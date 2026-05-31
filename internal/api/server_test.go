@@ -18,6 +18,7 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
 		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
 	))
 	server := NewServer(service)
 

@@ -10,23 +10,48 @@ infrastructure directly:
 - MinIO for static assets and application objects.
 - Rootless Podman for the shared pool sandbox boundary.
 
-The current repository is the first runnable slice of `platformd`. It provides:
+The current repository is the first runnable integration slice of `platformd`. It provides:
 
 - App registration and immutable deployment records.
 - A combined `workerd` Cap'n Proto configuration with one isolate and socket per
   active app.
 - A Traefik dynamic configuration with host routers and ForwardAuth.
 - Atomic config file replacement so watched files are never partially written.
-- App-scoped runtime KV capabilities with an in-memory store.
+- App-scoped runtime KV capabilities with PostgreSQL persistence when configured.
+- MinIO presigned upload and download URLs with app-prefixed object keys.
 - A small TypeScript worker SDK and starter Worker.
 
-PostgreSQL, MinIO, Podman lifecycle management, OIDC validation, blue-green pool
-replacement, rollback, and the deploy CLI remain integration work.
+Podman lifecycle management, OIDC validation, blue-green pool replacement,
+rollback, and the deploy CLI remain integration work.
 
 ## Run
 
+Start the local infrastructure:
+
 ```sh
+docker compose up -d
+```
+
+Run `platformd` with PostgreSQL and MinIO:
+
+```sh
+set -a
+. ./.env.example
+set +a
 go run ./cmd/platformd -addr :8080 -config-dir ./var/generated
+```
+
+When Traefik runs from `compose.yml` and `platformd` plus `workerd` run on the
+host, expose host-reachable callback and worker addresses:
+
+```sh
+go run ./cmd/platformd \
+  -addr :8080 \
+  -auth-url http://host.docker.internal:8080/internal/auth/verify \
+  -worker-host host.docker.internal \
+  -config-dir ./var/generated
+
+workerd serve ./var/generated/workerd.capnp
 ```
 
 Register and deploy a worker bundle:
@@ -45,6 +70,10 @@ The second request writes `var/generated/workerd.capnp` and
 `var/generated/traefik.yml`. In the full runtime, `platformd` will start a new
 pool generation, health-check it, and then allow Traefik to observe the new
 dynamic configuration.
+
+Without `DATABASE_URL` and `MINIO_ENDPOINT`, `platformd` still starts with its
+in-memory repository for quick unit-level experiments. Object endpoints remain
+disabled in that mode.
 
 ## Security Boundary
 

@@ -36,10 +36,65 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /internal/runtime/kv/get", s.kvGet)
 	s.mux.HandleFunc("POST /internal/runtime/kv/put", s.kvPut)
 	s.mux.HandleFunc("POST /internal/runtime/kv/delete", s.kvDelete)
+	s.mux.HandleFunc("POST /internal/runtime/objects/presign-upload", s.presignUpload)
+	s.mux.HandleFunc("POST /internal/runtime/objects/presign-download", s.presignDownload)
+	s.mux.HandleFunc("POST /internal/runtime/objects/delete", s.deleteObject)
 }
 
 func (s *Server) listApps(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.service.ListApps())
+	apps, err := s.service.ListApps()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apps)
+}
+
+type objectRequest struct {
+	Path string `json:"path"`
+}
+
+func (s *Server) presignUpload(w http.ResponseWriter, r *http.Request) {
+	s.presignObject(w, r, s.service.PresignUpload)
+}
+
+func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
+	s.presignObject(w, r, s.service.PresignDownload)
+}
+
+func (s *Server) presignObject(w http.ResponseWriter, r *http.Request, presign func(string, string) (string, error)) {
+	var input objectRequest
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if input.Path == "" {
+		writeError(w, http.StatusBadRequest, errors.New("path is required"))
+		return
+	}
+	url, err := presign(bearerToken(r), input.Path)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": url})
+}
+
+func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request) {
+	var input objectRequest
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if input.Path == "" {
+		writeError(w, http.StatusBadRequest, errors.New("path is required"))
+		return
+	}
+	if err := s.service.DeleteObject(bearerToken(r), input.Path); err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {

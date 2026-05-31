@@ -25,7 +25,7 @@ export interface RuntimeClientOptions {
   capability: string;
 }
 
-export function createRuntimeClient(options: RuntimeClientOptions): Pick<PlatformEnv, "KV" | "IDENTITY"> {
+export function createRuntimeClient(options: RuntimeClientOptions): PlatformEnv {
   async function runtimeRequest<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(new URL(path, options.baseURL), {
       method: "POST",
@@ -55,6 +55,19 @@ export function createRuntimeClient(options: RuntimeClientOptions): Pick<Platfor
       },
       async delete(key: string): Promise<void> {
         await runtimeRequest("/internal/runtime/kv/delete", { key });
+      },
+    },
+    OBJECTS: {
+      async presignUpload(path: string): Promise<string> {
+        const response = await runtimeRequest<{ url: string }>("/internal/runtime/objects/presign-upload", { path });
+        return response.url;
+      },
+      async presignDownload(path: string): Promise<string> {
+        const response = await runtimeRequest<{ url: string }>("/internal/runtime/objects/presign-download", { path });
+        return response.url;
+      },
+      async delete(path: string): Promise<void> {
+        await runtimeRequest("/internal/runtime/objects/delete", { path });
       },
     },
     IDENTITY: {

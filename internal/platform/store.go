@@ -12,6 +12,18 @@ var (
 	ErrInvalidCapability = errors.New("invalid runtime capability")
 )
 
+type Repository interface {
+	CreateApp(App) error
+	ListApps() ([]App, error)
+	NextPort() (int, error)
+	Activate(Deployment) error
+	ActiveDeployments() ([]ActiveDeployment, error)
+	AppIDForCapability(string) (string, error)
+	KVGet(capability, key string) ([]byte, bool, error)
+	KVPut(capability, key string, value []byte) error
+	KVDelete(capability, key string) error
+}
+
 type Store struct {
 	mu              sync.RWMutex
 	apps            map[string]App
@@ -41,7 +53,7 @@ func (s *Store) CreateApp(app App) error {
 	return nil
 }
 
-func (s *Store) ListApps() []App {
+func (s *Store) ListApps() ([]App, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	apps := make([]App, 0, len(s.apps))
@@ -49,7 +61,21 @@ func (s *Store) ListApps() []App {
 		apps = append(apps, app)
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
-	return apps
+	return apps, nil
+}
+
+func (s *Store) NextPort() (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	port := 9001
+	for _, deployments := range s.deployments {
+		for _, deployment := range deployments {
+			if deployment.Port >= port {
+				port = deployment.Port + 1
+			}
+		}
+	}
+	return port, nil
 }
 
 func (s *Store) Activate(deployment Deployment) error {
@@ -58,13 +84,19 @@ func (s *Store) Activate(deployment Deployment) error {
 	if _, exists := s.apps[deployment.AppID]; !exists {
 		return ErrAppNotFound
 	}
+	for _, previous := range s.deployments[deployment.AppID] {
+		if previous.ID == s.active[deployment.AppID] {
+			delete(s.capabilityToApp, previous.CapabilityToken)
+			break
+		}
+	}
 	s.deployments[deployment.AppID] = append(s.deployments[deployment.AppID], deployment)
 	s.active[deployment.AppID] = deployment.ID
 	s.capabilityToApp[deployment.CapabilityToken] = deployment.AppID
 	return nil
 }
 
-func (s *Store) ActiveDeployments() []ActiveDeployment {
+func (s *Store) ActiveDeployments() ([]ActiveDeployment, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	active := make([]ActiveDeployment, 0, len(s.active))
@@ -77,7 +109,17 @@ func (s *Store) ActiveDeployments() []ActiveDeployment {
 		}
 	}
 	sort.Slice(active, func(i, j int) bool { return active[i].App.ID < active[j].App.ID })
-	return active
+	return active, nil
+}
+
+func (s *Store) AppIDForCapability(capability string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	appID, ok := s.capabilityToApp[capability]
+	if !ok {
+		return "", ErrInvalidCapability
+	}
+	return appID, nil
 }
 
 func (s *Store) KVGet(capability, key string) ([]byte, bool, error) {

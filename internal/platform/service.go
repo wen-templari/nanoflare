@@ -8,7 +8,6 @@ import (
 	"net"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -18,14 +17,24 @@ type ConfigWriter interface {
 	Write([]ActiveDeployment) error
 }
 
-type Service struct {
-	store       *Store
-	writer      ConfigWriter
-	deployments atomic.Uint64
+type ObjectStore interface {
+	PresignUpload(appID, path string, expiry time.Duration) (string, error)
+	PresignDownload(appID, path string, expiry time.Duration) (string, error)
+	Delete(appID, path string) error
 }
 
-func NewService(store *Store, writer ConfigWriter) *Service {
+type Service struct {
+	store   Repository
+	writer  ConfigWriter
+	objects ObjectStore
+}
+
+func NewService(store Repository, writer ConfigWriter) *Service {
 	return &Service{store: store, writer: writer}
+}
+
+func NewServiceWithObjects(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
+	return &Service{store: store, writer: writer, objects: objects}
 }
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
@@ -41,7 +50,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	return app, s.store.CreateApp(app)
 }
 
-func (s *Service) ListApps() []App {
+func (s *Service) ListApps() ([]App, error) {
 	return s.store.ListApps()
 }
 
@@ -52,27 +61,69 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if _, err := time.Parse("2006-01-02", input.CompatibilityDate); err != nil {
 		return Deployment{}, errors.New("compatibility_date must use YYYY-MM-DD")
 	}
-	n := s.deployments.Add(1)
 	capability, err := randomToken()
 	if err != nil {
 		return Deployment{}, err
 	}
+	port, err := s.store.NextPort()
+	if err != nil {
+		return Deployment{}, err
+	}
+	deploymentID, err := randomToken()
+	if err != nil {
+		return Deployment{}, err
+	}
 	deployment := Deployment{
-		ID:                fmt.Sprintf("deployment-%06d", n),
+		ID:                "deployment-" + deploymentID[:16],
 		AppID:             appID,
 		BundlePath:        input.BundlePath,
 		CompatibilityDate: input.CompatibilityDate,
-		Port:              9000 + int(n),
+		Port:              port,
 		CapabilityToken:   capability,
 		CreatedAt:         time.Now().UTC(),
 	}
 	if err := s.store.Activate(deployment); err != nil {
 		return Deployment{}, err
 	}
-	if err := s.writer.Write(s.store.ActiveDeployments()); err != nil {
+	active, err := s.store.ActiveDeployments()
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := s.writer.Write(active); err != nil {
 		return Deployment{}, fmt.Errorf("write generated config: %w", err)
 	}
 	return deployment, nil
+}
+
+func (s *Service) PresignUpload(capability, path string) (string, error) {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return "", err
+	}
+	return s.objects.PresignUpload(appID, path, 15*time.Minute)
+}
+
+func (s *Service) PresignDownload(capability, path string) (string, error) {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return "", err
+	}
+	return s.objects.PresignDownload(appID, path, 15*time.Minute)
+}
+
+func (s *Service) DeleteObject(capability, path string) error {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return err
+	}
+	return s.objects.Delete(appID, path)
+}
+
+func (s *Service) appIDForCapability(capability string) (string, error) {
+	if s.objects == nil {
+		return "", errors.New("object storage is not configured")
+	}
+	return s.store.AppIDForCapability(capability)
 }
 
 func (s *Service) KVGet(capability, key string) ([]byte, bool, error) {

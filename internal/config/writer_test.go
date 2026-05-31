@@ -36,6 +36,7 @@ func TestWriterMakesAbsoluteBundlePathRelativeToConfig(t *testing.T) {
 		filepath.Join(dir, "generated", "workerd.capnp"),
 		filepath.Join(dir, "generated", "traefik.yml"),
 		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
 	)
 	err := writer.Write([]platform.ActiveDeployment{{
 		App: platform.App{ID: "hello-app", Hostname: "hello.example.com"},
@@ -61,11 +62,11 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 	config := Traefik([]platform.ActiveDeployment{{
 		App:        platform.App{ID: "hello-app", Hostname: "hello.example.com"},
 		Deployment: platform.Deployment{Port: 9001},
-	}}, "http://platformd:8080/internal/auth/verify")
+	}}, "http://platformd:8080/internal/auth/verify", "host.docker.internal")
 	for _, expected := range []string{
 		`address: "http://platformd:8080/internal/auth/verify"`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
-		`url: "http://127.0.0.1:9001/"`,
+		`url: "http://host.docker.internal:9001/"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)

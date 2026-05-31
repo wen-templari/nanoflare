@@ -14,17 +14,22 @@ type Writer struct {
 	workerdPath string
 	traefikPath string
 	authURL     string
+	workerHost  string
 }
 
-func NewWriter(workerdPath, traefikPath, authURL string) *Writer {
-	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL}
+func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
+	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL, workerHost: workerHost}
 }
 
 func (w *Writer) Write(active []platform.ActiveDeployment) error {
-	if err := writeAtomic(w.workerdPath, []byte(Workerd(relativeBundles(filepath.Dir(w.workerdPath), active)))); err != nil {
+	configDir, err := filepath.Abs(filepath.Dir(w.workerdPath))
+	if err != nil {
 		return err
 	}
-	return writeAtomic(w.traefikPath, []byte(Traefik(active, w.authURL)))
+	if err := writeAtomic(w.workerdPath, []byte(Workerd(relativeBundles(configDir, active)))); err != nil {
+		return err
+	}
+	return writeAtomic(w.traefikPath, []byte(Traefik(active, w.authURL, w.workerHost)))
 }
 
 func Workerd(active []platform.ActiveDeployment) string {
@@ -49,7 +54,7 @@ func Workerd(active []platform.ActiveDeployment) string {
 	return out.String()
 }
 
-func Traefik(active []platform.ActiveDeployment, authURL string) string {
+func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) string {
 	var out strings.Builder
 	out.WriteString("http:\n  middlewares:\n    platform-auth:\n      forwardAuth:\n")
 	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Platform-Context\n", yamlQuote(authURL))
@@ -63,7 +68,7 @@ func Traefik(active []platform.ActiveDeployment, authURL string) string {
 	for _, item := range active {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s:\n      loadBalancer:\n        servers:\n          - url: %s\n",
-			name, yamlQuote(fmt.Sprintf("http://127.0.0.1:%d/", item.Deployment.Port)))
+			name, yamlQuote(fmt.Sprintf("http://%s:%d/", workerHost, item.Deployment.Port)))
 	}
 	return out.String()
 }
