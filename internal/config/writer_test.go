@@ -13,7 +13,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		Deployment: platform.Deployment{
 			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
 			Entrypoint:        "worker.js",
-			CompatibilityDate: "2026-05-31",
+			CompatibilityDate: "2025-12-10",
 			Port:              9001,
 		},
 	}})
@@ -21,7 +21,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`address = "*:9001"`,
 		`serviceWorkerScript = "addEventListener(\"fetch\", () => {});"`,
-		`compatibilityDate = "2026-05-31"`,
+		`compatibilityDate = "2025-12-10"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)

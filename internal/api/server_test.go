@@ -57,7 +57,7 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	if detail.Deployment == nil || detail.Deployment.Entrypoint != "worker.js" || detail.Deployment.BundleSize != int64(len(bundle)) {
 		t.Fatalf("unexpected worker detail: %#v", detail)
 	}
-	if detail.Deployment.CompatibilityDate != "2026-05-31" {
+	if detail.Deployment.CompatibilityDate != "2025-12-10" {
 		t.Fatalf("compatibility date = %q", detail.Deployment.CompatibilityDate)
 	}
 
@@ -191,7 +191,7 @@ func deploy(t *testing.T, server http.Handler, appID string) platform.Deployment
 
 func deployContent(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, entrypoint string) platform.Deployment {
 	t.Helper()
-	body, err := json.Marshal(platform.DeployInput{Files: files, Entrypoint: entrypoint, CompatibilityDate: "2026-05-31"})
+	body, err := json.Marshal(platform.DeployInput{Files: files, Entrypoint: entrypoint, CompatibilityDate: "2025-12-10"})
 	if err != nil {
 		t.Fatal(err)
 	}

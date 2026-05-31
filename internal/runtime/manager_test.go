@@ -157,7 +157,7 @@ func deployments(port int) []platform.ActiveDeployment {
 			AppID:             "hello",
 			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
 			Entrypoint:        "worker.js",
-			CompatibilityDate: "2026-05-31",
+			CompatibilityDate: "2025-12-10",
 			Port:              port,
 		},
 	}}

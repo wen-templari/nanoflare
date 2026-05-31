@@ -24,8 +24,8 @@ The current repository is the first runnable integration slice of `platformd`. I
 - A small TypeScript worker SDK and starter Worker.
 
 Podman sandbox lifecycle management, OIDC validation, explicit rollback APIs,
-runner reconciliation after an unexpected `workerd` exit, and the deploy CLI
-remain integration work.
+and runner reconciliation after an unexpected `workerd` exit remain integration
+work.
 
 ## Run
 
@@ -91,27 +91,37 @@ short grace period so Traefik can poll the new configuration before old sockets
 are retired. Direct `workerd` execution remains available as a development
 fallback when `-runner-url` is empty.
 
-Register and deploy a worker bundle:
+Build the CLI:
 
 ```sh
-APP_ID=$(curl -sS -X POST http://127.0.0.1:8080/v1/apps \
-  -H 'content-type: application/json' \
-  -d '{"name":"Hello worker","hostname":"hello.example.com"}' | jq -r .id)
-
-curl -X POST "http://127.0.0.1:8080/v1/apps/$APP_ID/deployments" \
-  -H 'content-type: application/json' \
-  -d '{"files":[{"path":"worker.js","content":"addEventListener(\"fetch\", event => event.respondWith(new Response(\"hello\")));"}],"compatibility_date":"2026-05-31"}'
+go build -o ./bin/platform ./cmd/platform
 ```
 
-The second request starts a new `workerd` pool generation on fresh runtime
+Initialize, register, and deploy a worker:
+
+```sh
+./bin/platform init --name "Hello worker" --hostname hello.example.com ./hello-worker
+cd ./hello-worker
+../bin/platform create
+../bin/platform deploy
+```
+
+`platform init` writes a starter `worker.js` and a `platform.json` project file.
+`platform create` registers the worker and saves its generated app ID locally.
+`platform deploy` uploads each file listed in `platform.json`. Use
+`--api-url`, or set `PLATFORMD_URL`, when `platformd` is not listening on
+`http://127.0.0.1:8080`.
+
+The deploy command starts a new `workerd` pool generation on fresh runtime
 ports, health-checks every socket, publishes healthy upstreams for Traefik
 discovery, and then stops the previous generation. In direct mode,
 `var/generated` stores the private `workerd` configuration. In split mode,
 `platform-runner -config-dir` owns those private runtime files instead.
 
 Deployments store worker file content, not host filesystem paths. A single file
-uses service-worker syntax. For an ES-module worker, send multiple files and set
-`entrypoint` to the module that exports the worker handlers.
+uses service-worker syntax. For an ES-module worker, list multiple files in
+`platform.json` and set `entrypoint` to the module that exports the worker
+handlers.
 
 Without `DATABASE_URL` and `MINIO_ENDPOINT`, `platformd` still starts with its
 in-memory repository for quick unit-level experiments. Object endpoints remain

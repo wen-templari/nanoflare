@@ -12,11 +12,11 @@ func TestDeployRestoresPreviousActivationWhenRuntimePublicationFails(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "first.js", Content: "first"}}, CompatibilityDate: "2026-05-31"})
+	first, err := service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "first.js", Content: "first"}}, CompatibilityDate: "2025-12-10"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "second.js", Content: "second"}}, CompatibilityDate: "2026-05-31"}); err == nil {
+	if _, err := service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "second.js", Content: "second"}}, CompatibilityDate: "2025-12-10"}); err == nil {
 		t.Fatal("Deploy() error = nil, want runtime publication error")
 	}
 	active, err := store.ActiveDeployments()
