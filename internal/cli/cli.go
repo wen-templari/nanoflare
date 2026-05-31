@@ -124,7 +124,7 @@ func (r *Runner) init(args []string) error {
 		APIURL:            strings.TrimRight(*apiURL, "/"),
 		Entrypoint:        "worker.js",
 		Format:            "modules",
-		CompatibilityDate: r.Now().UTC().Format("2006-01-02"),
+		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	}
 	if err := writeProject(projectPath, project, os.O_EXCL); err != nil {
