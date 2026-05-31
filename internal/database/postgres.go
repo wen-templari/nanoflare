@@ -122,6 +122,32 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
 	return tx.Commit()
 }
 
+func (p *Postgres) SetActive(appID, deploymentID string) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE deployments SET active = false WHERE app_id = $1 AND active`, appID); err != nil {
+		return err
+	}
+	if deploymentID == "" {
+		return tx.Commit()
+	}
+	result, err := tx.Exec(`UPDATE deployments SET active = true WHERE app_id = $1 AND id = $2`, appID, deploymentID)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return errors.New("deployment not found")
+	}
+	return tx.Commit()
+}
+
 func (p *Postgres) ActiveDeployments() ([]platform.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.hostname, a.created_at,

@@ -6,8 +6,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/clas/platform/internal/api"
@@ -15,6 +17,7 @@ import (
 	"github.com/clas/platform/internal/database"
 	"github.com/clas/platform/internal/objects"
 	"github.com/clas/platform/internal/platform"
+	"github.com/clas/platform/internal/runtime"
 )
 
 func main() {
@@ -23,6 +26,9 @@ func main() {
 		configDir  = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
 		authURL    = flag.String("auth-url", "http://127.0.0.1:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
 		workerHost = flag.String("worker-host", "127.0.0.1", "hostname Traefik uses to reach workerd sockets")
+		workerd    = flag.String("workerd", "workerd", "path to the workerd executable")
+		portHost   = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
+		portStart  = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 	)
 	flag.Parse()
 
@@ -50,11 +56,22 @@ func main() {
 		*authURL,
 		*workerHost,
 	)
+	manager := runtime.NewManager(
+		writer,
+		runtime.CommandLauncher{Executable: *workerd},
+		*configDir,
+		filepath.Join(*configDir, "workerd.capnp"),
+		*portHost,
+		*portStart,
+		10*time.Second,
+		5*time.Second,
+	)
+	defer manager.Close()
 	active, err := store.ActiveDeployments()
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := writer.Write(active); err != nil {
+	if err := manager.Write(active); err != nil {
 		log.Fatal(err)
 	}
 
@@ -77,12 +94,21 @@ func main() {
 		log.Print("using MinIO object store")
 	}
 
-	service := platform.NewServiceWithObjects(store, writer, objectStore)
+	service := platform.NewServiceWithObjects(store, manager, objectStore)
 	server := api.NewServer(service)
 
 	log.Printf("platformd listening on %s", *addr)
 	log.Printf("generated configs will be written to %s", *configDir)
-	if err := http.ListenAndServe(*addr, server); err != nil {
+	httpServer := &http.Server{Addr: *addr, Handler: server}
+	shutdown, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	go func() {
+		<-shutdown.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		httpServer.Shutdown(ctx)
+	}()
+	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }

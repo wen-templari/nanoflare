@@ -17,12 +17,14 @@ The current repository is the first runnable integration slice of `platformd`. I
   active app.
 - A Traefik dynamic configuration with host routers and ForwardAuth.
 - Atomic config file replacement so watched files are never partially written.
+- Managed `workerd` pool generations with readiness checks and blue-green traffic
+  replacement.
 - App-scoped runtime KV capabilities with PostgreSQL persistence when configured.
 - MinIO presigned upload and download URLs with app-prefixed object keys.
 - A small TypeScript worker SDK and starter Worker.
 
-Podman lifecycle management, OIDC validation, blue-green pool replacement,
-rollback, and the deploy CLI remain integration work.
+Podman sandbox lifecycle management, OIDC validation, explicit rollback APIs,
+and the deploy CLI remain integration work.
 
 ## Run
 
@@ -50,9 +52,10 @@ go run ./cmd/platformd \
   -auth-url http://host.docker.internal:8080/internal/auth/verify \
   -worker-host host.docker.internal \
   -config-dir ./var/generated
-
-workerd serve ./var/generated/workerd.capnp
 ```
+
+`platformd` starts `workerd` itself. Use `-workerd /path/to/workerd` when the
+binary is not on `PATH`.
 
 Register and deploy a worker bundle:
 
@@ -66,14 +69,28 @@ curl -X POST http://127.0.0.1:8080/v1/apps/hello/deployments \
   -d '{"bundle_path":"/srv/apps/hello/worker.js","compatibility_date":"2026-05-31"}'
 ```
 
-The second request writes `var/generated/workerd.capnp` and
-`var/generated/traefik.yml`. In the full runtime, `platformd` will start a new
-pool generation, health-check it, and then allow Traefik to observe the new
-dynamic configuration.
+The second request starts a new `workerd` pool generation on fresh runtime
+ports, health-checks every socket, writes `var/generated/workerd.capnp` and
+`var/generated/traefik.yml`, and then stops the previous generation. Traefik
+only observes healthy generations.
 
 Without `DATABASE_URL` and `MINIO_ENDPOINT`, `platformd` still starts with its
 in-memory repository for quick unit-level experiments. Object endpoints remain
 disabled in that mode.
+
+## Web Console
+
+Run the React control plane UI:
+
+```sh
+cd packages/ui
+npm install
+npm run dev
+```
+
+Vite serves the console at `http://127.0.0.1:5173` and proxies `/v1` requests to
+`platformd` at `http://127.0.0.1:8080`. When `platformd` is not running, the
+console opens with demo workers and local page and storage management state.
 
 ## Security Boundary
 

@@ -82,17 +82,37 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		CapabilityToken:   capability,
 		CreatedAt:         time.Now().UTC(),
 	}
+	activeBefore, err := s.store.ActiveDeployments()
+	if err != nil {
+		return Deployment{}, err
+	}
+	previousID := activeDeploymentID(activeBefore, appID)
 	if err := s.store.Activate(deployment); err != nil {
 		return Deployment{}, err
 	}
 	active, err := s.store.ActiveDeployments()
 	if err != nil {
+		if rollbackErr := s.store.SetActive(appID, previousID); rollbackErr != nil {
+			return Deployment{}, fmt.Errorf("list active deployments: %w; rollback active deployment: %v", err, rollbackErr)
+		}
 		return Deployment{}, err
 	}
 	if err := s.writer.Write(active); err != nil {
+		if rollbackErr := s.store.SetActive(appID, previousID); rollbackErr != nil {
+			return Deployment{}, fmt.Errorf("write generated config: %w; rollback active deployment: %v", err, rollbackErr)
+		}
 		return Deployment{}, fmt.Errorf("write generated config: %w", err)
 	}
 	return deployment, nil
+}
+
+func activeDeploymentID(active []ActiveDeployment, appID string) string {
+	for _, item := range active {
+		if item.App.ID == appID {
+			return item.Deployment.ID
+		}
+	}
+	return ""
 }
 
 func (s *Service) PresignUpload(capability, path string) (string, error) {

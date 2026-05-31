@@ -2,3 +2,8 @@
 /bin/
 /node_modules/
 /dist/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+packages/ui/vite.config.js
+packages/ui/vite.config.d.ts

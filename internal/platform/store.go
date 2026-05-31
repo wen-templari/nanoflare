@@ -17,6 +17,7 @@ type Repository interface {
 	ListApps() ([]App, error)
 	NextPort() (int, error)
 	Activate(Deployment) error
+	SetActive(appID, deploymentID string) error
 	ActiveDeployments() ([]ActiveDeployment, error)
 	AppIDForCapability(string) (string, error)
 	KVGet(capability, key string) ([]byte, bool, error)
@@ -94,6 +95,29 @@ func (s *Store) Activate(deployment Deployment) error {
 	s.active[deployment.AppID] = deployment.ID
 	s.capabilityToApp[deployment.CapabilityToken] = deployment.AppID
 	return nil
+}
+
+func (s *Store) SetActive(appID, deploymentID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.apps[appID]; !exists {
+		return ErrAppNotFound
+	}
+	for _, deployment := range s.deployments[appID] {
+		if deployment.ID == s.active[appID] {
+			delete(s.capabilityToApp, deployment.CapabilityToken)
+		}
+		if deployment.ID == deploymentID {
+			s.active[appID] = deployment.ID
+			s.capabilityToApp[deployment.CapabilityToken] = appID
+			return nil
+		}
+	}
+	if deploymentID == "" {
+		delete(s.active, appID)
+		return nil
+	}
+	return errors.New("deployment not found")
 }
 
 func (s *Store) ActiveDeployments() ([]ActiveDeployment, error) {

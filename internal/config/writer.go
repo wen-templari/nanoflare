@@ -22,13 +22,21 @@ func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
 }
 
 func (w *Writer) Write(active []platform.ActiveDeployment) error {
-	configDir, err := filepath.Abs(filepath.Dir(w.workerdPath))
+	if err := w.WriteWorkerd(w.workerdPath, active); err != nil {
+		return err
+	}
+	return w.WriteTraefik(active)
+}
+
+func (w *Writer) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
+	configDir, err := filepath.Abs(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
-	if err := writeAtomic(w.workerdPath, []byte(Workerd(relativeBundles(configDir, active)))); err != nil {
-		return err
-	}
+	return writeAtomic(path, []byte(Workerd(relativeBundles(configDir, active))))
+}
+
+func (w *Writer) WriteTraefik(active []platform.ActiveDeployment) error {
 	return writeAtomic(w.traefikPath, []byte(Traefik(active, w.authURL, w.workerHost)))
 }
 
