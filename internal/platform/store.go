@@ -52,6 +52,7 @@ func (s *Store) CreateApp(app App) error {
 		return ErrAppExists
 	}
 	s.apps[app.ID] = app
+	s.capabilityToApp[app.RuntimeToken] = app.ID
 	return nil
 }
 
@@ -86,15 +87,8 @@ func (s *Store) Activate(deployment Deployment) error {
 	if _, exists := s.apps[deployment.AppID]; !exists {
 		return ErrAppNotFound
 	}
-	for _, previous := range s.deployments[deployment.AppID] {
-		if previous.ID == s.active[deployment.AppID] {
-			delete(s.capabilityToApp, previous.CapabilityToken)
-			break
-		}
-	}
 	s.deployments[deployment.AppID] = append(s.deployments[deployment.AppID], deployment)
 	s.active[deployment.AppID] = deployment.ID
-	s.capabilityToApp[deployment.CapabilityToken] = deployment.AppID
 	return nil
 }
 
@@ -105,12 +99,8 @@ func (s *Store) SetActive(appID, deploymentID string) error {
 		return ErrAppNotFound
 	}
 	for _, deployment := range s.deployments[appID] {
-		if deployment.ID == s.active[appID] {
-			delete(s.capabilityToApp, deployment.CapabilityToken)
-		}
 		if deployment.ID == deploymentID {
 			s.active[appID] = deployment.ID
-			s.capabilityToApp[deployment.CapabilityToken] = appID
 			return nil
 		}
 	}

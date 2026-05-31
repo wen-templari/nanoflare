@@ -20,6 +20,8 @@ The current repository is the first runnable integration slice of `platformd`. I
 - Managed `workerd` pool generations with readiness checks and blue-green traffic
   replacement.
 - App-scoped runtime KV capabilities with PostgreSQL persistence when configured.
+- A native `env.KV` binding for each worker with core `get`, `put`, and `delete`
+  operations.
 - MinIO presigned upload and download URLs with app-prefixed object keys.
 - A small TypeScript worker SDK and starter Worker.
 
@@ -46,6 +48,11 @@ go run ./cmd/platformd -addr :8080 -config-dir ./var/generated
 environment variables take precedence. Loading `DATABASE_URL` makes registered
 workers and deployments survive a `platformd` restart. Without it, `platformd`
 uses its intentionally ephemeral in-memory repository.
+
+`platformd` also listens on `127.0.0.1:8081` for the private Worker KV adapter.
+Use `-runtime-addr` to change the listener address. Do not expose this endpoint
+publicly; generated `workerd` configuration injects app-scoped credentials when
+calling it.
 
 The Compose Traefik service polls `platformd` at
 `GET /internal/traefik/config` using `PLATFORM_TRAEFIK_TOKEN`. Application
@@ -77,12 +84,17 @@ export PLATFORM_RUNNER_TOKEN=platform-development
 
 go run ./cmd/platform-runner \
   -addr 127.0.0.1:8090 \
-  -config-dir ./var/runner
+  -config-dir ./var/runner \
+  -platform-runtime-addr 127.0.0.1:8081
 
 go run ./cmd/platformd \
   -addr :8080 \
   -runner-url http://127.0.0.1:8090
 ```
+
+When `platform-runner` and `platformd` run on separate hosts, set
+`platformd -runtime-addr` to a private reachable listener and pass that address
+to `platform-runner -platform-runtime-addr`.
 
 The runner prepares a fresh `workerd` generation and health-checks its sockets.
 `platformd` publishes the corresponding routes from its HTTP discovery endpoint
@@ -118,10 +130,22 @@ discovery, and then stops the previous generation. In direct mode,
 `var/generated` stores the private `workerd` configuration. In split mode,
 `platform-runner -config-dir` owns those private runtime files instead.
 
-Deployments store worker file content, not host filesystem paths. A single file
-uses service-worker syntax. For an ES-module worker, list multiple files in
-`platform.json` and set `entrypoint` to the module that exports the worker
-handlers.
+Deployments store worker file content, not host filesystem paths. New projects
+use ES-module syntax and set `"format": "modules"` in `platform.json`, so their
+handler receives bindings through `env`, including `env.KV`. Existing projects
+without an explicit format remain compatible: one file uses service-worker
+syntax and multiple files use ES-module syntax.
+
+The native KV binding is app-scoped:
+
+```js
+export default {
+  async fetch(request, env) {
+    await env.KV.put("message", "hello");
+    return new Response(await env.KV.get("message"));
+  },
+};
+```
 
 Without `DATABASE_URL` and `MINIO_ENDPOINT`, `platformd` still starts with its
 in-memory repository for quick unit-level experiments. Object endpoints remain
@@ -173,5 +197,6 @@ runner and `workerd` inside a dedicated rootless Podman sandbox or VM with
 private ingress and restricted egress. Running the runner on the same host is an
 integration step, not a hardened sandbox.
 
-Runtime APIs use deployment capability tokens. An application never chooses its
-own app ID when reading or writing KV data.
+Runtime APIs use stable app-scoped capability tokens injected into private
+`workerd` configuration. An application never chooses its own app ID when
+reading or writing KV data.

@@ -35,7 +35,7 @@ func NewClient(baseURL, token string, traefik TraefikWriter) *Client {
 
 func (c *Client) Write(active []platform.ActiveDeployment) error {
 	var prepared PrepareResponse
-	if err := c.request(http.MethodPost, "/v1/generations/prepare", PrepareRequest{Deployments: active}, &prepared); err != nil {
+	if err := c.request(http.MethodPost, "/v1/generations/prepare", prepareRequest(active), &prepared); err != nil {
 		return fmt.Errorf("prepare runner generation: %w", err)
 	}
 	if err := c.traefik.WriteTraefik(prepared.Deployments); err != nil {

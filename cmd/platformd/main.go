@@ -33,6 +33,7 @@ func main() {
 
 	var (
 		addr         = flag.String("addr", ":8080", "HTTP listen address")
+		runtimeAddr  = flag.String("runtime-addr", "127.0.0.1:8081", "private runtime KV API listen address")
 		configDir    = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
 		traefikFile  = flag.String("traefik-file", "", "optional Traefik dynamic configuration file fallback")
 		authURL      = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
@@ -50,7 +51,10 @@ func main() {
 	if *traefikFile == "" && *traefikToken == "" {
 		log.Fatal("Traefik token is required when HTTP discovery is enabled")
 	}
-	if err := os.MkdirAll(*configDir, 0o755); err != nil {
+	if err := os.MkdirAll(*configDir, 0o700); err != nil {
+		log.Fatal(err)
+	}
+	if err := os.Chmod(*configDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
 
@@ -84,6 +88,7 @@ func main() {
 		log.Printf("using platform-runner at %s", *runnerURL)
 	} else {
 		writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
+		writer.SetPlatformRuntimeAddr(*runtimeAddr)
 		manager := runtime.NewManager(
 			writer,
 			runtime.CommandLauncher{Executable: *workerd, Output: output},
@@ -133,6 +138,13 @@ func main() {
 
 	service := platform.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewClient(*prometheus))
 	server := api.NewServerWithTraefik(service, traefikStore, *traefikToken)
+	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: api.NewRuntimeKVServer(service)}
+	go func() {
+		log.Printf("platformd runtime KV API listening on %s", *runtimeAddr)
+		if err := runtimeServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("runtime KV API: %v", err)
+		}
+	}()
 
 	log.Printf("platformd listening on %s", *addr)
 	log.Printf("runtime configs will be written to %s", *configDir)
@@ -144,6 +156,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		httpServer.Shutdown(ctx)
+		runtimeServer.Shutdown(ctx)
 	}()
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)

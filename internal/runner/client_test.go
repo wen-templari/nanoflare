@@ -53,14 +53,31 @@ func TestServerRejectsInvalidToken(t *testing.T) {
 	}
 }
 
+func TestClientTransportsPrivateRuntimeTokenToRunner(t *testing.T) {
+	manager := &fakeManager{generation: "workerd-000001.capnp", routed: deployments(10001)}
+	server := httptest.NewServer(NewServer(manager, "secret"))
+	defer server.Close()
+	active := deployments(9001)
+	active[0].App.RuntimeToken = "runtime-secret"
+
+	if err := NewClient(server.URL, "secret", &fakeTraefikWriter{}).Write(active); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.prepared[0].App.RuntimeToken; got != "runtime-secret" {
+		t.Fatalf("runtime token = %q, want private token transported to runner", got)
+	}
+}
+
 type fakeManager struct {
 	generation string
 	routed     []platform.ActiveDeployment
+	prepared   []platform.ActiveDeployment
 	events     []string
 }
 
-func (m *fakeManager) Prepare([]platform.ActiveDeployment) (string, []platform.ActiveDeployment, error) {
+func (m *fakeManager) Prepare(deployments []platform.ActiveDeployment) (string, []platform.ActiveDeployment, error) {
 	m.events = append(m.events, "prepare")
+	m.prepared = deployments
 	return m.generation, m.routed, nil
 }
 

@@ -1,14 +1,12 @@
-addEventListener("fetch", (event) => {
-  event.respondWith(handleRequest(event.request));
-});
-
-async function handleRequest(request) {
-  const identity = request.headers.get("x-platform-context");
-  return new Response(
-    JSON.stringify({
+export default {
+  async fetch(request, env) {
+    const identity = request.headers.get("x-platform-context");
+    const visits = Number((await env.KV.get("visits")) ?? "0") + 1;
+    await env.KV.put("visits", String(visits));
+    return Response.json({
       message: "hello from platform",
+      visits,
       identity: identity ? JSON.parse(identity) : null,
-    }),
-    { headers: { "content-type": "application/json" } },
-  );
-}
+    });
+  },
+};

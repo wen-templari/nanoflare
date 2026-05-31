@@ -3,10 +3,11 @@ package platform
 import "time"
 
 type App struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Hostname  string    `json:"hostname"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Hostname     string    `json:"hostname"`
+	RuntimeToken string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type Deployment struct {
@@ -14,9 +15,9 @@ type Deployment struct {
 	AppID             string       `json:"app_id"`
 	Files             []WorkerFile `json:"files"`
 	Entrypoint        string       `json:"entrypoint"`
+	Format            string       `json:"format"`
 	CompatibilityDate string       `json:"compatibility_date"`
 	Port              int          `json:"port"`
-	CapabilityToken   string       `json:"capability_token"`
 	CreatedAt         time.Time    `json:"created_at"`
 }
 
@@ -39,12 +40,14 @@ type CreateAppInput struct {
 type DeployInput struct {
 	Files             []WorkerFile `json:"files"`
 	Entrypoint        string       `json:"entrypoint,omitempty"`
+	Format            string       `json:"format,omitempty"`
 	CompatibilityDate string       `json:"compatibility_date"`
 }
 
 type WorkerDeployment struct {
 	ID                string    `json:"id"`
 	Entrypoint        string    `json:"entrypoint"`
+	Format            string    `json:"format"`
 	BundleSize        int64     `json:"bundle_size"`
 	CompatibilityDate string    `json:"compatibility_date"`
 	Port              int       `json:"port"`
@@ -62,6 +65,7 @@ type ConsoleDeployment struct {
 	AppName           string    `json:"app_name"`
 	Hostname          string    `json:"hostname"`
 	Entrypoint        string    `json:"entrypoint"`
+	Format            string    `json:"format"`
 	BundleSize        int64     `json:"bundle_size"`
 	CompatibilityDate string    `json:"compatibility_date"`
 	State             string    `json:"state"`

@@ -15,7 +15,8 @@ import (
 
 func TestCreateDeployAndScopedKV(t *testing.T) {
 	dir := t.TempDir()
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	store := platform.NewStore()
+	service := platform.NewService(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
 		"http://platformd/internal/auth/verify",
@@ -25,18 +26,16 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 
 	appOne := createApp(t, server, "App One", "one.example.com")
 	appTwo := createApp(t, server, "App Two", "two.example.com")
-	one := deploy(t, server, appOne.ID)
-	two := deploy(t, server, appTwo.ID)
+	deploy(t, server, appOne.ID)
+	deploy(t, server, appTwo.ID)
+	tokens := runtimeTokens(t, store)
+	kv := NewRuntimeKVServer(service)
 
-	request(t, server, http.MethodPost, "/internal/runtime/kv/put", one.CapabilityToken, `{"key":"color","value":"blue"}`, http.StatusNoContent)
-	response := request(t, server, http.MethodPost, "/internal/runtime/kv/get", one.CapabilityToken, `{"key":"color"}`, http.StatusOK)
-	if response["value"] != "blue" {
-		t.Fatalf("got %#v, want app-one value", response)
+	runtimeKVRequest(t, kv, http.MethodPut, "/color?urlencoded=true", tokens[appOne.ID], []byte("blue"), http.StatusNoContent)
+	if got := runtimeKVRequest(t, kv, http.MethodGet, "/color?urlencoded=true", tokens[appOne.ID], nil, http.StatusOK); string(got) != "blue" {
+		t.Fatalf("got %q, want app-one value", got)
 	}
-	response = request(t, server, http.MethodPost, "/internal/runtime/kv/get", two.CapabilityToken, `{"key":"color"}`, http.StatusOK)
-	if response["value"] != nil {
-		t.Fatalf("got %#v, want app-two KV to remain isolated", response)
-	}
+	runtimeKVRequest(t, kv, http.MethodGet, "/color?urlencoded=true", tokens[appTwo.ID], nil, http.StatusNotFound)
 }
 
 func TestWorkerConsoleAPIs(t *testing.T) {
@@ -256,4 +255,31 @@ func request(t *testing.T, server http.Handler, method, path, capability, body s
 		t.Fatal(err)
 	}
 	return response
+}
+
+func runtimeTokens(t *testing.T, store platform.Repository) map[string]string {
+	t.Helper()
+	apps, err := store.ListApps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := make(map[string]string, len(apps))
+	for _, app := range apps {
+		tokens[app.ID] = app.RuntimeToken
+	}
+	return tokens
+}
+
+func runtimeKVRequest(t *testing.T, server http.Handler, method, path, token string, body []byte, wantStatus int) []byte {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != wantStatus {
+		t.Fatalf("%s %s status = %d, body = %s", method, path, recorder.Code, recorder.Body.String())
+	}
+	return recorder.Body.Bytes()
 }

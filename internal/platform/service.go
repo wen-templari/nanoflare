@@ -62,7 +62,11 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	if err != nil {
 		return App{}, err
 	}
-	app := App{ID: appID, Name: input.Name, Hostname: input.Hostname, CreatedAt: time.Now().UTC()}
+	runtimeToken, err := randomToken()
+	if err != nil {
+		return App{}, err
+	}
+	app := App{ID: appID, Name: input.Name, Hostname: input.Hostname, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
 	return app, s.store.CreateApp(app)
 }
 
@@ -86,6 +90,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 	detail.Deployment = &WorkerDeployment{
 		ID:                active.Deployment.ID,
 		Entrypoint:        active.Deployment.Entrypoint,
+		Format:            active.Deployment.Format,
 		BundleSize:        size,
 		CompatibilityDate: active.Deployment.CompatibilityDate,
 		Port:              active.Deployment.Port,
@@ -121,6 +126,7 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			AppName:           record.App.Name,
 			Hostname:          record.App.Hostname,
 			Entrypoint:        record.Deployment.Entrypoint,
+			Format:            record.Deployment.Format,
 			BundleSize:        size,
 			CompatibilityDate: record.Deployment.CompatibilityDate,
 			State:             state,
@@ -193,12 +199,12 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
-	if _, err := time.Parse("2006-01-02", input.CompatibilityDate); err != nil {
-		return Deployment{}, errors.New("compatibility_date must use YYYY-MM-DD")
-	}
-	capability, err := randomToken()
+	format, err := workerFormat(input.Format, len(files))
 	if err != nil {
 		return Deployment{}, err
+	}
+	if _, err := time.Parse("2006-01-02", input.CompatibilityDate); err != nil {
+		return Deployment{}, errors.New("compatibility_date must use YYYY-MM-DD")
 	}
 	port, err := s.store.NextPort()
 	if err != nil {
@@ -213,9 +219,9 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		AppID:             appID,
 		Files:             files,
 		Entrypoint:        entrypoint,
+		Format:            format,
 		CompatibilityDate: input.CompatibilityDate,
 		Port:              port,
-		CapabilityToken:   capability,
 		CreatedAt:         time.Now().UTC(),
 	}
 	activeBefore, err := s.store.ActiveDeployments()
@@ -240,6 +246,20 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		return Deployment{}, fmt.Errorf("write generated config: %w", err)
 	}
 	return deployment, nil
+}
+
+func workerFormat(format string, fileCount int) (string, error) {
+	switch strings.TrimSpace(format) {
+	case "":
+		if fileCount == 1 {
+			return "service-worker", nil
+		}
+		return "modules", nil
+	case "modules", "service-worker":
+		return format, nil
+	default:
+		return "", errors.New(`format must be "modules" or "service-worker"`)
+	}
 }
 
 func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, string, error) {

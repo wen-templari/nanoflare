@@ -31,7 +31,7 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	if project.Name != "Hello Worker" || project.Hostname != "hello-worker.example.com" {
 		t.Fatalf("project = %#v", project)
 	}
-	if project.CompatibilityDate != "2025-12-10" || project.Entrypoint != "worker.js" {
+	if project.CompatibilityDate != "2026-05-31" || project.Entrypoint != "worker.js" || project.Format != "modules" {
 		t.Fatalf("project = %#v", project)
 	}
 	content, err := os.ReadFile(filepath.Join("hello", "worker.js"))

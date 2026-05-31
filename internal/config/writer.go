@@ -15,6 +15,7 @@ type Writer struct {
 	traefikPath string
 	authURL     string
 	workerHost  string
+	runtimeAddr string
 }
 
 type TraefikWriter interface {
@@ -24,14 +25,23 @@ type TraefikWriter interface {
 type RuntimeWriter struct {
 	workerdPath string
 	traefik     TraefikWriter
+	runtimeAddr string
 }
 
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
-	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL, workerHost: workerHost}
+	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL, workerHost: workerHost, runtimeAddr: "127.0.0.1:8081"}
 }
 
 func NewRuntimeWriter(workerdPath string, traefik TraefikWriter) *RuntimeWriter {
-	return &RuntimeWriter{workerdPath: workerdPath, traefik: traefik}
+	return &RuntimeWriter{workerdPath: workerdPath, traefik: traefik, runtimeAddr: "127.0.0.1:8081"}
+}
+
+func (w *Writer) SetPlatformRuntimeAddr(addr string) {
+	w.runtimeAddr = addr
+}
+
+func (w *RuntimeWriter) SetPlatformRuntimeAddr(addr string) {
+	w.runtimeAddr = addr
 }
 
 func (w *Writer) Write(active []platform.ActiveDeployment) error {
@@ -42,7 +52,7 @@ func (w *Writer) Write(active []platform.ActiveDeployment) error {
 }
 
 func (w *Writer) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
-	return writeAtomic(path, []byte(Workerd(active)))
+	return writeAtomic(path, []byte(WorkerdWithRuntimeAddr(active, w.runtimeAddr)))
 }
 
 func (w *Writer) WriteTraefik(active []platform.ActiveDeployment) error {
@@ -50,7 +60,7 @@ func (w *Writer) WriteTraefik(active []platform.ActiveDeployment) error {
 }
 
 func (w *RuntimeWriter) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
-	return writeAtomic(path, []byte(Workerd(active)))
+	return writeAtomic(path, []byte(WorkerdWithRuntimeAddr(active, w.runtimeAddr)))
 }
 
 func (w *RuntimeWriter) WriteTraefik(active []platform.ActiveDeployment) error {
@@ -58,11 +68,19 @@ func (w *RuntimeWriter) WriteTraefik(active []platform.ActiveDeployment) error {
 }
 
 func Workerd(active []platform.ActiveDeployment) string {
+	return WorkerdWithRuntimeAddr(active, "127.0.0.1:8081")
+}
+
+func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr string) string {
 	var out strings.Builder
 	out.WriteString("using Workerd = import \"/workerd/workerd.capnp\";\n\n")
 	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(item.App.ID), workerName(item.App.ID))
+	}
+	for _, item := range active {
+		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
+			quote(kvServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
@@ -73,6 +91,7 @@ func Workerd(active []platform.ActiveDeployment) string {
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(item.App.ID))
 		writeWorkerSource(&out, item.Deployment)
+		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s)],\n", quote(kvServiceName(item.App.ID)))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		out.WriteString(");\n")
 	}
@@ -80,7 +99,7 @@ func Workerd(active []platform.ActiveDeployment) string {
 }
 
 func writeWorkerSource(out *strings.Builder, deployment platform.Deployment) {
-	if len(deployment.Files) == 1 {
+	if deploymentFormat(deployment) == "service-worker" {
 		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(deployment.Files[0].Content))
 		return
 	}
@@ -89,6 +108,20 @@ func writeWorkerSource(out *strings.Builder, deployment platform.Deployment) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
 	}
 	out.WriteString("  ],\n")
+}
+
+func deploymentFormat(deployment platform.Deployment) string {
+	if deployment.Format != "" {
+		return deployment.Format
+	}
+	if len(deployment.Files) == 1 {
+		return "service-worker"
+	}
+	return "modules"
+}
+
+func kvServiceName(appID string) string {
+	return "kv-" + appID
 }
 
 func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.WorkerFile {
@@ -127,7 +160,7 @@ func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) str
 }
 
 func writeAtomic(path string, content []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	file, err := os.CreateTemp(filepath.Dir(path), ".platformd-*")

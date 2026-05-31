@@ -39,6 +39,7 @@ type Project struct {
 	AppID             string   `json:"app_id,omitempty"`
 	APIURL            string   `json:"api_url"`
 	Entrypoint        string   `json:"entrypoint"`
+	Format            string   `json:"format,omitempty"`
 	CompatibilityDate string   `json:"compatibility_date"`
 	Files             []string `json:"files"`
 }
@@ -122,6 +123,7 @@ func (r *Runner) init(args []string) error {
 		Hostname:          projectHostname,
 		APIURL:            strings.TrimRight(*apiURL, "/"),
 		Entrypoint:        "worker.js",
+		Format:            "modules",
 		CompatibilityDate: r.Now().UTC().Format("2006-01-02"),
 		Files:             []string{"worker.js"},
 	}
@@ -201,6 +203,7 @@ func (r *Runner) deploy(args []string) error {
 	if err := r.request(http.MethodPost, projectAPIURL(project, *apiURL)+"/v1/apps/"+project.AppID+"/deployments", platform.DeployInput{
 		Files:             files,
 		Entrypoint:        project.Entrypoint,
+		Format:            project.Format,
 		CompatibilityDate: date,
 	}, &deployment); err != nil {
 		return err

@@ -49,7 +49,7 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	generation, deployments, err := s.manager.Prepare(input.Deployments)
+	generation, deployments, err := s.manager.Prepare(input.activeDeployments())
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return

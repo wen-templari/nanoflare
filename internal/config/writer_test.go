@@ -9,7 +9,7 @@ import (
 
 func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	config := Workerd([]platform.ActiveDeployment{{
-		App: platform.App{ID: "hello-app"},
+		App: platform.App{ID: "hello-app", RuntimeToken: "secret"},
 		Deployment: platform.Deployment{
 			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
 			Entrypoint:        "worker.js",
@@ -21,11 +21,32 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`address = "*:9001"`,
 		`serviceWorkerScript = "addEventListener(\"fetch\", () => {});"`,
+		`(name = "KV", kvNamespace = "kv-hello-app")`,
+		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)
 		}
+	}
+}
+
+func TestWorkerdGeneratesSingleFileModuleWorker(t *testing.T) {
+	config := Workerd([]platform.ActiveDeployment{{
+		App: platform.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: platform.Deployment{
+			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Port:              9001,
+		},
+	}})
+	if !strings.Contains(config, `(name = "worker.js", esModule = "export default { fetch() {} };")`) {
+		t.Fatalf("config does not contain single-file module:\n%s", config)
+	}
+	if strings.Contains(config, "serviceWorkerScript") {
+		t.Fatalf("config unexpectedly contains service worker source:\n%s", config)
 	}
 }
 

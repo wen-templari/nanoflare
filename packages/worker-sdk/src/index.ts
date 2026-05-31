@@ -5,11 +5,7 @@ export interface Identity {
 }
 
 export interface PlatformEnv {
-  KV: {
-    get<T>(key: string): Promise<T | null>;
-    put(key: string, value: unknown): Promise<void>;
-    delete(key: string): Promise<void>;
-  };
+  KV: KVNamespace;
   OBJECTS: {
     presignUpload(path: string): Promise<string>;
     presignDownload(path: string): Promise<string>;
@@ -20,12 +16,21 @@ export interface PlatformEnv {
   };
 }
 
+export interface KVNamespace {
+  get(key: string): Promise<string | null>;
+  get<T = unknown>(key: string, type: "json"): Promise<T | null>;
+  get(key: string, type: "arrayBuffer"): Promise<ArrayBuffer | null>;
+  get(key: string, type: "stream"): Promise<ReadableStream | null>;
+  put(key: string, value: string | ArrayBuffer | ArrayBufferView | ReadableStream): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
 export interface RuntimeClientOptions {
   baseURL: string;
   capability: string;
 }
 
-export function createRuntimeClient(options: RuntimeClientOptions): PlatformEnv {
+export function createRuntimeClient(options: RuntimeClientOptions): Omit<PlatformEnv, "KV"> {
   async function runtimeRequest<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(new URL(path, options.baseURL), {
       method: "POST",
@@ -45,18 +50,6 @@ export function createRuntimeClient(options: RuntimeClientOptions): PlatformEnv 
   }
 
   return {
-    KV: {
-      async get<T>(key: string): Promise<T | null> {
-        const response = await runtimeRequest<{ value: T | null }>("/internal/runtime/kv/get", { key });
-        return response.value;
-      },
-      async put(key: string, value: unknown): Promise<void> {
-        await runtimeRequest("/internal/runtime/kv/put", { key, value });
-      },
-      async delete(key: string): Promise<void> {
-        await runtimeRequest("/internal/runtime/kv/delete", { key });
-      },
-    },
     OBJECTS: {
       async presignUpload(path: string): Promise<string> {
         const response = await runtimeRequest<{ url: string }>("/internal/runtime/objects/presign-upload", { path });

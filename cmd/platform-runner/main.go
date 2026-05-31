@@ -18,12 +18,13 @@ import (
 
 func main() {
 	var (
-		addr      = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
-		configDir = flag.String("config-dir", "./var/runner", "directory for generated runtime configuration")
-		workerd   = flag.String("workerd", "workerd", "path to the workerd executable")
-		portHost  = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
-		portStart = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
-		token     = flag.String("token", os.Getenv("PLATFORM_RUNNER_TOKEN"), "platformd authentication token")
+		addr                = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
+		configDir           = flag.String("config-dir", "./var/runner", "directory for generated runtime configuration")
+		workerd             = flag.String("workerd", "workerd", "path to the workerd executable")
+		portHost            = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
+		portStart           = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
+		platformRuntimeAddr = flag.String("platform-runtime-addr", "127.0.0.1:8081", "platformd private runtime KV API address reachable from workerd")
+		token               = flag.String("token", os.Getenv("PLATFORM_RUNNER_TOKEN"), "platformd authentication token")
 	)
 	flag.Parse()
 
@@ -31,6 +32,9 @@ func main() {
 		log.Fatal("runner token is required")
 	}
 	if err := os.MkdirAll(*configDir, 0o700); err != nil {
+		log.Fatal(err)
+	}
+	if err := os.Chmod(*configDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
 
@@ -41,6 +45,7 @@ func main() {
 		"",
 		"",
 	)
+	writer.SetPlatformRuntimeAddr(*platformRuntimeAddr)
 	manager := runtime.NewManager(
 		writer,
 		runtime.CommandLauncher{Executable: *workerd, Output: output},
