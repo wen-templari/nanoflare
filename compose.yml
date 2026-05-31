@@ -38,14 +38,13 @@ services:
       - --metrics.prometheus=true
       - --metrics.prometheus.addrouterslabels=true
       - --metrics.prometheus.addserviceslabels=true
-      - --providers.file.directory=/etc/traefik/dynamic
-      - --providers.file.watch=true
+      - --providers.http.endpoint=http://host.docker.internal:8080/internal/traefik/config
+      - --providers.http.pollInterval=1s
+      - --providers.http.headers.Authorization=Bearer ${PLATFORM_TRAEFIK_TOKEN:-platform-development}
     ports:
       - "8088:80"
       - "8443:443"
       - "8089:8080"
-    volumes:
-      - ./var/generated:/etc/traefik/dynamic:ro
 
   prometheus:
     image: prom/prometheus:v3.5.0

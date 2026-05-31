@@ -6,12 +6,25 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/clas/platform/internal/platform"
 )
+
+func TestMinimalEnvironmentDoesNotForwardPlatformSecrets(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	t.Setenv("DATABASE_URL", "postgres://secret")
+	t.Setenv("MINIO_SECRET_KEY", "secret")
+
+	got := minimalEnvironment()
+	want := []string{"TZ=UTC", "PATH=/usr/bin"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("minimalEnvironment() = %#v, want %#v", got, want)
+	}
+}
 
 func TestManagerReplacesHealthyPoolBeforePublishingTraffic(t *testing.T) {
 	events := &eventLog{}
@@ -70,6 +83,31 @@ func TestManagerKeepsPreviousPoolWhenReplacementIsUnhealthy(t *testing.T) {
 	}
 }
 
+func TestManagerKeepsPreviousPoolUntilPreparedGenerationIsCommitted(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
+	manager.retireDelay = 0
+	defer manager.Close()
+
+	if err := manager.Write(deployments(9001)); err != nil {
+		t.Fatal(err)
+	}
+	generation, _, err := manager.Prepare(deployments(9002))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launcher.process(0).isStopped() {
+		t.Fatal("previous pool stopped before commit")
+	}
+	if err := manager.Commit(generation); err != nil {
+		t.Fatal(err)
+	}
+	if !launcher.process(0).isStopped() {
+		t.Fatal("previous pool remains active after commit")
+	}
+}
+
 func TestManagerRestartsUnexpectedlyExitedPool(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
@@ -91,6 +129,23 @@ func TestManagerRestartsUnexpectedlyExitedPool(t *testing.T) {
 	}
 	if writer.traefikCount() != 2 {
 		t.Fatalf("Traefik writes = %d, want replacement publication", writer.traefikCount())
+	}
+}
+
+func TestManagerCanDisableAutomaticRestart(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
+	manager.SetAutoRestart(false)
+	defer manager.Close()
+
+	if err := manager.Write(deployments(9001)); err != nil {
+		t.Fatal(err)
+	}
+	launcher.process(0).crash(errors.New("process exited"))
+	time.Sleep(10 * time.Millisecond)
+	if launcher.count() != 1 {
+		t.Fatalf("launches = %d, want no automatic replacement", launcher.count())
 	}
 }
 

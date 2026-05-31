@@ -11,12 +11,22 @@ import (
 )
 
 type Server struct {
-	service *platform.Service
-	mux     *http.ServeMux
+	service      *platform.Service
+	traefik      TraefikConfigReader
+	traefikToken string
+	mux          *http.ServeMux
+}
+
+type TraefikConfigReader interface {
+	TraefikConfig() []byte
 }
 
 func NewServer(service *platform.Service) *Server {
-	server := &Server{service: service, mux: http.NewServeMux()}
+	return NewServerWithTraefik(service, nil, "")
+}
+
+func NewServerWithTraefik(service *platform.Service, traefik TraefikConfigReader, token string) *Server {
+	server := &Server{service: service, traefik: traefik, traefikToken: token, mux: http.NewServeMux()}
 	server.routes()
 	return server
 }
@@ -38,12 +48,27 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("POST /v1/apps/{appID}/deployments", s.deploy)
 	s.mux.HandleFunc("GET /internal/auth/verify", s.verifyAuth)
+	s.mux.HandleFunc("GET /internal/traefik/config", s.traefikConfig)
 	s.mux.HandleFunc("POST /internal/runtime/kv/get", s.kvGet)
 	s.mux.HandleFunc("POST /internal/runtime/kv/put", s.kvPut)
 	s.mux.HandleFunc("POST /internal/runtime/kv/delete", s.kvDelete)
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-upload", s.presignUpload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-download", s.presignDownload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/delete", s.deleteObject)
+}
+
+func (s *Server) traefikConfig(w http.ResponseWriter, r *http.Request) {
+	if s.traefik == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if s.traefikToken == "" || bearerToken(r) != s.traefikToken {
+		writeError(w, http.StatusUnauthorized, errors.New("invalid Traefik token"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(s.traefik.TraefikConfig())
 }
 
 func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {

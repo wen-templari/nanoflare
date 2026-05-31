@@ -131,6 +131,39 @@ func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
 	requestJSON(t, server, http.MethodGet, "/v1/apps/missing/deployments", http.StatusNotFound, &map[string]string{})
 }
 
+func TestTraefikConfigRequiresToken(t *testing.T) {
+	service := platform.NewService(platform.NewStore(), config.NewWriter(
+		filepath.Join(t.TempDir(), "workerd.capnp"),
+		filepath.Join(t.TempDir(), "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServerWithTraefik(service, staticTraefikConfig("http:\n  routers: {}\n"), "secret")
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/internal/traefik/config", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+
+	recorder = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/traefik/config", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "http:\n  routers: {}\n" {
+		t.Fatalf("authenticated response status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/yaml" {
+		t.Fatalf("content type = %q, want application/yaml", got)
+	}
+}
+
+type staticTraefikConfig string
+
+func (config staticTraefikConfig) TraefikConfig() []byte {
+	return []byte(config)
+}
+
 func createApp(t *testing.T, server http.Handler, name, hostname string) platform.App {
 	t.Helper()
 	body := `{"name":"` + name + `","hostname":"` + hostname + `"}`

@@ -43,14 +43,17 @@ type Manager struct {
 	stopTimeout     time.Duration
 	retireDelay     time.Duration
 	restartDelay    time.Duration
+	autoRestart     bool
 	generation      int
 	active          *pool
+	pending         *pool
 	closed          bool
 }
 
 type pool struct {
 	configPath string
 	process    Process
+	active     []platform.ActiveDeployment
 }
 
 func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConfig, portHost string, portStart int, healthTimeout, stopTimeout time.Duration) *Manager {
@@ -65,57 +68,125 @@ func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConf
 		stopTimeout:     stopTimeout,
 		retireDelay:     250 * time.Millisecond,
 		restartDelay:    time.Second,
+		autoRestart:     true,
 	}
+}
+
+func (m *Manager) SetRetireDelay(delay time.Duration) {
+	m.retireDelay = delay
+}
+
+func (m *Manager) SetAutoRestart(enabled bool) {
+	m.autoRestart = enabled
 }
 
 func (m *Manager) Write(active []platform.ActiveDeployment) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	generation, routed, err := m.prepare(active)
+	if err != nil {
+		return err
+	}
+	if err := m.writer.WriteTraefik(routed); err != nil {
+		m.abort(generation)
+		return err
+	}
+	return m.commit(generation)
+}
+
+func (m *Manager) Prepare(active []platform.ActiveDeployment) (string, []platform.ActiveDeployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.prepare(active)
+}
+
+func (m *Manager) Commit(generation string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.commit(generation)
+}
+
+func (m *Manager) Abort(generation string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.abort(generation)
+}
+
+func (m *Manager) prepare(active []platform.ActiveDeployment) (string, []platform.ActiveDeployment, error) {
 	if m.closed {
-		return errors.New("runtime manager is closed")
+		return "", nil, errors.New("runtime manager is closed")
+	}
+	if m.pending != nil {
+		return "", nil, errors.New("runtime generation is already pending")
 	}
 
 	if len(active) == 0 {
-		if err := m.writer.WriteWorkerd(m.canonicalConfig, active); err != nil {
-			return err
-		}
-		if err := m.writer.WriteTraefik(active); err != nil {
-			return err
-		}
-		m.publish(nil, nil)
-		return nil
+		m.pending = &pool{active: []platform.ActiveDeployment{}}
+		return "empty", []platform.ActiveDeployment{}, nil
 	}
 
 	generation, err := m.withRuntimePorts(active)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	m.generation++
 	configPath := filepath.Join(m.configDir, fmt.Sprintf("workerd-%06d.capnp", m.generation))
 	if err := m.writer.WriteWorkerd(configPath, generation); err != nil {
-		return err
+		return "", nil, err
 	}
 
 	process, err := m.launcher.Launch(configPath, generation)
 	if err != nil {
 		os.Remove(configPath)
-		return fmt.Errorf("start workerd: %w", err)
+		return "", nil, fmt.Errorf("start workerd: %w", err)
 	}
-	next := &pool{configPath: configPath, process: process}
+	next := &pool{configPath: configPath, process: process, active: generation}
 	if err := m.waitHealthy(process, generation); err != nil {
 		m.stop(next)
-		return err
+		return "", nil, err
 	}
-	if err := m.writer.WriteWorkerd(m.canonicalConfig, generation); err != nil {
+	m.pending = next
+	return filepath.Base(configPath), append([]platform.ActiveDeployment(nil), generation...), nil
+}
+
+func (m *Manager) commit(generation string) error {
+	if m.closed {
+		return errors.New("runtime manager is closed")
+	}
+	if m.pending == nil || poolGeneration(m.pending) != generation {
+		return errors.New("runtime generation is not pending")
+	}
+	next := m.pending
+	m.pending = nil
+	if err := m.writer.WriteWorkerd(m.canonicalConfig, next.active); err != nil {
 		m.stop(next)
 		return err
 	}
-	if err := m.writer.WriteTraefik(generation); err != nil {
-		m.stop(next)
-		return err
+	if next.process == nil {
+		m.publish(nil, nil)
+		return nil
 	}
-	m.publish(next, active)
+	m.publish(next, next.active)
 	return nil
+}
+
+func (m *Manager) abort(generation string) error {
+	if m.pending == nil || poolGeneration(m.pending) != generation {
+		return errors.New("runtime generation is not pending")
+	}
+	next := m.pending
+	m.pending = nil
+	if next.process == nil {
+		return nil
+	}
+	return m.stop(next)
+}
+
+func poolGeneration(pool *pool) string {
+	if pool.configPath == "" {
+		return "empty"
+	}
+	return filepath.Base(pool.configPath)
 }
 
 func (m *Manager) Close() error {
@@ -124,10 +195,20 @@ func (m *Manager) Close() error {
 	m.closed = true
 	previous := m.active
 	m.active = nil
-	if previous == nil {
-		return nil
+	pending := m.pending
+	m.pending = nil
+	var firstErr error
+	if pending != nil && pending.process != nil {
+		if err := m.stop(pending); err != nil {
+			firstErr = err
+		}
 	}
-	return m.stop(previous)
+	if previous != nil {
+		if err := m.stop(previous); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (m *Manager) publish(next *pool, desired []platform.ActiveDeployment) {
@@ -146,6 +227,9 @@ func (m *Manager) publish(next *pool, desired []platform.ActiveDeployment) {
 }
 
 func (m *Manager) stop(pool *pool) error {
+	if pool.process == nil {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), m.stopTimeout)
 	defer cancel()
 	err := pool.process.Stop(ctx)
@@ -209,8 +293,12 @@ func (m *Manager) watch(pool *pool, desired []platform.ActiveDeployment) {
 		return
 	}
 	m.active = nil
+	autoRestart := m.autoRestart
 	m.mu.Unlock()
 	log.Printf("active workerd generation exited unexpectedly: %v", err)
+	if !autoRestart {
+		return
+	}
 	for {
 		time.Sleep(m.restartDelay)
 		if err := m.Write(desired); err != nil {
@@ -245,6 +333,7 @@ type CommandLauncher struct {
 
 func (l CommandLauncher) Launch(configPath string, _ []platform.ActiveDeployment) (Process, error) {
 	command := exec.Command(l.Executable, "serve", configPath)
+	command.Env = minimalEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
@@ -263,6 +352,14 @@ func (l CommandLauncher) Launch(configPath string, _ []platform.ActiveDeployment
 		close(process.done)
 	}()
 	return process, nil
+}
+
+func minimalEnvironment() []string {
+	result := []string{"TZ=UTC"}
+	if path := os.Getenv("PATH"); path != "" {
+		result = append(result, "PATH="+path)
+	}
+	return result
 }
 
 type commandProcess struct {

@@ -17,8 +17,21 @@ type Writer struct {
 	workerHost  string
 }
 
+type TraefikWriter interface {
+	WriteTraefik([]platform.ActiveDeployment) error
+}
+
+type RuntimeWriter struct {
+	workerdPath string
+	traefik     TraefikWriter
+}
+
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
 	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL, workerHost: workerHost}
+}
+
+func NewRuntimeWriter(workerdPath string, traefik TraefikWriter) *RuntimeWriter {
+	return &RuntimeWriter{workerdPath: workerdPath, traefik: traefik}
 }
 
 func (w *Writer) Write(active []platform.ActiveDeployment) error {
@@ -34,6 +47,14 @@ func (w *Writer) WriteWorkerd(path string, active []platform.ActiveDeployment) e
 
 func (w *Writer) WriteTraefik(active []platform.ActiveDeployment) error {
 	return writeAtomic(w.traefikPath, []byte(Traefik(active, w.authURL, w.workerHost)))
+}
+
+func (w *RuntimeWriter) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
+	return writeAtomic(path, []byte(Workerd(active)))
+}
+
+func (w *RuntimeWriter) WriteTraefik(active []platform.ActiveDeployment) error {
+	return w.traefik.WriteTraefik(active)
 }
 
 func Workerd(active []platform.ActiveDeployment) string {
