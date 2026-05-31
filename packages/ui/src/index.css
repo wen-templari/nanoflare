@@ -1,0 +1,27 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Manrope", sans-serif;
+  --font-display: "Fraunces", serif;
+  --font-mono: "DM Mono", monospace;
+}
+
+:root { color: #26332f; background: #eeeae0; font-family: "Manrope", sans-serif; }
+* { box-sizing: border-box; }
+body { min-width: 320px; min-height: 100vh; margin: 0; }
+button { cursor: pointer; }
+
+.console-grid {
+  background-color: #f4f0e7;
+  background-image: linear-gradient(rgba(37,49,46,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(37,49,46,.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.paper-panel { box-shadow: 0 1px 0 rgba(255,255,255,.8) inset, 0 14px 30px rgba(37,49,46,.05); }
+.nav-noise { background-image: radial-gradient(rgba(255,255,255,.09) .7px, transparent .7px); background-size: 7px 7px; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pop { from { opacity: 0; transform: scale(.98) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+.animate-rise { animation: rise .5s ease both; }
+.animate-pop { animation: pop .2s ease both; }
