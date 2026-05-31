@@ -6,14 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
-	"regexp"
+	"path"
 	"strings"
 	"time"
 )
-
-var appIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 type ConfigWriter interface {
 	Write([]ActiveDeployment) error
@@ -54,15 +50,19 @@ func NewServiceWithConsole(store Repository, writer ConfigWriter, objects Object
 }
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
-	input.ID = strings.TrimSpace(input.ID)
+	input.Name = strings.TrimSpace(input.Name)
 	input.Hostname = strings.TrimSpace(strings.ToLower(input.Hostname))
-	if !appIDPattern.MatchString(input.ID) {
-		return App{}, errors.New("id must start with a letter and contain only lowercase letters, numbers, or hyphens")
+	if input.Name == "" {
+		return App{}, errors.New("name is required")
 	}
 	if input.Hostname == "" || strings.Contains(input.Hostname, ":") || net.ParseIP(input.Hostname) != nil {
 		return App{}, errors.New("hostname must be a DNS name without a port")
 	}
-	app := App{ID: input.ID, Hostname: input.Hostname, CreatedAt: time.Now().UTC()}
+	appID, err := randomToken()
+	if err != nil {
+		return App{}, err
+	}
+	app := App{ID: appID, Name: input.Name, Hostname: input.Hostname, CreatedAt: time.Now().UTC()}
 	return app, s.store.CreateApp(app)
 }
 
@@ -80,18 +80,54 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		return detail, nil
 	}
 	var size int64
-	if info, err := os.Stat(active.Deployment.BundlePath); err == nil {
-		size = info.Size()
+	for _, file := range active.Deployment.Files {
+		size += file.Size
 	}
 	detail.Deployment = &WorkerDeployment{
 		ID:                active.Deployment.ID,
-		BundlePath:        active.Deployment.BundlePath,
+		Entrypoint:        active.Deployment.Entrypoint,
 		BundleSize:        size,
 		CompatibilityDate: active.Deployment.CompatibilityDate,
 		Port:              active.Deployment.Port,
 		CreatedAt:         active.Deployment.CreatedAt,
 	}
 	return detail, nil
+}
+
+func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
+	if _, _, err := s.worker(appID); err != nil {
+		return nil, err
+	}
+	records, err := s.store.ListDeployments()
+	if err != nil {
+		return nil, err
+	}
+	deployments := make([]ConsoleDeployment, 0, len(records))
+	for _, record := range records {
+		if record.App.ID != appID {
+			continue
+		}
+		var size int64
+		for _, file := range record.Deployment.Files {
+			size += file.Size
+		}
+		state := "inactive"
+		if record.Active {
+			state = "active"
+		}
+		deployments = append(deployments, ConsoleDeployment{
+			ID:                record.Deployment.ID,
+			AppID:             record.App.ID,
+			AppName:           record.App.Name,
+			Hostname:          record.App.Hostname,
+			Entrypoint:        record.Deployment.Entrypoint,
+			BundleSize:        size,
+			CompatibilityDate: record.Deployment.CompatibilityDate,
+			State:             state,
+			CreatedAt:         record.Deployment.CreatedAt,
+		})
+	}
+	return deployments, nil
 }
 
 func (s *Service) WorkerFiles(appID string) ([]WorkerFile, error) {
@@ -102,20 +138,7 @@ func (s *Service) WorkerFiles(appID string) ([]WorkerFile, error) {
 	if active == nil {
 		return []WorkerFile{}, nil
 	}
-	content, err := os.ReadFile(active.Deployment.BundlePath)
-	if err != nil {
-		return nil, fmt.Errorf("read deployed bundle: %w", err)
-	}
-	const maxBundleSize = 1 << 20
-	if len(content) > maxBundleSize {
-		return nil, fmt.Errorf("deployed bundle exceeds %d byte viewer limit", maxBundleSize)
-	}
-	return []WorkerFile{{
-		Name:    filepath.Base(active.Deployment.BundlePath),
-		Path:    filepath.Base(active.Deployment.BundlePath),
-		Size:    int64(len(content)),
-		Content: string(content),
-	}}, nil
+	return append([]WorkerFile(nil), active.Deployment.Files...), nil
 }
 
 func (s *Service) WorkerOutput(appID string) ([]WorkerOutputLine, error) {
@@ -166,8 +189,9 @@ func (s *Service) worker(appID string) (App, *ActiveDeployment, error) {
 }
 
 func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
-	if strings.TrimSpace(input.BundlePath) == "" {
-		return Deployment{}, errors.New("bundle_path is required")
+	files, entrypoint, err := deploymentFiles(input.Files, input.Entrypoint)
+	if err != nil {
+		return Deployment{}, err
 	}
 	if _, err := time.Parse("2006-01-02", input.CompatibilityDate); err != nil {
 		return Deployment{}, errors.New("compatibility_date must use YYYY-MM-DD")
@@ -185,9 +209,10 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		return Deployment{}, err
 	}
 	deployment := Deployment{
-		ID:                "deployment-" + deploymentID[:16],
+		ID:                deploymentID,
 		AppID:             appID,
-		BundlePath:        input.BundlePath,
+		Files:             files,
+		Entrypoint:        entrypoint,
 		CompatibilityDate: input.CompatibilityDate,
 		Port:              port,
 		CapabilityToken:   capability,
@@ -215,6 +240,41 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		return Deployment{}, fmt.Errorf("write generated config: %w", err)
 	}
 	return deployment, nil
+}
+
+func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, string, error) {
+	const maxBundleSize = 1 << 20
+	if len(files) == 0 {
+		return nil, "", errors.New("files are required")
+	}
+	result := make([]WorkerFile, 0, len(files))
+	seen := make(map[string]bool, len(files))
+	totalSize := 0
+	for _, file := range files {
+		file.Path = path.Clean(strings.TrimSpace(file.Path))
+		if file.Path == "." || strings.HasPrefix(file.Path, "/") || strings.HasPrefix(file.Path, "../") {
+			return nil, "", errors.New("file paths must be relative and remain inside the worker")
+		}
+		if seen[file.Path] {
+			return nil, "", fmt.Errorf("duplicate worker file path %q", file.Path)
+		}
+		seen[file.Path] = true
+		file.Name = path.Base(file.Path)
+		file.Size = int64(len(file.Content))
+		totalSize += len(file.Content)
+		if totalSize > maxBundleSize {
+			return nil, "", fmt.Errorf("worker files exceed %d byte limit", maxBundleSize)
+		}
+		result = append(result, file)
+	}
+	entrypoint = path.Clean(strings.TrimSpace(entrypoint))
+	if entrypoint == "." {
+		entrypoint = result[0].Path
+	}
+	if !seen[entrypoint] {
+		return nil, "", errors.New("entrypoint must name a deployed worker file")
+	}
+	return result, entrypoint, nil
 }
 
 func activeDeploymentID(active []ActiveDeployment, appID string) string {

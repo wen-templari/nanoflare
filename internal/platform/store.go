@@ -19,6 +19,7 @@ type Repository interface {
 	Activate(Deployment) error
 	SetActive(appID, deploymentID string) error
 	ActiveDeployments() ([]ActiveDeployment, error)
+	ListDeployments() ([]DeploymentRecord, error)
 	AppIDForCapability(string) (string, error)
 	KVGet(capability, key string) ([]byte, bool, error)
 	KVPut(capability, key string, value []byte) error
@@ -134,6 +135,25 @@ func (s *Store) ActiveDeployments() ([]ActiveDeployment, error) {
 	}
 	sort.Slice(active, func(i, j int) bool { return active[i].App.ID < active[j].App.ID })
 	return active, nil
+}
+
+func (s *Store) ListDeployments() ([]DeploymentRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var records []DeploymentRecord
+	for appID, deployments := range s.deployments {
+		for _, deployment := range deployments {
+			records = append(records, DeploymentRecord{
+				App:        s.apps[appID],
+				Deployment: deployment,
+				Active:     deployment.ID == s.active[appID],
+			})
+		}
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].Deployment.CreatedAt.After(records[j].Deployment.CreatedAt)
+	})
+	return records, nil
 }
 
 func (s *Store) AppIDForCapability(capability string) (string, error) {

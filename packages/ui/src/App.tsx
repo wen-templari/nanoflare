@@ -3,8 +3,8 @@ import {
   Activity, Archive, ArrowLeft, ArrowUpRight, BarChart3, Boxes, Check,
   ChevronDown, ChevronRight, CircleGauge, CloudUpload, Code2, Copy, Database,
   ExternalLink, FileCode2, FileJson, FileText, Folder, FolderOpen, GitBranch,
-  Globe2, HardDrive, Layers3, MoreHorizontal, Plus, RefreshCw, Route, Search,
-  Server, Settings, SlidersHorizontal, Sparkles, Terminal, Timer, Trash2,
+  Globe2, HardDrive, Layers3, MoreHorizontal, Plus, RefreshCw, Search,
+  Server, Settings, SlidersHorizontal, Terminal, Timer, Trash2,
   UploadCloud, Waypoints,
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
@@ -14,10 +14,11 @@ import { Input } from "./components/ui/input";
 import { cn } from "./lib/utils";
 
 type Section = "overview" | "workers" | "pages" | "storage" | "monitoring";
-type Worker = { id: string; hostname: string; created_at: string; status?: "live" | "draft"; requests?: string; deployment?: string };
-type WorkerDetailTab = "files" | "config" | "output";
-type WorkerDeployment = { id: string; bundle_path: string; bundle_size: number; compatibility_date: string; port: number; created_at: string };
+type Worker = { id: string; name: string; hostname: string; created_at: string; status?: "live" | "draft"; requests?: string; deployment?: string };
+type WorkerDetailTab = "files" | "config" | "deployments" | "output";
+type WorkerDeployment = { id: string; entrypoint: string; bundle_size: number; compatibility_date: string; created_at: string };
 type WorkerDetailData = { app: Worker; deployment?: WorkerDeployment };
+type ConsoleDeployment = { id: string; app_id: string; app_name: string; hostname: string; entrypoint: string; bundle_size: number; compatibility_date: string; state: "active" | "inactive"; created_at: string };
 type WorkerFile = { name: string; path: string; size: number; content: string };
 type WorkerOutputLine = { timestamp: string; level: string; message: string };
 type WorkerTraffic = {
@@ -44,16 +45,22 @@ type MonitoringData = {
 };
 
 const demoWorkers: Worker[] = [
-  { id: "customer-portal", hostname: "portal.acme.internal", created_at: "2026-05-31T07:30:00Z", status: "live", requests: "24.8k", deployment: "deployment-8f2a91bc" },
-  { id: "billing-sync", hostname: "billing.acme.internal", created_at: "2026-05-29T14:20:00Z", status: "live", requests: "8.2k", deployment: "deployment-c75d110e" },
-  { id: "ops-dashboard", hostname: "ops.acme.internal", created_at: "2026-05-27T09:10:00Z", status: "draft", requests: "1.1k", deployment: "deployment-52e849aa" },
+  { id: "ec84a0260cb606a15cf3a09ea938ddd1ca3a57089320af23", name: "Customer portal", hostname: "portal.acme.internal", created_at: "2026-05-31T07:30:00Z", status: "live", requests: "24.8k", deployment: "cc01a1bab53a42c865bfe59a2296cd28419d03db91a54ac8" },
+  { id: "dc2b346df24d2e247917fcdbdc344e12cb6b642902ed86f8", name: "Billing sync", hostname: "billing.acme.internal", created_at: "2026-05-29T14:20:00Z", status: "live", requests: "8.2k", deployment: "06b83b2017e634e152d296a447660e9567c9f317fd2e47d5" },
+  { id: "ce586cdb38f47b15dc20397f081eef8738f1231f7df55f0a", name: "Operations dashboard", hostname: "ops.acme.internal", created_at: "2026-05-27T09:10:00Z", status: "draft", requests: "1.1k", deployment: "42eac2d9c9b5672eb56237745cbeef42cf8fe09107567c44" },
+];
+
+const demoDeployments: ConsoleDeployment[] = [
+  { id: "cc01a1bab53a42c865bfe59a2296cd28419d03db91a54ac8", app_id: demoWorkers[0].id, app_name: demoWorkers[0].name, hostname: demoWorkers[0].hostname, entrypoint: "worker.js", bundle_size: 18432, compatibility_date: "2026-05-31", state: "active", created_at: "2026-05-31T07:30:00Z" },
+  { id: "06b83b2017e634e152d296a447660e9567c9f317fd2e47d5", app_id: demoWorkers[1].id, app_name: demoWorkers[1].name, hostname: demoWorkers[1].hostname, entrypoint: "worker.js", bundle_size: 9638, compatibility_date: "2026-05-29", state: "active", created_at: "2026-05-29T14:20:00Z" },
+  { id: "42eac2d9c9b5672eb56237745cbeef42cf8fe09107567c44", app_id: demoWorkers[2].id, app_name: demoWorkers[2].name, hostname: demoWorkers[2].hostname, entrypoint: "worker.js", bundle_size: 6144, compatibility_date: "2026-05-27", state: "inactive", created_at: "2026-05-27T09:10:00Z" },
 ];
 
 const initialPages: Page[] = [
-  { id: 1, name: "Customer portal", path: "/", worker: "customer-portal", updated: "12 min ago", status: "published" },
-  { id: 2, name: "Usage reports", path: "/reports", worker: "customer-portal", updated: "2 hr ago", status: "published" },
-  { id: 3, name: "Invoice preview", path: "/preview", worker: "billing-sync", updated: "Yesterday", status: "draft" },
-  { id: 4, name: "Operations board", path: "/", worker: "ops-dashboard", updated: "May 27", status: "published" },
+  { id: 1, name: "Customer portal", path: "/", worker: demoWorkers[0].id, updated: "12 min ago", status: "published" },
+  { id: 2, name: "Usage reports", path: "/reports", worker: demoWorkers[0].id, updated: "2 hr ago", status: "published" },
+  { id: 3, name: "Invoice preview", path: "/preview", worker: demoWorkers[1].id, updated: "Yesterday", status: "draft" },
+  { id: 4, name: "Operations board", path: "/", worker: demoWorkers[2].id, updated: "May 27", status: "published" },
 ];
 
 const initialObjects: StoredObject[] = [
@@ -171,7 +178,7 @@ export function App() {
         <div className="mx-auto max-w-7xl p-4 md:p-8">
           {section === "overview" && <Overview workers={workers} pages={pages} objects={objects} setSection={setSection} />}
           {section === "workers" && <Workers workers={workers} setWorkers={setWorkers} openDialog={() => setWorkerDialog(true)} notify={notify} apiConnected={apiConnected} />}
-          {section === "pages" && <Pages pages={pages} setPages={setPages} openDialog={() => setPageDialog(true)} notify={notify} />}
+          {section === "pages" && <Pages pages={pages} setPages={setPages} workers={workers} openDialog={() => setPageDialog(true)} notify={notify} />}
           {section === "storage" && <Storage objects={objects} setObjects={setObjects} openDialog={() => setUploadDialog(true)} notify={notify} />}
           {section === "monitoring" && <Monitoring />}
         </div>
@@ -223,7 +230,7 @@ function Overview({ workers, pages, objects, setSection }: { workers: Worker[]; 
   ];
   return (
     <>
-      <PageHeading eyebrow="Sunday, 31 May" title="Good afternoon, Clas." copy="Your private runtime is steady. Here is the shape of your workspace today." actions={<Button variant="dark"><Sparkles className="size-4" />Quick deploy</Button>} />
+      <PageHeading eyebrow="Sunday, 31 May" title="Good afternoon, Clas." copy="Your private runtime is steady. Here is the shape of your workspace today." />
       <div className="grid gap-4 md:grid-cols-3">
         {stats.map(({ label, value, note, icon: Icon, section: target }, index) => (
           <button key={label} onClick={() => setSection(target)} style={{ animationDelay: `${index * 80}ms` }} className="paper-panel animate-rise group rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85 p-5 text-left transition hover:-translate-y-0.5 hover:border-[#c7c0b4]">
@@ -272,19 +279,14 @@ function Workers({ workers, setWorkers, openDialog, notify, apiConnected }: { wo
 }
 
 function WorkerRow({ worker, workers, setWorkers, notify, onSelect }: { worker: Worker; workers: Worker[]; setWorkers: (workers: Worker[]) => void; notify: (text: string) => void; onSelect: () => void }) {
-  const [deploying, setDeploying] = useState(false);
-  function deploy() {
-    setDeploying(true);
-    window.setTimeout(() => { setDeploying(false); notify(`${worker.id} deployment queued`); }, 700);
-  }
   return (
     <tr className="cursor-pointer border-b border-[#ece7dc] text-xs transition last:border-0 hover:bg-white/70" onClick={onSelect}>
-      <td className="px-5 py-4"><div className="flex items-center gap-3"><div><p className="font-extrabold text-[#35413e]">{worker.id}</p><p className="mt-1 font-mono text-[10px] text-[#949891]">{worker.hostname}</p></div><ChevronRight className="size-3.5 text-[#c0beb6] transition group-hover:translate-x-0.5" /></div></td>
+      <td className="px-5 py-4"><div className="flex items-center gap-3"><div><p className="font-extrabold text-[#35413e]">{worker.name}</p><p className="mt-1 font-mono text-[10px] text-[#949891]">{worker.hostname}</p></div><ChevronRight className="size-3.5 text-[#c0beb6] transition group-hover:translate-x-0.5" /></div></td>
       <td><Badge tone={worker.status === "draft" ? "orange" : "green"}>{worker.status ?? "live"}</Badge></td>
       <td className="font-mono text-[11px]">{worker.requests ?? "0"}</td>
       <td className="font-mono text-[10px] text-[#727a74]">{worker.deployment ?? "awaiting deploy"}</td>
       <td className="text-[#7d837d]">{new Date(worker.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</td>
-      <td className="pr-4 text-right"><Button variant="ghost" size="sm" onClick={(event) => { event.stopPropagation(); deploy(); }} disabled={deploying}>{deploying ? <RefreshCw className="size-3 animate-spin" /> : <UploadCloud className="size-3" />}{deploying ? "Queuing" : "Deploy"}</Button><Button variant="ghost" size="icon" aria-label={`Delete ${worker.id}`} onClick={(event) => { event.stopPropagation(); setWorkers(workers.filter(({ id }) => id !== worker.id)); notify(`${worker.id} removed`); }}><Trash2 className="size-3.5" /></Button></td>
+      <td className="pr-4 text-right"><Button variant="ghost" size="icon" aria-label={`Delete ${worker.name}`} onClick={(event) => { event.stopPropagation(); setWorkers(workers.filter(({ id }) => id !== worker.id)); notify(`${worker.name} removed`); }}><Trash2 className="size-3.5" /></Button></td>
     </tr>
   );
 }
@@ -293,6 +295,7 @@ function WorkerDetail({ worker, onBack, notify }: { worker: Worker; onBack: () =
   const [tab, setTab] = useState<WorkerDetailTab>("files");
   const [detail, setDetail] = useState<WorkerDetailData>();
   const [files, setFiles] = useState<WorkerFile[]>([]);
+  const [deployments, setDeployments] = useState<ConsoleDeployment[]>(() => demoDeployments.filter((deployment) => deployment.app_id === worker.id));
   const [selectedFile, setSelectedFile] = useState<WorkerFile>();
   const [output, setOutput] = useState<WorkerOutputLine[]>([]);
   const [traffic, setTraffic] = useState<WorkerTraffic>({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] });
@@ -303,14 +306,15 @@ function WorkerDetail({ worker, onBack, notify }: { worker: Worker; onBack: () =
     let cancelled = false;
     async function refresh() {
       try {
-        const [nextDetail, nextFiles, nextOutput, nextTraffic] = await Promise.all([
+        const [nextDetail, nextFiles, nextDeployments, nextOutput, nextTraffic] = await Promise.all([
           fetchJSON<WorkerDetailData>(`/v1/apps/${worker.id}`),
           fetchJSON<WorkerFile[]>(`/v1/apps/${worker.id}/files`),
+          fetchJSON<ConsoleDeployment[]>(`/v1/apps/${worker.id}/deployments`),
           fetchJSON<WorkerOutputLine[]>(`/v1/apps/${worker.id}/output`),
           fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`),
         ]);
         if (cancelled) return;
-        setDetail(nextDetail); setFiles(nextFiles); setOutput(nextOutput); setTraffic(nextTraffic); setError("");
+        setDetail(nextDetail); setFiles(nextFiles); setDeployments(nextDeployments); setOutput(nextOutput); setTraffic(nextTraffic); setError("");
         setSelectedFile((current) => nextFiles.find((file) => file.path === current?.path) ?? nextFiles[0]);
       } catch {
         if (!cancelled) setError("Worker detail API unavailable");
@@ -337,10 +341,10 @@ function WorkerDetail({ worker, onBack, notify }: { worker: Worker; onBack: () =
       <div className="animate-rise mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div>
           <div className="flex flex-wrap items-center gap-2"><p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#d75a41]">Worker isolate</p><Badge tone={deployment ? "green" : "orange"}>{deployment ? "live" : "draft"}</Badge></div>
-          <h1 className="font-display mt-2 text-4xl tracking-[-0.04em] text-[#26332f] md:text-5xl">{worker.id}</h1>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-[#858b84]"><span className="flex items-center gap-1.5"><Globe2 className="size-3" />{worker.hostname}</span><span className="flex items-center gap-1.5"><GitBranch className="size-3" />{deployment?.id ?? "awaiting deploy"}</span><span className="flex items-center gap-1.5"><Route className="size-3" />{deployment ? `runtime port ${deployment.port}` : "not assigned to runtime"}</span></div>
+          <h1 className="font-display mt-2 text-4xl tracking-[-0.04em] text-[#26332f] md:text-5xl">{worker.name}</h1>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-[#858b84]"><span className="flex items-center gap-1.5"><Globe2 className="size-3" />{worker.hostname}</span><span className="flex items-center gap-1.5"><GitBranch className="size-3" />{deployment?.id ?? "awaiting deploy"}</span></div>
         </div>
-        <div className="flex gap-2"><Button variant="outline" onClick={() => notify(`${worker.id} hostname copied`)}><Copy className="size-3.5" />Copy hostname</Button><Button onClick={() => notify(`${worker.id} deployment queued`)}><UploadCloud className="size-3.5" />Deploy bundle</Button></div>
+        <Button variant="outline" onClick={() => notify(`${worker.name} hostname copied`)}><Copy className="size-3.5" />Copy hostname</Button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -352,11 +356,12 @@ function WorkerDetail({ worker, onBack, notify }: { worker: Worker; onBack: () =
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.65fr_1fr]">
         <section className="paper-panel animate-rise overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7e1d6] px-4 py-3">
-            <div className="flex gap-1">{([{ id: "files", label: "Files", icon: FileCode2 }, { id: "config", label: "Config", icon: SlidersHorizontal }, { id: "output", label: "Output", icon: Terminal }] as const).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={cn("flex items-center gap-2 rounded-md px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] transition", tab === id ? "bg-[#26332f] text-white" : "text-[#80867f] hover:bg-[#efebe2] hover:text-[#35413e]")}><Icon className="size-3.5" />{label}</button>)}</div>
-            <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#a1a49e]">bundle / latest</p>
+            <div className="flex gap-1">{([{ id: "files", label: "Files", icon: FileCode2 }, { id: "config", label: "Config", icon: SlidersHorizontal }, { id: "deployments", label: "History", icon: Archive }, { id: "output", label: "Output", icon: Terminal }] as const).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={cn("flex items-center gap-2 rounded-md px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] transition", tab === id ? "bg-[#26332f] text-white" : "text-[#80867f] hover:bg-[#efebe2] hover:text-[#35413e]")}><Icon className="size-3.5" />{label}</button>)}</div>
+            <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#a1a49e]">{tab === "deployments" ? "revision ledger" : "bundle / latest"}</p>
           </header>
           {tab === "files" && <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />}
           {tab === "config" && <WorkerConfig detail={detail} />}
+          {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
           {tab === "output" && <WorkerOutput lines={output} />}
         </section>
 
@@ -378,8 +383,13 @@ function WorkerFileViewer({ files, selectedFile, onSelect }: { files: WorkerFile
 
 function WorkerConfig({ detail }: { detail?: WorkerDetailData }) {
   if (!detail?.deployment) return <WorkerDetailEmpty icon={<SlidersHorizontal />} title="No runtime config" copy="Deploy this worker to generate its active workerd configuration." />;
-  const rows = [["Worker ID", detail.app.id], ["Hostname", detail.app.hostname], ["Deployment", detail.deployment.id], ["Compatibility date", detail.deployment.compatibility_date], ["Bundle path", detail.deployment.bundle_path], ["Runtime port", String(detail.deployment.port)], ["Deployed", new Date(detail.deployment.created_at).toLocaleString()]];
+  const rows = [["Worker ID", detail.app.id], ["Name", detail.app.name], ["Hostname", detail.app.hostname], ["Deployment", detail.deployment.id], ["Compatibility date", detail.deployment.compatibility_date], ["Entrypoint", detail.deployment.entrypoint], ["Deployed", new Date(detail.deployment.created_at).toLocaleString()]];
   return <div className="p-5"><div className="mb-5 flex items-center gap-3 rounded-lg border border-[#dce2d9] bg-[#eef4ed] px-4 py-3 text-xs font-bold text-[#4d7057]"><Check className="size-4" />Configuration loaded from the active deployment.</div><div className="overflow-hidden rounded-lg border border-[#e2ddd2]">{rows.map(([label, value]) => <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"><span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#93978f]">{label}</span><span className="font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span></div>)}</div></div>;
+}
+
+function WorkerDeployments({ deployments }: { deployments: ConsoleDeployment[] }) {
+  if (!deployments.length) return <WorkerDetailEmpty icon={<Archive />} title="No deployment history" copy="This worker has no recorded revisions yet." />;
+  return <div className="min-h-[510px] overflow-x-auto"><table className="w-full min-w-[700px] text-left"><thead><tr className="border-b border-[#e3ded3] font-mono text-[9px] uppercase tracking-[0.14em] text-[#989b95]"><th className="px-5 py-3">State</th><th>Deployment</th><th>Entrypoint</th><th>Bundle</th><th>Compatibility</th><th className="pr-5">Created</th></tr></thead><tbody>{deployments.map((deployment) => <tr key={deployment.id} className="border-b border-[#ece7dc] text-xs transition last:border-0 hover:bg-white/70"><td className="px-5 py-4"><Badge tone={deployment.state === "active" ? "green" : "orange"}>{deployment.state}</Badge></td><td className="max-w-52 truncate font-mono text-[10px] text-[#727a74]" title={deployment.id}>{deployment.id}</td><td className="font-mono text-[10px] text-[#727a74]">{deployment.entrypoint}</td><td className="font-mono text-[10px] text-[#727a74]">{formatBytes(deployment.bundle_size)}</td><td className="font-mono text-[10px] text-[#727a74]">{deployment.compatibility_date}</td><td className="pr-5 text-[#7d837d]">{new Date(deployment.created_at).toLocaleString()}</td></tr>)}</tbody></table></div>;
 }
 
 function WorkerOutput({ lines }: { lines: WorkerOutputLine[] }) {
@@ -407,7 +417,7 @@ function formatBytes(value: number) {
   return `${(value / 1024).toFixed(1)} KB`;
 }
 
-function Pages({ pages, setPages, openDialog, notify }: { pages: Page[]; setPages: (pages: Page[]) => void; openDialog: () => void; notify: (text: string) => void }) {
+function Pages({ pages, setPages, workers, openDialog, notify }: { pages: Page[]; setPages: (pages: Page[]) => void; workers: Worker[]; openDialog: () => void; notify: (text: string) => void }) {
   return (
     <>
       <PageHeading eyebrow="Routing" title="Pages" copy="Map public paths to workers and keep published routes in view." actions={<Button onClick={openDialog}><Plus className="size-4" />New page</Button>} />
@@ -416,7 +426,7 @@ function Pages({ pages, setPages, openDialog, notify }: { pages: Page[]; setPage
           {pages.map((page) => (
             <div key={page.id} className="group flex flex-col gap-3 px-5 py-4 transition hover:bg-white/55 sm:flex-row sm:items-center">
               <div className="grid size-10 place-items-center rounded-lg border border-[#ded9ce] bg-white/75 text-[#d75a41]"><FileCode2 className="size-4" /></div>
-              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="text-sm font-extrabold">{page.name}</p><Badge tone={page.status === "published" ? "green" : "orange"}>{page.status}</Badge></div><p className="mt-1 font-mono text-[10px] text-[#8d928c]">{page.worker} → {page.path}</p></div>
+              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="text-sm font-extrabold">{page.name}</p><Badge tone={page.status === "published" ? "green" : "orange"}>{page.status}</Badge></div><p className="mt-1 font-mono text-[10px] text-[#8d928c]">{workers.find(({ id }) => id === page.worker)?.name ?? page.worker} → {page.path}</p></div>
               <p className="font-mono text-[10px] text-[#a0a29c]">{page.updated}</p>
               <Button variant="ghost" size="icon" aria-label="Open route"><ExternalLink className="size-3.5" /></Button>
               <Button variant="ghost" size="icon" aria-label={`Delete ${page.name}`} onClick={() => { setPages(pages.filter(({ id }) => id !== page.id)); notify(`${page.name} removed`); }}><Trash2 className="size-3.5" /></Button>
@@ -608,24 +618,26 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function CreateWorkerDialog({ open, onClose, workers, setWorkers, notify, apiConnected }: { open: boolean; onClose: () => void; workers: Worker[]; setWorkers: (workers: Worker[]) => void; notify: (text: string) => void; apiConnected: boolean }) {
-  const [id, setID] = useState("");
   const [hostname, setHostname] = useState("");
+  const [name, setName] = useState("");
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const worker = { id, hostname, created_at: new Date().toISOString(), status: "draft" as const, requests: "0", deployment: "awaiting deploy" };
+    let worker: Worker = { id: crypto.randomUUID().replace(/-/g, ""), name, hostname, created_at: new Date().toISOString(), status: "draft", requests: "0", deployment: "awaiting deploy" };
     if (apiConnected) {
-      const response = await fetch("/v1/apps", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, hostname }) });
+      const response = await fetch("/v1/apps", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, hostname }) });
       if (!response.ok) return notify("Worker registration failed");
+      worker = { ...worker, ...await response.json() as Worker };
     }
-    setWorkers([...workers, worker]); setID(""); setHostname(""); onClose(); notify(`${id} registered`);
+    setWorkers([...workers, worker]); setName(""); setHostname(""); onClose(); notify(`${worker.name} registered`);
   }
-  return <Dialog open={open} onClose={onClose} title="Register worker" description="Create an isolated runtime target. You can deploy a worker bundle after registration."><form className="space-y-4" onSubmit={submit}><Field label="Worker ID"><Input required pattern="[a-z][a-z0-9-]*" placeholder="analytics-worker" value={id} onChange={(event) => setID(event.target.value)} /></Field><Field label="Hostname"><Input required placeholder="analytics.acme.internal" value={hostname} onChange={(event) => setHostname(event.target.value)} /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Register worker</Button></div></form></Dialog>;
+  return <Dialog open={open} onClose={onClose} title="Register worker" description="Create an isolated runtime target. You can deploy a worker bundle after registration."><form className="space-y-4" onSubmit={submit}><Field label="Name"><Input required placeholder="Analytics worker" value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Hostname"><Input required placeholder="analytics.acme.internal" value={hostname} onChange={(event) => setHostname(event.target.value)} /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Register worker</Button></div></form></Dialog>;
 }
 
 function CreatePageDialog({ open, onClose, setPages, workers, notify }: { open: boolean; onClose: () => void; setPages: React.Dispatch<React.SetStateAction<Page[]>>; workers: Worker[]; notify: (text: string) => void }) {
-  const [name, setName] = useState(""); const [path, setPath] = useState("/");
-  function submit(event: FormEvent) { event.preventDefault(); setPages((pages) => [...pages, { id: Date.now(), name, path, worker: workers[0]?.id ?? "unassigned", updated: "Just now", status: "draft" }]); onClose(); notify(`${name} route created`); setName(""); setPath("/"); }
-  return <Dialog open={open} onClose={onClose} title="Add page route" description="Create a route mapping. New surfaces start as drafts until published."><form className="space-y-4" onSubmit={submit}><Field label="Page name"><Input required placeholder="Team dashboard" value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Public path"><Input required placeholder="/dashboard" value={path} onChange={(event) => setPath(event.target.value)} /></Field><Field label="Worker"><select className="h-10 w-full rounded-md border border-[#d6d0c3] bg-white/80 px-3 text-sm outline-none">{workers.map((worker) => <option key={worker.id}>{worker.id}</option>)}</select></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Create route</Button></div></form></Dialog>;
+  const [name, setName] = useState(""); const [path, setPath] = useState("/"); const [workerID, setWorkerID] = useState("");
+  const selectedWorkerID = workerID || workers[0]?.id || "";
+  function submit(event: FormEvent) { event.preventDefault(); setPages((pages) => [...pages, { id: Date.now(), name, path, worker: selectedWorkerID || "unassigned", updated: "Just now", status: "draft" }]); onClose(); notify(`${name} route created`); setName(""); setPath("/"); setWorkerID(""); }
+  return <Dialog open={open} onClose={onClose} title="Add page route" description="Create a route mapping. New surfaces start as drafts until published."><form className="space-y-4" onSubmit={submit}><Field label="Page name"><Input required placeholder="Team dashboard" value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Public path"><Input required placeholder="/dashboard" value={path} onChange={(event) => setPath(event.target.value)} /></Field><Field label="Worker"><select required value={selectedWorkerID} onChange={(event) => setWorkerID(event.target.value)} className="h-10 w-full rounded-md border border-[#d6d0c3] bg-white/80 px-3 text-sm outline-none">{workers.map((worker) => <option key={worker.id} value={worker.id}>{worker.name}</option>)}</select></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Create route</Button></div></form></Dialog>;
 }
 
 function UploadDialog({ open, onClose, setObjects, notify }: { open: boolean; onClose: () => void; setObjects: React.Dispatch<React.SetStateAction<StoredObject[]>>; notify: (text: string) => void }) {

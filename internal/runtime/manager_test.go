@@ -98,9 +98,10 @@ func deployments(port int) []platform.ActiveDeployment {
 	return []platform.ActiveDeployment{{
 		App: platform.App{ID: "hello", Hostname: "hello.example.com"},
 		Deployment: platform.Deployment{
-			ID:                "deployment-hello",
+			ID:                "d782fdf238391fd3ea15d629e16ff825fb19332a50347e04",
 			AppID:             "hello",
-			BundlePath:        "/srv/apps/hello/worker.js",
+			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
+			Entrypoint:        "worker.js",
 			CompatibilityDate: "2026-05-31",
 			Port:              port,
 		},

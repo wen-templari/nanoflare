@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,7 +11,8 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	config := Workerd([]platform.ActiveDeployment{{
 		App: platform.App{ID: "hello-app"},
 		Deployment: platform.Deployment{
-			BundlePath:        "/srv/apps/hello-app/worker.js",
+			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
+			Entrypoint:        "worker.js",
 			CompatibilityDate: "2026-05-31",
 			Port:              9001,
 		},
@@ -21,7 +20,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	for _, expected := range []string{
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`address = "*:9001"`,
-		`serviceWorkerScript = embed "/srv/apps/hello-app/worker.js"`,
+		`serviceWorkerScript = "addEventListener(\"fetch\", () => {});"`,
 		`compatibilityDate = "2026-05-31"`,
 	} {
 		if !strings.Contains(config, expected) {
@@ -30,31 +29,23 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	}
 }
 
-func TestWriterMakesAbsoluteBundlePathRelativeToConfig(t *testing.T) {
-	dir := t.TempDir()
-	writer := NewWriter(
-		filepath.Join(dir, "generated", "workerd.capnp"),
-		filepath.Join(dir, "generated", "traefik.yml"),
-		"http://platformd/internal/auth/verify",
-		"127.0.0.1",
-	)
-	err := writer.Write([]platform.ActiveDeployment{{
+func TestWorkerdGeneratesMultiFileModuleConfigWithEntrypointFirst(t *testing.T) {
+	config := Workerd([]platform.ActiveDeployment{{
 		App: platform.App{ID: "hello-app", Hostname: "hello.example.com"},
 		Deployment: platform.Deployment{
-			BundlePath:        filepath.Join(dir, "bundles", "hello.js"),
+			Files: []platform.WorkerFile{
+				{Path: "message.js", Content: `export const message = "hello";`},
+				{Path: "worker.js", Content: `import { message } from "./message.js"; export default { fetch() { return new Response(message); } };`},
+			},
+			Entrypoint:        "worker.js",
 			CompatibilityDate: "2025-12-10",
 			Port:              9001,
 		},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	content, err := os.ReadFile(filepath.Join(dir, "generated", "workerd.capnp"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(content), `serviceWorkerScript = embed "../bundles/hello.js"`) {
-		t.Fatalf("workerd config did not contain relative embed path:\n%s", content)
+	entrypoint := strings.Index(config, `(name = "worker.js", esModule = `)
+	imported := strings.Index(config, `(name = "message.js", esModule = `)
+	if entrypoint == -1 || imported == -1 || entrypoint > imported {
+		t.Fatalf("workerd modules did not put the entrypoint first:\n%s", config)
 	}
 }
 

@@ -22,6 +22,10 @@ import (
 )
 
 func main() {
+	if err := loadEnvFile(".env"); err != nil {
+		log.Fatal(err)
+	}
+
 	var (
 		addr       = flag.String("addr", ":8080", "HTTP listen address")
 		configDir  = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")

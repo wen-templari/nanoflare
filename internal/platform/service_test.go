@@ -8,14 +8,15 @@ import (
 func TestDeployRestoresPreviousActivationWhenRuntimePublicationFails(t *testing.T) {
 	store := NewStore()
 	service := NewService(store, &failAfterWriter{remaining: 1})
-	if _, err := service.CreateApp(CreateAppInput{ID: "hello", Hostname: "hello.example.com"}); err != nil {
-		t.Fatal(err)
-	}
-	first, err := service.Deploy("hello", DeployInput{BundlePath: "/srv/apps/hello/first.js", CompatibilityDate: "2026-05-31"})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Deploy("hello", DeployInput{BundlePath: "/srv/apps/hello/second.js", CompatibilityDate: "2026-05-31"}); err == nil {
+	first, err := service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "first.js", Content: "first"}}, CompatibilityDate: "2026-05-31"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "second.js", Content: "second"}}, CompatibilityDate: "2026-05-31"}); err == nil {
 		t.Fatal("Deploy() error = nil, want runtime publication error")
 	}
 	active, err := store.ActiveDeployments()

@@ -37,15 +37,14 @@ docker compose up -d
 Run `platformd` with PostgreSQL and MinIO:
 
 ```sh
-set -a
-. ./.env.example
-set +a
+cp .env.example .env
 go run ./cmd/platformd -addr :8080 -config-dir ./var/generated
 ```
 
-This loads `DATABASE_URL`, so registered workers and deployments survive a
-`platformd` restart. Without it, `platformd` uses its intentionally ephemeral
-in-memory repository.
+`platformd` automatically loads `.env` when it starts. Existing shell
+environment variables take precedence. Loading `DATABASE_URL` makes registered
+workers and deployments survive a `platformd` restart. Without it, `platformd`
+uses its intentionally ephemeral in-memory repository.
 
 The default flags assume Traefik runs from `compose.yml` while `platformd` and
 `workerd` run on the host. For a host-run Traefik process instead, use loopback
@@ -65,19 +64,23 @@ binary is not on `PATH`.
 Register and deploy a worker bundle:
 
 ```sh
-curl -X POST http://127.0.0.1:8080/v1/apps \
+APP_ID=$(curl -sS -X POST http://127.0.0.1:8080/v1/apps \
   -H 'content-type: application/json' \
-  -d '{"id":"hello","hostname":"hello.example.com"}'
+  -d '{"name":"Hello worker","hostname":"hello.example.com"}' | jq -r .id)
 
-curl -X POST http://127.0.0.1:8080/v1/apps/hello/deployments \
+curl -X POST "http://127.0.0.1:8080/v1/apps/$APP_ID/deployments" \
   -H 'content-type: application/json' \
-  -d '{"bundle_path":"/srv/apps/hello/worker.js","compatibility_date":"2026-05-31"}'
+  -d '{"files":[{"path":"worker.js","content":"addEventListener(\"fetch\", event => event.respondWith(new Response(\"hello\")));"}],"compatibility_date":"2026-05-31"}'
 ```
 
 The second request starts a new `workerd` pool generation on fresh runtime
 ports, health-checks every socket, writes `var/generated/workerd.capnp` and
 `var/generated/traefik.yml`, and then stops the previous generation. Traefik
 only observes healthy generations.
+
+Deployments store worker file content, not host filesystem paths. A single file
+uses service-worker syntax. For an ES-module worker, send multiple files and set
+`entrypoint` to the module that exports the worker handlers.
 
 Without `DATABASE_URL` and `MINIO_ENDPOINT`, `platformd` still starts with its
 in-memory repository for quick unit-level experiments. Object endpoints remain

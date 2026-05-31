@@ -29,11 +29,7 @@ func (w *Writer) Write(active []platform.ActiveDeployment) error {
 }
 
 func (w *Writer) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
-	configDir, err := filepath.Abs(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	return writeAtomic(path, []byte(Workerd(relativeBundles(configDir, active))))
+	return writeAtomic(path, []byte(Workerd(active)))
 }
 
 func (w *Writer) WriteTraefik(active []platform.ActiveDeployment) error {
@@ -55,11 +51,39 @@ func Workerd(active []platform.ActiveDeployment) string {
 	out.WriteString("  ]\n);\n")
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(item.App.ID))
-		fmt.Fprintf(&out, "  serviceWorkerScript = embed %s,\n", quote(item.Deployment.BundlePath))
+		writeWorkerSource(&out, item.Deployment)
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		out.WriteString(");\n")
 	}
 	return out.String()
+}
+
+func writeWorkerSource(out *strings.Builder, deployment platform.Deployment) {
+	if len(deployment.Files) == 1 {
+		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(deployment.Files[0].Content))
+		return
+	}
+	out.WriteString("  modules = [\n")
+	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
+		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
+	}
+	out.WriteString("  ],\n")
+}
+
+func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.WorkerFile {
+	result := make([]platform.WorkerFile, 0, len(files))
+	for _, file := range files {
+		if file.Path == entrypoint {
+			result = append(result, file)
+			break
+		}
+	}
+	for _, file := range files {
+		if file.Path != entrypoint {
+			result = append(result, file)
+		}
+	}
+	return result
 }
 
 func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) string {
@@ -121,21 +145,6 @@ func workerName(value string) string {
 		out.WriteRune(char)
 	}
 	return out.String()
-}
-
-func relativeBundles(configDir string, active []platform.ActiveDeployment) []platform.ActiveDeployment {
-	result := make([]platform.ActiveDeployment, len(active))
-	copy(result, active)
-	for i := range result {
-		if !filepath.IsAbs(result[i].Deployment.BundlePath) {
-			continue
-		}
-		relative, err := filepath.Rel(configDir, result[i].Deployment.BundlePath)
-		if err == nil {
-			result[i].Deployment.BundlePath = relative
-		}
-	}
-	return result
 }
 
 func quote(value string) string {

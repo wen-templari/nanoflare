@@ -35,6 +35,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/files", s.workerFiles)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/output", s.workerOutput)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/traffic", s.workerTraffic)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("POST /v1/apps/{appID}/deployments", s.deploy)
 	s.mux.HandleFunc("GET /internal/auth/verify", s.verifyAuth)
 	s.mux.HandleFunc("POST /internal/runtime/kv/get", s.kvGet)
@@ -43,6 +44,15 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-upload", s.presignUpload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-download", s.presignDownload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/delete", s.deleteObject)
+}
+
+func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {
+	deployments, err := s.service.WorkerDeployments(r.PathValue("appID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deployments)
 }
 
 func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {

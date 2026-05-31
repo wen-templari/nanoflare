@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,10 +23,10 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 	))
 	server := NewServer(service)
 
-	createApp(t, server, "app-one", "one.example.com")
-	createApp(t, server, "app-two", "two.example.com")
-	one := deploy(t, server, "app-one")
-	two := deploy(t, server, "app-two")
+	appOne := createApp(t, server, "App One", "one.example.com")
+	appTwo := createApp(t, server, "App Two", "two.example.com")
+	one := deploy(t, server, appOne.ID)
+	two := deploy(t, server, appTwo.ID)
 
 	request(t, server, http.MethodPost, "/internal/runtime/kv/put", one.CapabilityToken, `{"key":"color","value":"blue"}`, http.StatusNoContent)
 	response := request(t, server, http.MethodPost, "/internal/runtime/kv/get", one.CapabilityToken, `{"key":"color"}`, http.StatusOK)
@@ -42,11 +41,7 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 
 func TestWorkerConsoleAPIs(t *testing.T) {
 	dir := t.TempDir()
-	bundlePath := filepath.Join(dir, "worker.js")
 	bundle := `addEventListener("fetch", () => {});`
-	if err := os.WriteFile(bundlePath, []byte(bundle), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	service := platform.NewServiceWithConsole(platform.NewStore(), config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
@@ -54,12 +49,12 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 		"127.0.0.1",
 	), nil, fakeOutput{}, fakeTraffic{})
 	server := NewServer(service)
-	createApp(t, server, "console-app", "console.example.com")
-	deployPath(t, server, "console-app", bundlePath)
+	app := createApp(t, server, "Console App", "console.example.com")
+	deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
 
 	var detail platform.WorkerDetail
-	requestJSON(t, server, http.MethodGet, "/v1/apps/console-app", http.StatusOK, &detail)
-	if detail.Deployment == nil || detail.Deployment.BundlePath != bundlePath || detail.Deployment.BundleSize != int64(len(bundle)) {
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	if detail.Deployment == nil || detail.Deployment.Entrypoint != "worker.js" || detail.Deployment.BundleSize != int64(len(bundle)) {
 		t.Fatalf("unexpected worker detail: %#v", detail)
 	}
 	if detail.Deployment.CompatibilityDate != "2026-05-31" {
@@ -67,19 +62,19 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	}
 
 	var files []platform.WorkerFile
-	requestJSON(t, server, http.MethodGet, "/v1/apps/console-app/files", http.StatusOK, &files)
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 1 || files[0].Name != "worker.js" || files[0].Content != bundle {
 		t.Fatalf("unexpected worker files: %#v", files)
 	}
 
 	var output []platform.WorkerOutputLine
-	requestJSON(t, server, http.MethodGet, "/v1/apps/console-app/output", http.StatusOK, &output)
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/output", http.StatusOK, &output)
 	if len(output) != 1 || output[0].Message != "runtime ready" {
 		t.Fatalf("unexpected worker output: %#v", output)
 	}
 
 	var traffic platform.WorkerTraffic
-	requestJSON(t, server, http.MethodGet, "/v1/apps/console-app/traffic", http.StatusOK, &traffic)
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/traffic", http.StatusOK, &traffic)
 	if !traffic.Available || traffic.RequestsPerSecond != 4.25 || len(traffic.Traffic) != 2 {
 		t.Fatalf("unexpected worker traffic: %#v", traffic)
 	}
@@ -93,38 +88,82 @@ func TestWorkerConsoleAPIsForRegisteredWorkerWithoutDeployment(t *testing.T) {
 		"127.0.0.1",
 	))
 	server := NewServer(service)
-	createApp(t, server, "draft-app", "draft.example.com")
+	app := createApp(t, server, "Draft App", "draft.example.com")
 
 	var detail platform.WorkerDetail
-	requestJSON(t, server, http.MethodGet, "/v1/apps/draft-app", http.StatusOK, &detail)
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment != nil {
 		t.Fatalf("unexpected deployment: %#v", detail.Deployment)
 	}
 	var files []platform.WorkerFile
-	requestJSON(t, server, http.MethodGet, "/v1/apps/draft-app/files", http.StatusOK, &files)
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 0 {
 		t.Fatalf("unexpected files: %#v", files)
 	}
 	requestJSON(t, server, http.MethodGet, "/v1/apps/missing", http.StatusNotFound, &map[string]string{})
 }
 
-func createApp(t *testing.T, server http.Handler, id, hostname string) {
+func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
+	dir := t.TempDir()
+	service := platform.NewService(platform.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServer(service)
+	app := createApp(t, server, "Ledger App", "ledger.example.com")
+	first := deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "first.js", Content: "first"}}, "")
+	second := deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "second.js", Content: "second"}}, "")
+
+	var deployments []platform.ConsoleDeployment
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/deployments", http.StatusOK, &deployments)
+	if len(deployments) != 2 {
+		t.Fatalf("deployments = %#v, want two records", deployments)
+	}
+	states := map[string]string{}
+	for _, deployment := range deployments {
+		states[deployment.ID] = deployment.State
+	}
+	if states[first.ID] != "inactive" || states[second.ID] != "active" {
+		t.Fatalf("deployment states = %#v, want first inactive and second active", states)
+	}
+	requestJSON(t, server, http.MethodGet, "/v1/apps/missing/deployments", http.StatusNotFound, &map[string]string{})
+}
+
+func createApp(t *testing.T, server http.Handler, name, hostname string) platform.App {
 	t.Helper()
-	body := `{"id":"` + id + `","hostname":"` + hostname + `"}`
-	request(t, server, http.MethodPost, "/v1/apps", "", body, http.StatusCreated)
+	body := `{"name":"` + name + `","hostname":"` + hostname + `"}`
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create app status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var app platform.App
+	if err := json.NewDecoder(recorder.Body).Decode(&app); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.ID) != 48 {
+		t.Fatalf("generated app id = %q, want 48 character token", app.ID)
+	}
+	return app
 }
 
 func deploy(t *testing.T, server http.Handler, appID string) platform.Deployment {
 	t.Helper()
-	return deployPath(t, server, appID, "/srv/apps/"+appID+"/worker.js")
+	return deployContent(t, server, appID, []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}}, "")
 }
 
-func deployPath(t *testing.T, server http.Handler, appID, bundlePath string) platform.Deployment {
+func deployContent(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, entrypoint string) platform.Deployment {
 	t.Helper()
+	body, err := json.Marshal(platform.DeployInput{Files: files, Entrypoint: entrypoint, CompatibilityDate: "2026-05-31"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/apps/"+appID+"/deployments", bytes.NewBufferString(
-		`{"bundle_path":"`+bundlePath+`","compatibility_date":"2026-05-31"}`,
-	))
+	request := httptest.NewRequest(http.MethodPost, "/v1/apps/"+appID+"/deployments", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -133,6 +172,9 @@ func deployPath(t *testing.T, server http.Handler, appID, bundlePath string) pla
 	var deployment platform.Deployment
 	if err := json.NewDecoder(recorder.Body).Decode(&deployment); err != nil {
 		t.Fatal(err)
+	}
+	if len(deployment.ID) != 48 {
+		t.Fatalf("generated deployment id = %q, want 48 character token", deployment.ID)
 	}
 	return deployment
 }

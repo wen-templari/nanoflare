@@ -1,4 +1,5 @@
 /var/
+.env
 /bin/
 /node_modules/
 /dist/
