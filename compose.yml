@@ -33,6 +33,9 @@ services:
       - --api.insecure=true
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
+      - --metrics.prometheus=true
+      - --metrics.prometheus.addrouterslabels=true
+      - --metrics.prometheus.addserviceslabels=true
       - --providers.file.directory=/etc/traefik/dynamic
       - --providers.file.watch=true
     ports:
@@ -42,6 +45,20 @@ services:
     volumes:
       - ./var/generated:/etc/traefik/dynamic:ro
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - traefik
+
 volumes:
   postgres-data:
   minio-data:
+  prometheus-data:

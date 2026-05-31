@@ -1,9 +1,9 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
-  Activity, Archive, ArrowUpRight, Box, Boxes, Check, ChevronDown, CircleGauge,
+  Activity, Archive, ArrowUpRight, BarChart3, Box, Boxes, Check, ChevronDown, CircleGauge,
   CloudUpload, Code2, Database, ExternalLink, FileCode2, FileText, FolderOpen,
   Globe2, HardDrive, Layers3, MoreHorizontal, Plus, RefreshCw, Search, Server,
-  Settings, Sparkles, Trash2, UploadCloud, Waypoints, X,
+  Settings, Sparkles, Timer, Trash2, UploadCloud, Waypoints, X,
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -11,10 +11,22 @@ import { Dialog } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { cn } from "./lib/utils";
 
-type Section = "overview" | "workers" | "pages" | "storage";
+type Section = "overview" | "workers" | "pages" | "storage" | "monitoring";
 type Worker = { id: string; hostname: string; created_at: string; status?: "live" | "draft"; requests?: string; deployment?: string };
 type Page = { id: number; name: string; path: string; worker: string; updated: string; status: "published" | "draft" };
 type StoredObject = { id: number; name: string; type: string; size: string; updated: string };
+type PrometheusValue = [number, string];
+type PrometheusResult = { metric: Record<string, string>; value?: PrometheusValue; values?: PrometheusValue[] };
+type PrometheusResponse = { status: "success" | "error"; data?: { result: PrometheusResult[] } };
+type MonitoringData = {
+  available: boolean;
+  requestsPerSecond: number;
+  p95Latency: number;
+  errorRate: number;
+  openConnections: number;
+  traffic: number[];
+  statusCodes: { code: string; value: number }[];
+};
 
 const demoWorkers: Worker[] = [
   { id: "customer-portal", hostname: "portal.acme.internal", created_at: "2026-05-31T07:30:00Z", status: "live", requests: "24.8k", deployment: "deployment-8f2a91bc" },
@@ -42,6 +54,7 @@ const navItems: { section: Section; label: string; icon: typeof Server }[] = [
   { section: "workers", label: "Workers", icon: Waypoints },
   { section: "pages", label: "Pages", icon: Layers3 },
   { section: "storage", label: "Storage", icon: Database },
+  { section: "monitoring", label: "Monitoring", icon: BarChart3 },
 ];
 
 export function App() {
@@ -126,6 +139,7 @@ export function App() {
           {section === "workers" && <Workers workers={workers} setWorkers={setWorkers} openDialog={() => setWorkerDialog(true)} notify={notify} apiConnected={apiConnected} />}
           {section === "pages" && <Pages pages={pages} setPages={setPages} openDialog={() => setPageDialog(true)} notify={notify} />}
           {section === "storage" && <Storage objects={objects} setObjects={setObjects} openDialog={() => setUploadDialog(true)} notify={notify} />}
+          {section === "monitoring" && <Monitoring />}
         </div>
       </main>
 
@@ -282,6 +296,142 @@ function Storage({ objects, setObjects, openDialog, notify }: { objects: StoredO
       </Panel>
     </>
   );
+}
+
+const emptyMonitoring: MonitoringData = {
+  available: false,
+  requestsPerSecond: 0,
+  p95Latency: 0,
+  errorRate: 0,
+  openConnections: 0,
+  traffic: [],
+  statusCodes: [],
+};
+
+async function prometheusQuery(query: string) {
+  const response = await fetch(`/prometheus/api/v1/query?${new URLSearchParams({ query })}`);
+  if (!response.ok) throw new Error("Prometheus unavailable");
+  const payload = await response.json() as PrometheusResponse;
+  if (payload.status !== "success") throw new Error("Prometheus query failed");
+  return payload.data?.result ?? [];
+}
+
+async function prometheusRangeQuery(query: string) {
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - 60 * 60;
+  const response = await fetch(`/prometheus/api/v1/query_range?${new URLSearchParams({ query, start: String(start), end: String(end), step: "120" })}`);
+  if (!response.ok) throw new Error("Prometheus unavailable");
+  const payload = await response.json() as PrometheusResponse;
+  if (payload.status !== "success") throw new Error("Prometheus query failed");
+  return payload.data?.result ?? [];
+}
+
+function resultNumber(result: PrometheusResult[]) {
+  return Number(result[0]?.value?.[1] ?? 0) || 0;
+}
+
+function Monitoring() {
+  const [metrics, setMetrics] = useState<MonitoringData>(emptyMonitoring);
+  const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState<Date>();
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const [up, requests, latency, errors, connections, traffic, statusCodes] = await Promise.all([
+        prometheusQuery('up{job="traefik"}'),
+        prometheusQuery("sum(rate(traefik_entrypoint_requests_total[5m]))"),
+        prometheusQuery("histogram_quantile(0.95, sum by (le) (rate(traefik_entrypoint_request_duration_seconds_bucket[5m])))"),
+        prometheusQuery('sum(rate(traefik_entrypoint_requests_total{code=~"5.."}[5m]))'),
+        prometheusQuery("sum(traefik_entrypoint_open_connections)"),
+        prometheusRangeQuery("sum(rate(traefik_entrypoint_requests_total[5m]))"),
+        prometheusQuery("sum by (code) (rate(traefik_entrypoint_requests_total[5m]))"),
+      ]);
+      const requestsPerSecond = resultNumber(requests);
+      setMetrics({
+        available: resultNumber(up) === 1,
+        requestsPerSecond,
+        p95Latency: resultNumber(latency),
+        errorRate: requestsPerSecond ? resultNumber(errors) / requestsPerSecond : 0,
+        openConnections: resultNumber(connections),
+        traffic: traffic[0]?.values?.map(([, value]) => Number(value) || 0) ?? [],
+        statusCodes: statusCodes.map(({ metric, value }) => ({ code: metric.code ?? "other", value: Number(value?.[1]) || 0 })).sort((a, b) => a.code.localeCompare(b.code)),
+      });
+      setUpdatedAt(new Date());
+    } catch {
+      setMetrics(emptyMonitoring);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 15000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const cards = [
+    { label: "Request rate", value: `${metrics.requestsPerSecond.toFixed(2)}/s`, note: "5 minute rolling average", icon: Activity },
+    { label: "P95 latency", value: formatDuration(metrics.p95Latency), note: "Across Traefik entrypoints", icon: Timer },
+    { label: "Error rate", value: `${(metrics.errorRate * 100).toFixed(2)}%`, note: "HTTP 5xx responses", icon: CircleGauge },
+    { label: "Open connections", value: String(metrics.openConnections), note: "Active at the edge", icon: Waypoints },
+  ];
+
+  return (
+    <>
+      <PageHeading eyebrow="Observability" title="Monitoring" copy="Live edge traffic from Traefik, collected locally by Prometheus." actions={<Button variant="ghost" onClick={() => void refresh()} disabled={loading}><RefreshCw className={cn("size-4", loading && "animate-spin")} />Refresh metrics</Button>} />
+      <div className="mb-4 flex flex-col justify-between gap-3 rounded-lg border border-[#dcd6ca] bg-[#fbf9f3]/70 px-4 py-3 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-2 text-xs font-extrabold text-[#46534f]"><span className={cn("size-2 rounded-full", metrics.available ? "bg-[#52a46a]" : "bg-[#c89247]")} />{metrics.available ? "PROMETHEUS SCRAPE HEALTHY" : "PROMETHEUS UNAVAILABLE"}</div>
+        <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#989c96]">{updatedAt ? `Updated ${updatedAt.toLocaleTimeString()}` : "Waiting for local metrics"}</p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map(({ label, value, note, icon: Icon }, index) => (
+          <div key={label} style={{ animationDelay: `${index * 70}ms` }} className="paper-panel animate-rise rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85 p-5">
+            <Icon className="size-4 text-[#d75a41]" />
+            <p className="mt-6 font-display text-4xl tracking-[-0.05em] text-[#26332f]">{value}</p>
+            <p className="mt-2 text-xs font-extrabold">{label}</p>
+            <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#999d97]">{note}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+        <Panel title="Requests per second" eyebrow="Last 60 minutes">
+          <TrafficChart values={metrics.traffic} />
+        </Panel>
+        <Panel title="Response codes" eyebrow="5 minute rate">
+          <StatusCodeMix values={metrics.statusCodes} />
+        </Panel>
+      </div>
+    </>
+  );
+}
+
+function formatDuration(seconds: number) {
+  return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(2)}s`;
+}
+
+function TrafficChart({ values }: { values: number[] }) {
+  const max = Math.max(...values, 0.01);
+  if (!values.length) return <EmptyMetrics />;
+  return (
+    <>
+      <div className="flex h-52 items-end gap-1 pt-7">
+        {values.map((value, index) => <div key={index} title={`${value.toFixed(2)} requests/s`} className="group flex-1 rounded-t-sm bg-[#cbd9d1] transition hover:bg-[#e25b3f]" style={{ height: `${Math.max((value / max) * 100, 2)}%` }} />)}
+      </div>
+      <div className="mt-3 flex justify-between font-mono text-[9px] text-[#9ba09a]"><span>60 MIN AGO</span><span>30 MIN AGO</span><span>NOW</span></div>
+    </>
+  );
+}
+
+function StatusCodeMix({ values }: { values: { code: string; value: number }[] }) {
+  const total = values.reduce((sum, { value }) => sum + value, 0);
+  if (!values.length) return <EmptyMetrics />;
+  return <div className="space-y-4">{values.map(({ code, value }) => <div key={code}><div className="mb-1.5 flex justify-between font-mono text-[10px]"><span className="font-bold text-[#58645f]">HTTP {code}</span><span className="text-[#989c96]">{value.toFixed(2)}/s</span></div><div className="h-2 overflow-hidden rounded-full bg-[#e6e3db]"><div className={cn("h-full rounded-full", code.startsWith("5") ? "bg-[#d75a41]" : code.startsWith("4") ? "bg-[#c89247]" : "bg-[#6d9c79]")} style={{ width: `${total ? Math.max((value / total) * 100, 2) : 0}%` }} /></div></div>)}</div>;
+}
+
+function EmptyMetrics() {
+  return <div className="grid h-52 place-items-center rounded-lg border border-dashed border-[#d8d2c7] bg-white/30 text-center"><div><BarChart3 className="mx-auto size-5 text-[#b7b4ac]" /><p className="mt-3 text-xs font-extrabold text-[#777e78]">No traffic samples yet</p><p className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#a1a49e]">Start the stack or send a request through Traefik</p></div></div>;
 }
 
 function Panel({ title, eyebrow, children, flush = false }: { title: string; eyebrow: string; children: ReactNode; flush?: boolean }) {

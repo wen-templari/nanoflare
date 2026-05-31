@@ -92,6 +92,11 @@ Vite serves the console at `http://127.0.0.1:5173` and proxies `/v1` requests to
 `platformd` at `http://127.0.0.1:8080`. When `platformd` is not running, the
 console opens with demo workers and local page and storage management state.
 
+The Compose stack also starts Prometheus at `http://127.0.0.1:9090`. Traefik
+publishes request metrics on its internal metrics endpoint, and Prometheus
+scrapes them every 15 seconds. The console's Monitoring view queries Prometheus
+through Vite's `/prometheus` development proxy.
+
 ## Security Boundary
 
 The shared pool is intended for company-controlled or reviewed applications.
