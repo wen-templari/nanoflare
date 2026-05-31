@@ -43,14 +43,19 @@ set +a
 go run ./cmd/platformd -addr :8080 -config-dir ./var/generated
 ```
 
-When Traefik runs from `compose.yml` and `platformd` plus `workerd` run on the
-host, expose host-reachable callback and worker addresses:
+This loads `DATABASE_URL`, so registered workers and deployments survive a
+`platformd` restart. Without it, `platformd` uses its intentionally ephemeral
+in-memory repository.
+
+The default flags assume Traefik runs from `compose.yml` while `platformd` and
+`workerd` run on the host. For a host-run Traefik process instead, use loopback
+addresses explicitly:
 
 ```sh
 go run ./cmd/platformd \
   -addr :8080 \
-  -auth-url http://host.docker.internal:8080/internal/auth/verify \
-  -worker-host host.docker.internal \
+  -auth-url http://127.0.0.1:8080/internal/auth/verify \
+  -worker-host 127.0.0.1 \
   -config-dir ./var/generated
 ```
 
@@ -96,6 +101,20 @@ The Compose stack also starts Prometheus at `http://127.0.0.1:9090`. Traefik
 publishes request metrics on its internal metrics endpoint, and Prometheus
 scrapes them every 15 seconds. The console's Monitoring view queries Prometheus
 through Vite's `/prometheus` development proxy.
+
+Worker drill-down data is served by `platformd`:
+
+```text
+GET /v1/apps/{appID}
+GET /v1/apps/{appID}/files
+GET /v1/apps/{appID}/output
+GET /v1/apps/{appID}/traffic
+```
+
+The file viewer exposes the active deployed bundle, output contains the captured
+shared `workerd` process stream, and traffic is scoped to the worker's Traefik
+router. Set `PLATFORMD_URL` when running Vite to proxy the console to a
+non-default control-plane address.
 
 ## Security Boundary
 

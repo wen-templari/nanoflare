@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -23,10 +25,20 @@ type ObjectStore interface {
 	Delete(appID, path string) error
 }
 
+type WorkerOutputReader interface {
+	Output(string) []WorkerOutputLine
+}
+
+type WorkerTrafficReader interface {
+	Traffic(string) (WorkerTraffic, error)
+}
+
 type Service struct {
 	store   Repository
 	writer  ConfigWriter
 	objects ObjectStore
+	output  WorkerOutputReader
+	traffic WorkerTrafficReader
 }
 
 func NewService(store Repository, writer ConfigWriter) *Service {
@@ -35,6 +47,10 @@ func NewService(store Repository, writer ConfigWriter) *Service {
 
 func NewServiceWithObjects(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
 	return &Service{store: store, writer: writer, objects: objects}
+}
+
+func NewServiceWithConsole(store Repository, writer ConfigWriter, objects ObjectStore, output WorkerOutputReader, traffic WorkerTrafficReader) *Service {
+	return &Service{store: store, writer: writer, objects: objects, output: output, traffic: traffic}
 }
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
@@ -52,6 +68,101 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 
 func (s *Service) ListApps() ([]App, error) {
 	return s.store.ListApps()
+}
+
+func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
+	app, active, err := s.worker(appID)
+	if err != nil {
+		return WorkerDetail{}, err
+	}
+	detail := WorkerDetail{App: app}
+	if active == nil {
+		return detail, nil
+	}
+	var size int64
+	if info, err := os.Stat(active.Deployment.BundlePath); err == nil {
+		size = info.Size()
+	}
+	detail.Deployment = &WorkerDeployment{
+		ID:                active.Deployment.ID,
+		BundlePath:        active.Deployment.BundlePath,
+		BundleSize:        size,
+		CompatibilityDate: active.Deployment.CompatibilityDate,
+		Port:              active.Deployment.Port,
+		CreatedAt:         active.Deployment.CreatedAt,
+	}
+	return detail, nil
+}
+
+func (s *Service) WorkerFiles(appID string) ([]WorkerFile, error) {
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return nil, err
+	}
+	if active == nil {
+		return []WorkerFile{}, nil
+	}
+	content, err := os.ReadFile(active.Deployment.BundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("read deployed bundle: %w", err)
+	}
+	const maxBundleSize = 1 << 20
+	if len(content) > maxBundleSize {
+		return nil, fmt.Errorf("deployed bundle exceeds %d byte viewer limit", maxBundleSize)
+	}
+	return []WorkerFile{{
+		Name:    filepath.Base(active.Deployment.BundlePath),
+		Path:    filepath.Base(active.Deployment.BundlePath),
+		Size:    int64(len(content)),
+		Content: string(content),
+	}}, nil
+}
+
+func (s *Service) WorkerOutput(appID string) ([]WorkerOutputLine, error) {
+	if _, _, err := s.worker(appID); err != nil {
+		return nil, err
+	}
+	if s.output == nil {
+		return []WorkerOutputLine{}, nil
+	}
+	return s.output.Output(appID), nil
+}
+
+func (s *Service) WorkerTraffic(appID string) (WorkerTraffic, error) {
+	if _, _, err := s.worker(appID); err != nil {
+		return WorkerTraffic{}, err
+	}
+	if s.traffic == nil {
+		return WorkerTraffic{}, nil
+	}
+	return s.traffic.Traffic(appID)
+}
+
+func (s *Service) worker(appID string) (App, *ActiveDeployment, error) {
+	apps, err := s.store.ListApps()
+	if err != nil {
+		return App{}, nil, err
+	}
+	var app *App
+	for i := range apps {
+		if apps[i].ID == appID {
+			app = &apps[i]
+			break
+		}
+	}
+	if app == nil {
+		return App{}, nil, ErrAppNotFound
+	}
+	active, err := s.store.ActiveDeployments()
+	if err != nil {
+		return App{}, nil, err
+	}
+	for i := range active {
+		if active[i].App.ID == appID {
+			return *app, &active[i], nil
+		}
+	}
+	return *app, nil, nil
 }
 
 func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {

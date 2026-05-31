@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -239,6 +240,7 @@ func socketsReady(host string, active []platform.ActiveDeployment) bool {
 
 type CommandLauncher struct {
 	Executable string
+	Output     *OutputBuffer
 }
 
 func (l CommandLauncher) Launch(configPath string, _ []platform.ActiveDeployment) (Process, error) {
@@ -246,6 +248,11 @@ func (l CommandLauncher) Launch(configPath string, _ []platform.ActiveDeployment
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
+	if l.Output != nil {
+		command.Stdout = io.MultiWriter(os.Stdout, l.Output)
+		command.Stderr = io.MultiWriter(os.Stderr, l.Output)
+		l.Output.Append("info", fmt.Sprintf("starting workerd generation from %s", filepath.Base(configPath)))
+	}
 	if err := command.Start(); err != nil {
 		return nil, err
 	}

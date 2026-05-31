@@ -15,6 +15,7 @@ import (
 	"github.com/clas/platform/internal/api"
 	"github.com/clas/platform/internal/config"
 	"github.com/clas/platform/internal/database"
+	"github.com/clas/platform/internal/metrics"
 	"github.com/clas/platform/internal/objects"
 	"github.com/clas/platform/internal/platform"
 	"github.com/clas/platform/internal/runtime"
@@ -24,11 +25,12 @@ func main() {
 	var (
 		addr       = flag.String("addr", ":8080", "HTTP listen address")
 		configDir  = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
-		authURL    = flag.String("auth-url", "http://127.0.0.1:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
-		workerHost = flag.String("worker-host", "127.0.0.1", "hostname Traefik uses to reach workerd sockets")
+		authURL    = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
+		workerHost = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
 		workerd    = flag.String("workerd", "workerd", "path to the workerd executable")
 		portHost   = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart  = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
+		prometheus = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
 	)
 	flag.Parse()
 
@@ -56,9 +58,10 @@ func main() {
 		*authURL,
 		*workerHost,
 	)
+	output := runtime.NewOutputBuffer()
 	manager := runtime.NewManager(
 		writer,
-		runtime.CommandLauncher{Executable: *workerd},
+		runtime.CommandLauncher{Executable: *workerd, Output: output},
 		*configDir,
 		filepath.Join(*configDir, "workerd.capnp"),
 		*portHost,
@@ -94,7 +97,7 @@ func main() {
 		log.Print("using MinIO object store")
 	}
 
-	service := platform.NewServiceWithObjects(store, manager, objectStore)
+	service := platform.NewServiceWithConsole(store, manager, objectStore, output, metrics.NewClient(*prometheus))
 	server := api.NewServer(service)
 
 	log.Printf("platformd listening on %s", *addr)
