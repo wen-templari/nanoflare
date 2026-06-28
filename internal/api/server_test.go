@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -76,6 +77,44 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/traffic", http.StatusOK, &traffic)
 	if !traffic.Available || traffic.RequestsPerSecond != 4.25 || len(traffic.Traffic) != 2 {
 		t.Fatalf("unexpected worker traffic: %#v", traffic)
+	}
+}
+
+func TestWorkerConsoleAPIsWithObjectBackedDeployment(t *testing.T) {
+	dir := t.TempDir()
+	store := &apiObjectBackedRepo{Store: platform.NewStore()}
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithConsole(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects, fakeOutput{}, fakeTraffic{})
+	server := NewServer(service)
+	app := createApp(t, server, "Object App", "object.example.com")
+	bundle := `export default { async fetch() { return new Response("ok"); } }`
+	deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
+
+	var detail platform.WorkerDetail
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	if detail.Deployment == nil || detail.Deployment.BundleSize != int64(len(bundle)) {
+		t.Fatalf("unexpected object-backed worker detail: %#v", detail)
+	}
+
+	var files []platform.WorkerFile
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
+	if len(files) != 1 || files[0].Content != bundle {
+		t.Fatalf("unexpected object-backed worker files: %#v", files)
+	}
+	records, err := store.ListDeployments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Deployment.ObjectKey == "" {
+		t.Fatalf("expected object-backed deployment record, got %#v", records)
+	}
+	if _, ok := objects.objects[app.ID+":"+records[0].Deployment.ObjectKey]; !ok {
+		t.Fatalf("expected uploaded deployment object for %s", records[0].Deployment.ObjectKey)
 	}
 }
 
@@ -233,6 +272,65 @@ type fakeTraffic struct{}
 
 func (fakeTraffic) Traffic(string) (platform.WorkerTraffic, error) {
 	return platform.WorkerTraffic{Available: true, RequestsPerSecond: 4.25, Traffic: []float64{3, 4}}, nil
+}
+
+type apiObjectStore struct {
+	objects map[string][]byte
+}
+
+func newAPIObjectStore() *apiObjectStore {
+	return &apiObjectStore{objects: make(map[string][]byte)}
+}
+
+func (s *apiObjectStore) PresignUpload(string, string, time.Duration) (string, error) {
+	return "", nil
+}
+
+func (s *apiObjectStore) PresignDownload(string, string, time.Duration) (string, error) {
+	return "", nil
+}
+
+func (s *apiObjectStore) Put(appID, path string, _ string, data []byte) error {
+	s.objects[appID+":"+path] = append([]byte(nil), data...)
+	return nil
+}
+
+func (s *apiObjectStore) Get(appID, path string) ([]byte, error) {
+	data, ok := s.objects[appID+":"+path]
+	if !ok {
+		return nil, errors.New("object not found")
+	}
+	return append([]byte(nil), data...), nil
+}
+
+func (s *apiObjectStore) Delete(appID, path string) error {
+	delete(s.objects, appID+":"+path)
+	return nil
+}
+
+type apiObjectBackedRepo struct {
+	*platform.Store
+}
+
+func (r *apiObjectBackedRepo) Activate(deployment platform.Deployment) error {
+	copy := deployment
+	if copy.ObjectKey != "" {
+		copy.Files = nil
+	}
+	return r.Store.Activate(copy)
+}
+
+func (r *apiObjectBackedRepo) ActiveDeployments() ([]platform.ActiveDeployment, error) {
+	active, err := r.Store.ActiveDeployments()
+	if err != nil {
+		return nil, err
+	}
+	for i := range active {
+		if active[i].Deployment.ObjectKey != "" {
+			active[i].Deployment.Files = nil
+		}
+	}
+	return active, nil
 }
 
 func request(t *testing.T, server http.Handler, method, path, capability, body string, wantStatus int) map[string]any {

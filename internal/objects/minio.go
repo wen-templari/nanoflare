@@ -1,8 +1,10 @@
 package objects
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"path"
 	"strings"
 	"time"
@@ -70,6 +72,30 @@ func (m *MinIO) PresignDownload(appID, objectPath string, expiry time.Duration) 
 		return "", err
 	}
 	return signed.String(), nil
+}
+
+func (m *MinIO) Put(appID, objectPath string, contentType string, data []byte) error {
+	key, err := objectKey(appID, objectPath)
+	if err != nil {
+		return err
+	}
+	_, err = m.client.PutObject(context.Background(), m.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	return err
+}
+
+func (m *MinIO) Get(appID, objectPath string) ([]byte, error) {
+	key, err := objectKey(appID, objectPath)
+	if err != nil {
+		return nil, err
+	}
+	object, err := m.client.GetObject(context.Background(), m.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer object.Close()
+	return io.ReadAll(object)
 }
 
 func (m *MinIO) Delete(appID, objectPath string) error {

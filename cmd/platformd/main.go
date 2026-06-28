@@ -62,6 +62,24 @@ func main() {
 	defer cancel()
 
 	var store platform.Repository = platform.NewStore()
+	var objectStore platform.ObjectStore
+	if endpoint := os.Getenv("MINIO_ENDPOINT"); endpoint != "" {
+		secure, err := strconv.ParseBool(envOrDefault("MINIO_SECURE", "false"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		objectStore, err = objects.Open(ctx, objects.MinIOConfig{
+			Endpoint:  endpoint,
+			AccessKey: os.Getenv("MINIO_ACCESS_KEY"),
+			SecretKey: os.Getenv("MINIO_SECRET_KEY"),
+			Bucket:    envOrDefault("MINIO_BUCKET", "platform"),
+			Secure:    secure,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Print("using MinIO object store")
+	}
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
 		postgres, err := database.Open(ctx, databaseURL)
 		if err != nil {
@@ -109,34 +127,15 @@ func main() {
 	if closeRuntime != nil {
 		defer closeRuntime()
 	}
-	active, err := store.ActiveDeployments()
+
+	service := platform.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewClient(*prometheus))
+	active, err := service.ActiveDeployments()
 	if err != nil {
 		log.Fatal(err)
 	}
 	if err := publisher.Write(active); err != nil {
 		log.Fatal(err)
 	}
-
-	var objectStore platform.ObjectStore
-	if endpoint := os.Getenv("MINIO_ENDPOINT"); endpoint != "" {
-		secure, err := strconv.ParseBool(envOrDefault("MINIO_SECURE", "false"))
-		if err != nil {
-			log.Fatal(err)
-		}
-		objectStore, err = objects.Open(ctx, objects.MinIOConfig{
-			Endpoint:  endpoint,
-			AccessKey: os.Getenv("MINIO_ACCESS_KEY"),
-			SecretKey: os.Getenv("MINIO_SECRET_KEY"),
-			Bucket:    envOrDefault("MINIO_BUCKET", "platform"),
-			Secure:    secure,
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Print("using MinIO object store")
-	}
-
-	service := platform.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewClient(*prometheus))
 	server := api.NewServerWithTraefik(service, traefikStore, *traefikToken)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: api.NewRuntimeKVServer(service)}
 	go func() {

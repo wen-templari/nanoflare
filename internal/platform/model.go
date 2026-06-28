@@ -17,6 +17,8 @@ type Deployment struct {
 	Entrypoint        string       `json:"entrypoint"`
 	Format            string       `json:"format"`
 	CompatibilityDate string       `json:"compatibility_date"`
+	BundleSize        int64        `json:"-"`
+	ObjectKey         string       `json:"-"`
 	Port              int          `json:"port"`
 	CreatedAt         time.Time    `json:"created_at"`
 }

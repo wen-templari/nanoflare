@@ -3,6 +3,7 @@ package platform
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -18,6 +19,8 @@ type ConfigWriter interface {
 type ObjectStore interface {
 	PresignUpload(appID, path string, expiry time.Duration) (string, error)
 	PresignDownload(appID, path string, expiry time.Duration) (string, error)
+	Put(appID, path string, contentType string, data []byte) error
+	Get(appID, path string) ([]byte, error)
 	Delete(appID, path string) error
 }
 
@@ -74,6 +77,10 @@ func (s *Service) ListApps() ([]App, error) {
 	return s.store.ListApps()
 }
 
+func (s *Service) ActiveDeployments() ([]ActiveDeployment, error) {
+	return s.activeDeployments()
+}
+
 func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 	app, active, err := s.worker(appID)
 	if err != nil {
@@ -83,15 +90,11 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 	if active == nil {
 		return detail, nil
 	}
-	var size int64
-	for _, file := range active.Deployment.Files {
-		size += file.Size
-	}
 	detail.Deployment = &WorkerDeployment{
 		ID:                active.Deployment.ID,
 		Entrypoint:        active.Deployment.Entrypoint,
 		Format:            active.Deployment.Format,
-		BundleSize:        size,
+		BundleSize:        active.Deployment.BundleSize,
 		CompatibilityDate: active.Deployment.CompatibilityDate,
 		Port:              active.Deployment.Port,
 		CreatedAt:         active.Deployment.CreatedAt,
@@ -112,10 +115,6 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 		if record.App.ID != appID {
 			continue
 		}
-		var size int64
-		for _, file := range record.Deployment.Files {
-			size += file.Size
-		}
 		state := "inactive"
 		if record.Active {
 			state = "active"
@@ -127,7 +126,7 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			Hostname:          record.App.Hostname,
 			Entrypoint:        record.Deployment.Entrypoint,
 			Format:            record.Deployment.Format,
-			BundleSize:        size,
+			BundleSize:        record.Deployment.BundleSize,
 			CompatibilityDate: record.Deployment.CompatibilityDate,
 			State:             state,
 			CreatedAt:         record.Deployment.CreatedAt,
@@ -182,7 +181,7 @@ func (s *Service) worker(appID string) (App, *ActiveDeployment, error) {
 	if app == nil {
 		return App{}, nil, ErrAppNotFound
 	}
-	active, err := s.store.ActiveDeployments()
+	active, err := s.activeDeployments()
 	if err != nil {
 		return App{}, nil, err
 	}
@@ -221,26 +220,39 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Entrypoint:        entrypoint,
 		Format:            format,
 		CompatibilityDate: input.CompatibilityDate,
+		BundleSize:        bundleSize(files),
 		Port:              port,
 		CreatedAt:         time.Now().UTC(),
 	}
-	activeBefore, err := s.store.ActiveDeployments()
+	if s.objects != nil {
+		payload, err := json.Marshal(files)
+		if err != nil {
+			return Deployment{}, err
+		}
+		deployment.ObjectKey = deploymentBundleObjectPath(deploymentID)
+		if err := s.objects.Put(appID, deployment.ObjectKey, "application/json", payload); err != nil {
+			return Deployment{}, err
+		}
+	}
+	activeBefore, err := s.activeDeployments()
 	if err != nil {
+		s.cleanupDeploymentObject(deployment)
 		return Deployment{}, err
 	}
 	previousID := activeDeploymentID(activeBefore, appID)
 	if err := s.store.Activate(deployment); err != nil {
+		s.cleanupDeploymentObject(deployment)
 		return Deployment{}, err
 	}
-	active, err := s.store.ActiveDeployments()
+	active, err := s.activeDeployments()
 	if err != nil {
-		if rollbackErr := s.store.SetActive(appID, previousID); rollbackErr != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousID, deployment); rollbackErr != nil {
 			return Deployment{}, fmt.Errorf("list active deployments: %w; rollback active deployment: %v", err, rollbackErr)
 		}
 		return Deployment{}, err
 	}
 	if err := s.writer.Write(active); err != nil {
-		if rollbackErr := s.store.SetActive(appID, previousID); rollbackErr != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousID, deployment); rollbackErr != nil {
 			return Deployment{}, fmt.Errorf("write generated config: %w; rollback active deployment: %v", err, rollbackErr)
 		}
 		return Deployment{}, fmt.Errorf("write generated config: %w", err)
@@ -304,6 +316,75 @@ func activeDeploymentID(active []ActiveDeployment, appID string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Service) activeDeployments() ([]ActiveDeployment, error) {
+	active, err := s.store.ActiveDeployments()
+	if err != nil {
+		return nil, err
+	}
+	for i := range active {
+		if err := s.hydrateDeploymentFiles(&active[i].Deployment); err != nil {
+			return nil, err
+		}
+	}
+	return active, nil
+}
+
+func (s *Service) hydrateDeploymentFiles(deployment *Deployment) error {
+	if len(deployment.Files) > 0 {
+		if deployment.BundleSize == 0 {
+			deployment.BundleSize = bundleSize(deployment.Files)
+		}
+		return nil
+	}
+	if deployment.ObjectKey == "" {
+		return nil
+	}
+	if s.objects == nil {
+		return errors.New("object storage is not configured")
+	}
+	data, err := s.objects.Get(deployment.AppID, deployment.ObjectKey)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &deployment.Files); err != nil {
+		return err
+	}
+	if deployment.BundleSize == 0 {
+		deployment.BundleSize = bundleSize(deployment.Files)
+	}
+	return nil
+}
+
+func (s *Service) cleanupDeploymentObject(deployment Deployment) {
+	if s.objects == nil || deployment.ObjectKey == "" {
+		return
+	}
+	_ = s.objects.Delete(deployment.AppID, deployment.ObjectKey)
+}
+
+func (s *Service) rollbackDeployment(appID, previousID string, deployment Deployment) error {
+	if err := s.store.SetActive(appID, previousID); err != nil {
+		return err
+	}
+	if err := s.store.DeleteDeployment(deployment.ID); err != nil {
+		return err
+	}
+	s.cleanupDeploymentObject(deployment)
+	return nil
+}
+
+func bundleSize(files []WorkerFile) int64 {
+	var total int64
+	for _, file := range files {
+		total += file.Size
+	}
+	return total
+}
+
+func deploymentBundleObjectPath(deploymentID string) string {
+	return path.Join("deployments", deploymentID, "bundle.json")
 }
 
 func (s *Service) PresignUpload(capability, path string) (string, error) {

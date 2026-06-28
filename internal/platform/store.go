@@ -17,6 +17,7 @@ type Repository interface {
 	ListApps() ([]App, error)
 	NextPort() (int, error)
 	Activate(Deployment) error
+	DeleteDeployment(id string) error
 	SetActive(appID, deploymentID string) error
 	ActiveDeployments() ([]ActiveDeployment, error)
 	ListDeployments() ([]DeploymentRecord, error)
@@ -107,6 +108,24 @@ func (s *Store) SetActive(appID, deploymentID string) error {
 	if deploymentID == "" {
 		delete(s.active, appID)
 		return nil
+	}
+	return errors.New("deployment not found")
+}
+
+func (s *Store) DeleteDeployment(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for appID, deployments := range s.deployments {
+		for i, deployment := range deployments {
+			if deployment.ID != id {
+				continue
+			}
+			s.deployments[appID] = append(deployments[:i], deployments[i+1:]...)
+			if s.active[appID] == id {
+				delete(s.active, appID)
+			}
+			return nil
+		}
 	}
 	return errors.New("deployment not found")
 }

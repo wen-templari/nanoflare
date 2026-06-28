@@ -54,7 +54,10 @@ CREATE TABLE IF NOT EXISTS deployments (
 	app_id text NOT NULL REFERENCES apps(id),
 	files jsonb NOT NULL,
 	entrypoint text NOT NULL,
+	format text NOT NULL DEFAULT '',
 	compatibility_date text NOT NULL,
+	bundle_size bigint NOT NULL DEFAULT 0,
+	object_key text NOT NULL DEFAULT '',
 	port integer NOT NULL,
 	created_at timestamptz NOT NULL,
 	active boolean NOT NULL DEFAULT false
@@ -67,10 +70,16 @@ UPDATE apps SET name = hostname WHERE name = '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS entrypoint text NOT NULL DEFAULT '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS format text NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
 UPDATE deployments SET format = CASE
 	WHEN jsonb_array_length(files) = 1 THEN 'service-worker'
 	ELSE 'modules'
 END WHERE format = '';
+UPDATE deployments SET bundle_size = COALESCE((
+	SELECT SUM(COALESCE((entry->>'size')::bigint, 0))
+	FROM jsonb_array_elements(files) AS entry
+), 0) WHERE bundle_size = 0;
 CREATE TABLE IF NOT EXISTS runtime_kv (
 	app_id text NOT NULL REFERENCES apps(id),
 	key text NOT NULL,
@@ -205,9 +214,13 @@ func (p *Postgres) NextPort() (int, error) {
 }
 
 func (p *Postgres) Activate(deployment platform.Deployment) error {
-	files, err := json.Marshal(deployment.Files)
-	if err != nil {
-		return err
+	files := []byte(`[]`)
+	var err error
+	if deployment.ObjectKey == "" {
+		files, err = json.Marshal(deployment.Files)
+		if err != nil {
+			return err
+		}
 	}
 	tx, err := p.db.Begin()
 	if err != nil {
@@ -221,10 +234,10 @@ func (p *Postgres) Activate(deployment platform.Deployment) error {
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, app_id, files, entrypoint, format, compatibility_date, port, created_at, active)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
+	(id, app_id, files, entrypoint, format, compatibility_date, bundle_size, object_key, port, created_at, active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)`,
 		deployment.ID, deployment.AppID, files, deployment.Entrypoint, deployment.Format,
-		deployment.CompatibilityDate, deployment.Port, deployment.CreatedAt)
+		deployment.CompatibilityDate, deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
 		return platform.ErrAppNotFound
 	}
@@ -260,10 +273,15 @@ func (p *Postgres) SetActive(appID, deploymentID string) error {
 	return tx.Commit()
 }
 
+func (p *Postgres) DeleteDeployment(id string) error {
+	_, err := p.db.Exec(`DELETE FROM deployments WHERE id = $1`, id)
+	return err
+}
+
 func (p *Postgres) ActiveDeployments() ([]platform.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.name, a.hostname, a.runtime_token, a.created_at,
-	d.id, d.app_id, d.files, d.entrypoint, d.format, d.compatibility_date, d.port, d.created_at
+	d.id, d.app_id, d.files, d.entrypoint, d.format, d.compatibility_date, d.bundle_size, d.object_key, d.port, d.created_at
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
 WHERE d.active
@@ -279,7 +297,8 @@ ORDER BY a.id`)
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &files, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &item.Deployment.Port,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &item.Deployment.BundleSize,
+			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt,
 		)
 		if err != nil {
@@ -296,7 +315,7 @@ ORDER BY a.id`)
 func (p *Postgres) ListDeployments() ([]platform.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
 	SELECT a.id, a.name, a.hostname, a.runtime_token, a.created_at,
-		d.id, d.app_id, d.files, d.entrypoint, d.format, d.compatibility_date, d.port, d.created_at, d.active
+		d.id, d.app_id, d.entrypoint, d.format, d.compatibility_date, d.bundle_size, d.object_key, d.port, d.created_at, d.active
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
 	ORDER BY d.created_at DESC`)
@@ -307,17 +326,14 @@ func (p *Postgres) ListDeployments() ([]platform.DeploymentRecord, error) {
 	var records []platform.DeploymentRecord
 	for rows.Next() {
 		var item platform.DeploymentRecord
-		var files []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &item.App.RuntimeToken, &item.App.CreatedAt,
-			&item.Deployment.ID, &item.Deployment.AppID, &files, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &item.Deployment.Port,
+			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.Entrypoint,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &item.Deployment.BundleSize,
+			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.Active,
 		)
 		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(files, &item.Deployment.Files); err != nil {
 			return nil, err
 		}
 		records = append(records, item)
