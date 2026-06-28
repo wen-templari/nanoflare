@@ -38,6 +38,7 @@ type Manager struct {
 	configDir       string
 	canonicalConfig string
 	portHost        string
+	portBind        string
 	nextPort        int
 	healthTimeout   time.Duration
 	stopTimeout     time.Duration
@@ -63,6 +64,7 @@ func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConf
 		configDir:       configDir,
 		canonicalConfig: canonicalConfig,
 		portHost:        portHost,
+		portBind:        "0.0.0.0",
 		nextPort:        portStart,
 		healthTimeout:   healthTimeout,
 		stopTimeout:     stopTimeout,
@@ -252,7 +254,7 @@ func (m *Manager) withRuntimePorts(active []platform.ActiveDeployment) ([]platfo
 
 func (m *Manager) availablePort() (int, error) {
 	for port := m.nextPort; port <= 65535; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort(m.portHost, fmt.Sprint(port)))
+		listener, err := net.Listen("tcp", net.JoinHostPort(m.portBind, fmt.Sprint(port)))
 		if err != nil {
 			continue
 		}

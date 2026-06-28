@@ -137,11 +137,14 @@ func main() {
 		log.Fatal(err)
 	}
 	server := api.NewServerWithTraefik(service, traefikStore, *traefikToken)
-	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: api.NewRuntimeKVServer(service)}
+	runtimeMux := http.NewServeMux()
+	runtimeMux.Handle("/", api.NewRuntimeKVServer(service))
+	runtimeMux.Handle("/internal/runtime/assets/", api.NewRuntimeAssetServer(service))
+	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {
-		log.Printf("platformd runtime KV API listening on %s", *runtimeAddr)
+		log.Printf("platformd runtime API listening on %s", *runtimeAddr)
 		if err := runtimeServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("runtime KV API: %v", err)
+			log.Fatalf("runtime API: %v", err)
 		}
 	}()
 

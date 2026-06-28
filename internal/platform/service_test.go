@@ -128,6 +128,96 @@ func TestActiveDeploymentsFallsBackToLegacyInlineFiles(t *testing.T) {
 	}
 }
 
+func TestDeployStoresAttachedAssetsAndServesThemThroughResolution(t *testing.T) {
+	store := newObjectBackedRepo()
+	objects := newMemoryObjectStore()
+	service := NewServiceWithObjects(store, &recordingWriter{}, objects)
+
+	app, err := service.CreateApp(CreateAppInput{Name: "Assets", Hostname: "assets.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		Assets:            []AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Hello</h1>")}},
+		CompatibilityDate: "2025-12-10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployment.Assets) != 1 || deployment.Assets[0].ObjectKey == "" {
+		t.Fatalf("deployment assets = %#v", deployment.Assets)
+	}
+	response, handled, err := service.PublicAsset(app.ID, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || response.StatusCode != 200 || string(response.Body) != "<h1>Hello</h1>" {
+		t.Fatalf("public asset response = %#v handled=%v", response, handled)
+	}
+}
+
+func TestPublicAssetFallsBackToCustom404Page(t *testing.T) {
+	store := newObjectBackedRepo()
+	objects := newMemoryObjectStore()
+	service := NewServiceWithObjects(store, &recordingWriter{}, objects)
+
+	app, err := service.CreateApp(CreateAppInput{Name: "Assets", Hostname: "assets.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Deploy(app.ID, DeployInput{
+		Files: []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		Assets: []AssetFile{
+			{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Hello</h1>")},
+			{Path: "404.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Missing</h1>")},
+		},
+		CompatibilityDate: "2025-12-10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, handled, err := service.PublicAsset(app.ID, "/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || response.StatusCode != 404 || string(response.Body) != "<h1>Missing</h1>" {
+		t.Fatalf("public asset response = %#v handled=%v", response, handled)
+	}
+}
+
+func TestDeleteAppRemovesDeploymentsAndCapability(t *testing.T) {
+	store := NewStore()
+	service := NewService(store, &recordingWriter{})
+
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2025-12-10",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteApp(app.ID); err != nil {
+		t.Fatal(err)
+	}
+	apps, err := service.ListApps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(apps) != 0 {
+		t.Fatalf("apps = %#v, want empty", apps)
+	}
+	if _, _, err := service.worker(app.ID); !errors.Is(err, ErrAppNotFound) {
+		t.Fatalf("worker() error = %v, want ErrAppNotFound", err)
+	}
+	if _, err := store.AppIDForCapability(app.RuntimeToken); !errors.Is(err, ErrInvalidCapability) {
+		t.Fatalf("capability error = %v, want ErrInvalidCapability", err)
+	}
+}
+
 type recordingWriter struct{}
 
 func (w *recordingWriter) Write([]ActiveDeployment) error {

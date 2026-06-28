@@ -53,9 +53,11 @@ CREATE TABLE IF NOT EXISTS deployments (
 	id text PRIMARY KEY,
 	app_id text NOT NULL REFERENCES apps(id),
 	files jsonb NOT NULL,
+	assets jsonb NOT NULL DEFAULT '[]',
 	entrypoint text NOT NULL,
 	format text NOT NULL DEFAULT '',
 	compatibility_date text NOT NULL,
+	asset_config jsonb NOT NULL DEFAULT '{}'::jsonb,
 	bundle_size bigint NOT NULL DEFAULT 0,
 	object_key text NOT NULL DEFAULT '',
 	port integer NOT NULL,
@@ -68,8 +70,10 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
 UPDATE apps SET name = hostname WHERE name = '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS assets jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS entrypoint text NOT NULL DEFAULT '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS format text NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
 UPDATE deployments SET format = CASE
@@ -207,6 +211,32 @@ func (p *Postgres) ListApps() ([]platform.App, error) {
 	return apps, rows.Err()
 }
 
+func (p *Postgres) DeleteApp(appID string) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM runtime_kv WHERE app_id = $1`, appID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM deployments WHERE app_id = $1`, appID); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM apps WHERE id = $1`, appID)
+	if err != nil {
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
+		return platform.ErrAppNotFound
+	}
+	return tx.Commit()
+}
+
 func (p *Postgres) NextPort() (int, error) {
 	var port int
 	err := p.db.QueryRow(`SELECT COALESCE(MAX(port) + 1, 9001) FROM deployments`).Scan(&port)
@@ -215,7 +245,10 @@ func (p *Postgres) NextPort() (int, error) {
 
 func (p *Postgres) Activate(deployment platform.Deployment) error {
 	files := []byte(`[]`)
-	var err error
+	assets, err := json.Marshal(deployment.Assets)
+	if err != nil {
+		return err
+	}
 	if deployment.ObjectKey == "" {
 		files, err = json.Marshal(deployment.Files)
 		if err != nil {
@@ -234,10 +267,10 @@ func (p *Postgres) Activate(deployment platform.Deployment) error {
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, app_id, files, entrypoint, format, compatibility_date, bundle_size, object_key, port, created_at, active)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)`,
-		deployment.ID, deployment.AppID, files, deployment.Entrypoint, deployment.Format,
-		deployment.CompatibilityDate, deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
+	(id, app_id, files, assets, entrypoint, format, compatibility_date, asset_config, bundle_size, object_key, port, created_at, active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)`,
+		deployment.ID, deployment.AppID, files, assets, deployment.Entrypoint, deployment.Format,
+		deployment.CompatibilityDate, mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
 		return platform.ErrAppNotFound
 	}
@@ -281,7 +314,7 @@ func (p *Postgres) DeleteDeployment(id string) error {
 func (p *Postgres) ActiveDeployments() ([]platform.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.name, a.hostname, a.runtime_token, a.created_at,
-	d.id, d.app_id, d.files, d.entrypoint, d.format, d.compatibility_date, d.bundle_size, d.object_key, d.port, d.created_at
+	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
 WHERE d.active
@@ -293,11 +326,11 @@ ORDER BY a.id`)
 	var active []platform.ActiveDeployment
 	for rows.Next() {
 		var item platform.ActiveDeployment
-		var files []byte
+		var files, assets, assetConfig []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &item.App.RuntimeToken, &item.App.CreatedAt,
-			&item.Deployment.ID, &item.Deployment.AppID, &files, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &item.Deployment.BundleSize,
+			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt,
 		)
@@ -305,6 +338,12 @@ ORDER BY a.id`)
 			return nil, err
 		}
 		if err := json.Unmarshal(files, &item.Deployment.Files); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(assets, &item.Deployment.Assets); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {
 			return nil, err
 		}
 		active = append(active, item)
@@ -315,7 +354,7 @@ ORDER BY a.id`)
 func (p *Postgres) ListDeployments() ([]platform.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
 	SELECT a.id, a.name, a.hostname, a.runtime_token, a.created_at,
-		d.id, d.app_id, d.entrypoint, d.format, d.compatibility_date, d.bundle_size, d.object_key, d.port, d.created_at, d.active
+		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
 	ORDER BY d.created_at DESC`)
@@ -326,14 +365,21 @@ func (p *Postgres) ListDeployments() ([]platform.DeploymentRecord, error) {
 	var records []platform.DeploymentRecord
 	for rows.Next() {
 		var item platform.DeploymentRecord
+		var assets, assetConfig []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &item.App.RuntimeToken, &item.App.CreatedAt,
-			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &item.Deployment.BundleSize,
+			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.Active,
 		)
 		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(assets, &item.Deployment.Assets); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {
 			return nil, err
 		}
 		records = append(records, item)
@@ -408,4 +454,9 @@ func sqlState(err error) string {
 		return target.SQLState()
 	}
 	return fmt.Sprint(err)
+}
+
+func mustJSON(value any) []byte {
+	data, _ := json.Marshal(value)
+	return data
 }

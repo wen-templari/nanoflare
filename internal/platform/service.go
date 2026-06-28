@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"path"
 	"strings"
@@ -38,6 +39,12 @@ type Service struct {
 	objects ObjectStore
 	output  WorkerOutputReader
 	traffic WorkerTrafficReader
+}
+
+type AssetResponse struct {
+	Body        []byte
+	ContentType string
+	StatusCode  int
 }
 
 func NewService(store Repository, writer ConfigWriter) *Service {
@@ -77,6 +84,45 @@ func (s *Service) ListApps() ([]App, error) {
 	return s.store.ListApps()
 }
 
+func (s *Service) DeleteApp(appID string) error {
+	records, err := s.store.ListDeployments()
+	if err != nil {
+		return err
+	}
+	apps, err := s.store.ListApps()
+	if err != nil {
+		return err
+	}
+	exists := false
+	for _, app := range apps {
+		if app.ID == appID {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		return ErrAppNotFound
+	}
+	for _, record := range records {
+		if record.App.ID != appID {
+			continue
+		}
+		s.cleanupDeploymentObject(record.Deployment)
+		s.cleanupDeploymentAssets(record.Deployment)
+	}
+	if err := s.store.DeleteApp(appID); err != nil {
+		return err
+	}
+	active, err := s.activeDeployments()
+	if err != nil {
+		return err
+	}
+	if err := s.writer.Write(active); err != nil {
+		return fmt.Errorf("write generated config: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) ActiveDeployments() ([]ActiveDeployment, error) {
 	return s.activeDeployments()
 }
@@ -95,7 +141,9 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		Entrypoint:        active.Deployment.Entrypoint,
 		Format:            active.Deployment.Format,
 		BundleSize:        active.Deployment.BundleSize,
+		AssetCount:        len(active.Deployment.Assets),
 		CompatibilityDate: active.Deployment.CompatibilityDate,
+		AssetConfig:       active.Deployment.AssetConfig,
 		Port:              active.Deployment.Port,
 		CreatedAt:         active.Deployment.CreatedAt,
 	}
@@ -127,6 +175,7 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			Entrypoint:        record.Deployment.Entrypoint,
 			Format:            record.Deployment.Format,
 			BundleSize:        record.Deployment.BundleSize,
+			AssetCount:        len(record.Deployment.Assets),
 			CompatibilityDate: record.Deployment.CompatibilityDate,
 			State:             state,
 			CreatedAt:         record.Deployment.CreatedAt,
@@ -198,6 +247,14 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
+	assets, err := deploymentAssets(input.Assets, input.AssetConfig)
+	if err != nil {
+		return Deployment{}, err
+	}
+	assetConfig, err := normalizeAssetConfig(input.AssetConfig)
+	if err != nil {
+		return Deployment{}, err
+	}
 	format, err := workerFormat(input.Format, len(files))
 	if err != nil {
 		return Deployment{}, err
@@ -217,12 +274,17 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		ID:                deploymentID,
 		AppID:             appID,
 		Files:             files,
+		Assets:            assets,
 		Entrypoint:        entrypoint,
 		Format:            format,
 		CompatibilityDate: input.CompatibilityDate,
+		AssetConfig:       assetConfig,
 		BundleSize:        bundleSize(files),
 		Port:              port,
 		CreatedAt:         time.Now().UTC(),
+	}
+	if len(deployment.Assets) > 0 && s.objects == nil {
+		return Deployment{}, errors.New("object storage is not configured")
 	}
 	if s.objects != nil {
 		payload, err := json.Marshal(files)
@@ -232,6 +294,15 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		deployment.ObjectKey = deploymentBundleObjectPath(deploymentID)
 		if err := s.objects.Put(appID, deployment.ObjectKey, "application/json", payload); err != nil {
 			return Deployment{}, err
+		}
+		for i := range deployment.Assets {
+			deployment.Assets[i].ObjectKey = deploymentAssetObjectPath(deploymentID, deployment.Assets[i].Path)
+			if err := s.objects.Put(appID, deployment.Assets[i].ObjectKey, deployment.Assets[i].ContentType, deployment.Assets[i].Data); err != nil {
+				s.cleanupDeploymentAssets(deployment)
+				s.cleanupDeploymentObject(deployment)
+				return Deployment{}, err
+			}
+			deployment.Assets[i].Data = nil
 		}
 	}
 	activeBefore, err := s.activeDeployments()
@@ -309,6 +380,63 @@ func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, strin
 	return result, entrypoint, nil
 }
 
+func deploymentAssets(files []AssetFile, config AssetConfig) ([]AssetFile, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	result := make([]AssetFile, 0, len(files))
+	seen := make(map[string]bool, len(files))
+	for _, file := range files {
+		file.Path = path.Clean(strings.TrimSpace(file.Path))
+		if file.Path == "." || strings.HasPrefix(file.Path, "/") || strings.HasPrefix(file.Path, "../") {
+			return nil, errors.New("asset paths must be relative and remain inside the asset directory")
+		}
+		if seen[file.Path] {
+			return nil, fmt.Errorf("duplicate asset path %q", file.Path)
+		}
+		seen[file.Path] = true
+		file.Size = int64(len(file.Data))
+		if file.Size == 0 {
+			return nil, fmt.Errorf("asset %q is empty", file.Path)
+		}
+		if file.ContentType == "" {
+			file.ContentType = detectAssetContentType(file.Path)
+		}
+		result = append(result, file)
+	}
+	if len(result) > 0 && strings.TrimSpace(config.HTMLHandling) == "" {
+		config.HTMLHandling = "auto-trailing-slash"
+	}
+	return result, nil
+}
+
+func normalizeAssetConfig(config AssetConfig) (AssetConfig, error) {
+	if config.HTMLHandling == "" {
+		config.HTMLHandling = "auto-trailing-slash"
+	}
+	switch config.HTMLHandling {
+	case "none", "auto-trailing-slash":
+	default:
+		return AssetConfig{}, errors.New(`asset_config.html_handling must be "none" or "auto-trailing-slash"`)
+	}
+	if config.NotFoundHandling == "" {
+		config.NotFoundHandling = "404-page"
+	}
+	switch config.NotFoundHandling {
+	case "none", "404-page", "single-page-application":
+	default:
+		return AssetConfig{}, errors.New(`asset_config.not_found_handling must be "none", "404-page", or "single-page-application"`)
+	}
+	return config, nil
+}
+
+func detectAssetContentType(assetPath string) string {
+	if value := mime.TypeByExtension(strings.ToLower(path.Ext(assetPath))); value != "" {
+		return value
+	}
+	return "application/octet-stream"
+}
+
 func activeDeploymentID(active []ActiveDeployment, appID string) string {
 	for _, item := range active {
 		if item.App.ID == appID {
@@ -364,6 +492,18 @@ func (s *Service) cleanupDeploymentObject(deployment Deployment) {
 	_ = s.objects.Delete(deployment.AppID, deployment.ObjectKey)
 }
 
+func (s *Service) cleanupDeploymentAssets(deployment Deployment) {
+	if s.objects == nil {
+		return
+	}
+	for _, asset := range deployment.Assets {
+		if asset.ObjectKey == "" {
+			continue
+		}
+		_ = s.objects.Delete(deployment.AppID, asset.ObjectKey)
+	}
+}
+
 func (s *Service) rollbackDeployment(appID, previousID string, deployment Deployment) error {
 	if err := s.store.SetActive(appID, previousID); err != nil {
 		return err
@@ -372,6 +512,7 @@ func (s *Service) rollbackDeployment(appID, previousID string, deployment Deploy
 		return err
 	}
 	s.cleanupDeploymentObject(deployment)
+	s.cleanupDeploymentAssets(deployment)
 	return nil
 }
 
@@ -385,6 +526,10 @@ func bundleSize(files []WorkerFile) int64 {
 
 func deploymentBundleObjectPath(deploymentID string) string {
 	return path.Join("deployments", deploymentID, "bundle.json")
+}
+
+func deploymentAssetObjectPath(deploymentID, assetPath string) string {
+	return path.Join("deployments", deploymentID, "assets", assetPath)
 }
 
 func (s *Service) PresignUpload(capability, path string) (string, error) {
@@ -428,6 +573,109 @@ func (s *Service) KVPut(capability, key string, value []byte) error {
 
 func (s *Service) KVDelete(capability, key string) error {
 	return s.store.KVDelete(capability, key)
+}
+
+func (s *Service) AssetFetch(capability, assetPath string) (AssetResponse, error) {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return AssetResponse{}, err
+	}
+	return s.assetResponse(appID, assetPath)
+}
+
+func (s *Service) PublicAsset(appID, requestPath string) (AssetResponse, bool, error) {
+	if _, active, err := s.worker(appID); err != nil {
+		return AssetResponse{}, false, err
+	} else if active == nil || len(active.Deployment.Assets) == 0 {
+		return AssetResponse{}, false, nil
+	}
+	response, err := s.assetResponse(appID, requestPath)
+	if err != nil {
+		return AssetResponse{}, false, err
+	}
+	return response, true, nil
+}
+
+func (s *Service) WorkerPort(appID string) (int, bool, error) {
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return 0, false, err
+	}
+	if active == nil {
+		return 0, false, nil
+	}
+	return active.Deployment.Port, active.Deployment.AssetConfig.RunWorkerFirst, nil
+}
+
+func (s *Service) assetResponse(appID, requestPath string) (AssetResponse, error) {
+	if s.objects == nil {
+		return AssetResponse{}, errors.New("object storage is not configured")
+	}
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return AssetResponse{}, err
+	}
+	if active == nil {
+		return AssetResponse{}, ErrAppNotFound
+	}
+	if len(active.Deployment.Assets) == 0 {
+		return AssetResponse{StatusCode: 404}, nil
+	}
+	resolved, status, ok := resolveAsset(active.Deployment, requestPath)
+	if !ok {
+		return AssetResponse{StatusCode: 404}, nil
+	}
+	body, err := s.objects.Get(appID, resolved.ObjectKey)
+	if err != nil {
+		return AssetResponse{}, err
+	}
+	return AssetResponse{
+		Body:        body,
+		ContentType: resolved.ContentType,
+		StatusCode:  status,
+	}, nil
+}
+
+func resolveAsset(deployment Deployment, requestPath string) (AssetFile, int, bool) {
+	lookup := make(map[string]AssetFile, len(deployment.Assets))
+	for _, asset := range deployment.Assets {
+		lookup["/"+strings.TrimPrefix(asset.Path, "/")] = asset
+	}
+	clean := path.Clean("/" + strings.TrimSpace(requestPath))
+	if clean == "." {
+		clean = "/"
+	}
+	if asset, ok := lookup[clean]; ok {
+		return asset, 200, true
+	}
+	if deployment.AssetConfig.HTMLHandling == "auto-trailing-slash" {
+		for _, candidate := range []string{
+			htmlIndexPath(clean),
+			strings.TrimSuffix(clean, "/") + ".html",
+		} {
+			if asset, ok := lookup[candidate]; ok {
+				return asset, 200, true
+			}
+		}
+	}
+	switch deployment.AssetConfig.NotFoundHandling {
+	case "single-page-application":
+		if asset, ok := lookup["/index.html"]; ok {
+			return asset, 200, true
+		}
+	case "404-page":
+		if asset, ok := lookup["/404.html"]; ok {
+			return asset, 404, true
+		}
+	}
+	return AssetFile{}, 404, false
+}
+
+func htmlIndexPath(requestPath string) string {
+	if requestPath == "/" {
+		return "/index.html"
+	}
+	return strings.TrimSuffix(requestPath, "/") + "/index.html"
 }
 
 func randomToken() (string, error) {

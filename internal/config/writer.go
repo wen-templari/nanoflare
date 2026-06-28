@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -81,6 +82,8 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
 			quote(kvServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
+		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
+			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
@@ -91,7 +94,8 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(item.App.ID))
 		writeWorkerSource(&out, item.Deployment)
-		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s)],\n", quote(kvServiceName(item.App.ID)))
+		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s), (name = \"ASSETS\", service = %s)],\n",
+			quote(kvServiceName(item.App.ID)), quote(assetServiceName(item.App.ID)))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		out.WriteString(");\n")
 	}
@@ -124,6 +128,10 @@ func kvServiceName(appID string) string {
 	return "kv-" + appID
 }
 
+func assetServiceName(appID string) string {
+	return "assets-" + appID
+}
+
 func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.WorkerFile {
 	result := make([]platform.WorkerFile, 0, len(files))
 	for _, file := range files {
@@ -144,19 +152,33 @@ func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) str
 	var out strings.Builder
 	out.WriteString("http:\n  middlewares:\n    platform-auth:\n      forwardAuth:\n")
 	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Platform-Context\n", yamlQuote(authURL))
+	backendBase := platformdGatewayBase(authURL)
+	for _, item := range active {
+		name := identifier(item.App.ID)
+		fmt.Fprintf(&out, "    %s-prefix:\n      addPrefix:\n        prefix: %s\n",
+			name, yamlQuote(fmt.Sprintf("/internal/http/apps/%s/%d", item.App.ID, item.Deployment.Port)))
+	}
 	out.WriteString("  routers:\n")
 	for _, item := range active {
 		name := identifier(item.App.ID)
-		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      entryPoints:\n        - websecure\n      middlewares:\n        - platform-auth\n      service: %s\n      tls: {}\n",
-			name, yamlQuote("Host(`"+item.App.Hostname+"`)"), name)
+		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - platform-auth\n        - %s-prefix\n      service: %s\n      tls: {}\n",
+			name, yamlQuote("Host(`"+item.App.Hostname+"`)"), name, name)
 	}
 	out.WriteString("  services:\n")
 	for _, item := range active {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s:\n      loadBalancer:\n        servers:\n          - url: %s\n",
-			name, yamlQuote(fmt.Sprintf("http://%s:%d/", workerHost, item.Deployment.Port)))
+			name, yamlQuote(backendBase))
 	}
 	return out.String()
+}
+
+func platformdGatewayBase(authURL string) string {
+	parsed, err := url.Parse(authURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return authURL
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func writeAtomic(path string, content []byte) error {

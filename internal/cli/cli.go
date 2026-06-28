@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,14 +36,22 @@ type Runner struct {
 }
 
 type Project struct {
-	Name              string   `json:"name"`
-	Hostname          string   `json:"hostname"`
-	AppID             string   `json:"app_id,omitempty"`
-	APIURL            string   `json:"api_url"`
-	Entrypoint        string   `json:"entrypoint"`
-	Format            string   `json:"format,omitempty"`
-	CompatibilityDate string   `json:"compatibility_date"`
-	Files             []string `json:"files"`
+	Name              string        `json:"name"`
+	Hostname          string        `json:"hostname"`
+	AppID             string        `json:"app_id,omitempty"`
+	APIURL            string        `json:"api_url"`
+	Entrypoint        string        `json:"entrypoint"`
+	Format            string        `json:"format,omitempty"`
+	CompatibilityDate string        `json:"compatibility_date"`
+	Files             []string      `json:"files"`
+	Assets            ProjectAssets `json:"assets,omitempty"`
+}
+
+type ProjectAssets struct {
+	Directory        string `json:"directory,omitempty"`
+	HTMLHandling     string `json:"html_handling,omitempty"`
+	NotFoundHandling string `json:"not_found_handling,omitempty"`
+	RunWorkerFirst   bool   `json:"run_worker_first,omitempty"`
 }
 
 func NewRunner(stdout, stderr io.Writer) *Runner {
@@ -63,6 +73,10 @@ func (r *Runner) Run(args []string) error {
 		return r.init(args[1:])
 	case "create":
 		return r.create(withoutWorkerNoun(args[1:]))
+	case "list":
+		return r.list(withoutWorkerNoun(args[1:]))
+	case "delete":
+		return r.delete(withoutWorkerNoun(args[1:]))
 	case "deploy":
 		return r.deploy(withoutWorkerNoun(args[1:]))
 	case "help", "-h", "--help":
@@ -124,7 +138,7 @@ func (r *Runner) init(args []string) error {
 		APIURL:            strings.TrimRight(*apiURL, "/"),
 		Entrypoint:        "worker.js",
 		Format:            "modules",
-		CompatibilityDate: "2025-12-10",
+		CompatibilityDate: r.Now().UTC().Format("2006-01-02"),
 		Files:             []string{"worker.js"},
 	}
 	if err := writeProject(projectPath, project, os.O_EXCL); err != nil {
@@ -173,6 +187,67 @@ func (r *Runner) create(args []string) error {
 	return nil
 }
 
+func (r *Runner) list(args []string) error {
+	flags := flag.NewFlagSet("list", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("PLATFORMD_URL", defaultAPIURL), "platformd base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: platform list [worker] [flags]")
+	}
+	var apps []platform.App
+	if err := r.request(http.MethodGet, strings.TrimRight(*apiURL, "/")+"/v1/apps", nil, &apps); err != nil {
+		return err
+	}
+	for _, app := range apps {
+		fmt.Fprintf(r.Stdout, "%s\t%s\t%s\n", app.ID, app.Name, app.Hostname)
+	}
+	return nil
+}
+
+func (r *Runner) delete(args []string) error {
+	flags := flag.NewFlagSet("delete", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", "", "platformd base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 1 {
+		return errors.New("usage: platform delete [worker] [app-id] [flags]")
+	}
+	appID := ""
+	var projectPath string
+	var project Project
+	if flags.NArg() == 1 {
+		appID = strings.TrimSpace(flags.Arg(0))
+	} else {
+		var err error
+		projectPath, project, err = loadProject()
+		if err != nil {
+			return err
+		}
+		if project.AppID == "" {
+			return errors.New("worker is not registered; run `platform create` first")
+		}
+		appID = project.AppID
+	}
+	baseURL := projectAPIURL(project, *apiURL)
+	if err := r.request(http.MethodDelete, baseURL+"/v1/apps/"+appID, nil, nil); err != nil {
+		return err
+	}
+	if projectPath != "" && project.AppID == appID {
+		project.AppID = ""
+		project.APIURL = baseURL
+		if err := writeProject(projectPath, project, os.O_TRUNC); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(r.Stdout, "Deleted worker %s\n", appID)
+	return nil
+}
+
 func (r *Runner) deploy(args []string) error {
 	flags := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
@@ -199,12 +274,22 @@ func (r *Runner) deploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	assets, err := loadAssetFiles(project.Assets.Directory)
+	if err != nil {
+		return err
+	}
 	var deployment platform.Deployment
 	if err := r.request(http.MethodPost, projectAPIURL(project, *apiURL)+"/v1/apps/"+project.AppID+"/deployments", platform.DeployInput{
 		Files:             files,
+		Assets:            assets,
 		Entrypoint:        project.Entrypoint,
 		Format:            project.Format,
 		CompatibilityDate: date,
+		AssetConfig: platform.AssetConfig{
+			HTMLHandling:     project.Assets.HTMLHandling,
+			NotFoundHandling: project.Assets.NotFoundHandling,
+			RunWorkerFirst:   project.Assets.RunWorkerFirst,
+		},
 	}, &deployment); err != nil {
 		return err
 	}
@@ -213,15 +298,21 @@ func (r *Runner) deploy(args []string) error {
 }
 
 func (r *Runner) request(method, url string, input, output any) error {
-	body, err := json.Marshal(input)
+	var body io.Reader
+	if input != nil {
+		payload, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequest(method, url, bytes.NewReader(body))
-	if err != nil {
-		return err
+	if input != nil {
+		request.Header.Set("Content-Type", "application/json")
 	}
-	request.Header.Set("Content-Type", "application/json")
 	response, err := r.Client.Do(request)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, url, err)
@@ -235,6 +326,9 @@ func (r *Runner) request(method, url string, input, output any) error {
 			return fmt.Errorf("%s %s: platformd returned %s", method, url, response.Status)
 		}
 		return fmt.Errorf("%s %s: %s", method, url, apiError.Error)
+	}
+	if output == nil || response.StatusCode == http.StatusNoContent {
+		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
 		return fmt.Errorf("decode platformd response: %w", err)
@@ -275,6 +369,56 @@ func loadWorkerFiles(paths []string) ([]platform.WorkerFile, error) {
 		files = append(files, platform.WorkerFile{Path: filepath.ToSlash(clean), Content: string(content)})
 	}
 	return files, nil
+}
+
+func loadAssetFiles(dir string) ([]platform.AssetFile, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil, nil
+	}
+	cleanRoot := filepath.Clean(filepath.FromSlash(dir))
+	if cleanRoot == "." || filepath.IsAbs(cleanRoot) || cleanRoot == ".." || strings.HasPrefix(cleanRoot, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("asset directory %q must remain inside the project", dir)
+	}
+	var assets []platform.AssetFile
+	err := filepath.WalkDir(cleanRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(cleanRoot, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(filepath.Clean(relative))
+		if relative == "." || strings.HasPrefix(relative, "../") {
+			return fmt.Errorf("asset file path %q must remain inside %s", path, cleanRoot)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read asset file %s: %w", path, err)
+		}
+		assets = append(assets, platform.AssetFile{
+			Path:        relative,
+			Size:        int64(len(data)),
+			ContentType: detectContentType(relative),
+			Data:        data,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return assets, nil
+}
+
+func detectContentType(path string) string {
+	if value := mime.TypeByExtension(strings.ToLower(filepath.Ext(path))); value != "" {
+		return value
+	}
+	return "application/octet-stream"
 }
 
 func writeProject(path string, project Project, flag int) error {
@@ -343,5 +487,7 @@ func (r *Runner) usage() {
 	fmt.Fprintln(r.Stderr, `Usage:
   platform init [flags] [directory]
   platform create [worker] [flags]
+  platform list [worker] [flags]
+  platform delete [worker] [app-id] [flags]
   platform deploy [worker] [flags]`)
 }

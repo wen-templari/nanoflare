@@ -109,6 +109,16 @@ Build the CLI:
 go build -o ./bin/platform ./cmd/platform
 ```
 
+Build all distributable packages with Docker:
+
+```sh
+docker build --output type=local,dest=./dist .
+```
+
+The exported artifacts include the `platform`, `platform-runner`, and
+`platformd` binaries under `dist/bin`, the web console under `dist/ui`, and the
+TypeScript Worker SDK under `dist/packages/worker-sdk`.
+
 Initialize, register, and deploy a worker:
 
 ```sh

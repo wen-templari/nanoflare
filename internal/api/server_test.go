@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,34 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	if !traffic.Available || traffic.RequestsPerSecond != 4.25 || len(traffic.Traffic) != 2 {
 		t.Fatalf("unexpected worker traffic: %#v", traffic)
 	}
+
+	var apps []platform.App
+	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &apps)
+	if len(apps) != 1 || apps[0].ID != app.ID {
+		t.Fatalf("unexpected app list: %#v", apps)
+	}
+}
+
+func TestDeleteAppRemovesWorker(t *testing.T) {
+	dir := t.TempDir()
+	service := platform.NewService(platform.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServer(service)
+	app := createApp(t, server, "Delete App", "delete.example.com")
+	deploy(t, server, app.ID)
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/v1/apps/"+app.ID, nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("delete app status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &[]platform.App{})
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusNotFound, &map[string]string{})
 }
 
 func TestWorkerConsoleAPIsWithObjectBackedDeployment(t *testing.T) {
@@ -196,6 +225,63 @@ func TestTraefikConfigRequiresToken(t *testing.T) {
 	}
 }
 
+func TestAppGatewayServesAttachedAsset(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployWithAssets(t, server, app.ID,
+		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Site</h1>" {
+		t.Fatalf("gateway status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Fatalf("content type = %q", got)
+	}
+}
+
+func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployment := deployWithAssets(t, server, app.ID,
+		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]platform.AssetFile{{Path: "logo.svg", ContentType: "image/svg+xml", Data: []byte("<svg />")}},
+	)
+	if len(deployment.Assets) != 1 {
+		t.Fatalf("deployment assets = %#v", deployment.Assets)
+	}
+
+	runtimeAssets := NewRuntimeAssetServer(service)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/runtime/assets/logo.svg", nil)
+	request.Header.Set("Authorization", "Bearer "+runtimeTokens(t, store)[app.ID])
+	runtimeAssets.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "<svg />" {
+		t.Fatalf("runtime asset status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
 type staticTraefikConfig string
 
 func (config staticTraefikConfig) TraefikConfig() []byte {
@@ -246,6 +332,30 @@ func deployContent(t *testing.T, server http.Handler, appID string, files []plat
 	}
 	if len(deployment.ID) != 48 {
 		t.Fatalf("generated deployment id = %q, want 48 character token", deployment.ID)
+	}
+	return deployment
+}
+
+func deployWithAssets(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, assets []platform.AssetFile) platform.Deployment {
+	t.Helper()
+	body, err := json.Marshal(platform.DeployInput{
+		Files:             files,
+		Assets:            assets,
+		CompatibilityDate: "2025-12-10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/apps/"+appID+"/deployments", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("deploy status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var deployment platform.Deployment
+	if err := json.NewDecoder(recorder.Body).Decode(&deployment); err != nil {
+		t.Fatal(err)
 	}
 	return deployment
 }
@@ -310,6 +420,10 @@ func (s *apiObjectStore) Delete(appID, path string) error {
 
 type apiObjectBackedRepo struct {
 	*platform.Store
+}
+
+func newAPIObjectBackedRepo() *apiObjectBackedRepo {
+	return &apiObjectBackedRepo{Store: platform.NewStore()}
 }
 
 func (r *apiObjectBackedRepo) Activate(deployment platform.Deployment) error {

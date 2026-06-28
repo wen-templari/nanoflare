@@ -18,7 +18,10 @@ func TestTraefikStorePublishesGeneratedConfiguration(t *testing.T) {
 	config := string(store.TraefikConfig())
 	for _, expected := range []string{
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
-		`url: "http://runtime.internal:10001/"`,
+		`- web`,
+		`- websecure`,
+		`prefix: "/internal/http/apps/hello-app/10001"`,
+		`url: "http://platformd"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)

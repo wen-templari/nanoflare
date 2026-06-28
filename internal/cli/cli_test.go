@@ -96,6 +96,82 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 }
 
+func TestListWorkers(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(t, w, http.StatusOK, []platform.App{
+			{ID: "app-123", Name: "Hello", Hostname: "hello.example.com"},
+			{ID: "app-456", Name: "World", Hostname: "world.example.com"},
+		})
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"list", "--api-url", server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "app-123\tHello\thello.example.com\napp-456\tWorld\tworld.example.com\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestDeleteRegisteredWorkerClearsLocalAppID(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/app-123" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	writeProjectFile(t, Project{
+		Name:              "Hello",
+		Hostname:          "hello.example.com",
+		AppID:             "app-123",
+		APIURL:            server.URL,
+		Entrypoint:        "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+	})
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"delete"}); err != nil {
+		t.Fatal(err)
+	}
+	project := readProject(t, projectFilename)
+	if project.AppID != "" {
+		t.Fatalf("app id = %q, want cleared", project.AppID)
+	}
+	if got := stdout.String(); got != "Deleted worker app-123\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestDeleteWorkerByID(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/app-789" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	runner := NewRunner(io.Discard, io.Discard)
+	if err := runner.Run([]string{"delete", "--api-url", server.URL, "app-789"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDeployRequiresRegisteredWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	writeProjectFile(t, Project{

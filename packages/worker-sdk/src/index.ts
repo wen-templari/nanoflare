@@ -6,6 +6,7 @@ export interface Identity {
 
 export interface PlatformEnv {
   KV: KVNamespace;
+  ASSETS: AssetFetcher;
   OBJECTS: {
     presignUpload(path: string): Promise<string>;
     presignDownload(path: string): Promise<string>;
@@ -30,6 +31,14 @@ export interface RuntimeClientOptions {
   capability: string;
 }
 
+export interface Fetcher {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
+export interface AssetFetcher {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
 export function createRuntimeClient(options: RuntimeClientOptions): Omit<PlatformEnv, "KV"> {
   async function runtimeRequest<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(new URL(path, options.baseURL), {
@@ -50,6 +59,15 @@ export function createRuntimeClient(options: RuntimeClientOptions): Omit<Platfor
   }
 
   return {
+    ASSETS: {
+      fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+        const target = assetRuntimeURL(input, options.baseURL);
+        return fetch(target, {
+          method: init?.method ?? "GET",
+          headers: { authorization: `Bearer ${options.capability}` },
+        });
+      },
+    } satisfies AssetFetcher,
     OBJECTS: {
       async presignUpload(path: string): Promise<string> {
         const response = await runtimeRequest<{ url: string }>("/internal/runtime/objects/presign-upload", { path });
@@ -70,4 +88,13 @@ export function createRuntimeClient(options: RuntimeClientOptions): Omit<Platfor
       },
     },
   };
+}
+
+function assetRuntimeURL(input: RequestInfo | URL, baseURL: string): URL {
+  if (typeof input === "string" && input.startsWith("/")) {
+    return new URL(`/internal/runtime/assets${input}`, baseURL);
+  }
+  const request = new Request(input);
+  const url = new URL(request.url);
+  return new URL(`/internal/runtime/assets${url.pathname}${url.search}`, baseURL);
 }

@@ -149,6 +149,28 @@ func TestManagerCanDisableAutomaticRestart(t *testing.T) {
 	}
 }
 
+func TestManagerSkipsPortBusyOnWildcardBind(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
+	defer manager.Close()
+
+	busyPort := manager.nextPort
+	busy, err := net.Listen("tcp", "0.0.0.0:"+stringPort(busyPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+
+	port, err := manager.availablePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port == busyPort {
+		t.Fatalf("allocator reused busy wildcard port %d", port)
+	}
+}
+
 func deployments(port int) []platform.ActiveDeployment {
 	return []platform.ActiveDeployment{{
 		App: platform.App{ID: "hello", Hostname: "hello.example.com"},

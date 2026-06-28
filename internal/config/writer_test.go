@@ -22,6 +22,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`address = "*:9001"`,
 		`serviceWorkerScript = "addEventListener(\"fetch\", () => {});"`,
 		`(name = "KV", kvNamespace = "kv-hello-app")`,
+		`(name = "ASSETS", service = "assets-hello-app")`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
 	} {
@@ -78,7 +79,11 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 	for _, expected := range []string{
 		`address: "http://platformd:8080/internal/auth/verify"`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
-		`url: "http://host.docker.internal:9001/"`,
+		`- web`,
+		`- websecure`,
+		`- hello_app-prefix`,
+		`prefix: "/internal/http/apps/hello-app/9001"`,
+		`url: "http://platformd:8080"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)
