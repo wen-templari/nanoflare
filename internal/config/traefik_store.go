@@ -9,6 +9,7 @@ import (
 type TraefikStore struct {
 	mu         sync.RWMutex
 	authURL    string
+	authHost   string
 	workerHost string
 	config     []byte
 }
@@ -19,8 +20,17 @@ func NewTraefikStore(authURL, workerHost string) *TraefikStore {
 	return store
 }
 
+func (s *TraefikStore) SetAuthHost(host string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authHost = host
+}
+
 func (s *TraefikStore) WriteTraefik(active []platform.ActiveDeployment) error {
-	config := []byte(Traefik(active, s.authURL, s.workerHost))
+	s.mu.RLock()
+	authHost := s.authHost
+	s.mu.RUnlock()
+	config := []byte(Traefik(active, s.authURL, authHost, s.workerHost))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.config = config

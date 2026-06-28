@@ -3,6 +3,8 @@ package oidc
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -31,7 +33,9 @@ type Verifier struct {
 	emailClaim   string
 	clientID     string
 	clientSecret string
+	publicURL    string
 	redirectURL  string
+	cookieDomain string
 	client       *http.Client
 
 	mu        sync.RWMutex
@@ -69,6 +73,9 @@ type jwk struct {
 	Kty string `json:"kty"`
 	N   string `json:"n"`
 	E   string `json:"e"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
 }
 
 type jwtHeader struct {
@@ -78,23 +85,26 @@ type jwtHeader struct {
 }
 
 func NewVerifier(issuer, audience, emailClaim string, client *http.Client) *Verifier {
-	return NewBrowserVerifier(issuer, audience, emailClaim, "", "", "", client)
+	return NewBrowserVerifier(issuer, audience, emailClaim, "", "", "", "", client)
 }
 
-func NewBrowserVerifier(issuer, audience, emailClaim, clientID, clientSecret, redirectURL string, client *http.Client) *Verifier {
+func NewBrowserVerifier(issuer, audience, emailClaim, clientID, clientSecret, publicURL, cookieDomain string, client *http.Client) *Verifier {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	if emailClaim == "" {
 		emailClaim = "email"
 	}
+	publicURL = strings.TrimRight(strings.TrimSpace(publicURL), "/")
 	return &Verifier{
 		issuer:       strings.TrimRight(strings.TrimSpace(issuer), "/"),
 		audience:     strings.TrimSpace(audience),
 		emailClaim:   strings.TrimSpace(emailClaim),
 		clientID:     strings.TrimSpace(clientID),
 		clientSecret: strings.TrimSpace(clientSecret),
-		redirectURL:  strings.TrimSpace(redirectURL),
+		publicURL:    publicURL,
+		redirectURL:  publicURL + "/internal/auth/callback",
+		cookieDomain: strings.TrimSpace(cookieDomain),
 		client:       client,
 		states:       make(map[string]browserState),
 		sessions:     make(map[string]browserSession),
@@ -102,7 +112,7 @@ func NewBrowserVerifier(issuer, audience, emailClaim, clientID, clientSecret, re
 }
 
 func (v *Verifier) BrowserFlowEnabled() bool {
-	return v.clientID != "" && v.redirectURL != ""
+	return v.clientID != "" && v.publicURL != ""
 }
 
 func (v *Verifier) Session(r *http.Request) (api.AuthResult, string, bool) {
@@ -195,7 +205,7 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 		return errors.New("oidc token exchange returned an empty access token")
 	}
 
-	result, _, err := v.UserInfo(r.Context(), token.AccessToken)
+	result, _, err := v.callbackIdentity(r.Context(), token)
 	if err != nil {
 		return err
 	}
@@ -225,6 +235,7 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    sessionID,
+		Domain:   v.cookieDomain,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   strings.HasPrefix(v.redirectURL, "https://"),
@@ -233,6 +244,36 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 		MaxAge:   int(time.Until(expiresAt).Seconds()),
 	})
 	http.Redirect(w, r, state.ReturnURL, http.StatusFound)
+	return nil
+}
+
+func (v *Verifier) RedirectURL() string {
+	return v.redirectURL
+}
+
+func (v *Verifier) PublicHost() string {
+	parsed, err := url.Parse(v.publicURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
+}
+
+func (v *Verifier) ValidateBrowserConfig() error {
+	if !v.BrowserFlowEnabled() {
+		return nil
+	}
+	parsed, err := url.Parse(v.publicURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("oidc public url must be an absolute URL")
+	}
+	if v.cookieDomain != "" {
+		host := parsed.Hostname()
+		domain := strings.TrimPrefix(v.cookieDomain, ".")
+		if host != domain && !strings.HasSuffix(host, "."+domain) {
+			return errors.New("oidc cookie domain must match the callback host or its parent domain")
+		}
+	}
 	return nil
 }
 
@@ -271,6 +312,41 @@ func (v *Verifier) UserInfo(ctx context.Context, token string) (api.AuthResult, 
 	return result, raw, nil
 }
 
+func (v *Verifier) callbackIdentity(ctx context.Context, token tokenResponse) (api.AuthResult, map[string]any, error) {
+	raw, err := v.fetchUserInfo(ctx, token.AccessToken)
+	if err != nil {
+		return api.AuthResult{}, nil, err
+	}
+	if strings.TrimSpace(token.IDToken) != "" {
+		claims, err := v.parseAndValidateForAudience(ctx, token.IDToken, v.clientID)
+		if err != nil {
+			return api.AuthResult{}, nil, err
+		}
+		result := claimsToResult(claims)
+		result.Email, _ = raw["email"].(string)
+		if result.Email == "" {
+			result.Email, _ = claims[v.emailClaim].(string)
+		}
+		if result.Email == "" {
+			return api.AuthResult{}, nil, errors.New("userinfo email is required")
+		}
+		if result.Subject == "" {
+			result.Subject, _ = raw["sub"].(string)
+		}
+		return result, raw, nil
+	}
+	result := api.AuthResult{Valid: true, Claims: raw}
+	result.Subject, _ = raw["sub"].(string)
+	result.Email, _ = raw["email"].(string)
+	if result.Email == "" {
+		result.Email, _ = raw[v.emailClaim].(string)
+	}
+	if result.Email == "" {
+		return api.AuthResult{}, nil, errors.New("userinfo email is required")
+	}
+	return result, raw, nil
+}
+
 func claimsToResult(claims map[string]any) api.AuthResult {
 	result := api.AuthResult{Valid: true, Claims: claims}
 	if subject, _ := claims["sub"].(string); subject != "" {
@@ -298,6 +374,7 @@ func forwardedURL(r *http.Request) string {
 
 type tokenResponse struct {
 	AccessToken string `json:"access_token"`
+	IDToken     string `json:"id_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int64  `json:"expires_in"`
 }
@@ -361,6 +438,10 @@ func pkceChallenge(verifier string) string {
 }
 
 func (v *Verifier) parseAndValidate(ctx context.Context, token string) (map[string]any, error) {
+	return v.parseAndValidateForAudience(ctx, token, v.audience)
+}
+
+func (v *Verifier) parseAndValidateForAudience(ctx context.Context, token string, audience string) (map[string]any, error) {
 	header, signingInput, signature, claims, err := parseJWT(token)
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
@@ -371,7 +452,7 @@ func (v *Verifier) parseAndValidate(ctx context.Context, token string) (map[stri
 	if claimsIssuer, _ := claims["iss"].(string); claimsIssuer != v.issuer {
 		return nil, errors.New("invalid token: issuer mismatch")
 	}
-	if !audienceMatches(claims["aud"], v.audience) {
+	if !audienceMatches(claims["aud"], audience) {
 		return nil, errors.New("invalid token: audience mismatch")
 	}
 	if expiration, ok := numericDate(claims["exp"]); ok && !expiration.After(time.Now().UTC()) {
@@ -409,7 +490,7 @@ func parseJWT(token string) (jwtHeader, string, []byte, map[string]any, error) {
 }
 
 func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signingInput string, signature []byte) error {
-	hash, err := jwtHash(header.Alg)
+	properties, err := jwtProperties(header.Alg)
 	if err != nil {
 		return fmt.Errorf("invalid token: %w", err)
 	}
@@ -417,24 +498,51 @@ func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signin
 	if err != nil {
 		return err
 	}
-	digest := hash.New()
+	digest := properties.Hash.New()
 	_, _ = digest.Write([]byte(signingInput))
-	if err := rsa.VerifyPKCS1v15(key, hash, digest.Sum(nil), signature); err != nil {
-		return fmt.Errorf("invalid token: %w", err)
+	sum := digest.Sum(nil)
+	switch typed := key.(type) {
+	case *rsa.PublicKey:
+		if properties.KeyType != "RSA" {
+			return fmt.Errorf("invalid token: signing key type mismatch for %s", header.Alg)
+		}
+		if err := rsa.VerifyPKCS1v15(typed, properties.Hash, sum, signature); err != nil {
+			return fmt.Errorf("invalid token: %w", err)
+		}
+	case *ecdsa.PublicKey:
+		if properties.KeyType != "EC" {
+			return fmt.Errorf("invalid token: signing key type mismatch for %s", header.Alg)
+		}
+		if err := verifyECDSASignature(typed, sum, signature); err != nil {
+			return fmt.Errorf("invalid token: %w", err)
+		}
+	default:
+		return errors.New("invalid token: unsupported signing key type")
 	}
 	return nil
 }
 
-func jwtHash(alg string) (crypto.Hash, error) {
+type jwtAlgorithm struct {
+	Hash    crypto.Hash
+	KeyType string
+}
+
+func jwtProperties(alg string) (jwtAlgorithm, error) {
 	switch alg {
 	case "RS256":
-		return crypto.SHA256, nil
+		return jwtAlgorithm{Hash: crypto.SHA256, KeyType: "RSA"}, nil
 	case "RS384":
-		return crypto.SHA384, nil
+		return jwtAlgorithm{Hash: crypto.SHA384, KeyType: "RSA"}, nil
 	case "RS512":
-		return crypto.SHA512, nil
+		return jwtAlgorithm{Hash: crypto.SHA512, KeyType: "RSA"}, nil
+	case "ES256":
+		return jwtAlgorithm{Hash: crypto.SHA256, KeyType: "EC"}, nil
+	case "ES384":
+		return jwtAlgorithm{Hash: crypto.SHA384, KeyType: "EC"}, nil
+	case "ES512":
+		return jwtAlgorithm{Hash: crypto.SHA512, KeyType: "EC"}, nil
 	default:
-		return 0, fmt.Errorf("unsupported jwt alg %q", alg)
+		return jwtAlgorithm{}, fmt.Errorf("unsupported jwt alg %q", alg)
 	}
 }
 
@@ -465,22 +573,19 @@ func audienceMatches(value any, audience string) bool {
 	return false
 }
 
-func (v *Verifier) keyForToken(ctx context.Context, kid string) (*rsa.PublicKey, error) {
+func (v *Verifier) keyForToken(ctx context.Context, kid string) (any, error) {
 	keys, err := v.keysForContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if kid != "" {
-		if key, ok := keys[kid].(*rsa.PublicKey); ok {
+		if key, ok := keys[kid]; ok {
 			return key, nil
 		}
 	}
 	if len(keys) == 1 {
 		for _, key := range keys {
-			publicKey, ok := key.(*rsa.PublicKey)
-			if ok {
-				return publicKey, nil
-			}
+			return key, nil
 		}
 	}
 	return nil, errors.New("invalid token: signing key not found")
@@ -577,7 +682,7 @@ func (v *Verifier) keysForContext(ctx context.Context) (map[string]any, error) {
 	}
 	keys := make(map[string]any, len(document.Keys))
 	for _, item := range document.Keys {
-		key, err := rsaKeyFromJWK(item)
+		key, err := keyFromJWK(item)
 		if err != nil {
 			return nil, err
 		}
@@ -597,10 +702,18 @@ func cloneKeys(keys map[string]any) map[string]any {
 	return out
 }
 
-func rsaKeyFromJWK(value jwk) (*rsa.PublicKey, error) {
-	if value.Kty != "RSA" {
+func keyFromJWK(value jwk) (any, error) {
+	switch value.Kty {
+	case "RSA":
+		return rsaKeyFromJWK(value)
+	case "EC":
+		return ecKeyFromJWK(value)
+	default:
 		return nil, fmt.Errorf("unsupported jwk kty %q", value.Kty)
 	}
+}
+
+func rsaKeyFromJWK(value jwk) (*rsa.PublicKey, error) {
 	if value.N == "" || value.E == "" {
 		return nil, errors.New("jwks key is missing modulus or exponent")
 	}
@@ -620,6 +733,64 @@ func rsaKeyFromJWK(value jwk) (*rsa.PublicKey, error) {
 		return nil, errors.New("jwks exponent is invalid")
 	}
 	return &rsa.PublicKey{N: new(big.Int).SetBytes(modulusBytes), E: exponent}, nil
+}
+
+func ecKeyFromJWK(value jwk) (*ecdsa.PublicKey, error) {
+	if value.Crv == "" || value.X == "" || value.Y == "" {
+		return nil, errors.New("jwks key is missing curve or coordinates")
+	}
+	curve, err := ellipticCurve(value.Crv)
+	if err != nil {
+		return nil, err
+	}
+	xBytes, err := base64.RawURLEncoding.DecodeString(value.X)
+	if err != nil {
+		return nil, fmt.Errorf("decode jwk x coordinate: %w", err)
+	}
+	yBytes, err := base64.RawURLEncoding.DecodeString(value.Y)
+	if err != nil {
+		return nil, fmt.Errorf("decode jwk y coordinate: %w", err)
+	}
+	x := new(big.Int).SetBytes(xBytes)
+	y := new(big.Int).SetBytes(yBytes)
+	if !curve.IsOnCurve(x, y) {
+		return nil, errors.New("jwks EC point is not on curve")
+	}
+	return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
+}
+
+func ellipticCurve(name string) (elliptic.Curve, error) {
+	switch name {
+	case "P-256":
+		return elliptic.P256(), nil
+	case "P-384":
+		return elliptic.P384(), nil
+	case "P-521":
+		return elliptic.P521(), nil
+	default:
+		return nil, fmt.Errorf("unsupported jwk curve %q", name)
+	}
+}
+
+func verifyECDSASignature(key *ecdsa.PublicKey, digest []byte, signature []byte) error {
+	size := (key.Curve.Params().BitSize + 7) / 8
+	if len(signature) != size*2 {
+		return errors.New("invalid ECDSA signature length")
+	}
+	type ecdsaSignature struct {
+		R, S *big.Int
+	}
+	value := ecdsaSignature{
+		R: new(big.Int).SetBytes(signature[:size]),
+		S: new(big.Int).SetBytes(signature[size:]),
+	}
+	if value.R.Sign() <= 0 || value.S.Sign() <= 0 {
+		return errors.New("invalid ECDSA signature values")
+	}
+	if !ecdsa.Verify(key, digest, value.R, value.S) {
+		return errors.New("ecdsa verification failed")
+	}
+	return nil
 }
 
 func randomToken() (string, error) {

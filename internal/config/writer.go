@@ -15,6 +15,7 @@ type Writer struct {
 	workerdPath string
 	traefikPath string
 	authURL     string
+	authHost    string
 	workerHost  string
 	runtimeAddr string
 }
@@ -31,6 +32,10 @@ type RuntimeWriter struct {
 
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
 	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL, workerHost: workerHost, runtimeAddr: "127.0.0.1:8081"}
+}
+
+func (w *Writer) SetAuthHost(host string) {
+	w.authHost = strings.TrimSpace(host)
 }
 
 func NewRuntimeWriter(workerdPath string, traefik TraefikWriter) *RuntimeWriter {
@@ -57,7 +62,7 @@ func (w *Writer) WriteWorkerd(path string, active []platform.ActiveDeployment) e
 }
 
 func (w *Writer) WriteTraefik(active []platform.ActiveDeployment) error {
-	return writeAtomic(w.traefikPath, []byte(Traefik(active, w.authURL, w.workerHost)))
+	return writeAtomic(w.traefikPath, []byte(Traefik(active, w.authURL, w.authHost, w.workerHost)))
 }
 
 func (w *RuntimeWriter) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
@@ -493,7 +498,7 @@ func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.
 	return result
 }
 
-func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) string {
+func Traefik(active []platform.ActiveDeployment, authURL, authHost, workerHost string) string {
 	var out strings.Builder
 	out.WriteString("http:\n  middlewares:\n    platform-auth:\n      forwardAuth:\n")
 	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Platform-User-JWT\n          - X-Platform-User-Email\n", yamlQuote(authURL))
@@ -504,6 +509,10 @@ func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) str
 			name, yamlQuote(fmt.Sprintf("/internal/http/apps/%s/%d", item.App.ID, item.Deployment.Port)))
 	}
 	out.WriteString("  routers:\n")
+	if authHost != "" {
+		fmt.Fprintf(&out, "    platform_auth_callback:\n      rule: %s\n      priority: 1000\n      entryPoints:\n        - web\n        - websecure\n      service: platform_auth_callback\n      tls: {}\n",
+			yamlQuote("Host(`"+authHost+"`) && PathPrefix(`/internal/auth/`)"))
+	}
 	for _, item := range active {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      priority: 1\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - %s-prefix\n      service: %s\n      tls: {}\n",
@@ -514,6 +523,9 @@ func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) str
 		}
 	}
 	out.WriteString("  services:\n")
+	if authHost != "" {
+		fmt.Fprintf(&out, "    platform_auth_callback:\n      loadBalancer:\n        servers:\n          - url: %s\n", yamlQuote(backendBase))
+	}
 	for _, item := range active {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s:\n      loadBalancer:\n        servers:\n          - url: %s\n",

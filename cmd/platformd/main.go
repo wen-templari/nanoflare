@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -52,7 +53,8 @@ func main() {
 		oidcEmail    = flag.String("oidc-email-claim", envOrDefault("PLATFORM_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
 		oidcClientID = flag.String("oidc-client-id", os.Getenv("PLATFORM_OIDC_CLIENT_ID"), "OIDC client ID for browser login flow; defaults to oidc-audience when omitted")
 		oidcSecret   = flag.String("oidc-client-secret", os.Getenv("PLATFORM_OIDC_CLIENT_SECRET"), "OIDC client secret for browser login flow")
-		oidcRedirect = flag.String("oidc-redirect-url", os.Getenv("PLATFORM_OIDC_REDIRECT_URL"), "Public callback URL for browser login flow, for example https://platform.example.com/internal/auth/callback")
+		oidcPublic   = flag.String("oidc-public-url", os.Getenv("PLATFORM_OIDC_PUBLIC_URL"), "Public control-plane base URL for browser login callback routing, for example https://platform.example.com:8443")
+		oidcCookie   = flag.String("oidc-cookie-domain", os.Getenv("PLATFORM_OIDC_COOKIE_DOMAIN"), "Optional parent cookie domain shared by the callback host and worker hosts, for example .local.nbtca.space")
 	)
 	flag.Parse()
 
@@ -102,9 +104,22 @@ func main() {
 	var publisher runtimePublisher
 	var closeRuntime func()
 	traefikStore := config.NewTraefikStore(*authURL, *workerHost)
+	if *oidcPublic != "" {
+		if parsed, err := url.Parse(*oidcPublic); err == nil {
+			traefikStore.SetAuthHost(parsed.Hostname())
+		} else {
+			log.Fatal(err)
+		}
+	}
 	var traefikWriter config.TraefikWriter = traefikStore
 	if *traefikFile != "" {
 		traefikWriter = config.NewWriter("", *traefikFile, *authURL, *workerHost)
+		if parsed, err := url.Parse(*oidcPublic); *oidcPublic != "" {
+			if err != nil {
+				log.Fatal(err)
+			}
+			traefikWriter.(*config.Writer).SetAuthHost(parsed.Hostname())
+		}
 	}
 	if *runnerURL != "" {
 		if *runnerToken == "" {
@@ -155,7 +170,14 @@ func main() {
 		if clientID == "" {
 			clientID = *oidcAudience
 		}
-		authenticator = oidc.NewBrowserVerifier(*oidcIssuer, *oidcAudience, *oidcEmail, clientID, *oidcSecret, *oidcRedirect, nil)
+		verifier := oidc.NewBrowserVerifier(*oidcIssuer, *oidcAudience, *oidcEmail, clientID, *oidcSecret, *oidcPublic, *oidcCookie, nil)
+		if err := verifier.ValidateBrowserConfig(); err != nil {
+			log.Fatal(err)
+		}
+		if verifier.BrowserFlowEnabled() {
+			log.Printf("platformd oidc callback URL %s", verifier.RedirectURL())
+		}
+		authenticator = verifier
 	}
 	server := api.NewServerWithAuth(service, traefikStore, *traefikToken, authenticator)
 	runtimeMux := http.NewServeMux()

@@ -100,7 +100,7 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 	config := Traefik([]platform.ActiveDeployment{{
 		App:        platform.App{ID: "hello-app", Hostname: "hello.example.com"},
 		Deployment: platform.Deployment{Port: 9001},
-	}}, "http://platformd:8080/internal/auth/verify", "host.docker.internal")
+	}}, "http://platformd:8080/internal/auth/verify", "", "host.docker.internal")
 	for _, expected := range []string{
 		`address: "http://platformd:8080/internal/auth/verify"`,
 		`- X-Platform-User-JWT`,
@@ -126,7 +126,7 @@ func TestTraefikGeneratesProtectedRouteRouters(t *testing.T) {
 			Auth:     platform.AuthConfig{ProtectedRoutes: []string{"/admin/*", "/reports"}},
 		},
 		Deployment: platform.Deployment{Port: 9001},
-	}}, "http://platformd:8080/internal/auth/verify", "host.docker.internal")
+	}}, "http://platformd:8080/internal/auth/verify", "", "host.docker.internal")
 	for _, expected := range []string{
 		`hello_app-auth-0`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `) && PathPrefix(` + "`" + `/admin/` + "`" + `)"`,
@@ -140,5 +140,25 @@ func TestTraefikGeneratesProtectedRouteRouters(t *testing.T) {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)
 		}
+	}
+}
+
+func TestTraefikGeneratesControlPlaneAuthRouter(t *testing.T) {
+	config := Traefik([]platform.ActiveDeployment{{
+		App:        platform.App{ID: "hello-app", Hostname: "hello.example.com"},
+		Deployment: platform.Deployment{Port: 9001},
+	}}, "http://platformd:8080/internal/auth/verify", "platform.local.nbtca.space", "host.docker.internal")
+	for _, expected := range []string{
+		`platform_auth_callback`,
+		`rule: "Host(` + "`" + `platform.local.nbtca.space` + "`" + `) && PathPrefix(` + "`" + `/internal/auth/` + "`" + `)"`,
+		`service: platform_auth_callback`,
+		`url: "http://platformd:8080"`,
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, config)
+		}
+	}
+	if strings.Contains(config, `platform_auth_callback-prefix`) {
+		t.Fatalf("callback router unexpectedly contains prefix middleware:\n%s", config)
 	}
 }
