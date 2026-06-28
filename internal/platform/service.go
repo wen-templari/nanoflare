@@ -431,7 +431,23 @@ func normalizeAssetConfig(config AssetConfig) (AssetConfig, error) {
 	default:
 		return AssetConfig{}, errors.New(`asset_config.not_found_handling must be "none", "404-page", or "single-page-application"`)
 	}
+	if err := validateRunWorkerFirst(config.RunWorkerFirst); err != nil {
+		return AssetConfig{}, err
+	}
 	return config, nil
+}
+
+func validateRunWorkerFirst(runWorkerFirst RunWorkerFirst) error {
+	if runWorkerFirst.Always() {
+		return nil
+	}
+	for _, route := range runWorkerFirst.Routes() {
+		pattern := strings.TrimPrefix(route, "!")
+		if !strings.HasPrefix(pattern, "/") || pattern == "/" || strings.Contains(strings.TrimSuffix(pattern, "*"), "*") {
+			return fmt.Errorf("asset_config.run_worker_first route %q must be an absolute path with an optional trailing wildcard", route)
+		}
+	}
+	return nil
 }
 
 func detectAssetContentType(assetPath string) string {
@@ -600,7 +616,7 @@ func (s *Service) PublicAsset(appID, requestPath string) (AssetResponse, bool, e
 	return response, true, nil
 }
 
-func (s *Service) WorkerPort(appID string) (int, bool, error) {
+func (s *Service) WorkerPort(appID, requestPath string) (int, bool, error) {
 	_, active, err := s.worker(appID)
 	if err != nil {
 		return 0, false, err
@@ -608,7 +624,42 @@ func (s *Service) WorkerPort(appID string) (int, bool, error) {
 	if active == nil {
 		return 0, false, nil
 	}
-	return active.Deployment.Port, active.Deployment.AssetConfig.RunWorkerFirst, nil
+	return active.Deployment.Port, shouldRunWorkerFirst(active.Deployment.AssetConfig.RunWorkerFirst, requestPath), nil
+}
+
+func shouldRunWorkerFirst(runWorkerFirst RunWorkerFirst, requestPath string) bool {
+	if runWorkerFirst.Always() {
+		return true
+	}
+	clean := routeRequestPath(requestPath)
+	runFirst := false
+	for _, route := range runWorkerFirst.Routes() {
+		negated := strings.HasPrefix(route, "!")
+		pattern := strings.TrimPrefix(route, "!")
+		if routePatternMatches(pattern, clean) {
+			runFirst = !negated
+		}
+	}
+	return runFirst
+}
+
+func routeRequestPath(requestPath string) string {
+	trimmed := strings.TrimSpace(requestPath)
+	clean := path.Clean("/" + trimmed)
+	if clean == "." {
+		clean = "/"
+	}
+	if strings.HasSuffix(trimmed, "/") && clean != "/" {
+		return clean + "/"
+	}
+	return clean
+}
+
+func routePatternMatches(pattern, requestPath string) bool {
+	if strings.HasSuffix(pattern, "*") {
+		return strings.HasPrefix(requestPath, strings.TrimSuffix(pattern, "*"))
+	}
+	return requestPath == pattern
 }
 
 func (s *Service) assetResponse(appID, requestPath string) (AssetResponse, error) {

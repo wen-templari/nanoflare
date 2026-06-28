@@ -48,11 +48,11 @@ type Project struct {
 }
 
 type ProjectAssets struct {
-	Binding          string `json:"binding,omitempty"`
-	Directory        string `json:"directory,omitempty"`
-	HTMLHandling     string `json:"html_handling,omitempty"`
-	NotFoundHandling string `json:"not_found_handling,omitempty"`
-	RunWorkerFirst   bool   `json:"run_worker_first,omitempty"`
+	Binding          string                  `json:"binding,omitempty"`
+	Directory        string                  `json:"directory,omitempty"`
+	HTMLHandling     string                  `json:"html_handling,omitempty"`
+	NotFoundHandling string                  `json:"not_found_handling,omitempty"`
+	RunWorkerFirst   platform.RunWorkerFirst `json:"run_worker_first,omitempty"`
 }
 
 func NewRunner(stdout, stderr io.Writer) *Runner {

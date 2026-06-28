@@ -338,6 +338,103 @@ func TestGatewayFallsBackToWorkerWhenAssetMissing(t *testing.T) {
 	}
 }
 
+func TestGatewayRunWorkerFirstTrueProxiesBeforeAssets(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployWithAssetsConfig(t, server, app.ID,
+		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+		platform.AssetConfig{RunWorkerFirst: runWorkerFirstTrue(t)},
+	)
+	workerPort := startTestWorker(t, "worker")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
+		t.Fatalf("gateway status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayRunWorkerFirstRoutesOnlyMatchingPaths(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployWithAssetsConfig(t, server, app.ID,
+		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+		platform.AssetConfig{
+			NotFoundHandling: "single-page-application",
+			RunWorkerFirst:   platform.RunWorkerFirst{"/api/*"},
+		},
+	)
+	workerPort := startTestWorker(t, "worker")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Site</h1>" {
+		t.Fatalf("gateway asset status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/api/visits", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
+		t.Fatalf("gateway worker status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayRunWorkerFirstNegativeRouteServesAsset(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployWithAssetsConfig(t, server, app.ID,
+		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]platform.AssetFile{
+			{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")},
+			{Path: "api/docs/index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Docs</h1>")},
+		},
+		platform.AssetConfig{
+			NotFoundHandling: "single-page-application",
+			RunWorkerFirst:   platform.RunWorkerFirst{"/api/*", "!/api/docs/*"},
+		},
+	)
+	workerPort := startTestWorker(t, "worker")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/api/docs/", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Docs</h1>" {
+		t.Fatalf("gateway status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
 type staticTraefikConfig string
 
 func (config staticTraefikConfig) TraefikConfig() []byte {
@@ -394,10 +491,16 @@ func deployContent(t *testing.T, server http.Handler, appID string, files []plat
 
 func deployWithAssets(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, assets []platform.AssetFile) platform.Deployment {
 	t.Helper()
+	return deployWithAssetsConfig(t, server, appID, files, assets, platform.AssetConfig{})
+}
+
+func deployWithAssetsConfig(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, assets []platform.AssetFile, assetConfig platform.AssetConfig) platform.Deployment {
+	t.Helper()
 	body, err := json.Marshal(platform.DeployInput{
 		Files:             files,
 		Assets:            assets,
 		CompatibilityDate: "2025-12-10",
+		AssetConfig:       assetConfig,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -414,6 +517,41 @@ func deployWithAssets(t *testing.T, server http.Handler, appID string, files []p
 		t.Fatal(err)
 	}
 	return deployment
+}
+
+func runWorkerFirstTrue(t *testing.T) platform.RunWorkerFirst {
+	t.Helper()
+	var runWorkerFirst platform.RunWorkerFirst
+	if err := json.Unmarshal([]byte("true"), &runWorkerFirst); err != nil {
+		t.Fatal(err)
+	}
+	return runWorkerFirst
+}
+
+func startTestWorker(t *testing.T, body string) int {
+	t.Helper()
+	workerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, portValue, err := net.SplitHostPort(workerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerPort, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})}
+	go func() {
+		_ = workerServer.Serve(workerListener)
+	}()
+	t.Cleanup(func() {
+		_ = workerServer.Close()
+	})
+	return workerPort
 }
 
 func requestJSON(t *testing.T, server http.Handler, method, path string, wantStatus int, target any) {

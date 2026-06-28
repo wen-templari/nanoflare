@@ -113,6 +113,32 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 }
 
+func TestProjectAssetsRunWorkerFirstJSONShapes(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		payload    string
+		always     bool
+		routeCount int
+	}{
+		{name: "true", payload: `{"name":"Hello","hostname":"hello.example.com","api_url":"http://127.0.0.1:8080","entrypoint":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{"run_worker_first":true}}`, always: true},
+		{name: "omitted", payload: `{"name":"Hello","hostname":"hello.example.com","api_url":"http://127.0.0.1:8080","entrypoint":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{}}`},
+		{name: "routes", payload: `{"name":"Hello","hostname":"hello.example.com","api_url":"http://127.0.0.1:8080","entrypoint":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{"run_worker_first":["/api/*","!/api/docs/*"]}}`, routeCount: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var project Project
+			if err := json.Unmarshal([]byte(test.payload), &project); err != nil {
+				t.Fatal(err)
+			}
+			if project.Assets.RunWorkerFirst.Always() != test.always {
+				t.Fatalf("always = %v, want %v", project.Assets.RunWorkerFirst.Always(), test.always)
+			}
+			if len(project.Assets.RunWorkerFirst.Routes()) != test.routeCount {
+				t.Fatalf("routes = %#v, want %d routes", project.Assets.RunWorkerFirst.Routes(), test.routeCount)
+			}
+		})
+	}
+}
+
 func TestListWorkers(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

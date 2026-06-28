@@ -168,7 +168,8 @@ Cloudflare Workers:
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
-    "not_found_handling": "404-page"
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   }
 }
 ```

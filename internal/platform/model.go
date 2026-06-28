@@ -1,6 +1,11 @@
 package platform
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"time"
+)
 
 type App struct {
 	ID           string    `json:"id"`
@@ -97,10 +102,53 @@ type AssetFile struct {
 }
 
 type AssetConfig struct {
-	Binding          string `json:"binding,omitempty"`
-	HTMLHandling     string `json:"html_handling,omitempty"`
-	NotFoundHandling string `json:"not_found_handling,omitempty"`
-	RunWorkerFirst   bool   `json:"run_worker_first,omitempty"`
+	Binding          string         `json:"binding,omitempty"`
+	HTMLHandling     string         `json:"html_handling,omitempty"`
+	NotFoundHandling string         `json:"not_found_handling,omitempty"`
+	RunWorkerFirst   RunWorkerFirst `json:"run_worker_first,omitempty"`
+}
+
+type RunWorkerFirst []string
+
+const runWorkerFirstAlways = "\x00always"
+
+func (r RunWorkerFirst) Always() bool {
+	return len(r) == 1 && r[0] == runWorkerFirstAlways
+}
+
+func (r RunWorkerFirst) Routes() []string {
+	if r.Always() {
+		return nil
+	}
+	return []string(r)
+}
+
+func (r RunWorkerFirst) MarshalJSON() ([]byte, error) {
+	if r.Always() {
+		return []byte("true"), nil
+	}
+	return json.Marshal([]string(r))
+}
+
+func (r *RunWorkerFirst) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	switch {
+	case bytes.Equal(data, []byte("true")):
+		*r = RunWorkerFirst{runWorkerFirstAlways}
+		return nil
+	case bytes.Equal(data, []byte("false")), bytes.Equal(data, []byte("null")):
+		*r = nil
+		return nil
+	case len(data) > 0 && data[0] == '[':
+		var routes []string
+		if err := json.Unmarshal(data, &routes); err != nil {
+			return err
+		}
+		*r = RunWorkerFirst(routes)
+		return nil
+	default:
+		return errors.New(`run_worker_first must be true, false, or an array of route patterns`)
+	}
 }
 
 type WorkerOutputLine struct {

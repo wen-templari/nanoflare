@@ -215,7 +215,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	port, runWorkerFirst, err := s.service.WorkerPort(appID)
+	port, runWorkerFirst, err := s.service.WorkerPort(appID, requestPath)
 	if err != nil {
 		writeWorkerError(w, err)
 		return

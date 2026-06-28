@@ -157,6 +157,32 @@ func TestDeployStoresAttachedAssetsAndServesThemThroughResolution(t *testing.T) 
 	}
 }
 
+func TestAssetConfigRunWorkerFirstJSONShapes(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		payload    string
+		always     bool
+		routeCount int
+	}{
+		{name: "true", payload: `{"run_worker_first":true}`, always: true},
+		{name: "omitted", payload: `{}`},
+		{name: "routes", payload: `{"run_worker_first":["/api/*","!/api/docs/*"]}`, routeCount: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var config AssetConfig
+			if err := json.Unmarshal([]byte(test.payload), &config); err != nil {
+				t.Fatal(err)
+			}
+			if config.RunWorkerFirst.Always() != test.always {
+				t.Fatalf("always = %v, want %v", config.RunWorkerFirst.Always(), test.always)
+			}
+			if len(config.RunWorkerFirst.Routes()) != test.routeCount {
+				t.Fatalf("routes = %#v, want %d routes", config.RunWorkerFirst.Routes(), test.routeCount)
+			}
+		})
+	}
+}
+
 func TestPublicAssetFallsBackToCustom404Page(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()
@@ -182,6 +208,33 @@ func TestPublicAssetFallsBackToCustom404Page(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !handled || response.StatusCode != 404 || string(response.Body) != "<h1>Missing</h1>" {
+		t.Fatalf("public asset response = %#v handled=%v", response, handled)
+	}
+}
+
+func TestPublicAssetFallsBackToSPAIndex(t *testing.T) {
+	store := newObjectBackedRepo()
+	objects := newMemoryObjectStore()
+	service := NewServiceWithObjects(store, &recordingWriter{}, objects)
+
+	app, err := service.CreateApp(CreateAppInput{Name: "Assets", Hostname: "assets.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		Assets:            []AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Hello</h1>")}},
+		CompatibilityDate: "2025-12-10",
+		AssetConfig:       AssetConfig{NotFoundHandling: "single-page-application"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, handled, err := service.PublicAsset(app.ID, "/settings/profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || response.StatusCode != 200 || string(response.Body) != "<h1>Hello</h1>" {
 		t.Fatalf("public asset response = %#v handled=%v", response, handled)
 	}
 }
