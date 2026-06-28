@@ -23,12 +23,33 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`serviceWorkerScript = "addEventListener(\"fetch\", () => {});"`,
 		`(name = "KV", kvNamespace = "kv-hello-app")`,
 		`(name = "ASSETS", service = "assets-hello-app")`,
+		`(name = "X-Platform-Binding", value = "assets")`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)
 		}
+	}
+}
+
+func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
+	config := Workerd([]platform.ActiveDeployment{{
+		App: platform.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: platform.Deployment{
+			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			AssetConfig:       platform.AssetConfig{Binding: "STATIC"},
+			Port:              9001,
+		},
+	}})
+	if !strings.Contains(config, `(name = "STATIC", service = "assets-hello-app")`) {
+		t.Fatalf("config does not contain custom asset binding:\n%s", config)
+	}
+	if strings.Contains(config, `(name = "ASSETS", service = "assets-hello-app")`) {
+		t.Fatalf("config unexpectedly contains default asset binding:\n%s", config)
 	}
 }
 

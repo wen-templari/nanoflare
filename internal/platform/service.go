@@ -411,6 +411,10 @@ func deploymentAssets(files []AssetFile, config AssetConfig) ([]AssetFile, error
 }
 
 func normalizeAssetConfig(config AssetConfig) (AssetConfig, error) {
+	config.Binding = strings.TrimSpace(config.Binding)
+	if config.Binding == "" {
+		config.Binding = "ASSETS"
+	}
 	if config.HTMLHandling == "" {
 		config.HTMLHandling = "auto-trailing-slash"
 	}

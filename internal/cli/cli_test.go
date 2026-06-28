@@ -68,8 +68,19 @@ func TestCreateAndDeployWorker(t *testing.T) {
 		Entrypoint:        "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
+		Assets: ProjectAssets{
+			Directory:        "public",
+			Binding:          "STATIC",
+			NotFoundHandling: "404-page",
+		},
 	})
 	if err := os.WriteFile("worker.js", []byte("addEventListener('fetch', () => {});"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir("public", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("public", "logo.svg"), []byte("<svg />"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,6 +104,12 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if len(deployed.Files) != 1 || deployed.Files[0].Path != "worker.js" || deployed.Files[0].Content == "" {
 		t.Fatalf("deploy files = %#v", deployed.Files)
+	}
+	if len(deployed.Assets) != 1 || deployed.Assets[0].Path != "logo.svg" {
+		t.Fatalf("deploy assets = %#v", deployed.Assets)
+	}
+	if deployed.AssetConfig.Binding != "STATIC" || deployed.AssetConfig.NotFoundHandling != "404-page" {
+		t.Fatalf("asset config = %#v", deployed.AssetConfig)
 	}
 }
 

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -279,6 +281,60 @@ func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
 	runtimeAssets.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<svg />" {
 		t.Fatalf("runtime asset status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/logo.svg?v=1", nil)
+	request.Header.Set("Authorization", "Bearer "+runtimeTokens(t, store)[app.ID])
+	runtimeAssets.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "<svg />" {
+		t.Fatalf("runtime direct asset status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayFallsBackToWorkerWhenAssetMissing(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployWithAssets(t, server, app.ID,
+		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+	)
+	workerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, portValue, err := net.SplitHostPort(workerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerPort, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("worker"))
+	})}
+	go func() {
+		_ = workerServer.Serve(workerListener)
+	}()
+	t.Cleanup(func() {
+		_ = workerServer.Close()
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/missing", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
+		t.Fatalf("gateway fallback status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
 }
 

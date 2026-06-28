@@ -22,6 +22,8 @@ The current repository is the first runnable integration slice of `platformd`. I
 - App-scoped runtime KV capabilities with PostgreSQL persistence when configured.
 - A native `env.KV` binding for each worker with core `get`, `put`, and `delete`
   operations.
+- A Cloudflare-style static assets binding for deployed assets through
+  `env.ASSETS.fetch(...)`.
 - MinIO presigned upload and download URLs with app-prefixed object keys.
 - A small TypeScript worker SDK and starter Worker.
 
@@ -153,6 +155,30 @@ export default {
   async fetch(request, env) {
     await env.KV.put("message", "hello");
     return new Response(await env.KV.get("message"));
+  },
+};
+```
+
+Static assets can be attached to a Worker deployment by setting an assets
+directory in `platform.json`. The binding defaults to `ASSETS`, matching
+Cloudflare Workers:
+
+```json
+{
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page"
+  }
+}
+```
+
+Worker code can fetch attached assets directly:
+
+```js
+export default {
+  async fetch(request, env) {
+    return env.ASSETS.fetch(request);
   },
 };
 ```

@@ -138,8 +138,16 @@ func main() {
 	}
 	server := api.NewServerWithTraefik(service, traefikStore, *traefikToken)
 	runtimeMux := http.NewServeMux()
-	runtimeMux.Handle("/", api.NewRuntimeKVServer(service))
-	runtimeMux.Handle("/internal/runtime/assets/", api.NewRuntimeAssetServer(service))
+	runtimeKV := api.NewRuntimeKVServer(service)
+	runtimeAssets := api.NewRuntimeAssetServer(service)
+	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Platform-Binding") == "assets" {
+			runtimeAssets.ServeHTTP(w, r)
+			return
+		}
+		runtimeKV.ServeHTTP(w, r)
+	}))
+	runtimeMux.Handle("/internal/runtime/assets/", runtimeAssets)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {
 		log.Printf("platformd runtime API listening on %s", *runtimeAddr)

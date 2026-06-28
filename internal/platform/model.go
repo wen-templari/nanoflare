@@ -97,6 +97,7 @@ type AssetFile struct {
 }
 
 type AssetConfig struct {
+	Binding          string `json:"binding,omitempty"`
 	HTMLHandling     string `json:"html_handling,omitempty"`
 	NotFoundHandling string `json:"not_found_handling,omitempty"`
 	RunWorkerFirst   bool   `json:"run_worker_first,omitempty"`

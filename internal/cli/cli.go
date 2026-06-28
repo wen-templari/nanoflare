@@ -48,6 +48,7 @@ type Project struct {
 }
 
 type ProjectAssets struct {
+	Binding          string `json:"binding,omitempty"`
 	Directory        string `json:"directory,omitempty"`
 	HTMLHandling     string `json:"html_handling,omitempty"`
 	NotFoundHandling string `json:"not_found_handling,omitempty"`
@@ -286,6 +287,7 @@ func (r *Runner) deploy(args []string) error {
 		Format:            project.Format,
 		CompatibilityDate: date,
 		AssetConfig: platform.AssetConfig{
+			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,
 			NotFoundHandling: project.Assets.NotFoundHandling,
 			RunWorkerFirst:   project.Assets.RunWorkerFirst,

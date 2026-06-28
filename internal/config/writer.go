@@ -82,7 +82,7 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
 			quote(kvServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
-		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
+		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Platform-Binding\", value = \"assets\")]))),\n",
 			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
@@ -94,8 +94,8 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(item.App.ID))
 		writeWorkerSource(&out, item.Deployment)
-		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s), (name = \"ASSETS\", service = %s)],\n",
-			quote(kvServiceName(item.App.ID)), quote(assetServiceName(item.App.ID)))
+		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s), (name = %s, service = %s)],\n",
+			quote(kvServiceName(item.App.ID)), quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID)))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		out.WriteString(");\n")
 	}
@@ -108,10 +108,46 @@ func writeWorkerSource(out *strings.Builder, deployment platform.Deployment) {
 		return
 	}
 	out.WriteString("  modules = [\n")
+	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__platform_internal_entrypoint__.js"), quote(assetEntrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig))))
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
 	}
 	out.WriteString("  ],\n")
+}
+
+func assetEntrypointWrapper(entrypoint, binding string) string {
+	return fmt.Sprintf(`import userWorker from %s;
+
+const assetBindingName = %s;
+
+function wrapAssetBinding(binding) {
+  if (!binding) return binding;
+  return {
+    fetch(input, init) {
+      if (typeof input === "string" && input.startsWith("/")) {
+        return binding.fetch(new Request("https://assets.local" + input, init));
+      }
+      return binding.fetch(input, init);
+    },
+  };
+}
+
+function wrapEnv(env) {
+  if (!env || !env[assetBindingName]) return env;
+  const wrapped = Object.create(env);
+  Object.defineProperty(wrapped, assetBindingName, {
+    value: wrapAssetBinding(env[assetBindingName]),
+    enumerable: true,
+  });
+  return wrapped;
+}
+
+export default {
+  ...userWorker,
+  fetch(request, env, ctx) {
+    return userWorker.fetch(request, wrapEnv(env), ctx);
+  },
+};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding))
 }
 
 func deploymentFormat(deployment platform.Deployment) string {
@@ -130,6 +166,13 @@ func kvServiceName(appID string) string {
 
 func assetServiceName(appID string) string {
 	return "assets-" + appID
+}
+
+func assetBindingName(config platform.AssetConfig) string {
+	if strings.TrimSpace(config.Binding) == "" {
+		return "ASSETS"
+	}
+	return strings.TrimSpace(config.Binding)
 }
 
 func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.WorkerFile {

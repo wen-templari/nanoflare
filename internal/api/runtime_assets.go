@@ -23,6 +23,9 @@ func (s *RuntimeAssetServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestPath := strings.TrimPrefix(r.URL.EscapedPath(), "/internal/runtime/assets")
+	if requestPath == r.URL.EscapedPath() {
+		requestPath = r.URL.EscapedPath()
+	}
 	if requestPath == "" {
 		requestPath = "/"
 	}
