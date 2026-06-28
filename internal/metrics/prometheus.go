@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"time"
@@ -38,8 +39,8 @@ func NewClient(baseURL string) *Client {
 }
 
 func (c *Client) Traffic(appID string) (platform.WorkerTraffic, error) {
-	router := strconv.Quote(appID + "@file")
-	selector := `router=` + router
+	router := strconv.Quote(regexp.QuoteMeta(appID) + `@(http|file)`)
+	selector := `router=~` + router
 	requests, err := c.query(`sum(rate(traefik_router_requests_total{` + selector + `}[5m]))`)
 	if err != nil {
 		return platform.WorkerTraffic{}, err

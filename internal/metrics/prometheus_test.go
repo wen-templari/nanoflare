@@ -43,8 +43,8 @@ func TestTrafficQueriesRouterMetrics(t *testing.T) {
 		t.Fatalf("got %d queries, want 5", len(queries))
 	}
 	for _, query := range queries {
-		if !strings.Contains(query, `router="integration@file"`) {
-			t.Fatalf("query is not router-scoped: %s", query)
+		if !strings.Contains(query, `router=~"integration@(http|file)"`) {
+			t.Fatalf("query is not router-provider scoped: %s", query)
 		}
 	}
 }
