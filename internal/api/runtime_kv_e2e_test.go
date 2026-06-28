@@ -190,6 +190,86 @@ func TestWorkerdAssetsBindingEndToEnd(t *testing.T) {
 	t.Fatal("workerd did not become ready")
 }
 
+func TestWorkerdObjectsBindingEndToEnd(t *testing.T) {
+	workerd, err := exec.LookPath("workerd")
+	if err != nil {
+		t.Skip("workerd is not installed")
+	}
+	store := platform.NewStore()
+	objects := newE2EObjectStore()
+	app := platform.App{ID: "native-objects", Name: "Native Objects", Hostname: "objects.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
+	if err := store.CreateApp(app); err != nil {
+		t.Fatal(err)
+	}
+	service := platform.NewServiceWithObjects(store, discardWriter{}, objects)
+	runtimeServer := httptest.NewServer(api.NewServer(service))
+	defer runtimeServer.Close()
+
+	port := availablePort(t)
+	active := []platform.ActiveDeployment{{
+		App: app,
+		Deployment: platform.Deployment{
+			ID:                "deployment",
+			AppID:             app.ID,
+			Files:             []platform.WorkerFile{{Path: "worker.js", Content: nativeObjectsWorker}},
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Port:              port,
+			CreatedAt:         time.Now().UTC(),
+		},
+	}}
+	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
+	if err := os.WriteFile(configPath, []byte(config.WorkerdWithRuntimeAddr(active, strings.TrimPrefix(runtimeServer.URL, "http://"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := exec.CommandContext(ctx, workerd, "serve", configPath)
+	output, err := command.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		_ = command.Wait()
+	}()
+	errorOutput := make(chan string, 1)
+	go func() {
+		value, _ := io.ReadAll(output)
+		errorOutput <- string(value)
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err := http.Get(url)
+		if err == nil {
+			body, readErr := io.ReadAll(response.Body)
+			response.Body.Close()
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("worker status = %d, body = %s", response.StatusCode, body)
+			}
+			if got, want := string(body), `{"created":{"key":"folder/demo.json","size":11,"etag":"etag-folder/demo.json","httpEtag":"\"etag-folder/demo.json\"","contentType":"application/json"},"head":{"key":"folder/demo.json","size":11},"body":{"ok":true},"missing":true}`; got != want {
+				t.Fatalf("worker body = %s, want %s", got, want)
+			}
+			return
+		}
+		select {
+		case value := <-errorOutput:
+			t.Fatalf("workerd exited before becoming ready: %s", value)
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	t.Fatal("workerd did not become ready")
+}
+
 func availablePort(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -207,11 +287,11 @@ func (discardWriter) Write([]platform.ActiveDeployment) error {
 }
 
 type e2eObjectStore struct {
-	objects map[string][]byte
+	objects map[string]platform.ObjectBody
 }
 
 func newE2EObjectStore() *e2eObjectStore {
-	return &e2eObjectStore{objects: make(map[string][]byte)}
+	return &e2eObjectStore{objects: make(map[string]platform.ObjectBody)}
 }
 
 func (s *e2eObjectStore) PresignUpload(string, string, time.Duration) (string, error) {
@@ -222,13 +302,39 @@ func (s *e2eObjectStore) PresignDownload(string, string, time.Duration) (string,
 	return "", nil
 }
 
-func (s *e2eObjectStore) Put(appID, path string, _ string, data []byte) error {
-	s.objects[appID+"/"+path] = append([]byte(nil), data...)
-	return nil
+func (s *e2eObjectStore) Put(appID, path string, contentType string, data []byte) (platform.ObjectInfo, error) {
+	object := platform.ObjectBody{
+		ObjectInfo: platform.ObjectInfo{
+			Key:      path,
+			Size:     int64(len(data)),
+			ETag:     "etag-" + path,
+			HTTPETag: `"etag-` + path + `"`,
+			Uploaded: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			HTTPMetadata: platform.ObjectHTTPMetadata{
+				ContentType: contentType,
+			},
+		},
+		Body: append([]byte(nil), data...),
+	}
+	s.objects[appID+"/"+path] = object
+	return object.ObjectInfo, nil
 }
 
-func (s *e2eObjectStore) Get(appID, path string) ([]byte, error) {
-	return append([]byte(nil), s.objects[appID+"/"+path]...), nil
+func (s *e2eObjectStore) Get(appID, path string) (platform.ObjectBody, error) {
+	object, ok := s.objects[appID+"/"+path]
+	if !ok {
+		return platform.ObjectBody{}, platform.ErrObjectNotFound
+	}
+	object.Body = append([]byte(nil), object.Body...)
+	return object, nil
+}
+
+func (s *e2eObjectStore) Head(appID, path string) (platform.ObjectInfo, error) {
+	object, ok := s.objects[appID+"/"+path]
+	if !ok {
+		return platform.ObjectInfo{}, platform.ErrObjectNotFound
+	}
+	return object.ObjectInfo, nil
 }
 
 func (s *e2eObjectStore) Delete(appID, path string) error {
@@ -253,5 +359,29 @@ const nativeAssetsWorker = `export default {
     const direct = await env.ASSETS.fetch("/logo.svg");
     const forwarded = await env.ASSETS.fetch(new Request("https://assets.local/index.html?x=1"));
     return new Response(await direct.text() + "|" + await forwarded.text());
+  },
+};`
+
+const nativeObjectsWorker = `export default {
+  async fetch(_request, env) {
+    const created = await env.OBJECTS.put("folder/demo.json", JSON.stringify({ ok: true }), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    const body = await env.OBJECTS.get("folder/demo.json");
+    const head = await env.OBJECTS.head("folder/demo.json");
+    await env.OBJECTS.delete("folder/demo.json");
+    const missing = await env.OBJECTS.get("folder/demo.json");
+    return Response.json({
+      created: {
+        key: created.key,
+        size: created.size,
+        etag: created.etag,
+        httpEtag: created.httpEtag,
+        contentType: created.httpMetadata.contentType,
+      },
+      head: head ? { key: head.key, size: head.size } : null,
+      body: body ? await body.json() : null,
+      missing: missing === null,
+    });
   },
 };`

@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -183,6 +184,101 @@ func TestAssetConfigRunWorkerFirstJSONShapes(t *testing.T) {
 	}
 }
 
+func TestCreateAppNormalizesExplicitHostname(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: " Hello.EXAMPLE.com. "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Hostname != "hello.example.com" {
+		t.Fatalf("hostname = %q, want normalized hostname", app.Hostname)
+	}
+}
+
+func TestCreateAppGeneratesHostnameFromBase(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	if err := service.SetBaseHostname(" Workers.EXAMPLE.com. "); err != nil {
+		t.Fatal(err)
+	}
+	service.randomHostnameSuffix = func() (string, error) { return "a1b2c3d4", nil }
+
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello Worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Hostname != "hello-worker-a1b2c3d4.workers.example.com" {
+		t.Fatalf("hostname = %q", app.Hostname)
+	}
+}
+
+func TestCreateAppRequiresBaseHostnameWhenHostnameOmitted(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	_, err := service.CreateApp(CreateAppInput{Name: "Hello Worker"})
+	if err == nil || !strings.Contains(err.Error(), "base hostname is not configured") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCreateAppUsesWorkerSlugFallback(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	if err := service.SetBaseHostname("example.com"); err != nil {
+		t.Fatal(err)
+	}
+	service.randomHostnameSuffix = func() (string, error) { return "a1b2c3d4", nil }
+
+	app, err := service.CreateApp(CreateAppInput{Name: "!!!"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Hostname != "worker-a1b2c3d4.example.com" {
+		t.Fatalf("hostname = %q", app.Hostname)
+	}
+}
+
+func TestCreateAppDoesNotRetryExplicitHostnameConflict(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	if _, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	service.randomHostnameSuffix = func() (string, error) {
+		calls++
+		return "a1b2c3d4", nil
+	}
+
+	_, err := service.CreateApp(CreateAppInput{Name: "Hello Again", Hostname: "hello.example.com"})
+	if !errors.Is(err, ErrAppExists) {
+		t.Fatalf("error = %v, want ErrAppExists", err)
+	}
+	if calls != 0 {
+		t.Fatalf("random suffix calls = %d, want 0", calls)
+	}
+}
+
+func TestCreateAppRetriesGeneratedHostnameConflict(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	if err := service.SetBaseHostname("example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello-a1b2c3d4.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	suffixes := []string{"a1b2c3d4", "d4c3b2a1"}
+	service.randomHostnameSuffix = func() (string, error) {
+		next := suffixes[0]
+		suffixes = suffixes[1:]
+		return next, nil
+	}
+
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Hostname != "hello-d4c3b2a1.example.com" {
+		t.Fatalf("hostname = %q", app.Hostname)
+	}
+}
+
 func TestPublicAssetFallsBackToCustom404Page(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()
@@ -290,11 +386,11 @@ func (w *failAfterWriter) Write([]ActiveDeployment) error {
 }
 
 type memoryObjectStore struct {
-	objects map[string][]byte
+	objects map[string]ObjectBody
 }
 
 func newMemoryObjectStore() *memoryObjectStore {
-	return &memoryObjectStore{objects: make(map[string][]byte)}
+	return &memoryObjectStore{objects: make(map[string]ObjectBody)}
 }
 
 func (s *memoryObjectStore) PresignUpload(string, string, time.Duration) (string, error) {
@@ -305,17 +401,39 @@ func (s *memoryObjectStore) PresignDownload(string, string, time.Duration) (stri
 	return "", nil
 }
 
-func (s *memoryObjectStore) Put(appID, path string, _ string, data []byte) error {
-	s.objects[appID+":"+path] = append([]byte(nil), data...)
-	return nil
+func (s *memoryObjectStore) Put(appID, path string, contentType string, data []byte) (ObjectInfo, error) {
+	object := ObjectBody{
+		ObjectInfo: ObjectInfo{
+			Key:      path,
+			Size:     int64(len(data)),
+			ETag:     "etag-" + path,
+			HTTPETag: `"etag-` + path + `"`,
+			Uploaded: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			HTTPMetadata: ObjectHTTPMetadata{
+				ContentType: contentType,
+			},
+		},
+		Body: append([]byte(nil), data...),
+	}
+	s.objects[appID+":"+path] = object
+	return object.ObjectInfo, nil
 }
 
-func (s *memoryObjectStore) Get(appID, path string) ([]byte, error) {
+func (s *memoryObjectStore) Get(appID, path string) (ObjectBody, error) {
 	data, ok := s.objects[appID+":"+path]
 	if !ok {
-		return nil, errors.New("object not found")
+		return ObjectBody{}, ErrObjectNotFound
 	}
-	return append([]byte(nil), data...), nil
+	data.Body = append([]byte(nil), data.Body...)
+	return data, nil
+}
+
+func (s *memoryObjectStore) Head(appID, path string) (ObjectInfo, error) {
+	data, ok := s.objects[appID+":"+path]
+	if !ok {
+		return ObjectInfo{}, ErrObjectNotFound
+	}
+	return data.ObjectInfo, nil
 }
 
 func (s *memoryObjectStore) Delete(appID, path string) error {
@@ -373,7 +491,7 @@ func (r *objectBackedRepo) snapshotObjectPayload(t *testing.T, objects *memoryOb
 		t.Fatal(err)
 	}
 	var files []WorkerFile
-	if err := json.Unmarshal(raw, &files); err != nil {
+	if err := json.Unmarshal(raw.Body, &files); err != nil {
 		t.Fatal(err)
 	}
 	return files

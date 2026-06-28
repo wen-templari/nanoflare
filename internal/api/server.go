@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/clas/platform/internal/platform"
 )
@@ -56,9 +58,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/traffic", s.workerTraffic)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("POST /v1/apps/{appID}/deployments", s.deploy)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/kv", s.workerKVList)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/{key...}", s.workerKVGet)
+	s.mux.HandleFunc("PUT /v1/apps/{appID}/kv/{key...}", s.workerKVPut)
+	s.mux.HandleFunc("DELETE /v1/apps/{appID}/kv/{key...}", s.workerKVDelete)
 	s.mux.HandleFunc("GET /internal/auth/verify", s.verifyAuth)
 	s.mux.HandleFunc("GET /internal/traefik/config", s.traefikConfig)
 	s.mux.HandleFunc("/internal/http/apps/", s.appGateway)
+	s.mux.HandleFunc("GET /internal/runtime/objects/{key...}", s.runtimeObjectGet)
+	s.mux.HandleFunc("HEAD /internal/runtime/objects/{key...}", s.runtimeObjectHead)
+	s.mux.HandleFunc("PUT /internal/runtime/objects/{key...}", s.runtimeObjectPut)
+	s.mux.HandleFunc("DELETE /internal/runtime/objects/{key...}", s.runtimeObjectDelete)
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-upload", s.presignUpload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-download", s.presignDownload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/delete", s.deleteObject)
@@ -127,6 +137,128 @@ func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, traffic)
 }
 
+func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.service.WorkerKVList(r.PathValue("appID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, keys)
+}
+
+func (s *Server) workerKVGet(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("key") == "" {
+		s.workerKVList(w, r)
+		return
+	}
+	key, err := consoleKVKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	value, ok, err := s.service.WorkerKVGet(r.PathValue("appID"), key)
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(value)
+}
+
+func (s *Server) workerKVPut(w http.ResponseWriter, r *http.Request) {
+	key, err := consoleKVKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	defer r.Body.Close()
+	value, err := io.ReadAll(io.LimitReader(r.Body, maxKVValueSize+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(value) > maxKVValueSize {
+		writeError(w, http.StatusRequestEntityTooLarge, errors.New("KV value exceeds 25 MiB limit"))
+		return
+	}
+	if err := s.service.WorkerKVPut(r.PathValue("appID"), key, value); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) workerKVDelete(w http.ResponseWriter, r *http.Request) {
+	key, err := consoleKVKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.WorkerKVDelete(r.PathValue("appID"), key); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func consoleKVKey(r *http.Request) (string, error) {
+	key := r.PathValue("key")
+	if key == "" {
+		return "", errors.New("KV key cannot be empty")
+	}
+	if key == "." || key == ".." {
+		return "", errors.New(`KV keys "." and ".." are not allowed`)
+	}
+	if len([]byte(key)) > maxKVKeySize {
+		return "", errors.New("KV key exceeds 512 byte limit")
+	}
+	return key, nil
+}
+
+func runtimeObjectKey(r *http.Request) (string, error) {
+	key, err := url.PathUnescape(r.PathValue("key"))
+	if err != nil {
+		return "", errors.New("invalid object key encoding")
+	}
+	if key == "" {
+		return "", errors.New("object key cannot be empty")
+	}
+	if key == "." || key == ".." {
+		return "", errors.New(`object keys "." and ".." are not allowed`)
+	}
+	if strings.Contains(key, "..") {
+		return "", errors.New(`object keys must not contain ".."`)
+	}
+	clean := strings.TrimPrefix(path.Clean("/"+key), "/")
+	if clean == "." || clean == "" {
+		return "", errors.New("object key cannot be empty")
+	}
+	return clean, nil
+}
+
+func writeRuntimeObjectHeaders(header http.Header, object platform.ObjectInfo) {
+	if object.HTTPMetadata.ContentType != "" {
+		header.Set("Content-Type", object.HTTPMetadata.ContentType)
+	} else {
+		header.Set("Content-Type", "application/octet-stream")
+	}
+	header.Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	if object.HTTPETag != "" {
+		header.Set("ETag", object.HTTPETag)
+	}
+	if !object.Uploaded.IsZero() {
+		header.Set("Last-Modified", object.Uploaded.UTC().Format(http.TimeFormat))
+	}
+	header.Set("X-Platform-Object-Key", object.Key)
+	header.Set("X-Platform-Object-Etag", object.ETag)
+	header.Set("X-Platform-Object-Uploaded", object.Uploaded.UTC().Format(time.RFC3339Nano))
+}
+
 func (s *Server) listApps(w http.ResponseWriter, _ *http.Request) {
 	apps, err := s.service.ListApps()
 	if err != nil {
@@ -138,6 +270,78 @@ func (s *Server) listApps(w http.ResponseWriter, _ *http.Request) {
 
 type objectRequest struct {
 	Path string `json:"path"`
+}
+
+func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
+	key, err := runtimeObjectKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, ok, err := s.service.ObjectGet(bearerToken(r), key)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	writeRuntimeObjectHeaders(w.Header(), object.ObjectInfo)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(object.Body)
+}
+
+func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
+	key, err := runtimeObjectKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, ok, err := s.service.ObjectHead(bearerToken(r), key)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	writeRuntimeObjectHeaders(w.Header(), object)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
+	key, err := runtimeObjectKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, err := s.service.ObjectPut(bearerToken(r), key, r.Header.Get("Content-Type"), body)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, object)
+}
+
+func (s *Server) runtimeObjectDelete(w http.ResponseWriter, r *http.Request) {
+	key, err := runtimeObjectKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.DeleteObject(bearerToken(r), key); err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) presignUpload(w http.ResponseWriter, r *http.Request) {

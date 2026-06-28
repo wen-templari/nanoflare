@@ -170,3 +170,26 @@ type WorkerTraffic struct {
 	Traffic           []float64          `json:"traffic"`
 	StatusCodes       []WorkerStatusCode `json:"status_codes"`
 }
+
+type WorkerKVKey struct {
+	Key  string `json:"key"`
+	Size int64  `json:"size"`
+}
+
+type ObjectHTTPMetadata struct {
+	ContentType string `json:"contentType,omitempty"`
+}
+
+type ObjectInfo struct {
+	Key          string             `json:"key"`
+	Size         int64              `json:"size"`
+	ETag         string             `json:"etag,omitempty"`
+	HTTPETag     string             `json:"httpEtag,omitempty"`
+	Uploaded     time.Time          `json:"uploaded"`
+	HTTPMetadata ObjectHTTPMetadata `json:"httpMetadata,omitempty"`
+}
+
+type ObjectBody struct {
+	ObjectInfo
+	Body []byte `json:"-"`
+}

@@ -20,8 +20,9 @@ type ConfigWriter interface {
 type ObjectStore interface {
 	PresignUpload(appID, path string, expiry time.Duration) (string, error)
 	PresignDownload(appID, path string, expiry time.Duration) (string, error)
-	Put(appID, path string, contentType string, data []byte) error
-	Get(appID, path string) ([]byte, error)
+	Put(appID, path string, contentType string, data []byte) (ObjectInfo, error)
+	Get(appID, path string) (ObjectBody, error)
+	Head(appID, path string) (ObjectInfo, error)
 	Delete(appID, path string) error
 }
 
@@ -34,11 +35,13 @@ type WorkerTrafficReader interface {
 }
 
 type Service struct {
-	store   Repository
-	writer  ConfigWriter
-	objects ObjectStore
-	output  WorkerOutputReader
-	traffic WorkerTrafficReader
+	store                Repository
+	writer               ConfigWriter
+	objects              ObjectStore
+	output               WorkerOutputReader
+	traffic              WorkerTrafficReader
+	baseHostname         string
+	randomHostnameSuffix func() (string, error)
 }
 
 type AssetResponse struct {
@@ -48,15 +51,24 @@ type AssetResponse struct {
 }
 
 func NewService(store Repository, writer ConfigWriter) *Service {
-	return &Service{store: store, writer: writer}
+	return &Service{store: store, writer: writer, randomHostnameSuffix: randomHostnameSuffix}
 }
 
 func NewServiceWithObjects(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
-	return &Service{store: store, writer: writer, objects: objects}
+	return &Service{store: store, writer: writer, objects: objects, randomHostnameSuffix: randomHostnameSuffix}
 }
 
 func NewServiceWithConsole(store Repository, writer ConfigWriter, objects ObjectStore, output WorkerOutputReader, traffic WorkerTrafficReader) *Service {
-	return &Service{store: store, writer: writer, objects: objects, output: output, traffic: traffic}
+	return &Service{store: store, writer: writer, objects: objects, output: output, traffic: traffic, randomHostnameSuffix: randomHostnameSuffix}
+}
+
+func (s *Service) SetBaseHostname(hostname string) error {
+	normalized, err := normalizeHostname(hostname)
+	if err != nil {
+		return err
+	}
+	s.baseHostname = normalized
+	return nil
 }
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
@@ -65,19 +77,53 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	if input.Name == "" {
 		return App{}, errors.New("name is required")
 	}
-	if input.Hostname == "" || strings.Contains(input.Hostname, ":") || net.ParseIP(input.Hostname) != nil {
-		return App{}, errors.New("hostname must be a DNS name without a port")
+	generated := input.Hostname == ""
+	if !generated {
+		hostname, err := normalizeHostname(input.Hostname)
+		if err != nil {
+			return App{}, err
+		}
+		input.Hostname = hostname
 	}
-	appID, err := randomToken()
-	if err != nil {
-		return App{}, err
+	attempts := 1
+	if generated {
+		if s.baseHostname == "" {
+			return App{}, errors.New("hostname is required when base hostname is not configured")
+		}
+		attempts = 5
 	}
-	runtimeToken, err := randomToken()
-	if err != nil {
-		return App{}, err
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		hostname := input.Hostname
+		if generated {
+			var err error
+			hostname, err = s.generatedHostname(input.Name)
+			if err != nil {
+				return App{}, err
+			}
+		}
+		appID, err := randomToken()
+		if err != nil {
+			return App{}, err
+		}
+		runtimeToken, err := randomToken()
+		if err != nil {
+			return App{}, err
+		}
+		app := App{ID: appID, Name: input.Name, Hostname: hostname, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
+		if err := s.store.CreateApp(app); err != nil {
+			if generated && errors.Is(err, ErrAppExists) {
+				lastErr = err
+				continue
+			}
+			return App{}, err
+		}
+		return app, nil
 	}
-	app := App{ID: appID, Name: input.Name, Hostname: input.Hostname, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
-	return app, s.store.CreateApp(app)
+	if lastErr != nil {
+		return App{}, errors.New("could not generate unique hostname")
+	}
+	return App{}, errors.New("could not create app")
 }
 
 func (s *Service) ListApps() ([]App, error) {
@@ -292,12 +338,12 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 			return Deployment{}, err
 		}
 		deployment.ObjectKey = deploymentBundleObjectPath(deploymentID)
-		if err := s.objects.Put(appID, deployment.ObjectKey, "application/json", payload); err != nil {
+		if _, err := s.objects.Put(appID, deployment.ObjectKey, "application/json", payload); err != nil {
 			return Deployment{}, err
 		}
 		for i := range deployment.Assets {
 			deployment.Assets[i].ObjectKey = deploymentAssetObjectPath(deploymentID, deployment.Assets[i].Path)
-			if err := s.objects.Put(appID, deployment.Assets[i].ObjectKey, deployment.Assets[i].ContentType, deployment.Assets[i].Data); err != nil {
+			if _, err := s.objects.Put(appID, deployment.Assets[i].ObjectKey, deployment.Assets[i].ContentType, deployment.Assets[i].Data); err != nil {
 				s.cleanupDeploymentAssets(deployment)
 				s.cleanupDeploymentObject(deployment)
 				return Deployment{}, err
@@ -492,11 +538,11 @@ func (s *Service) hydrateDeploymentFiles(deployment *Deployment) error {
 	if s.objects == nil {
 		return errors.New("object storage is not configured")
 	}
-	data, err := s.objects.Get(deployment.AppID, deployment.ObjectKey)
+	object, err := s.objects.Get(deployment.AppID, deployment.ObjectKey)
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, &deployment.Files); err != nil {
+	if err := json.Unmarshal(object.Body, &deployment.Files); err != nil {
 		return err
 	}
 	if deployment.BundleSize == 0 {
@@ -576,6 +622,38 @@ func (s *Service) DeleteObject(capability, path string) error {
 	return s.objects.Delete(appID, path)
 }
 
+func (s *Service) ObjectPut(capability, objectPath, contentType string, data []byte) (ObjectInfo, error) {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	return s.objects.Put(appID, objectPath, contentType, data)
+}
+
+func (s *Service) ObjectGet(capability, objectPath string) (ObjectBody, bool, error) {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return ObjectBody{}, false, err
+	}
+	object, err := s.objects.Get(appID, objectPath)
+	if errors.Is(err, ErrObjectNotFound) {
+		return ObjectBody{}, false, nil
+	}
+	return object, err == nil, err
+}
+
+func (s *Service) ObjectHead(capability, objectPath string) (ObjectInfo, bool, error) {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return ObjectInfo{}, false, err
+	}
+	object, err := s.objects.Head(appID, objectPath)
+	if errors.Is(err, ErrObjectNotFound) {
+		return ObjectInfo{}, false, nil
+	}
+	return object, err == nil, err
+}
+
 func (s *Service) appIDForCapability(capability string) (string, error) {
 	if s.objects == nil {
 		return "", errors.New("object storage is not configured")
@@ -593,6 +671,38 @@ func (s *Service) KVPut(capability, key string, value []byte) error {
 
 func (s *Service) KVDelete(capability, key string) error {
 	return s.store.KVDelete(capability, key)
+}
+
+func (s *Service) WorkerKVList(appID string) ([]WorkerKVKey, error) {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.KVList(app.RuntimeToken)
+}
+
+func (s *Service) WorkerKVGet(appID, key string) ([]byte, bool, error) {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return nil, false, err
+	}
+	return s.store.KVGet(app.RuntimeToken, key)
+}
+
+func (s *Service) WorkerKVPut(appID, key string, value []byte) error {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return err
+	}
+	return s.store.KVPut(app.RuntimeToken, key, value)
+}
+
+func (s *Service) WorkerKVDelete(appID, key string) error {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return err
+	}
+	return s.store.KVDelete(app.RuntimeToken, key)
 }
 
 func (s *Service) AssetFetch(capability, assetPath string) (AssetResponse, error) {
@@ -680,12 +790,12 @@ func (s *Service) assetResponse(appID, requestPath string) (AssetResponse, error
 	if !ok {
 		return AssetResponse{StatusCode: 404}, nil
 	}
-	body, err := s.objects.Get(appID, resolved.ObjectKey)
+	object, err := s.objects.Get(appID, resolved.ObjectKey)
 	if err != nil {
 		return AssetResponse{}, err
 	}
 	return AssetResponse{
-		Body:        body,
+		Body:        object.Body,
 		ContentType: resolved.ContentType,
 		StatusCode:  status,
 	}, nil
@@ -731,6 +841,49 @@ func htmlIndexPath(requestPath string) string {
 		return "/index.html"
 	}
 	return strings.TrimSuffix(requestPath, "/") + "/index.html"
+}
+
+func (s *Service) generatedHostname(name string) (string, error) {
+	suffix, err := s.randomHostnameSuffix()
+	if err != nil {
+		return "", err
+	}
+	prefix := slug(name)
+	if prefix == "" {
+		prefix = "worker"
+	}
+	return prefix + "-" + suffix + "." + s.baseHostname, nil
+}
+
+func normalizeHostname(hostname string) (string, error) {
+	hostname = strings.TrimSuffix(strings.TrimSpace(strings.ToLower(hostname)), ".")
+	if hostname == "" || strings.Contains(hostname, ":") || net.ParseIP(hostname) != nil {
+		return "", errors.New("hostname must be a DNS name without a port")
+	}
+	return hostname, nil
+}
+
+func slug(value string) string {
+	var result strings.Builder
+	dash := false
+	for _, char := range strings.ToLower(value) {
+		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' {
+			result.WriteRune(char)
+			dash = false
+		} else if result.Len() > 0 && !dash {
+			result.WriteByte('-')
+			dash = true
+		}
+	}
+	return strings.Trim(result.String(), "-")
+}
+
+func randomHostnameSuffix() (string, error) {
+	value := make([]byte, 4)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
 }
 
 func randomToken() (string, error) {

@@ -20,9 +20,10 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	for _, expected := range []string{
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`address = "*:9001"`,
-		`serviceWorkerScript = "addEventListener(\"fetch\", () => {});"`,
+		`globalThis.OBJECTS = __platformWrapObjectsBinding(globalThis.OBJECTS);`,
 		`(name = "KV", kvNamespace = "kv-hello-app")`,
 		`(name = "ASSETS", service = "assets-hello-app")`,
+		`(name = "OBJECTS", service = "objects-hello-app")`,
 		`(name = "X-Platform-Binding", value = "assets")`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
@@ -47,6 +48,9 @@ func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
 	}})
 	if !strings.Contains(config, `(name = "STATIC", service = "assets-hello-app")`) {
 		t.Fatalf("config does not contain custom asset binding:\n%s", config)
+	}
+	if !strings.Contains(config, `(name = "OBJECTS", service = "objects-hello-app")`) {
+		t.Fatalf("config does not contain objects binding:\n%s", config)
 	}
 	if strings.Contains(config, `(name = "ASSETS", service = "assets-hello-app")`) {
 		t.Fatalf("config unexpectedly contains default asset binding:\n%s", config)

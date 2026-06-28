@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -86,6 +85,66 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &apps)
 	if len(apps) != 1 || apps[0].ID != app.ID {
 		t.Fatalf("unexpected app list: %#v", apps)
+	}
+}
+
+func TestWorkerConsoleKV(t *testing.T) {
+	dir := t.TempDir()
+	service := platform.NewService(platform.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServer(service)
+	appOne := createApp(t, server, "Console KV One", "console-kv-one.example.com")
+	appTwo := createApp(t, server, "Console KV Two", "console-kv-two.example.com")
+
+	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/color", []byte("blue"), http.StatusNoContent)
+	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/count", []byte("42"), http.StatusNoContent)
+	if got := workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/color", nil, http.StatusOK); string(got) != "blue" {
+		t.Fatalf("got %q, want app-one value", got)
+	}
+	var keys []platform.WorkerKVKey
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv", http.StatusOK, &keys)
+	if len(keys) != 2 || keys[0].Key != "color" || keys[0].Size != 4 || keys[1].Key != "count" || keys[1].Size != 2 {
+		t.Fatalf("unexpected KV keys: %#v", keys)
+	}
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/", http.StatusOK, &keys)
+	if len(keys) != 2 {
+		t.Fatalf("unexpected trailing-slash KV keys: %#v", keys)
+	}
+	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appTwo.ID+"/kv/color", nil, http.StatusNotFound)
+	workerKVRequest(t, server, http.MethodDelete, "/v1/apps/"+appOne.ID+"/kv/color", nil, http.StatusNoContent)
+	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/color", nil, http.StatusNotFound)
+	workerKVRequest(t, server, http.MethodPut, "/v1/apps/missing/kv/color", []byte("blue"), http.StatusNotFound)
+}
+
+func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
+	service := platform.NewService(platform.NewStore(), config.NewWriter(
+		filepath.Join(t.TempDir(), "workerd.capnp"),
+		filepath.Join(t.TempDir(), "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	))
+	if err := service.SetBaseHostname("workers.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(service)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"name":"Hello Worker"}`))
+	request.Header.Set("Content-Type", "application/json")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var app platform.App
+	if err := json.NewDecoder(recorder.Body).Decode(&app); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(app.Hostname, "hello-worker-") || !strings.HasSuffix(app.Hostname, ".workers.example.com") {
+		t.Fatalf("generated hostname = %q", app.Hostname)
 	}
 }
 
@@ -289,6 +348,72 @@ func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
 	runtimeAssets.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<svg />" {
 		t.Fatalf("runtime direct asset status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := platform.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://platformd/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Objects", "objects.example.com")
+	token := runtimeTokens(t, store)[app.ID]
+
+	request := httptest.NewRequest(http.MethodPut, "/internal/runtime/objects/folder%2Fhello.txt", bytes.NewReader([]byte("hello")))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "text/plain")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("put status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	var object platform.ObjectInfo
+	if err := json.NewDecoder(recorder.Body).Decode(&object); err != nil {
+		t.Fatal(err)
+	}
+	if object.Key != "folder/hello.txt" || object.Size != 5 || object.HTTPMetadata.ContentType != "text/plain" {
+		t.Fatalf("unexpected object info: %#v", object)
+	}
+
+	request = httptest.NewRequest(http.MethodHead, "/internal/runtime/objects/folder%2Fhello.txt", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("head status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("X-Platform-Object-Key"); got != "folder/hello.txt" {
+		t.Fatalf("head key = %q", got)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/internal/runtime/objects/folder%2Fhello.txt", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "hello" {
+		t.Fatalf("get status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodDelete, "/internal/runtime/objects/folder%2Fhello.txt", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/internal/runtime/objects/folder%2Fhello.txt", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("missing get status = %d", recorder.Code)
 	}
 }
 
@@ -579,11 +704,11 @@ func (fakeTraffic) Traffic(string) (platform.WorkerTraffic, error) {
 }
 
 type apiObjectStore struct {
-	objects map[string][]byte
+	objects map[string]platform.ObjectBody
 }
 
 func newAPIObjectStore() *apiObjectStore {
-	return &apiObjectStore{objects: make(map[string][]byte)}
+	return &apiObjectStore{objects: make(map[string]platform.ObjectBody)}
 }
 
 func (s *apiObjectStore) PresignUpload(string, string, time.Duration) (string, error) {
@@ -594,17 +719,39 @@ func (s *apiObjectStore) PresignDownload(string, string, time.Duration) (string,
 	return "", nil
 }
 
-func (s *apiObjectStore) Put(appID, path string, _ string, data []byte) error {
-	s.objects[appID+":"+path] = append([]byte(nil), data...)
-	return nil
+func (s *apiObjectStore) Put(appID, path string, contentType string, data []byte) (platform.ObjectInfo, error) {
+	object := platform.ObjectBody{
+		ObjectInfo: platform.ObjectInfo{
+			Key:      path,
+			Size:     int64(len(data)),
+			ETag:     "etag-" + path,
+			HTTPETag: `"etag-` + path + `"`,
+			Uploaded: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			HTTPMetadata: platform.ObjectHTTPMetadata{
+				ContentType: contentType,
+			},
+		},
+		Body: append([]byte(nil), data...),
+	}
+	s.objects[appID+":"+path] = object
+	return object.ObjectInfo, nil
 }
 
-func (s *apiObjectStore) Get(appID, path string) ([]byte, error) {
+func (s *apiObjectStore) Get(appID, path string) (platform.ObjectBody, error) {
 	data, ok := s.objects[appID+":"+path]
 	if !ok {
-		return nil, errors.New("object not found")
+		return platform.ObjectBody{}, platform.ErrObjectNotFound
 	}
-	return append([]byte(nil), data...), nil
+	data.Body = append([]byte(nil), data.Body...)
+	return data, nil
+}
+
+func (s *apiObjectStore) Head(appID, path string) (platform.ObjectInfo, error) {
+	data, ok := s.objects[appID+":"+path]
+	if !ok {
+		return platform.ObjectInfo{}, platform.ErrObjectNotFound
+	}
+	return data.ObjectInfo, nil
 }
 
 func (s *apiObjectStore) Delete(appID, path string) error {
@@ -683,6 +830,17 @@ func runtimeKVRequest(t *testing.T, server http.Handler, method, path, token str
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != wantStatus {
+		t.Fatalf("%s %s status = %d, body = %s", method, path, recorder.Code, recorder.Body.String())
+	}
+	return recorder.Body.Bytes()
+}
+
+func workerKVRequest(t *testing.T, server http.Handler, method, path string, body []byte, wantStatus int) []byte {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != wantStatus {
 		t.Fatalf("%s %s status = %d, body = %s", method, path, recorder.Code, recorder.Body.String())

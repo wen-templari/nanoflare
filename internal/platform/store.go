@@ -10,6 +10,7 @@ var (
 	ErrAppExists         = errors.New("app already exists")
 	ErrAppNotFound       = errors.New("app not found")
 	ErrInvalidCapability = errors.New("invalid runtime capability")
+	ErrObjectNotFound    = errors.New("object not found")
 )
 
 type Repository interface {
@@ -23,6 +24,7 @@ type Repository interface {
 	ActiveDeployments() ([]ActiveDeployment, error)
 	ListDeployments() ([]DeploymentRecord, error)
 	AppIDForCapability(string) (string, error)
+	KVList(capability string) ([]WorkerKVKey, error)
 	KVGet(capability, key string) ([]byte, bool, error)
 	KVPut(capability, key string, value []byte) error
 	KVDelete(capability, key string) error
@@ -52,6 +54,11 @@ func (s *Store) CreateApp(app App) error {
 	defer s.mu.Unlock()
 	if _, exists := s.apps[app.ID]; exists {
 		return ErrAppExists
+	}
+	for _, existing := range s.apps {
+		if existing.Hostname == app.Hostname {
+			return ErrAppExists
+		}
 	}
 	s.apps[app.ID] = app
 	s.capabilityToApp[app.RuntimeToken] = app.ID
@@ -200,6 +207,21 @@ func (s *Store) KVGet(capability, key string) ([]byte, bool, error) {
 	}
 	value, ok := s.kv[appID][key]
 	return append([]byte(nil), value...), ok, nil
+}
+
+func (s *Store) KVList(capability string) ([]WorkerKVKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	appID, ok := s.capabilityToApp[capability]
+	if !ok {
+		return nil, ErrInvalidCapability
+	}
+	items := make([]WorkerKVKey, 0, len(s.kv[appID]))
+	for key, value := range s.kv[appID] {
+		items = append(items, WorkerKVKey{Key: key, Size: int64(len(value))})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
+	return items, nil
 }
 
 func (s *Store) KVPut(capability, key string, value []byte) error {

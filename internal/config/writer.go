@@ -84,6 +84,8 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 			quote(kvServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Platform-Binding\", value = \"assets\")]))),\n",
 			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
+		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
+			quote(objectServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
@@ -94,8 +96,8 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(item.App.ID))
 		writeWorkerSource(&out, item.Deployment)
-		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s), (name = %s, service = %s)],\n",
-			quote(kvServiceName(item.App.ID)), quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID)))
+		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s), (name = %s, service = %s), (name = \"OBJECTS\", service = %s)],\n",
+			quote(kvServiceName(item.App.ID)), quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID)), quote(objectServiceName(item.App.ID)))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		out.WriteString(");\n")
 	}
@@ -104,18 +106,18 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 
 func writeWorkerSource(out *strings.Builder, deployment platform.Deployment) {
 	if deploymentFormat(deployment) == "service-worker" {
-		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(deployment.Files[0].Content))
+		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content)))
 		return
 	}
 	out.WriteString("  modules = [\n")
-	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__platform_internal_entrypoint__.js"), quote(assetEntrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig))))
+	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__platform_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig))))
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
 	}
 	out.WriteString("  ],\n")
 }
 
-func assetEntrypointWrapper(entrypoint, binding string) string {
+func entrypointWrapper(entrypoint, binding string) string {
 	return fmt.Sprintf(`import userWorker from %s;
 
 const assetBindingName = %s;
@@ -132,13 +134,163 @@ function wrapAssetBinding(binding) {
   };
 }
 
+function buildObjectBody(response, object) {
+  if (!response) return null;
+  return {
+    key: object.key,
+    size: object.size,
+    etag: object.etag,
+    httpEtag: object.httpEtag,
+    uploaded: new Date(object.uploaded),
+    httpMetadata: object.httpMetadata ?? {},
+    body: response.body,
+    get bodyUsed() {
+      return response.bodyUsed;
+    },
+    arrayBuffer() {
+      return response.arrayBuffer();
+    },
+    text() {
+      return response.text();
+    },
+    json() {
+      return response.json();
+    },
+    blob() {
+      return response.blob();
+    },
+  };
+}
+
+async function toObjectRequestInit(value, options) {
+  if (value instanceof Request || value instanceof Response) {
+    const contentLength = value.headers.get("content-length");
+    return {
+      body: value.body,
+      contentType: value.headers.get("content-type") || options?.httpMetadata?.contentType || "",
+      size: contentLength ? Number(contentLength) : undefined,
+    };
+  }
+  if (typeof value === "string") {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || "",
+      size: new TextEncoder().encode(value).byteLength,
+    };
+  }
+  if (value instanceof ArrayBuffer) {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || "",
+      size: value.byteLength,
+    };
+  }
+  if (ArrayBuffer.isView(value)) {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || "",
+      size: value.byteLength,
+    };
+  }
+  if (value instanceof Blob) {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || value.type || "",
+      size: value.size,
+    };
+  }
+  return {
+    body: value,
+    contentType: options?.httpMetadata?.contentType || (value instanceof Blob ? value.type : ""),
+    size: undefined,
+  };
+}
+
+function wrapObjectsBinding(binding) {
+  if (!binding) return binding;
+  return {
+    async put(key, value, options) {
+      const init = await toObjectRequestInit(value, options);
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
+        method: "PUT",
+        headers: init.contentType ? { "content-type": init.contentType } : undefined,
+        body: init.body,
+      }));
+      if (!response.ok) throw new Error("OBJECTS.put failed: " + response.status);
+      const raw = await response.text();
+      if (!raw.trim()) {
+        return {
+          key,
+          size: init.size ?? 0,
+          etag: "",
+          httpEtag: "",
+          uploaded: new Date(),
+          httpMetadata: {
+            contentType: init.contentType || "",
+          },
+        };
+      }
+      const object = JSON.parse(raw);
+      object.uploaded = new Date(object.uploaded);
+      return object;
+    },
+    async get(key) {
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key)));
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("OBJECTS.get failed: " + response.status);
+      const object = {
+        key: response.headers.get("x-platform-object-key") || key,
+        size: Number(response.headers.get("content-length") || "0"),
+        etag: response.headers.get("x-platform-object-etag") || "",
+        httpEtag: response.headers.get("etag") || "",
+        uploaded: response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString(),
+        httpMetadata: {
+          contentType: response.headers.get("content-type") || "",
+        },
+      };
+      return buildObjectBody(response, object);
+    },
+    async head(key) {
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
+        method: "HEAD",
+      }));
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("OBJECTS.head failed: " + response.status);
+      return {
+        key: response.headers.get("x-platform-object-key") || key,
+        size: Number(response.headers.get("content-length") || "0"),
+        etag: response.headers.get("x-platform-object-etag") || "",
+        httpEtag: response.headers.get("etag") || "",
+        uploaded: new Date(response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString()),
+        httpMetadata: {
+          contentType: response.headers.get("content-type") || "",
+        },
+      };
+    },
+    async delete(key) {
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
+        method: "DELETE",
+      }));
+      if (!response.ok) throw new Error("OBJECTS.delete failed: " + response.status);
+    },
+  };
+}
+
 function wrapEnv(env) {
-  if (!env || !env[assetBindingName]) return env;
+  if (!env) return env;
   const wrapped = Object.create(env);
-  Object.defineProperty(wrapped, assetBindingName, {
-    value: wrapAssetBinding(env[assetBindingName]),
-    enumerable: true,
-  });
+  if (env[assetBindingName]) {
+    Object.defineProperty(wrapped, assetBindingName, {
+      value: wrapAssetBinding(env[assetBindingName]),
+      enumerable: true,
+    });
+  }
+  if (env.OBJECTS) {
+    Object.defineProperty(wrapped, "OBJECTS", {
+      value: wrapObjectsBinding(env.OBJECTS),
+      enumerable: true,
+    });
+  }
   return wrapped;
 }
 
@@ -148,6 +300,152 @@ export default {
     return userWorker.fetch(request, wrapEnv(env), ctx);
   },
 };`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding))
+}
+
+func serviceWorkerWrapper(script string) string {
+	return `function __platformBuildObjectBody(response, object) {
+  if (!response) return null;
+  return {
+    key: object.key,
+    size: object.size,
+    etag: object.etag,
+    httpEtag: object.httpEtag,
+    uploaded: new Date(object.uploaded),
+    httpMetadata: object.httpMetadata ?? {},
+    body: response.body,
+    get bodyUsed() {
+      return response.bodyUsed;
+    },
+    arrayBuffer() {
+      return response.arrayBuffer();
+    },
+    text() {
+      return response.text();
+    },
+    json() {
+      return response.json();
+    },
+    blob() {
+      return response.blob();
+    },
+  };
+}
+
+async function __platformToObjectRequestInit(value, options) {
+  if (value instanceof Request || value instanceof Response) {
+    const contentLength = value.headers.get("content-length");
+    return {
+      body: value.body,
+      contentType: value.headers.get("content-type") || options?.httpMetadata?.contentType || "",
+      size: contentLength ? Number(contentLength) : undefined,
+    };
+  }
+  if (typeof value === "string") {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || "",
+      size: new TextEncoder().encode(value).byteLength,
+    };
+  }
+  if (value instanceof ArrayBuffer) {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || "",
+      size: value.byteLength,
+    };
+  }
+  if (ArrayBuffer.isView(value)) {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || "",
+      size: value.byteLength,
+    };
+  }
+  if (value instanceof Blob) {
+    return {
+      body: value,
+      contentType: options?.httpMetadata?.contentType || value.type || "",
+      size: value.size,
+    };
+  }
+  return {
+    body: value,
+    contentType: options?.httpMetadata?.contentType || (value instanceof Blob ? value.type : ""),
+    size: undefined,
+  };
+}
+
+function __platformWrapObjectsBinding(binding) {
+  if (!binding) return binding;
+  return {
+    async put(key, value, options) {
+      const init = await __platformToObjectRequestInit(value, options);
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
+        method: "PUT",
+        headers: init.contentType ? { "content-type": init.contentType } : undefined,
+        body: init.body,
+      }));
+      if (!response.ok) throw new Error("OBJECTS.put failed: " + response.status);
+      const raw = await response.text();
+      if (!raw.trim()) {
+        return {
+          key,
+          size: init.size ?? 0,
+          etag: "",
+          httpEtag: "",
+          uploaded: new Date(),
+          httpMetadata: {
+            contentType: init.contentType || "",
+          },
+        };
+      }
+      const object = JSON.parse(raw);
+      object.uploaded = new Date(object.uploaded);
+      return object;
+    },
+    async get(key) {
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key)));
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("OBJECTS.get failed: " + response.status);
+      return __platformBuildObjectBody(response, {
+        key: response.headers.get("x-platform-object-key") || key,
+        size: Number(response.headers.get("content-length") || "0"),
+        etag: response.headers.get("x-platform-object-etag") || "",
+        httpEtag: response.headers.get("etag") || "",
+        uploaded: response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString(),
+        httpMetadata: {
+          contentType: response.headers.get("content-type") || "",
+        },
+      });
+    },
+    async head(key) {
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
+        method: "HEAD",
+      }));
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("OBJECTS.head failed: " + response.status);
+      return {
+        key: response.headers.get("x-platform-object-key") || key,
+        size: Number(response.headers.get("content-length") || "0"),
+        etag: response.headers.get("x-platform-object-etag") || "",
+        httpEtag: response.headers.get("etag") || "",
+        uploaded: new Date(response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString()),
+        httpMetadata: {
+          contentType: response.headers.get("content-type") || "",
+        },
+      };
+    },
+    async delete(key) {
+      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
+        method: "DELETE",
+      }));
+      if (!response.ok) throw new Error("OBJECTS.delete failed: " + response.status);
+    },
+  };
+}
+
+globalThis.OBJECTS = __platformWrapObjectsBinding(globalThis.OBJECTS);
+` + "\n" + script
 }
 
 func deploymentFormat(deployment platform.Deployment) string {
@@ -166,6 +464,10 @@ func kvServiceName(appID string) string {
 
 func assetServiceName(appID string) string {
 	return "assets-" + appID
+}
+
+func objectServiceName(appID string) string {
+	return "objects-" + appID
 }
 
 func assetBindingName(config platform.AssetConfig) string {
