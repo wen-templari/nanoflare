@@ -77,6 +77,10 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	if input.Name == "" {
 		return App{}, errors.New("name is required")
 	}
+	auth, err := normalizeAuthConfig(input.Auth)
+	if err != nil {
+		return App{}, err
+	}
 	generated := input.Hostname == ""
 	if !generated {
 		hostname, err := normalizeHostname(input.Hostname)
@@ -110,7 +114,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 		if err != nil {
 			return App{}, err
 		}
-		app := App{ID: appID, Name: input.Name, Hostname: hostname, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
+		app := App{ID: appID, Name: input.Name, Hostname: hostname, Auth: auth, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
 		if err := s.store.CreateApp(app); err != nil {
 			if generated && errors.Is(err, ErrAppExists) {
 				lastErr = err
@@ -124,6 +128,31 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 		return App{}, errors.New("could not generate unique hostname")
 	}
 	return App{}, errors.New("could not create app")
+}
+
+func (s *Service) UpdateApp(appID string, input UpdateAppInput) (App, error) {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return App{}, err
+	}
+	if input.Auth != nil {
+		auth, err := normalizeAuthConfig(*input.Auth)
+		if err != nil {
+			return App{}, err
+		}
+		app.Auth = auth
+	}
+	if err := s.store.UpdateApp(app); err != nil {
+		return App{}, err
+	}
+	active, err := s.activeDeployments()
+	if err != nil {
+		return App{}, err
+	}
+	if err := s.writer.Write(active); err != nil {
+		return App{}, fmt.Errorf("write generated config: %w", err)
+	}
+	return app, nil
 }
 
 func (s *Service) ListApps() ([]App, error) {
@@ -492,6 +521,42 @@ func validateRunWorkerFirst(runWorkerFirst RunWorkerFirst) error {
 		if !strings.HasPrefix(pattern, "/") || pattern == "/" || strings.Contains(strings.TrimSuffix(pattern, "*"), "*") {
 			return fmt.Errorf("asset_config.run_worker_first route %q must be an absolute path with an optional trailing wildcard", route)
 		}
+	}
+	return nil
+}
+
+func normalizeAuthConfig(config AuthConfig) (AuthConfig, error) {
+	if len(config.ProtectedRoutes) == 0 {
+		return AuthConfig{}, nil
+	}
+	routes := make([]string, 0, len(config.ProtectedRoutes))
+	seen := make(map[string]bool, len(config.ProtectedRoutes))
+	for _, route := range config.ProtectedRoutes {
+		route = strings.TrimSpace(route)
+		if err := validateProtectedRoute(route); err != nil {
+			return AuthConfig{}, err
+		}
+		if seen[route] {
+			continue
+		}
+		seen[route] = true
+		routes = append(routes, route)
+	}
+	return AuthConfig{ProtectedRoutes: routes}, nil
+}
+
+func validateProtectedRoute(route string) error {
+	if route == "" {
+		return errors.New("auth.protected_routes cannot contain empty values")
+	}
+	if !strings.HasPrefix(route, "/") || route == "/" {
+		return fmt.Errorf("auth.protected_routes route %q must be an absolute path and cannot be root", route)
+	}
+	if strings.Contains(strings.TrimSuffix(route, "*"), "*") {
+		return fmt.Errorf("auth.protected_routes route %q must use at most one trailing wildcard", route)
+	}
+	if strings.HasSuffix(route, "*") && !strings.HasSuffix(route, "/*") {
+		return fmt.Errorf("auth.protected_routes route %q wildcard must be written as /*", route)
 	}
 	return nil
 }

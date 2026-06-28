@@ -103,12 +103,39 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 	}}, "http://platformd:8080/internal/auth/verify", "host.docker.internal")
 	for _, expected := range []string{
 		`address: "http://platformd:8080/internal/auth/verify"`,
+		`- X-Platform-User-JWT`,
+		`- X-Platform-User-Email`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
 		`- web`,
 		`- websecure`,
 		`- hello_app-prefix`,
 		`prefix: "/internal/http/apps/hello-app/9001"`,
 		`url: "http://platformd:8080"`,
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, config)
+		}
+	}
+}
+
+func TestTraefikGeneratesProtectedRouteRouters(t *testing.T) {
+	config := Traefik([]platform.ActiveDeployment{{
+		App: platform.App{
+			ID:       "hello-app",
+			Hostname: "hello.example.com",
+			Auth:     platform.AuthConfig{ProtectedRoutes: []string{"/admin/*", "/reports"}},
+		},
+		Deployment: platform.Deployment{Port: 9001},
+	}}, "http://platformd:8080/internal/auth/verify", "host.docker.internal")
+	for _, expected := range []string{
+		`hello_app-auth-0`,
+		`rule: "Host(` + "`" + `hello.example.com` + "`" + `) && PathPrefix(` + "`" + `/admin/` + "`" + `)"`,
+		`hello_app-auth-1`,
+		`rule: "Host(` + "`" + `hello.example.com` + "`" + `) && Path(` + "`" + `/reports` + "`" + `)"`,
+		`priority: 200`,
+		`priority: 190`,
+		`middlewares:`,
+		`- platform-auth`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)

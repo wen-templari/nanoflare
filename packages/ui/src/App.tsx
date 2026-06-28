@@ -1,11 +1,10 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import {
   Activity, Archive, ArrowLeft, ArrowUpRight, BarChart3, Boxes, Check,
-  ChevronDown, ChevronRight, CircleGauge, CloudUpload, Code2, Copy, Database,
-  ExternalLink, FileCode2, FileJson, FileText, Folder, FolderOpen, GitBranch,
-  Globe2, HardDrive, Layers3, MoreHorizontal, Plus, RefreshCw, Search,
-  Server, Settings, SlidersHorizontal, Terminal, Timer, Trash2,
-  UploadCloud, Waypoints,
+  ChevronDown, ChevronRight, CircleGauge, CloudUpload, Code2, Copy,
+  FileCode2, FileJson, Folder, GitBranch, Globe2, KeyRound, MoreHorizontal,
+  Plus, RefreshCw, Save, Search, Server, Settings, SlidersHorizontal, Terminal,
+  Timer, Trash2, Waypoints,
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -13,14 +12,16 @@ import { Dialog } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { cn } from "./lib/utils";
 
-type Section = "overview" | "workers" | "pages" | "storage" | "monitoring";
-type Worker = { id: string; name: string; hostname: string; created_at: string; status?: "live" | "draft"; requests?: string; deployment?: string };
-type WorkerDetailTab = "files" | "config" | "deployments" | "output";
+type Section = "overview" | "workers" | "monitoring";
+type WorkerAuth = { protected_routes?: string[] };
+type Worker = { id: string; name: string; hostname: string; created_at: string; auth?: WorkerAuth; status?: "live" | "draft"; requests?: string; deployment?: string };
+type WorkerDetailTab = "files" | "kv" | "config" | "deployments" | "output";
 type WorkerDeployment = { id: string; entrypoint: string; bundle_size: number; compatibility_date: string; created_at: string };
 type WorkerDetailData = { app: Worker; deployment?: WorkerDeployment };
 type ConsoleDeployment = { id: string; app_id: string; app_name: string; hostname: string; entrypoint: string; bundle_size: number; compatibility_date: string; state: "active" | "inactive"; created_at: string };
 type WorkerFile = { name: string; path: string; size: number; content: string };
 type WorkerOutputLine = { timestamp: string; level: string; message: string };
+type WorkerKVKey = { key: string; size: number };
 type WorkerTraffic = {
   available: boolean;
   requests_per_second: number;
@@ -29,8 +30,6 @@ type WorkerTraffic = {
   traffic: number[];
   status_codes: { code: string; value: number }[];
 };
-type Page = { id: number; name: string; path: string; worker: string; updated: string; status: "published" | "draft" };
-type StoredObject = { id: number; name: string; type: string; size: string; updated: string };
 type PrometheusValue = [number, string];
 type PrometheusResult = { metric: Record<string, string>; value?: PrometheusValue; values?: PrometheusValue[] };
 type PrometheusResponse = { status: "success" | "error"; data?: { result: PrometheusResult[] } };
@@ -56,37 +55,16 @@ const demoDeployments: ConsoleDeployment[] = [
   { id: "42eac2d9c9b5672eb56237745cbeef42cf8fe09107567c44", app_id: demoWorkers[2].id, app_name: demoWorkers[2].name, hostname: demoWorkers[2].hostname, entrypoint: "worker.js", bundle_size: 6144, compatibility_date: "2026-05-27", state: "inactive", created_at: "2026-05-27T09:10:00Z" },
 ];
 
-const initialPages: Page[] = [
-  { id: 1, name: "Customer portal", path: "/", worker: demoWorkers[0].id, updated: "12 min ago", status: "published" },
-  { id: 2, name: "Usage reports", path: "/reports", worker: demoWorkers[0].id, updated: "2 hr ago", status: "published" },
-  { id: 3, name: "Invoice preview", path: "/preview", worker: demoWorkers[1].id, updated: "Yesterday", status: "draft" },
-  { id: 4, name: "Operations board", path: "/", worker: demoWorkers[2].id, updated: "May 27", status: "published" },
-];
-
-const initialObjects: StoredObject[] = [
-  { id: 1, name: "brand/wordmark.svg", type: "SVG", size: "18 KB", updated: "8 min ago" },
-  { id: 2, name: "exports/may-usage.csv", type: "CSV", size: "2.4 MB", updated: "34 min ago" },
-  { id: 3, name: "uploads/contract-v4.pdf", type: "PDF", size: "864 KB", updated: "Yesterday" },
-  { id: 4, name: "avatars/team-grid.webp", type: "WEBP", size: "312 KB", updated: "May 28" },
-  { id: 5, name: "docs/onboarding.md", type: "MD", size: "7 KB", updated: "May 25" },
-];
-
 const navItems: { section: Section; label: string; icon: typeof Server }[] = [
   { section: "overview", label: "Overview", icon: CircleGauge },
   { section: "workers", label: "Workers", icon: Waypoints },
-  { section: "pages", label: "Pages", icon: Layers3 },
-  { section: "storage", label: "Storage", icon: Database },
   { section: "monitoring", label: "Monitoring", icon: BarChart3 },
 ];
 
 export function App() {
   const [section, setSection] = useState<Section>("overview");
   const [workers, setWorkers] = useState<Worker[]>(demoWorkers);
-  const [pages, setPages] = useState(initialPages);
-  const [objects, setObjects] = useState(initialObjects);
   const [workerDialog, setWorkerDialog] = useState(false);
-  const [pageDialog, setPageDialog] = useState(false);
-  const [uploadDialog, setUploadDialog] = useState(false);
   const [toast, setToast] = useState("");
   const [apiConnected, setApiConnected] = useState(false);
 
@@ -176,10 +154,8 @@ export function App() {
         </header>
 
         <div className="mx-auto max-w-7xl p-4 md:p-8">
-          {section === "overview" && <Overview workers={workers} pages={pages} objects={objects} setSection={setSection} />}
+          {section === "overview" && <Overview workers={workers} setSection={setSection} />}
           {section === "workers" && <Workers workers={workers} setWorkers={setWorkers} openDialog={() => setWorkerDialog(true)} notify={notify} apiConnected={apiConnected} />}
-          {section === "pages" && <Pages pages={pages} setPages={setPages} workers={workers} openDialog={() => setPageDialog(true)} notify={notify} />}
-          {section === "storage" && <Storage objects={objects} setObjects={setObjects} openDialog={() => setUploadDialog(true)} notify={notify} />}
           {section === "monitoring" && <Monitoring />}
         </div>
       </main>
@@ -197,8 +173,6 @@ export function App() {
       </nav>
 
       <CreateWorkerDialog open={workerDialog} onClose={() => setWorkerDialog(false)} workers={workers} setWorkers={setWorkers} notify={notify} apiConnected={apiConnected} />
-      <CreatePageDialog open={pageDialog} onClose={() => setPageDialog(false)} setPages={setPages} workers={workers} notify={notify} />
-      <UploadDialog open={uploadDialog} onClose={() => setUploadDialog(false)} setObjects={setObjects} notify={notify} />
 
       {toast && (
         <div className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-lg bg-[#26332f] px-4 py-3 text-xs font-bold text-white shadow-xl">
@@ -222,16 +196,15 @@ function PageHeading({ eyebrow, title, copy, actions }: { eyebrow: string; title
   );
 }
 
-function Overview({ workers, pages, objects, setSection }: { workers: Worker[]; pages: Page[]; objects: StoredObject[]; setSection: (section: Section) => void }) {
+function Overview({ workers, setSection }: { workers: Worker[]; setSection: (section: Section) => void }) {
   const stats = [
     { label: "Workers", value: workers.length, note: `${workers.filter((worker) => worker.status === "live").length} live · ${workers.filter((worker) => worker.status === "draft").length} draft`, icon: Waypoints, section: "workers" as Section },
-    { label: "Published pages", value: pages.filter((page) => page.status === "published").length, note: `${pages.length} total routes`, icon: Globe2, section: "pages" as Section },
-    { label: "Stored objects", value: objects.length, note: "3.6 MB in use", icon: HardDrive, section: "storage" as Section },
+    { label: "Monitoring", value: workers.filter((worker) => worker.status === "live").length, note: "workers with active deployments", icon: BarChart3, section: "monitoring" as Section },
   ];
   return (
     <>
       <PageHeading eyebrow="Sunday, 31 May" title="Good afternoon, Clas." copy="Your private runtime is steady. Here is the shape of your workspace today." />
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         {stats.map(({ label, value, note, icon: Icon, section: target }, index) => (
           <button key={label} onClick={() => setSection(target)} style={{ animationDelay: `${index * 80}ms` }} className="paper-panel animate-rise group rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85 p-5 text-left transition hover:-translate-y-0.5 hover:border-[#c7c0b4]">
             <div className="flex justify-between"><Icon className="size-5 text-[#d75a41]" /><ArrowUpRight className="size-4 text-[#b8b7b0] transition group-hover:text-[#d75a41]" /></div>
@@ -248,10 +221,10 @@ function Overview({ workers, pages, objects, setSection }: { workers: Worker[]; 
           <div className="mt-3 flex justify-between font-mono text-[9px] text-[#9ba09a]"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>NOW</span></div>
         </Panel>
         <Panel title="Recent events" eyebrow="Live log">
-          <Event icon={<CloudUpload />} text="may-usage.csv uploaded" time="34m" />
-          <Event icon={<Globe2 />} text="portal route published" time="2h" />
+          <Event icon={<CloudUpload />} text="worker bundle deployed" time="34m" />
+          <Event icon={<KeyRound />} text="env.KV binding refreshed" time="2h" />
           <Event icon={<Code2 />} text="billing-sync deployed" time="5h" />
-          <Event icon={<Archive />} text="backup completed" time="8h" />
+          <Event icon={<Archive />} text="previous generation retired" time="8h" />
         </Panel>
       </div>
     </>
@@ -261,7 +234,7 @@ function Overview({ workers, pages, objects, setSection }: { workers: Worker[]; 
 function Workers({ workers, setWorkers, openDialog, notify, apiConnected }: { workers: Worker[]; setWorkers: (workers: Worker[]) => void; openDialog: () => void; notify: (text: string) => void; apiConnected: boolean }) {
   const [selectedWorker, setSelectedWorker] = useState<Worker>();
   if (selectedWorker) {
-    return <WorkerDetail worker={selectedWorker} onBack={() => setSelectedWorker(undefined)} notify={notify} />;
+    return <WorkerDetail worker={selectedWorker} onBack={() => setSelectedWorker(undefined)} notify={notify} apiConnected={apiConnected} />;
   }
   return (
     <>
@@ -291,7 +264,7 @@ function WorkerRow({ worker, workers, setWorkers, notify, onSelect }: { worker: 
   );
 }
 
-function WorkerDetail({ worker, onBack, notify }: { worker: Worker; onBack: () => void; notify: (text: string) => void }) {
+function WorkerDetail({ worker, onBack, notify, apiConnected }: { worker: Worker; onBack: () => void; notify: (text: string) => void; apiConnected: boolean }) {
   const [tab, setTab] = useState<WorkerDetailTab>("files");
   const [detail, setDetail] = useState<WorkerDetailData>();
   const [files, setFiles] = useState<WorkerFile[]>([]);
@@ -305,27 +278,47 @@ function WorkerDetail({ worker, onBack, notify }: { worker: Worker; onBack: () =
   useEffect(() => {
     let cancelled = false;
     async function refresh() {
-      try {
-        const [nextDetail, nextFiles, nextDeployments, nextOutput, nextTraffic] = await Promise.all([
-          fetchJSON<WorkerDetailData>(`/v1/apps/${worker.id}`),
-          fetchJSON<WorkerFile[]>(`/v1/apps/${worker.id}/files`),
-          fetchJSON<ConsoleDeployment[]>(`/v1/apps/${worker.id}/deployments`),
-          fetchJSON<WorkerOutputLine[]>(`/v1/apps/${worker.id}/output`),
-          fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`),
-        ]);
-        if (cancelled) return;
-        setDetail(nextDetail); setFiles(nextFiles); setDeployments(nextDeployments); setOutput(nextOutput); setTraffic(nextTraffic); setError("");
-        setSelectedFile((current) => nextFiles.find((file) => file.path === current?.path) ?? nextFiles[0]);
-      } catch {
-        if (!cancelled) setError("Worker detail API unavailable");
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (!apiConnected) {
+        const demoDeployment = demoDeployments.find((deployment) => deployment.app_id === worker.id);
+        setDetail({
+          app: worker,
+          deployment: demoDeployment && {
+            id: demoDeployment.id,
+            entrypoint: demoDeployment.entrypoint,
+            bundle_size: demoDeployment.bundle_size,
+            compatibility_date: demoDeployment.compatibility_date,
+            created_at: demoDeployment.created_at,
+          },
+        });
+        setFiles([]);
+        setDeployments(demoDeployments.filter((deployment) => deployment.app_id === worker.id));
+        setOutput([]);
+        setTraffic({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] });
+        setError("");
+        setLoading(false);
+        return;
       }
+      const [nextDetail, nextFiles, nextDeployments, nextOutput, nextTraffic] = await Promise.all([
+        fetchJSON<WorkerDetailData>(`/v1/apps/${worker.id}`).catch(() => undefined),
+        fetchJSON<WorkerFile[]>(`/v1/apps/${worker.id}/files`).catch(() => []),
+        fetchJSON<ConsoleDeployment[]>(`/v1/apps/${worker.id}/deployments`).catch(() => []),
+        fetchJSON<WorkerOutputLine[]>(`/v1/apps/${worker.id}/output`).catch(() => []),
+        fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`).catch(() => ({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] })),
+      ]);
+      if (cancelled) return;
+      setDetail(nextDetail);
+      setFiles(nextFiles);
+      setDeployments(nextDeployments);
+      setOutput(nextOutput);
+      setTraffic(nextTraffic);
+      setError(nextDetail ? "" : "Worker detail API unavailable");
+      setSelectedFile((current) => nextFiles.find((file) => file.path === current?.path) ?? nextFiles[0]);
+      setLoading(false);
     }
     void refresh();
     const interval = window.setInterval(() => void refresh(), 15000);
     return () => { cancelled = true; window.clearInterval(interval); };
-  }, [worker.id]);
+  }, [apiConnected, worker]);
 
   const deployment = detail?.deployment;
   const cards = [
@@ -356,11 +349,12 @@ function WorkerDetail({ worker, onBack, notify }: { worker: Worker; onBack: () =
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.65fr_1fr]">
         <section className="paper-panel animate-rise overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7e1d6] px-4 py-3">
-            <div className="flex gap-1">{([{ id: "files", label: "Files", icon: FileCode2 }, { id: "config", label: "Config", icon: SlidersHorizontal }, { id: "deployments", label: "History", icon: Archive }, { id: "output", label: "Output", icon: Terminal }] as const).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={cn("flex items-center gap-2 rounded-md px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] transition", tab === id ? "bg-[#26332f] text-white" : "text-[#80867f] hover:bg-[#efebe2] hover:text-[#35413e]")}><Icon className="size-3.5" />{label}</button>)}</div>
-            <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#a1a49e]">{tab === "deployments" ? "revision ledger" : "bundle / latest"}</p>
+            <div className="flex gap-1">{([{ id: "files", label: "Files", icon: FileCode2 }, { id: "kv", label: "KV", icon: KeyRound }, { id: "config", label: "Config", icon: SlidersHorizontal }, { id: "deployments", label: "History", icon: Archive }, { id: "output", label: "Output", icon: Terminal }] as const).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={cn("flex items-center gap-2 rounded-md px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] transition", tab === id ? "bg-[#26332f] text-white" : "text-[#80867f] hover:bg-[#efebe2] hover:text-[#35413e]")}><Icon className="size-3.5" />{label}</button>)}</div>
+            <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#a1a49e]">{tab === "deployments" ? "revision ledger" : tab === "kv" ? "key lookup" : "bundle / latest"}</p>
           </header>
           {tab === "files" && <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />}
-          {tab === "config" && <WorkerConfig detail={detail} />}
+          {tab === "kv" && <WorkerKV workerID={worker.id} notify={notify} />}
+          {tab === "config" && <WorkerConfig detail={detail} apiConnected={apiConnected} notify={notify} />}
           {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
           {tab === "output" && <WorkerOutput lines={output} />}
         </section>
@@ -381,10 +375,160 @@ function WorkerFileViewer({ files, selectedFile, onSelect }: { files: WorkerFile
   return <div className="grid min-h-[510px] md:grid-cols-[190px_1fr]"><aside className="border-b border-[#e7e1d6] bg-[#f5f1e9]/75 py-3 md:border-b-0 md:border-r"><p className="px-4 pb-2 font-mono text-[9px] uppercase tracking-[0.15em] text-[#a0a39c]">Deployed bundle</p><div className="flex items-center gap-2 px-4 py-1.5 font-mono text-[10px] font-bold text-[#68716c]"><Folder className="size-3.5 text-[#d75a41]" />active</div>{files.map((file) => <button key={file.path} onClick={() => onSelect(file)} className={cn("flex w-full items-center gap-2 px-4 py-2 pl-8 text-left font-mono text-[10px] transition", selectedFile.path === file.path ? "bg-[#e5e0d6] font-bold text-[#35413e]" : "text-[#848a83] hover:bg-white/60 hover:text-[#4c5853]")}>{file.name.endsWith(".json") ? <FileJson className="size-3.5 text-[#bd7e35]" /> : <FileCode2 className="size-3.5 text-[#668e7a]" />}{file.name}</button>)}</aside><div className="min-w-0 bg-[#202b29] text-[#d8dfd8]"><div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><p className="font-mono text-[10px] text-[#b5c1bb]">{selectedFile.path}</p><span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#778781]">{formatBytes(selectedFile.size)} / read only</span></div><pre className="overflow-x-auto p-4 font-mono text-[11px] leading-6"><code>{selectedFile.content.split("\n").map((line, index) => <span key={`${line}-${index}`} className="block"><span className="mr-5 inline-block w-5 select-none text-right text-[#61706b]">{index + 1}</span>{line || " "}</span>)}</code></pre></div></div>;
 }
 
-function WorkerConfig({ detail }: { detail?: WorkerDetailData }) {
+function WorkerConfig({ detail, apiConnected, notify }: { detail?: WorkerDetailData; apiConnected: boolean; notify: (text: string) => void }) {
+  const [protectedRoutes, setProtectedRoutes] = useState((detail?.app.auth?.protected_routes ?? []).join("\n"));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setProtectedRoutes((detail?.app.auth?.protected_routes ?? []).join("\n"));
+  }, [detail?.app.id, detail?.app.auth?.protected_routes]);
+
   if (!detail?.deployment) return <WorkerDetailEmpty icon={<SlidersHorizontal />} title="No runtime config" copy="Deploy this worker to generate its active workerd configuration." />;
+  const appID = detail.app.id;
   const rows = [["Worker ID", detail.app.id], ["Name", detail.app.name], ["Hostname", detail.app.hostname], ["Deployment", detail.deployment.id], ["Compatibility date", detail.deployment.compatibility_date], ["Entrypoint", detail.deployment.entrypoint], ["Deployed", new Date(detail.deployment.created_at).toLocaleString()]];
-  return <div className="p-5"><div className="mb-5 flex items-center gap-3 rounded-lg border border-[#dce2d9] bg-[#eef4ed] px-4 py-3 text-xs font-bold text-[#4d7057]"><Check className="size-4" />Configuration loaded from the active deployment.</div><div className="overflow-hidden rounded-lg border border-[#e2ddd2]">{rows.map(([label, value]) => <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"><span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#93978f]">{label}</span><span className="font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span></div>)}</div></div>;
+
+  async function saveRoutes() {
+    if (!apiConnected) {
+      notify("Protected routes are only editable when platformd is connected");
+      return;
+    }
+    setSaving(true);
+    try {
+      const protected_routes = protectedRoutes.split("\n").map((route) => route.trim()).filter(Boolean);
+      const response = await fetch(`/v1/apps/${appID}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ auth: { protected_routes } }),
+      });
+      if (!response.ok) throw new Error(`Config update failed (${response.status})`);
+      notify("Protected routes updated");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Config update failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="p-5"><div className="mb-5 flex items-center gap-3 rounded-lg border border-[#dce2d9] bg-[#eef4ed] px-4 py-3 text-xs font-bold text-[#4d7057]"><Check className="size-4" />Configuration loaded from the active deployment.</div><div className="overflow-hidden rounded-lg border border-[#e2ddd2]">{rows.map(([label, value]) => <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"><span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#93978f]">{label}</span><span className="font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span></div>)}</div><div className="mt-5 rounded-lg border border-[#e2ddd2] bg-white/50 p-4"><div className="mb-2 flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#7f857e]">Protected routes</p><Button type="button" onClick={() => void saveRoutes()} disabled={saving}><Save className="size-3.5" />Save routes</Button></div><p className="mb-3 text-xs text-[#6f766f]">One absolute path per line. Example: <span className="font-mono">/admin/*</span></p><textarea value={protectedRoutes} onChange={(event) => setProtectedRoutes(event.target.value)} spellCheck={false} className="min-h-40 w-full rounded-md border border-[#d6d0c3] bg-[#fdfbf6] p-3 font-mono text-[11px] leading-6 text-[#35413e] outline-none" placeholder="/admin/*&#10;/api/private/*" /></div></div>;
+}
+
+function WorkerKV({ workerID, notify }: { workerID: string; notify: (text: string) => void }) {
+  const [keys, setKeys] = useState<WorkerKVKey[]>([]);
+  const [key, setKey] = useState("");
+  const [value, setValue] = useState("");
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
+  const path = key.trim() ? `/v1/apps/${workerID}/kv/${encodeURIComponent(key.trim())}` : "";
+
+  async function refreshKeys() {
+    setLoading(true); setStatus("");
+    try {
+      setKeys(await fetchJSON<WorkerKVKey[]>(`/v1/apps/${workerID}/kv`));
+      setStatus("Keys refreshed");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "KV list failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function readKey(nextKey = key.trim()) {
+    if (!nextKey) return;
+    setLoading(true); setStatus("");
+    try {
+      setKey(nextKey);
+      const response = await fetch(`/v1/apps/${workerID}/kv/${encodeURIComponent(nextKey)}`);
+      if (response.status === 404) {
+        setValue(""); setStatus("Key not found");
+        return;
+      }
+      if (!response.ok) throw new Error(`KV read failed (${response.status})`);
+      setValue(await response.text());
+      setStatus("Value loaded");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "KV read failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshKeys();
+  }, [workerID]);
+
+  async function writeKey() {
+    if (!path) return;
+    setLoading(true); setStatus("");
+    try {
+      const response = await fetch(path, { method: "PUT", body: value });
+      if (!response.ok) throw new Error(`KV write failed (${response.status})`);
+      setStatus("Value saved");
+      setKeys(await fetchJSON<WorkerKVKey[]>(`/v1/apps/${workerID}/kv`));
+      notify(`${key.trim()} saved`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "KV write failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteKey() {
+    if (!path) return;
+    setLoading(true); setStatus("");
+    try {
+      const response = await fetch(path, { method: "DELETE" });
+      if (!response.ok) throw new Error(`KV delete failed (${response.status})`);
+      setValue("");
+      setStatus("Key deleted");
+      setKeys(await fetchJSON<WorkerKVKey[]>(`/v1/apps/${workerID}/kv`));
+      notify(`${key.trim()} deleted`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "KV delete failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="grid min-h-[510px] gap-0 md:grid-cols-[260px_1fr]">
+      <aside className="border-b border-[#e7e1d6] bg-[#f5f1e9]/75 py-3 md:border-b-0 md:border-r">
+        <div className="flex items-center justify-between px-4 pb-2">
+          <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-[#a0a39c]">KV keys</p>
+          <Button type="button" variant="ghost" size="icon" aria-label="Refresh KV keys" onClick={() => void refreshKeys()} disabled={loading}><RefreshCw className={cn("size-3.5", loading && "animate-spin")} /></Button>
+        </div>
+        <button onClick={() => { setKey(""); setValue(""); setStatus("Ready for a new key"); }} className="flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] font-bold text-[#68716c] transition hover:bg-white/60"><Plus className="size-3.5 text-[#d75a41]" />new key</button>
+        {keys.map((item) => (
+          <button key={item.key} onClick={() => void readKey(item.key)} className={cn("flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] transition", key === item.key ? "bg-[#e5e0d6] font-bold text-[#35413e]" : "text-[#848a83] hover:bg-white/60 hover:text-[#4c5853]")}>
+            <KeyRound className="size-3.5 text-[#668e7a]" />
+            <span className="min-w-0 flex-1 truncate">{item.key}</span>
+            <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
+          </button>
+        ))}
+        {!keys.length && <p className="px-4 py-8 text-center font-mono text-[9px] uppercase tracking-[0.08em] text-[#a1a49e]">No keys yet</p>}
+        {status && <p className="mx-4 mt-3 rounded-md border border-[#ded8cd] bg-white/55 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[#727a74]">{status}</p>}
+      </aside>
+      <div className="p-5">
+        <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void readKey(); }}>
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-[#d6d0c3] bg-white/75 px-3">
+            <Search className="size-4 text-[#959a93]" />
+            <Input required value={key} onChange={(event) => setKey(event.target.value)} placeholder="visits" className="h-10 border-0 bg-transparent p-0 focus:ring-0" />
+          </div>
+          <Button type="submit" variant="outline" disabled={loading}><Search className="size-3.5" />Read</Button>
+        </form>
+        <div className="mt-4 overflow-hidden rounded-lg border border-[#d9d3c7] bg-[#202b29]">
+          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+            <p className="font-mono text-[10px] text-[#b5c1bb]">{key.trim() || "Select a key"}</p>
+            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#778781]">{value.length} bytes</span>
+          </div>
+          <textarea value={value} onChange={(event) => setValue(event.target.value)} spellCheck={false} className="min-h-80 w-full resize-y bg-transparent p-4 font-mono text-[11px] leading-6 text-[#d8dfd8] outline-none" placeholder="Value" />
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={() => void deleteKey()} disabled={loading || !key.trim()}><Trash2 className="size-3.5" />Delete</Button>
+          <Button type="button" onClick={() => void writeKey()} disabled={loading || !key.trim()}><Save className="size-3.5" />Save</Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function WorkerDeployments({ deployments }: { deployments: ConsoleDeployment[] }) {
@@ -415,53 +559,6 @@ async function fetchJSON<T>(path: string) {
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   return `${(value / 1024).toFixed(1)} KB`;
-}
-
-function Pages({ pages, setPages, workers, openDialog, notify }: { pages: Page[]; setPages: (pages: Page[]) => void; workers: Worker[]; openDialog: () => void; notify: (text: string) => void }) {
-  return (
-    <>
-      <PageHeading eyebrow="Routing" title="Pages" copy="Map public paths to workers and keep published routes in view." actions={<Button onClick={openDialog}><Plus className="size-4" />New page</Button>} />
-      <Panel title={`${pages.length} routes`} eyebrow="Published surfaces" flush>
-        <div className="divide-y divide-[#e5dfd4]">
-          {pages.map((page) => (
-            <div key={page.id} className="group flex flex-col gap-3 px-5 py-4 transition hover:bg-white/55 sm:flex-row sm:items-center">
-              <div className="grid size-10 place-items-center rounded-lg border border-[#ded9ce] bg-white/75 text-[#d75a41]"><FileCode2 className="size-4" /></div>
-              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="text-sm font-extrabold">{page.name}</p><Badge tone={page.status === "published" ? "green" : "orange"}>{page.status}</Badge></div><p className="mt-1 font-mono text-[10px] text-[#8d928c]">{workers.find(({ id }) => id === page.worker)?.name ?? page.worker} → {page.path}</p></div>
-              <p className="font-mono text-[10px] text-[#a0a29c]">{page.updated}</p>
-              <Button variant="ghost" size="icon" aria-label="Open route"><ExternalLink className="size-3.5" /></Button>
-              <Button variant="ghost" size="icon" aria-label={`Delete ${page.name}`} onClick={() => { setPages(pages.filter(({ id }) => id !== page.id)); notify(`${page.name} removed`); }}><Trash2 className="size-3.5" /></Button>
-            </div>
-          ))}
-        </div>
-      </Panel>
-    </>
-  );
-}
-
-function Storage({ objects, setObjects, openDialog, notify }: { objects: StoredObject[]; setObjects: (objects: StoredObject[]) => void; openDialog: () => void; notify: (text: string) => void }) {
-  const [query, setQuery] = useState("");
-  const visibleObjects = useMemo(() => objects.filter((object) => object.name.includes(query.toLowerCase())), [objects, query]);
-  return (
-    <>
-      <PageHeading eyebrow="Object store" title="Storage" copy="Browse application files, inspect assets, and keep object storage tidy." actions={<Button onClick={openDialog}><UploadCloud className="size-4" />Upload object</Button>} />
-      <div className="mb-4 flex items-center gap-3 rounded-lg border border-[#dbd5ca] bg-white/55 p-2">
-        <Search className="ml-2 size-4 text-[#959a93]" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search objects by path..." className="h-8 border-0 bg-transparent p-0 focus:ring-0" />
-      </div>
-      <Panel title={`${visibleObjects.length} objects`} eyebrow="platform-assets" flush>
-        <div className="divide-y divide-[#e5dfd4]">
-          {visibleObjects.map((object) => (
-            <div key={object.id} className="group flex items-center gap-3 px-5 py-4 transition hover:bg-white/55">
-              <div className="grid size-10 place-items-center rounded-lg border border-[#ded9ce] bg-white/75 text-[#52756e]"><FileText className="size-4" /></div>
-              <div className="min-w-0 flex-1"><p className="truncate text-sm font-extrabold">{object.name}</p><p className="mt-1 font-mono text-[10px] text-[#92968f]">{object.type} · {object.size}</p></div>
-              <p className="hidden font-mono text-[10px] text-[#a0a29c] sm:block">{object.updated}</p>
-              <Button variant="ghost" size="icon" aria-label="More options"><MoreHorizontal className="size-4" /></Button>
-              <Button variant="ghost" size="icon" aria-label={`Delete ${object.name}`} onClick={() => { setObjects(objects.filter(({ id }) => id !== object.id)); notify(`${object.name} deleted`); }}><Trash2 className="size-3.5" /></Button>
-            </div>
-          ))}
-        </div>
-      </Panel>
-    </>
-  );
 }
 
 const emptyMonitoring: MonitoringData = {
@@ -620,28 +717,18 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function CreateWorkerDialog({ open, onClose, workers, setWorkers, notify, apiConnected }: { open: boolean; onClose: () => void; workers: Worker[]; setWorkers: (workers: Worker[]) => void; notify: (text: string) => void; apiConnected: boolean }) {
   const [hostname, setHostname] = useState("");
   const [name, setName] = useState("");
+  const [protectedRoutes, setProtectedRoutes] = useState("");
   async function submit(event: FormEvent) {
     event.preventDefault();
-    let worker: Worker = { id: crypto.randomUUID().replace(/-/g, ""), name, hostname, created_at: new Date().toISOString(), status: "draft", requests: "0", deployment: "awaiting deploy" };
+    const auth = { protected_routes: protectedRoutes.split("\n").map((route) => route.trim()).filter(Boolean) };
+    let worker: Worker = { id: crypto.randomUUID().replace(/-/g, ""), name, hostname, auth, created_at: new Date().toISOString(), status: "draft", requests: "0", deployment: "awaiting deploy" };
     if (apiConnected) {
-      const response = await fetch("/v1/apps", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, hostname }) });
+      const trimmedHostname = hostname.trim();
+      const response = await fetch("/v1/apps", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(trimmedHostname ? { name, hostname: trimmedHostname, auth } : { name, auth }) });
       if (!response.ok) return notify("Worker registration failed");
       worker = { ...worker, ...await response.json() as Worker };
     }
-    setWorkers([...workers, worker]); setName(""); setHostname(""); onClose(); notify(`${worker.name} registered`);
+    setWorkers([...workers, worker]); setName(""); setHostname(""); setProtectedRoutes(""); onClose(); notify(`${worker.name} registered`);
   }
-  return <Dialog open={open} onClose={onClose} title="Register worker" description="Create an isolated runtime target. You can deploy a worker bundle after registration."><form className="space-y-4" onSubmit={submit}><Field label="Name"><Input required placeholder="Analytics worker" value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Hostname"><Input required placeholder="analytics.acme.internal" value={hostname} onChange={(event) => setHostname(event.target.value)} /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Register worker</Button></div></form></Dialog>;
-}
-
-function CreatePageDialog({ open, onClose, setPages, workers, notify }: { open: boolean; onClose: () => void; setPages: React.Dispatch<React.SetStateAction<Page[]>>; workers: Worker[]; notify: (text: string) => void }) {
-  const [name, setName] = useState(""); const [path, setPath] = useState("/"); const [workerID, setWorkerID] = useState("");
-  const selectedWorkerID = workerID || workers[0]?.id || "";
-  function submit(event: FormEvent) { event.preventDefault(); setPages((pages) => [...pages, { id: Date.now(), name, path, worker: selectedWorkerID || "unassigned", updated: "Just now", status: "draft" }]); onClose(); notify(`${name} route created`); setName(""); setPath("/"); setWorkerID(""); }
-  return <Dialog open={open} onClose={onClose} title="Add page route" description="Create a route mapping. New surfaces start as drafts until published."><form className="space-y-4" onSubmit={submit}><Field label="Page name"><Input required placeholder="Team dashboard" value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Public path"><Input required placeholder="/dashboard" value={path} onChange={(event) => setPath(event.target.value)} /></Field><Field label="Worker"><select required value={selectedWorkerID} onChange={(event) => setWorkerID(event.target.value)} className="h-10 w-full rounded-md border border-[#d6d0c3] bg-white/80 px-3 text-sm outline-none">{workers.map((worker) => <option key={worker.id} value={worker.id}>{worker.name}</option>)}</select></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Create route</Button></div></form></Dialog>;
-}
-
-function UploadDialog({ open, onClose, setObjects, notify }: { open: boolean; onClose: () => void; setObjects: React.Dispatch<React.SetStateAction<StoredObject[]>>; notify: (text: string) => void }) {
-  const [path, setPath] = useState("");
-  function submit(event: FormEvent) { event.preventDefault(); setObjects((objects) => [{ id: Date.now(), name: path, type: path.split(".").pop()?.toUpperCase() ?? "FILE", size: "0 KB", updated: "Just now" }, ...objects]); onClose(); notify(`${path} uploaded`); setPath(""); }
-  return <Dialog open={open} onClose={onClose} title="Upload object" description="Add an object path to the shared MinIO-backed asset bucket."><form className="space-y-4" onSubmit={submit}><div className="grid place-items-center rounded-lg border border-dashed border-[#c9c2b6] bg-white/45 px-4 py-7 text-center"><FolderOpen className="size-7 text-[#d35c45]" /><p className="mt-3 text-xs font-bold">Choose a destination path</p><p className="mt-1 font-mono text-[9px] text-[#999c96]">OBJECT CONTENT UPLOAD WILL USE A PRESIGNED URL</p></div><Field label="Object path"><Input required placeholder="uploads/report.csv" value={path} onChange={(event) => setPath(event.target.value)} /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Upload object</Button></div></form></Dialog>;
+  return <Dialog open={open} onClose={onClose} title="Register worker" description="Create an isolated runtime target. You can deploy a worker bundle after registration."><form className="space-y-4" onSubmit={submit}><Field label="Name"><Input required placeholder="Analytics worker" value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Hostname"><Input placeholder="analytics.acme.internal" value={hostname} onChange={(event) => setHostname(event.target.value)} /></Field><Field label="Protected routes"><textarea value={protectedRoutes} onChange={(event) => setProtectedRoutes(event.target.value)} spellCheck={false} className="min-h-28 w-full rounded-md border border-[#d6d0c3] bg-[#fdfbf6] p-3 font-mono text-[11px] leading-6 text-[#35413e] outline-none" placeholder="/admin/*&#10;/api/private/*" /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Register worker</Button></div></form></Dialog>;
 }

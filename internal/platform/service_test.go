@@ -279,6 +279,33 @@ func TestCreateAppRetriesGeneratedHostnameConflict(t *testing.T) {
 	}
 }
 
+func TestCreateAppNormalizesProtectedRoutes(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{
+		Name:     "Secure",
+		Hostname: "secure.example.com",
+		Auth:     AuthConfig{ProtectedRoutes: []string{" /admin/* ", "/admin/*", "/reports"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(app.Auth.ProtectedRoutes) != 2 || app.Auth.ProtectedRoutes[0] != "/admin/*" || app.Auth.ProtectedRoutes[1] != "/reports" {
+		t.Fatalf("protected routes = %#v", app.Auth.ProtectedRoutes)
+	}
+}
+
+func TestUpdateAppRejectsInvalidProtectedRoutes(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Secure", Hostname: "secure.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.UpdateApp(app.ID, UpdateAppInput{Auth: &AuthConfig{ProtectedRoutes: []string{"admin/*"}}})
+	if err == nil || !strings.Contains(err.Error(), "absolute path") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestPublicAssetFallsBackToCustom404Page(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()

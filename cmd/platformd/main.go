@@ -17,6 +17,7 @@ import (
 	"github.com/clas/platform/internal/database"
 	"github.com/clas/platform/internal/metrics"
 	"github.com/clas/platform/internal/objects"
+	"github.com/clas/platform/internal/oidc"
 	"github.com/clas/platform/internal/platform"
 	"github.com/clas/platform/internal/runner"
 	"github.com/clas/platform/internal/runtime"
@@ -38,6 +39,7 @@ func main() {
 		traefikFile  = flag.String("traefik-file", "", "optional Traefik dynamic configuration file fallback")
 		authURL      = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
 		workerHost   = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
+		baseHostname = flag.String("base-hostname", os.Getenv("PLATFORM_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
 		workerd      = flag.String("workerd", "workerd", "path to the workerd executable")
 		portHost     = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart    = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
@@ -45,6 +47,12 @@ func main() {
 		runnerURL    = flag.String("runner-url", "", "platform-runner control API URL; empty starts workerd directly")
 		runnerToken  = flag.String("runner-token", os.Getenv("PLATFORM_RUNNER_TOKEN"), "platform-runner authentication token")
 		traefikToken = flag.String("traefik-token", os.Getenv("PLATFORM_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
+		oidcIssuer   = flag.String("oidc-issuer", os.Getenv("PLATFORM_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
+		oidcAudience = flag.String("oidc-audience", os.Getenv("PLATFORM_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
+		oidcEmail    = flag.String("oidc-email-claim", envOrDefault("PLATFORM_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
+		oidcClientID = flag.String("oidc-client-id", os.Getenv("PLATFORM_OIDC_CLIENT_ID"), "OIDC client ID for browser login flow; defaults to oidc-audience when omitted")
+		oidcSecret   = flag.String("oidc-client-secret", os.Getenv("PLATFORM_OIDC_CLIENT_SECRET"), "OIDC client secret for browser login flow")
+		oidcRedirect = flag.String("oidc-redirect-url", os.Getenv("PLATFORM_OIDC_REDIRECT_URL"), "Public callback URL for browser login flow, for example https://platform.example.com/internal/auth/callback")
 	)
 	flag.Parse()
 
@@ -129,6 +137,11 @@ func main() {
 	}
 
 	service := platform.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewClient(*prometheus))
+	if *baseHostname != "" {
+		if err := service.SetBaseHostname(*baseHostname); err != nil {
+			log.Fatal(err)
+		}
+	}
 	active, err := service.ActiveDeployments()
 	if err != nil {
 		log.Fatal(err)
@@ -136,7 +149,15 @@ func main() {
 	if err := publisher.Write(active); err != nil {
 		log.Fatal(err)
 	}
-	server := api.NewServerWithTraefik(service, traefikStore, *traefikToken)
+	var authenticator api.Authenticator
+	if *oidcIssuer != "" && *oidcAudience != "" {
+		clientID := *oidcClientID
+		if clientID == "" {
+			clientID = *oidcAudience
+		}
+		authenticator = oidc.NewBrowserVerifier(*oidcIssuer, *oidcAudience, *oidcEmail, clientID, *oidcSecret, *oidcRedirect, nil)
+	}
+	server := api.NewServerWithAuth(service, traefikStore, *traefikToken, authenticator)
 	runtimeMux := http.NewServeMux()
 	runtimeKV := api.NewRuntimeKVServer(service)
 	runtimeAssets := api.NewRuntimeAssetServer(service)

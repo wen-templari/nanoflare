@@ -8,11 +8,16 @@ import (
 )
 
 type App struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Hostname     string    `json:"hostname"`
-	RuntimeToken string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Hostname     string     `json:"hostname"`
+	Auth         AuthConfig `json:"auth,omitempty"`
+	RuntimeToken string     `json:"-"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+type AuthConfig struct {
+	ProtectedRoutes []string `json:"protected_routes,omitempty"`
 }
 
 type Deployment struct {
@@ -42,8 +47,13 @@ type DeploymentRecord struct {
 }
 
 type CreateAppInput struct {
-	Name     string `json:"name"`
-	Hostname string `json:"hostname"`
+	Name     string     `json:"name"`
+	Hostname string     `json:"hostname"`
+	Auth     AuthConfig `json:"auth,omitempty"`
+}
+
+type UpdateAppInput struct {
+	Auth *AuthConfig `json:"auth,omitempty"`
 }
 
 type DeployInput struct {

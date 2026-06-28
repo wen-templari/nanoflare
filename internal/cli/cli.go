@@ -45,6 +45,7 @@ type Project struct {
 	CompatibilityDate string        `json:"compatibility_date"`
 	Files             []string      `json:"files"`
 	Assets            ProjectAssets `json:"assets,omitempty"`
+	Auth              ProjectAuth   `json:"auth,omitempty"`
 }
 
 type ProjectAssets struct {
@@ -53,6 +54,10 @@ type ProjectAssets struct {
 	HTMLHandling     string                  `json:"html_handling,omitempty"`
 	NotFoundHandling string                  `json:"not_found_handling,omitempty"`
 	RunWorkerFirst   platform.RunWorkerFirst `json:"run_worker_first,omitempty"`
+}
+
+type ProjectAuth struct {
+	ProtectedRoutes []string `json:"protected_routes,omitempty"`
 }
 
 func NewRunner(stdout, stderr io.Writer) *Runner {
@@ -126,13 +131,6 @@ func (r *Runner) init(args []string) error {
 		projectName = filepath.Base(absDir)
 	}
 	projectHostname := strings.TrimSpace(*hostname)
-	if projectHostname == "" {
-		projectSlug := slug(projectName)
-		if projectSlug == "" {
-			projectSlug = "worker"
-		}
-		projectHostname = projectSlug + ".example.com"
-	}
 	project := Project{
 		Name:              projectName,
 		Hostname:          projectHostname,
@@ -176,10 +174,12 @@ func (r *Runner) create(args []string) error {
 	if err := r.request(http.MethodPost, baseURL+"/v1/apps", platform.CreateAppInput{
 		Name:     project.Name,
 		Hostname: project.Hostname,
+		Auth:     platform.AuthConfig{ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...)},
 	}, &app); err != nil {
 		return err
 	}
 	project.AppID = app.ID
+	project.Hostname = app.Hostname
 	project.APIURL = baseURL
 	if err := writeProject(path, project, os.O_TRUNC); err != nil {
 		return err
@@ -271,6 +271,14 @@ func (r *Runner) deploy(args []string) error {
 	if *compatibilityDate != "" {
 		date = *compatibilityDate
 	}
+	baseURL := projectAPIURL(project, *apiURL)
+	if err := r.request(http.MethodPatch, baseURL+"/v1/apps/"+project.AppID, platform.UpdateAppInput{
+		Auth: &platform.AuthConfig{
+			ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...),
+		},
+	}, nil); err != nil {
+		return err
+	}
 	files, err := loadWorkerFiles(project.Files)
 	if err != nil {
 		return err
@@ -280,7 +288,7 @@ func (r *Runner) deploy(args []string) error {
 		return err
 	}
 	var deployment platform.Deployment
-	if err := r.request(http.MethodPost, projectAPIURL(project, *apiURL)+"/v1/apps/"+project.AppID+"/deployments", platform.DeployInput{
+	if err := r.request(http.MethodPost, baseURL+"/v1/apps/"+project.AppID+"/deployments", platform.DeployInput{
 		Files:             files,
 		Assets:            assets,
 		Entrypoint:        project.Entrypoint,
@@ -351,7 +359,7 @@ func loadProject() (string, Project, error) {
 	if err := json.Unmarshal(content, &project); err != nil {
 		return "", Project{}, fmt.Errorf("decode %s: %w", path, err)
 	}
-	if project.Name == "" || project.Hostname == "" || project.Entrypoint == "" || project.CompatibilityDate == "" || len(project.Files) == 0 {
+	if project.Name == "" || project.Entrypoint == "" || project.CompatibilityDate == "" || len(project.Files) == 0 {
 		return "", Project{}, fmt.Errorf("%s is missing required worker configuration", path)
 	}
 	return path, project, nil

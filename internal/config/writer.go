@@ -496,7 +496,7 @@ func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.
 func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) string {
 	var out strings.Builder
 	out.WriteString("http:\n  middlewares:\n    platform-auth:\n      forwardAuth:\n")
-	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Platform-Context\n", yamlQuote(authURL))
+	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Platform-User-JWT\n          - X-Platform-User-Email\n", yamlQuote(authURL))
 	backendBase := platformdGatewayBase(authURL)
 	for _, item := range active {
 		name := identifier(item.App.ID)
@@ -506,8 +506,12 @@ func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) str
 	out.WriteString("  routers:\n")
 	for _, item := range active {
 		name := identifier(item.App.ID)
-		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - platform-auth\n        - %s-prefix\n      service: %s\n      tls: {}\n",
+		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      priority: 1\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - %s-prefix\n      service: %s\n      tls: {}\n",
 			name, yamlQuote("Host(`"+item.App.Hostname+"`)"), name, name)
+		for index, route := range item.App.Auth.ProtectedRoutes {
+			fmt.Fprintf(&out, "    %s-auth-%d:\n      rule: %s\n      priority: %d\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - platform-auth\n        - %s-prefix\n      service: %s\n      tls: {}\n",
+				name, index, yamlQuote(protectedRouteRule(item.App.Hostname, route)), protectedRoutePriority(route), name, name)
+		}
 	}
 	out.WriteString("  services:\n")
 	for _, item := range active {
@@ -516,6 +520,20 @@ func Traefik(active []platform.ActiveDeployment, authURL, workerHost string) str
 			name, yamlQuote(backendBase))
 	}
 	return out.String()
+}
+
+func protectedRouteRule(hostname, route string) string {
+	if strings.HasSuffix(route, "/*") {
+		return "Host(`" + hostname + "`) && PathPrefix(`" + strings.TrimSuffix(route, "*") + "`)"
+	}
+	return "Host(`" + hostname + "`) && Path(`" + route + "`)"
+}
+
+func protectedRoutePriority(route string) int {
+	if strings.HasSuffix(route, "/*") {
+		return 190
+	}
+	return 200
 }
 
 func platformdGatewayBase(authURL string) string {

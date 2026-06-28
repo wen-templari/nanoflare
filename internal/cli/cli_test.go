@@ -28,7 +28,7 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	}
 
 	project := readProject(t, filepath.Join("hello", projectFilename))
-	if project.Name != "Hello Worker" || project.Hostname != "hello-worker.example.com" {
+	if project.Name != "Hello Worker" || project.Hostname != "" {
 		t.Fatalf("project = %#v", project)
 	}
 	if project.CompatibilityDate != "2026-05-31" || project.Entrypoint != "worker.js" || project.Format != "modules" {
@@ -43,15 +43,40 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	}
 }
 
+func TestInitPreservesExplicitHostname(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	runner := NewRunner(io.Discard, io.Discard)
+	runner.Now = func() time.Time {
+		return time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	}
+
+	if err := runner.Run([]string{"init", "--name", "Hello Worker", "--hostname", "hello.example.com", "hello"}); err != nil {
+		t.Fatal(err)
+	}
+
+	project := readProject(t, filepath.Join("hello", projectFilename))
+	if project.Hostname != "hello.example.com" {
+		t.Fatalf("hostname = %q", project.Hostname)
+	}
+}
+
 func TestCreateAndDeployWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	var created platform.CreateAppInput
+	var updated platform.UpdateAppInput
 	var deployed platform.DeployInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/apps":
 			decodeRequest(t, r, &created)
 			writeJSON(t, w, http.StatusCreated, platform.App{ID: "app-123", Hostname: created.Hostname})
+		case "/v1/apps/app-123":
+			if r.Method != http.MethodPatch {
+				http.NotFound(w, r)
+				return
+			}
+			decodeRequest(t, r, &updated)
+			w.WriteHeader(http.StatusOK)
 		case "/v1/apps/app-123/deployments":
 			decodeRequest(t, r, &deployed)
 			writeJSON(t, w, http.StatusCreated, platform.Deployment{ID: "deployment-456"})
@@ -68,6 +93,9 @@ func TestCreateAndDeployWorker(t *testing.T) {
 		Entrypoint:        "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
+		Auth: ProjectAuth{
+			ProtectedRoutes: []string{"/admin/*"},
+		},
 		Assets: ProjectAssets{
 			Directory:        "public",
 			Binding:          "STATIC",
@@ -96,8 +124,17 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	if project.AppID != "app-123" {
 		t.Fatalf("app id = %q", project.AppID)
 	}
+	if project.Hostname != "hello.example.com" {
+		t.Fatalf("hostname = %q", project.Hostname)
+	}
 	if created.Name != "Hello" || created.Hostname != "hello.example.com" {
 		t.Fatalf("create payload = %#v", created)
+	}
+	if len(created.Auth.ProtectedRoutes) != 1 || created.Auth.ProtectedRoutes[0] != "/admin/*" {
+		t.Fatalf("create auth = %#v", created.Auth)
+	}
+	if updated.Auth == nil || len(updated.Auth.ProtectedRoutes) != 1 || updated.Auth.ProtectedRoutes[0] != "/admin/*" {
+		t.Fatalf("update auth = %#v", updated.Auth)
 	}
 	if deployed.Entrypoint != "worker.js" || deployed.CompatibilityDate != "2025-12-10" {
 		t.Fatalf("deploy payload = %#v", deployed)
@@ -110,6 +147,39 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if deployed.AssetConfig.Binding != "STATIC" || deployed.AssetConfig.NotFoundHandling != "404-page" {
 		t.Fatalf("asset config = %#v", deployed.AssetConfig)
+	}
+}
+
+func TestCreatePersistsGeneratedHostname(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	var created platform.CreateAppInput
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps" {
+			http.NotFound(w, r)
+			return
+		}
+		decodeRequest(t, r, &created)
+		writeJSON(t, w, http.StatusCreated, platform.App{ID: "app-123", Name: created.Name, Hostname: "hello-a1b2c3d4.example.com"})
+	}))
+	defer server.Close()
+
+	writeProjectFile(t, Project{
+		Name:              "Hello",
+		APIURL:            server.URL,
+		Entrypoint:        "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+	})
+
+	if err := NewRunner(io.Discard, io.Discard).Run([]string{"create"}); err != nil {
+		t.Fatal(err)
+	}
+	project := readProject(t, projectFilename)
+	if created.Name != "Hello" || created.Hostname != "" {
+		t.Fatalf("create payload = %#v", created)
+	}
+	if project.AppID != "app-123" || project.Hostname != "hello-a1b2c3d4.example.com" {
+		t.Fatalf("project = %#v", project)
 	}
 }
 

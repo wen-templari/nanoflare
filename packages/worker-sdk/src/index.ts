@@ -4,6 +4,11 @@ export interface Identity {
   roles: string[];
 }
 
+export interface RequestIdentityHeaders {
+  jwt: string | null;
+  email: string | null;
+}
+
 export interface ObjectHTTPMetadata {
   contentType?: string;
 }
@@ -52,6 +57,7 @@ export interface PlatformEnv {
   OBJECTS: R2Bucket;
   IDENTITY: {
     get(request: Request): Identity | null;
+    headers(request: Request): RequestIdentityHeaders;
   };
 }
 
@@ -144,6 +150,12 @@ export function createRuntimeClient(options: RuntimeClientOptions): Omit<Platfor
       get(request: Request): Identity | null {
         const context = request.headers.get("x-platform-context");
         return context ? (JSON.parse(context) as Identity) : null;
+      },
+      headers(request: Request): RequestIdentityHeaders {
+        return {
+          jwt: request.headers.get("x-platform-user-jwt"),
+          email: request.headers.get("x-platform-user-email"),
+        };
       },
     },
   };

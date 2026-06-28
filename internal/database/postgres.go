@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS apps (
 	id text PRIMARY KEY,
 	name text NOT NULL,
 	hostname text NOT NULL UNIQUE,
+	auth jsonb NOT NULL DEFAULT '{}'::jsonb,
 	runtime_token text,
 	created_at timestamptz NOT NULL
 );
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS deployments (
 CREATE UNIQUE INDEX IF NOT EXISTS deployments_active_app_idx
 	ON deployments(app_id) WHERE active;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
 UPDATE apps SET name = hostname WHERE name = '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]';
@@ -186,8 +188,8 @@ SELECT EXISTS (
 }
 
 func (p *Postgres) CreateApp(app platform.App) error {
-	_, err := p.db.Exec(`INSERT INTO apps (id, name, hostname, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5)`,
-		app.ID, app.Name, app.Hostname, app.RuntimeToken, app.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO apps (id, name, hostname, auth, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		app.ID, app.Name, app.Hostname, mustJSON(app.Auth), app.RuntimeToken, app.CreatedAt)
 	if isUniqueViolation(err) {
 		return platform.ErrAppExists
 	}
@@ -195,7 +197,7 @@ func (p *Postgres) CreateApp(app platform.App) error {
 }
 
 func (p *Postgres) ListApps() ([]platform.App, error) {
-	rows, err := p.db.Query(`SELECT id, name, hostname, runtime_token, created_at FROM apps ORDER BY id`)
+	rows, err := p.db.Query(`SELECT id, name, hostname, auth, runtime_token, created_at FROM apps ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -203,12 +205,35 @@ func (p *Postgres) ListApps() ([]platform.App, error) {
 	var apps []platform.App
 	for rows.Next() {
 		var app platform.App
-		if err := rows.Scan(&app.ID, &app.Name, &app.Hostname, &app.RuntimeToken, &app.CreatedAt); err != nil {
+		var auth []byte
+		if err := rows.Scan(&app.ID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(auth, &app.Auth); err != nil {
 			return nil, err
 		}
 		apps = append(apps, app)
 	}
 	return apps, rows.Err()
+}
+
+func (p *Postgres) UpdateApp(app platform.App) error {
+	result, err := p.db.Exec(`UPDATE apps SET name = $2, hostname = $3, auth = $4 WHERE id = $1`,
+		app.ID, app.Name, app.Hostname, mustJSON(app.Auth))
+	if isUniqueViolation(err) {
+		return platform.ErrAppExists
+	}
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return platform.ErrAppNotFound
+	}
+	return nil
 }
 
 func (p *Postgres) DeleteApp(appID string) error {
@@ -313,7 +338,7 @@ func (p *Postgres) DeleteDeployment(id string) error {
 
 func (p *Postgres) ActiveDeployments() ([]platform.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
-SELECT a.id, a.name, a.hostname, a.runtime_token, a.created_at,
+SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
 	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
@@ -326,9 +351,9 @@ ORDER BY a.id`)
 	var active []platform.ActiveDeployment
 	for rows.Next() {
 		var item platform.ActiveDeployment
-		var files, assets, assetConfig []byte
+		var files, assets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.Name, &item.App.Hostname, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
@@ -338,6 +363,9 @@ ORDER BY a.id`)
 			return nil, err
 		}
 		if err := json.Unmarshal(files, &item.Deployment.Files); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(auth, &item.App.Auth); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(assets, &item.Deployment.Assets); err != nil {
@@ -353,7 +381,7 @@ ORDER BY a.id`)
 
 func (p *Postgres) ListDeployments() ([]platform.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
-	SELECT a.id, a.name, a.hostname, a.runtime_token, a.created_at,
+	SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
 		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
@@ -365,9 +393,9 @@ func (p *Postgres) ListDeployments() ([]platform.DeploymentRecord, error) {
 	var records []platform.DeploymentRecord
 	for rows.Next() {
 		var item platform.DeploymentRecord
-		var assets, assetConfig []byte
+		var assets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.Name, &item.App.Hostname, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
@@ -377,6 +405,9 @@ func (p *Postgres) ListDeployments() ([]platform.DeploymentRecord, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal(assets, &item.Deployment.Assets); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(auth, &item.App.Auth); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {
@@ -407,6 +438,27 @@ func (p *Postgres) KVGet(capability, key string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	return value, err == nil, err
+}
+
+func (p *Postgres) KVList(capability string) ([]platform.WorkerKVKey, error) {
+	appID, err := p.AppIDForCapability(capability)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.db.Query(`SELECT key, octet_length(value) FROM runtime_kv WHERE app_id = $1 ORDER BY key`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []platform.WorkerKVKey{}
+	for rows.Next() {
+		var item platform.WorkerKVKey
+		if err := rows.Scan(&item.Key, &item.Size); err != nil {
+			return nil, err
+		}
+		keys = append(keys, item)
+	}
+	return keys, rows.Err()
 }
 
 func (p *Postgres) KVPut(capability, key string, value []byte) error {

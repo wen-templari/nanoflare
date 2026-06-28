@@ -16,6 +16,7 @@ var (
 type Repository interface {
 	CreateApp(App) error
 	ListApps() ([]App, error)
+	UpdateApp(App) error
 	DeleteApp(string) error
 	NextPort() (int, error)
 	Activate(Deployment) error
@@ -74,6 +75,24 @@ func (s *Store) ListApps() ([]App, error) {
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
 	return apps, nil
+}
+
+func (s *Store) UpdateApp(app App) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, exists := s.apps[app.ID]
+	if !exists {
+		return ErrAppNotFound
+	}
+	for _, candidate := range s.apps {
+		if candidate.ID != app.ID && candidate.Hostname == app.Hostname {
+			return ErrAppExists
+		}
+	}
+	app.RuntimeToken = existing.RuntimeToken
+	app.CreatedAt = existing.CreatedAt
+	s.apps[app.ID] = app
+	return nil
 }
 
 func (s *Store) DeleteApp(appID string) error {

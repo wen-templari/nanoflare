@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,8 +19,31 @@ type Server struct {
 	service      *platform.Service
 	traefik      TraefikConfigReader
 	traefikToken string
+	auth         Authenticator
 	mux          *http.ServeMux
 }
+
+type Authenticator interface {
+	ValidateToken(context.Context, string) (AuthResult, error)
+	UserInfo(context.Context, string) (AuthResult, map[string]any, error)
+}
+
+type BrowserAuthenticator interface {
+	Authenticator
+	Session(*http.Request) (AuthResult, string, bool)
+	BeginAuth(http.ResponseWriter, *http.Request) error
+	HandleCallback(http.ResponseWriter, *http.Request) error
+}
+
+type AuthResult struct {
+	Valid     bool           `json:"valid"`
+	Subject   string         `json:"subject,omitempty"`
+	Email     string         `json:"email,omitempty"`
+	ExpiresAt *time.Time     `json:"expires_at,omitempty"`
+	Claims    map[string]any `json:"claims,omitempty"`
+}
+
+var errAuthDisabled = errors.New("oidc authentication is not configured")
 
 type proxiedResponse struct {
 	statusCode int
@@ -32,11 +56,15 @@ type TraefikConfigReader interface {
 }
 
 func NewServer(service *platform.Service) *Server {
-	return NewServerWithTraefik(service, nil, "")
+	return NewServerWithAuth(service, nil, "", nil)
 }
 
 func NewServerWithTraefik(service *platform.Service, traefik TraefikConfigReader, token string) *Server {
-	server := &Server{service: service, traefik: traefik, traefikToken: token, mux: http.NewServeMux()}
+	return NewServerWithAuth(service, traefik, token, nil)
+}
+
+func NewServerWithAuth(service *platform.Service, traefik TraefikConfigReader, token string, auth Authenticator) *Server {
+	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, mux: http.NewServeMux()}
 	server.routes()
 	return server
 }
@@ -51,6 +79,7 @@ func (s *Server) routes() {
 	})
 	s.mux.HandleFunc("GET /v1/apps", s.listApps)
 	s.mux.HandleFunc("POST /v1/apps", s.createApp)
+	s.mux.HandleFunc("PATCH /v1/apps/{appID}", s.updateApp)
 	s.mux.HandleFunc("DELETE /v1/apps/{appID}", s.deleteApp)
 	s.mux.HandleFunc("GET /v1/apps/{appID}", s.workerDetail)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/files", s.workerFiles)
@@ -62,7 +91,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/{key...}", s.workerKVGet)
 	s.mux.HandleFunc("PUT /v1/apps/{appID}/kv/{key...}", s.workerKVPut)
 	s.mux.HandleFunc("DELETE /v1/apps/{appID}/kv/{key...}", s.workerKVDelete)
+	s.mux.HandleFunc("POST /v1/auth/validate", s.validateAuthToken)
+	s.mux.HandleFunc("POST /v1/auth/userinfo", s.authUserInfo)
 	s.mux.HandleFunc("GET /internal/auth/verify", s.verifyAuth)
+	s.mux.HandleFunc("GET /internal/auth/callback", s.authCallback)
 	s.mux.HandleFunc("GET /internal/traefik/config", s.traefikConfig)
 	s.mux.HandleFunc("/internal/http/apps/", s.appGateway)
 	s.mux.HandleFunc("GET /internal/runtime/objects/{key...}", s.runtimeObjectGet)
@@ -405,6 +437,27 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, app)
 }
 
+func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
+	var input platform.UpdateAppInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	app, err := s.service.UpdateApp(r.PathValue("appID"), input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, platform.ErrAppNotFound) {
+			status = http.StatusNotFound
+		}
+		if errors.Is(err, platform.ErrAppExists) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, app)
+}
+
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	if err := s.service.DeleteApp(r.PathValue("appID")); err != nil {
 		writeWorkerError(w, err)
@@ -479,11 +532,93 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, deployment)
 }
 
-// verifyAuth is intentionally a placeholder until an OIDC provider is selected.
-// It preserves a clean Traefik ForwardAuth integration point for the first runtime slice.
-func (s *Server) verifyAuth(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("X-Platform-Context", `{"subject":"development-user"}`)
+func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(bearerToken(r))
+	if token == "" {
+		if browserAuth, ok := s.auth.(BrowserAuthenticator); ok {
+			if result, sessionToken, ok := browserAuth.Session(r); ok {
+				w.Header().Set("X-Platform-User-JWT", sessionToken)
+				w.Header().Set("X-Platform-User-Email", result.Email)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if shouldRedirectToOIDC(r) {
+				if err := browserAuth.BeginAuth(w, r); err != nil {
+					writeAuthError(w, err)
+				}
+				return
+			}
+		}
+		writeError(w, http.StatusUnauthorized, errors.New("bearer token is required"))
+		return
+	}
+	result, _, err := s.userInfoForRequest(r.Context(), token)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	w.Header().Set("X-Platform-User-JWT", token)
+	w.Header().Set("X-Platform-User-Email", result.Email)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
+	browserAuth, ok := s.auth.(BrowserAuthenticator)
+	if !ok {
+		writeAuthError(w, errAuthDisabled)
+		return
+	}
+	if err := browserAuth.HandleCallback(w, r); err != nil {
+		writeAuthError(w, err)
+	}
+}
+
+type authTokenRequest struct {
+	Token string `json:"token"`
+}
+
+type authUserInfoResponse struct {
+	Valid     bool           `json:"valid"`
+	Subject   string         `json:"subject,omitempty"`
+	Email     string         `json:"email,omitempty"`
+	ExpiresAt *time.Time     `json:"expires_at,omitempty"`
+	Claims    map[string]any `json:"claims,omitempty"`
+	Raw       map[string]any `json:"raw,omitempty"`
+}
+
+func (s *Server) validateAuthToken(w http.ResponseWriter, r *http.Request) {
+	token, err := decodeAuthTokenRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	result, err := s.validateRequestToken(r.Context(), token)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) authUserInfo(w http.ResponseWriter, r *http.Request) {
+	token, err := decodeAuthTokenRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	result, raw, err := s.userInfoForRequest(r.Context(), token)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, authUserInfoResponse{
+		Valid:     result.Valid,
+		Subject:   result.Subject,
+		Email:     result.Email,
+		ExpiresAt: result.ExpiresAt,
+		Claims:    result.Claims,
+		Raw:       raw,
+	})
 }
 
 func writeRuntimeError(w http.ResponseWriter, err error) {
@@ -502,11 +637,65 @@ func writeWorkerError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, err)
 }
 
+func writeAuthError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errAuthDisabled):
+		writeError(w, http.StatusServiceUnavailable, err)
+	case strings.Contains(strings.ToLower(err.Error()), "bearer token is required"),
+		strings.Contains(strings.ToLower(err.Error()), "invalid token"),
+		strings.Contains(strings.ToLower(err.Error()), "token expired"),
+		strings.Contains(strings.ToLower(err.Error()), "email"):
+		writeError(w, http.StatusUnauthorized, err)
+	default:
+		writeError(w, http.StatusBadGateway, err)
+	}
+}
+
+func decodeAuthTokenRequest(r *http.Request) (string, error) {
+	var input authTokenRequest
+	if err := decodeJSON(r, &input); err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(input.Token)
+	if token == "" {
+		return "", errors.New("token is required")
+	}
+	return token, nil
+}
+
+func (s *Server) validateRequestToken(ctx context.Context, token string) (AuthResult, error) {
+	if s.auth == nil {
+		return AuthResult{}, errAuthDisabled
+	}
+	return s.auth.ValidateToken(ctx, token)
+}
+
+func (s *Server) userInfoForRequest(ctx context.Context, token string) (AuthResult, map[string]any, error) {
+	if s.auth == nil {
+		return AuthResult{}, nil, errAuthDisabled
+	}
+	return s.auth.UserInfo(ctx, token)
+}
+
 func decodeJSON(r *http.Request, target any) error {
 	defer r.Body.Close()
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(target)
+}
+
+func shouldRedirectToOIDC(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	if strings.Contains(accept, "application/json") {
+		return false
+	}
+	if strings.EqualFold(r.Header.Get("X-Requested-With"), "XMLHttpRequest") {
+		return false
+	}
+	return true
 }
 
 func appGatewayPath(requestPath string) (string, int, string, bool) {
