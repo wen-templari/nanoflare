@@ -24,7 +24,7 @@ The current repository is the first runnable integration slice of `platformd`. I
   operations.
 - A Cloudflare-style static assets binding for deployed assets through
   `env.ASSETS.fetch(...)`.
-- MinIO presigned upload and download URLs with app-prefixed object keys.
+- A Cloudflare R2-style `env.OBJECTS` binding with core `put`, `get`, `head`, and `delete` operations backed by MinIO.
 - A small TypeScript worker SDK and starter Worker.
 
 Podman sandbox lifecycle management, OIDC validation, explicit rollback APIs,
@@ -40,16 +40,25 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Run `platformd` with PostgreSQL and MinIO:
+Run `platformd` with PostgreSQL, MinIO, and a base hostname for workers that do
+not provide an explicit hostname:
 
 ```sh
-go run ./cmd/platformd -addr :8080 -config-dir ./var/generated
+go run ./cmd/platformd \
+  -addr :8080 \
+  -config-dir ./var/generated \
+  -base-hostname workers.example.com
 ```
 
 `platformd` automatically loads `.env` when it starts. Existing shell
 environment variables take precedence. Loading `DATABASE_URL` makes registered
 workers and deployments survive a `platformd` restart. Without it, `platformd`
 uses its intentionally ephemeral in-memory repository.
+
+When a worker is registered without a hostname, `platformd` uses
+`-base-hostname` or `PLATFORM_BASE_HOSTNAME` to generate one in the form
+`worker-name-a1b2c3d4.workers.example.com`. Requests without a hostname are
+rejected when no base hostname is configured.
 
 `platformd` also listens on `127.0.0.1:8081` for the private Worker KV adapter.
 Use `-runtime-addr` to change the listener address. Do not expose this endpoint
@@ -131,8 +140,10 @@ cd ./hello-worker
 ```
 
 `platform init` writes a starter `worker.js` and a `platform.json` project file.
-`platform create` registers the worker and saves its generated app ID locally.
-`platform deploy` uploads each file listed in `platform.json`. Use
+Pass `--hostname` for an explicit DNS hostname, or omit it to let `platformd`
+generate one from the worker name and configured base hostname. `platform
+create` registers the worker and saves its generated app ID and final hostname
+locally. `platform deploy` uploads each file listed in `platform.json`. Use
 `--api-url`, or set `PLATFORMD_URL`, when `platformd` is not listening on
 `http://127.0.0.1:8080`.
 
@@ -144,7 +155,7 @@ discovery, and then stops the previous generation. In direct mode,
 
 Deployments store worker file content, not host filesystem paths. New projects
 use ES-module syntax and set `"format": "modules"` in `platform.json`, so their
-handler receives bindings through `env`, including `env.KV`. Existing projects
+handler receives bindings through `env`, including `env.KV` and `env.OBJECTS`. Existing projects
 without an explicit format remain compatible: one file uses service-worker
 syntax and multiple files use ES-module syntax.
 
@@ -180,6 +191,23 @@ Worker code can fetch attached assets directly:
 export default {
   async fetch(request, env) {
     return env.ASSETS.fetch(request);
+  },
+};
+```
+
+Application object storage is app-scoped and exposed with an R2-style binding:
+
+```js
+export default {
+  async fetch(_request, env) {
+    await env.OBJECTS.put("profiles/user.json", JSON.stringify({ ok: true }), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    const object = await env.OBJECTS.get("profiles/user.json");
+    return Response.json({
+      head: await env.OBJECTS.head("profiles/user.json"),
+      body: object ? await object.json() : null,
+    });
   },
 };
 ```
