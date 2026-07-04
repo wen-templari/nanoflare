@@ -37,7 +37,7 @@ Create the local environment and start the infrastructure:
 
 ```sh
 cp .env.example .env
-docker compose up -d
+docker compose -f docker/compose.yml up -d
 ```
 
 Run `nanoflared` with PostgreSQL, MinIO, and a base hostname for workers that do
@@ -68,8 +68,8 @@ calling it.
 The Compose Traefik service polls `nanoflared` at
 `GET /internal/traefik/config` using `NANOFLARE_TRAEFIK_TOKEN`. Application
 traffic still routes directly from Traefik to `workerd`. The default flags
-assume Traefik runs from `compose.yml` while `nanoflared` and `workerd` run on
-the host.
+assume Traefik runs from `docker/compose.yml` while `nanoflared` and `workerd`
+run on the host.
 
 For a host-run Traefik process configured with its file provider instead, use
 the explicit file fallback and loopback addresses:
