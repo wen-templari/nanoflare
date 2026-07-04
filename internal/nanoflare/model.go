@@ -57,6 +57,10 @@ type CreateKVNamespaceInput struct {
 	Name string `json:"name"`
 }
 
+type UpdateKVNamespaceInput struct {
+	Name string `json:"name"`
+}
+
 type UpdateAppInput struct {
 	Auth *AuthConfig `json:"auth,omitempty"`
 }

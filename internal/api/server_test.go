@@ -133,11 +133,32 @@ func TestKVNamespaceAPIs(t *testing.T) {
 		t.Fatalf("unexpected namespaces: %#v", namespaces)
 	}
 
+	var fetched nanoflare.KVNamespace
+	requestJSON(t, server, http.MethodGet, "/v1/kv/namespaces/"+namespace.ID, http.StatusOK, &fetched)
+	if fetched.ID != namespace.ID || fetched.Name != namespace.Name {
+		t.Fatalf("unexpected namespace detail: %#v", fetched)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/v1/kv/namespaces/"+namespace.ID, strings.NewReader(`{"name":"shared-sessions"}`))
+	request.Header.Set("Content-Type", "application/json")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("patch status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var updated nanoflare.KVNamespace
+	if err := json.NewDecoder(recorder.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != namespace.ID || updated.Name != "shared-sessions" {
+		t.Fatalf("unexpected updated namespace: %#v", updated)
+	}
+
 	app := createApp(t, server, "Bound App", "bound.example.com")
 	deployWithKV(t, server, app.ID, []nanoflare.KVBinding{{Binding: "CACHE", ID: namespace.ID}})
 
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodDelete, "/v1/kv/namespaces/"+namespace.ID, nil)
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodDelete, "/v1/kv/namespaces/"+namespace.ID, nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("delete status = %d, body = %s", recorder.Code, recorder.Body.String())

@@ -150,6 +150,34 @@ func (s *Service) ListKVNamespaces() ([]KVNamespace, error) {
 	return s.store.ListKVNamespaces()
 }
 
+func (s *Service) GetKVNamespace(namespaceID string) (KVNamespace, error) {
+	namespaceID = strings.TrimSpace(namespaceID)
+	if namespaceID == "" {
+		return KVNamespace{}, ErrKVNamespaceNotFound
+	}
+	return s.store.GetKVNamespace(namespaceID)
+}
+
+func (s *Service) UpdateKVNamespace(namespaceID string, input UpdateKVNamespaceInput) (KVNamespace, error) {
+	namespaceID = strings.TrimSpace(namespaceID)
+	if namespaceID == "" {
+		return KVNamespace{}, ErrKVNamespaceNotFound
+	}
+	namespace, err := s.store.GetKVNamespace(namespaceID)
+	if err != nil {
+		return KVNamespace{}, err
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return KVNamespace{}, errors.New("name is required")
+	}
+	namespace.Name = name
+	if err := s.store.UpdateKVNamespace(namespace); err != nil {
+		return KVNamespace{}, err
+	}
+	return namespace, nil
+}
+
 func (s *Service) DeleteKVNamespace(namespaceID string) error {
 	namespaceID = strings.TrimSpace(namespaceID)
 	if namespaceID == "" {

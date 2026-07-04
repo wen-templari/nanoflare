@@ -81,6 +81,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/apps", s.createApp)
 	s.mux.HandleFunc("GET /v1/kv/namespaces", s.listKVNamespaces)
 	s.mux.HandleFunc("POST /v1/kv/namespaces", s.createKVNamespace)
+	s.mux.HandleFunc("GET /v1/kv/namespaces/{namespaceID}", s.getKVNamespace)
+	s.mux.HandleFunc("PATCH /v1/kv/namespaces/{namespaceID}", s.updateKVNamespace)
 	s.mux.HandleFunc("DELETE /v1/kv/namespaces/{namespaceID}", s.deleteKVNamespace)
 	s.mux.HandleFunc("PATCH /v1/apps/{appID}", s.updateApp)
 	s.mux.HandleFunc("DELETE /v1/apps/{appID}", s.deleteApp)
@@ -262,6 +264,29 @@ func (s *Server) createKVNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, namespace)
+}
+
+func (s *Server) getKVNamespace(w http.ResponseWriter, r *http.Request) {
+	namespace, err := s.service.GetKVNamespace(r.PathValue("namespaceID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, namespace)
+}
+
+func (s *Server) updateKVNamespace(w http.ResponseWriter, r *http.Request) {
+	var input nanoflare.UpdateKVNamespaceInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	namespace, err := s.service.UpdateKVNamespace(r.PathValue("namespaceID"), input)
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, namespace)
 }
 
 func (s *Server) deleteKVNamespace(w http.ResponseWriter, r *http.Request) {

@@ -25,6 +25,7 @@ type Repository interface {
 	CreateKVNamespace(KVNamespace) error
 	ListKVNamespaces() ([]KVNamespace, error)
 	GetKVNamespace(string) (KVNamespace, error)
+	UpdateKVNamespace(KVNamespace) error
 	DeleteKVNamespace(string) error
 	NextPort() (int, error)
 	Activate(Deployment) error
@@ -153,6 +154,23 @@ func (s *Store) GetKVNamespace(namespaceID string) (KVNamespace, error) {
 		return KVNamespace{}, ErrKVNamespaceNotFound
 	}
 	return namespace, nil
+}
+
+func (s *Store) UpdateKVNamespace(namespace KVNamespace) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.kvNamespaces[namespace.ID]
+	if !ok {
+		return ErrKVNamespaceNotFound
+	}
+	for _, candidate := range s.kvNamespaces {
+		if candidate.ID != namespace.ID && candidate.Name == namespace.Name {
+			return ErrKVNamespaceExists
+		}
+	}
+	namespace.CreatedAt = existing.CreatedAt
+	s.kvNamespaces[namespace.ID] = namespace
+	return nil
 }
 
 func (s *Store) DeleteKVNamespace(namespaceID string) error {
