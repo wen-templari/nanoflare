@@ -3,7 +3,7 @@ package config
 import (
 	"sync"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type TraefikStore struct {
@@ -26,7 +26,7 @@ func (s *TraefikStore) SetAuthHost(host string) {
 	s.authHost = host
 }
 
-func (s *TraefikStore) WriteTraefik(active []platform.ActiveDeployment) error {
+func (s *TraefikStore) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 	s.mu.RLock()
 	authHost := s.authHost
 	s.mu.RUnlock()

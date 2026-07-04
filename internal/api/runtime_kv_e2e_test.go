@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clas/platform/internal/api"
-	"github.com/clas/platform/internal/config"
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/api"
+	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
@@ -24,22 +24,22 @@ func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Skip("workerd is not installed")
 	}
-	store := platform.NewStore()
-	app := platform.App{ID: "native-kv", Name: "Native KV", Hostname: "native.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
+	store := nanoflare.NewStore()
+	app := nanoflare.App{ID: "native-kv", Name: "Native KV", Hostname: "native.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
 	if err := store.CreateApp(app); err != nil {
 		t.Fatal(err)
 	}
-	service := platform.NewService(store, discardWriter{})
+	service := nanoflare.NewService(store, discardWriter{})
 	runtimeServer := httptest.NewServer(api.NewRuntimeKVServer(service))
 	defer runtimeServer.Close()
 
 	port := availablePort(t)
-	active := []platform.ActiveDeployment{{
+	active := []nanoflare.ActiveDeployment{{
 		App: app,
-		Deployment: platform.Deployment{
+		Deployment: nanoflare.Deployment{
 			ID:                "deployment",
 			AppID:             app.ID,
-			Files:             []platform.WorkerFile{{Path: "worker.js", Content: nativeKVWorker}},
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeKVWorker}},
 			Entrypoint:        "worker.js",
 			Format:            "modules",
 			CompatibilityDate: "2025-12-10",
@@ -103,20 +103,20 @@ func TestWorkerdAssetsBindingEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Skip("workerd is not installed")
 	}
-	store := platform.NewStore()
+	store := nanoflare.NewStore()
 	objects := newE2EObjectStore()
-	app := platform.App{ID: "native-assets", Name: "Native Assets", Hostname: "assets.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
+	app := nanoflare.App{ID: "native-assets", Name: "Native Assets", Hostname: "assets.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
 	if err := store.CreateApp(app); err != nil {
 		t.Fatal(err)
 	}
-	service := platform.NewServiceWithObjects(store, discardWriter{}, objects)
-	deployment, err := service.Deploy(app.ID, platform.DeployInput{
-		Files:             []platform.WorkerFile{{Path: "worker.js", Content: nativeAssetsWorker}},
-		Assets:            []platform.AssetFile{{Path: "logo.svg", ContentType: "image/svg+xml", Data: []byte("<svg />")}, {Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Index</h1>")}},
+	service := nanoflare.NewServiceWithObjects(store, discardWriter{}, objects)
+	deployment, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeAssetsWorker}},
+		Assets:            []nanoflare.AssetFile{{Path: "logo.svg", ContentType: "image/svg+xml", Data: []byte("<svg />")}, {Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Index</h1>")}},
 		Entrypoint:        "worker.js",
 		Format:            "modules",
 		CompatibilityDate: "2025-12-10",
-		AssetConfig:       platform.AssetConfig{Binding: "ASSETS"},
+		AssetConfig:       nanoflare.AssetConfig{Binding: "ASSETS"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestWorkerdAssetsBindingEndToEnd(t *testing.T) {
 	runtimeKV := api.NewRuntimeKVServer(service)
 	runtimeAssets := api.NewRuntimeAssetServer(service)
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Platform-Binding") == "assets" {
+		if r.Header.Get("X-Nanoflare-Binding") == "assets" {
 			runtimeAssets.ServeHTTP(w, r)
 			return
 		}
@@ -133,11 +133,11 @@ func TestWorkerdAssetsBindingEndToEnd(t *testing.T) {
 	defer runtimeServer.Close()
 
 	port := availablePort(t)
-	active := []platform.ActiveDeployment{{
+	active := []nanoflare.ActiveDeployment{{
 		App:        app,
 		Deployment: deployment,
 	}}
-	active[0].Deployment.Files = []platform.WorkerFile{{Path: "worker.js", Content: nativeAssetsWorker}}
+	active[0].Deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeAssetsWorker}}
 	active[0].Deployment.Port = port
 	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
 	if err := os.WriteFile(configPath, []byte(config.WorkerdWithRuntimeAddr(active, strings.TrimPrefix(runtimeServer.URL, "http://"))), 0o600); err != nil {
@@ -195,23 +195,23 @@ func TestWorkerdObjectsBindingEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Skip("workerd is not installed")
 	}
-	store := platform.NewStore()
+	store := nanoflare.NewStore()
 	objects := newE2EObjectStore()
-	app := platform.App{ID: "native-objects", Name: "Native Objects", Hostname: "objects.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
+	app := nanoflare.App{ID: "native-objects", Name: "Native Objects", Hostname: "objects.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
 	if err := store.CreateApp(app); err != nil {
 		t.Fatal(err)
 	}
-	service := platform.NewServiceWithObjects(store, discardWriter{}, objects)
+	service := nanoflare.NewServiceWithObjects(store, discardWriter{}, objects)
 	runtimeServer := httptest.NewServer(api.NewServer(service))
 	defer runtimeServer.Close()
 
 	port := availablePort(t)
-	active := []platform.ActiveDeployment{{
+	active := []nanoflare.ActiveDeployment{{
 		App: app,
-		Deployment: platform.Deployment{
+		Deployment: nanoflare.Deployment{
 			ID:                "deployment",
 			AppID:             app.ID,
-			Files:             []platform.WorkerFile{{Path: "worker.js", Content: nativeObjectsWorker}},
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeObjectsWorker}},
 			Entrypoint:        "worker.js",
 			Format:            "modules",
 			CompatibilityDate: "2025-12-10",
@@ -282,16 +282,16 @@ func availablePort(t *testing.T) int {
 
 type discardWriter struct{}
 
-func (discardWriter) Write([]platform.ActiveDeployment) error {
+func (discardWriter) Write([]nanoflare.ActiveDeployment) error {
 	return nil
 }
 
 type e2eObjectStore struct {
-	objects map[string]platform.ObjectBody
+	objects map[string]nanoflare.ObjectBody
 }
 
 func newE2EObjectStore() *e2eObjectStore {
-	return &e2eObjectStore{objects: make(map[string]platform.ObjectBody)}
+	return &e2eObjectStore{objects: make(map[string]nanoflare.ObjectBody)}
 }
 
 func (s *e2eObjectStore) PresignUpload(string, string, time.Duration) (string, error) {
@@ -302,15 +302,15 @@ func (s *e2eObjectStore) PresignDownload(string, string, time.Duration) (string,
 	return "", nil
 }
 
-func (s *e2eObjectStore) Put(appID, path string, contentType string, data []byte) (platform.ObjectInfo, error) {
-	object := platform.ObjectBody{
-		ObjectInfo: platform.ObjectInfo{
+func (s *e2eObjectStore) Put(appID, path string, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
+	object := nanoflare.ObjectBody{
+		ObjectInfo: nanoflare.ObjectInfo{
 			Key:      path,
 			Size:     int64(len(data)),
 			ETag:     "etag-" + path,
 			HTTPETag: `"etag-` + path + `"`,
 			Uploaded: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-			HTTPMetadata: platform.ObjectHTTPMetadata{
+			HTTPMetadata: nanoflare.ObjectHTTPMetadata{
 				ContentType: contentType,
 			},
 		},
@@ -320,19 +320,19 @@ func (s *e2eObjectStore) Put(appID, path string, contentType string, data []byte
 	return object.ObjectInfo, nil
 }
 
-func (s *e2eObjectStore) Get(appID, path string) (platform.ObjectBody, error) {
+func (s *e2eObjectStore) Get(appID, path string) (nanoflare.ObjectBody, error) {
 	object, ok := s.objects[appID+"/"+path]
 	if !ok {
-		return platform.ObjectBody{}, platform.ErrObjectNotFound
+		return nanoflare.ObjectBody{}, nanoflare.ErrObjectNotFound
 	}
 	object.Body = append([]byte(nil), object.Body...)
 	return object, nil
 }
 
-func (s *e2eObjectStore) Head(appID, path string) (platform.ObjectInfo, error) {
+func (s *e2eObjectStore) Head(appID, path string) (nanoflare.ObjectInfo, error) {
 	object, ok := s.objects[appID+"/"+path]
 	if !ok {
-		return platform.ObjectInfo{}, platform.ErrObjectNotFound
+		return nanoflare.ObjectInfo{}, nanoflare.ErrObjectNotFound
 	}
 	return object.ObjectInfo, nil
 }

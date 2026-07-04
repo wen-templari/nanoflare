@@ -1,4 +1,4 @@
-package platform
+package nanoflare
 
 import (
 	"encoding/json"

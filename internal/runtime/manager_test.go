@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
-func TestMinimalEnvironmentDoesNotForwardPlatformSecrets(t *testing.T) {
+func TestMinimalEnvironmentDoesNotForwardNanoflareSecrets(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
 	t.Setenv("DATABASE_URL", "postgres://secret")
 	t.Setenv("MINIO_SECRET_KEY", "secret")
@@ -171,13 +171,13 @@ func TestManagerSkipsPortBusyOnWildcardBind(t *testing.T) {
 	}
 }
 
-func deployments(port int) []platform.ActiveDeployment {
-	return []platform.ActiveDeployment{{
-		App: platform.App{ID: "hello", Hostname: "hello.example.com"},
-		Deployment: platform.Deployment{
+func deployments(port int) []nanoflare.ActiveDeployment {
+	return []nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello", Hostname: "hello.example.com"},
+		Deployment: nanoflare.Deployment{
 			ID:                "d782fdf238391fd3ea15d629e16ff825fb19332a50347e04",
 			AppID:             "hello",
-			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
 			Entrypoint:        "worker.js",
 			CompatibilityDate: "2025-12-10",
 			Port:              port,
@@ -198,19 +198,19 @@ func availablePort(t *testing.T) int {
 type fakeWriter struct {
 	mu      sync.Mutex
 	events  *eventLog
-	traefik [][]platform.ActiveDeployment
+	traefik [][]nanoflare.ActiveDeployment
 }
 
-func (w *fakeWriter) WriteWorkerd(_ string, _ []platform.ActiveDeployment) error {
+func (w *fakeWriter) WriteWorkerd(_ string, _ []nanoflare.ActiveDeployment) error {
 	w.events.add("workerd")
 	return nil
 }
 
-func (w *fakeWriter) WriteTraefik(active []platform.ActiveDeployment) error {
+func (w *fakeWriter) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 	w.events.add("traefik")
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.traefik = append(w.traefik, append([]platform.ActiveDeployment(nil), active...))
+	w.traefik = append(w.traefik, append([]nanoflare.ActiveDeployment(nil), active...))
 	return nil
 }
 
@@ -233,7 +233,7 @@ type fakeLauncher struct {
 	processes []*fakeProcess
 }
 
-func (l *fakeLauncher) Launch(_ string, active []platform.ActiveDeployment) (Process, error) {
+func (l *fakeLauncher) Launch(_ string, active []nanoflare.ActiveDeployment) (Process, error) {
 	l.events.add("launch")
 	process := &fakeProcess{events: l.events, done: make(chan error, 1)}
 	if l.healthy {

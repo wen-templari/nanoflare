@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestClientPreparesRoutesAndCommitsGeneration(t *testing.T) {
@@ -70,12 +70,12 @@ func TestClientTransportsPrivateRuntimeTokenToRunner(t *testing.T) {
 
 type fakeManager struct {
 	generation string
-	routed     []platform.ActiveDeployment
-	prepared   []platform.ActiveDeployment
+	routed     []nanoflare.ActiveDeployment
+	prepared   []nanoflare.ActiveDeployment
 	events     []string
 }
 
-func (m *fakeManager) Prepare(deployments []platform.ActiveDeployment) (string, []platform.ActiveDeployment, error) {
+func (m *fakeManager) Prepare(deployments []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
 	m.events = append(m.events, "prepare")
 	m.prepared = deployments
 	return m.generation, m.routed, nil
@@ -92,18 +92,18 @@ func (m *fakeManager) Abort(generation string) error {
 }
 
 type fakeTraefikWriter struct {
-	active []platform.ActiveDeployment
+	active []nanoflare.ActiveDeployment
 	err    error
 }
 
-func (w *fakeTraefikWriter) WriteTraefik(active []platform.ActiveDeployment) error {
+func (w *fakeTraefikWriter) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 	w.active = active
 	return w.err
 }
 
-func deployments(port int) []platform.ActiveDeployment {
-	return []platform.ActiveDeployment{{
-		App:        platform.App{ID: "hello", Hostname: "hello.example.com"},
-		Deployment: platform.Deployment{ID: "deployment", Port: port},
+func deployments(port int) []nanoflare.ActiveDeployment {
+	return []nanoflare.ActiveDeployment{{
+		App:        nanoflare.App{ID: "hello", Hostname: "hello.example.com"},
+		Deployment: nanoflare.Deployment{ID: "deployment", Port: port},
 	}}
 }

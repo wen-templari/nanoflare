@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type RuntimeAssetServer struct {
-	service *platform.Service
+	service *nanoflare.Service
 }
 
-func NewRuntimeAssetServer(service *platform.Service) *RuntimeAssetServer {
+func NewRuntimeAssetServer(service *nanoflare.Service) *RuntimeAssetServer {
 	return &RuntimeAssetServer{service: service}
 }
 

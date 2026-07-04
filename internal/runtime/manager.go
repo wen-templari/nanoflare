@@ -14,12 +14,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type ConfigWriter interface {
-	WriteWorkerd(string, []platform.ActiveDeployment) error
-	WriteTraefik([]platform.ActiveDeployment) error
+	WriteWorkerd(string, []nanoflare.ActiveDeployment) error
+	WriteTraefik([]nanoflare.ActiveDeployment) error
 }
 
 type Process interface {
@@ -28,7 +28,7 @@ type Process interface {
 }
 
 type Launcher interface {
-	Launch(string, []platform.ActiveDeployment) (Process, error)
+	Launch(string, []nanoflare.ActiveDeployment) (Process, error)
 }
 
 type Manager struct {
@@ -54,7 +54,7 @@ type Manager struct {
 type pool struct {
 	configPath string
 	process    Process
-	active     []platform.ActiveDeployment
+	active     []nanoflare.ActiveDeployment
 }
 
 func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConfig, portHost string, portStart int, healthTimeout, stopTimeout time.Duration) *Manager {
@@ -82,7 +82,7 @@ func (m *Manager) SetAutoRestart(enabled bool) {
 	m.autoRestart = enabled
 }
 
-func (m *Manager) Write(active []platform.ActiveDeployment) error {
+func (m *Manager) Write(active []nanoflare.ActiveDeployment) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	generation, routed, err := m.prepare(active)
@@ -96,7 +96,7 @@ func (m *Manager) Write(active []platform.ActiveDeployment) error {
 	return m.commit(generation)
 }
 
-func (m *Manager) Prepare(active []platform.ActiveDeployment) (string, []platform.ActiveDeployment, error) {
+func (m *Manager) Prepare(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.prepare(active)
@@ -114,7 +114,7 @@ func (m *Manager) Abort(generation string) error {
 	return m.abort(generation)
 }
 
-func (m *Manager) prepare(active []platform.ActiveDeployment) (string, []platform.ActiveDeployment, error) {
+func (m *Manager) prepare(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
 	if m.closed {
 		return "", nil, errors.New("runtime manager is closed")
 	}
@@ -123,8 +123,8 @@ func (m *Manager) prepare(active []platform.ActiveDeployment) (string, []platfor
 	}
 
 	if len(active) == 0 {
-		m.pending = &pool{active: []platform.ActiveDeployment{}}
-		return "empty", []platform.ActiveDeployment{}, nil
+		m.pending = &pool{active: []nanoflare.ActiveDeployment{}}
+		return "empty", []nanoflare.ActiveDeployment{}, nil
 	}
 
 	generation, err := m.withRuntimePorts(active)
@@ -148,7 +148,7 @@ func (m *Manager) prepare(active []platform.ActiveDeployment) (string, []platfor
 		return "", nil, err
 	}
 	m.pending = next
-	return filepath.Base(configPath), append([]platform.ActiveDeployment(nil), generation...), nil
+	return filepath.Base(configPath), append([]nanoflare.ActiveDeployment(nil), generation...), nil
 }
 
 func (m *Manager) commit(generation string) error {
@@ -213,11 +213,11 @@ func (m *Manager) Close() error {
 	return firstErr
 }
 
-func (m *Manager) publish(next *pool, desired []platform.ActiveDeployment) {
+func (m *Manager) publish(next *pool, desired []nanoflare.ActiveDeployment) {
 	previous := m.active
 	m.active = next
 	if next != nil {
-		go m.watch(next, append([]platform.ActiveDeployment(nil), desired...))
+		go m.watch(next, append([]nanoflare.ActiveDeployment(nil), desired...))
 	}
 	if previous == nil {
 		return
@@ -239,8 +239,8 @@ func (m *Manager) stop(pool *pool) error {
 	return err
 }
 
-func (m *Manager) withRuntimePorts(active []platform.ActiveDeployment) ([]platform.ActiveDeployment, error) {
-	result := make([]platform.ActiveDeployment, len(active))
+func (m *Manager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]nanoflare.ActiveDeployment, error) {
+	result := make([]nanoflare.ActiveDeployment, len(active))
 	copy(result, active)
 	for i := range result {
 		port, err := m.availablePort()
@@ -265,7 +265,7 @@ func (m *Manager) availablePort() (int, error) {
 	return 0, errors.New("no runtime ports available")
 }
 
-func (m *Manager) waitHealthy(process Process, active []platform.ActiveDeployment) error {
+func (m *Manager) waitHealthy(process Process, active []nanoflare.ActiveDeployment) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.healthTimeout)
 	defer cancel()
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -287,7 +287,7 @@ func (m *Manager) waitHealthy(process Process, active []platform.ActiveDeploymen
 	}
 }
 
-func (m *Manager) watch(pool *pool, desired []platform.ActiveDeployment) {
+func (m *Manager) watch(pool *pool, desired []nanoflare.ActiveDeployment) {
 	err := <-pool.process.Done()
 	m.mu.Lock()
 	if m.closed || m.active != pool {
@@ -317,7 +317,7 @@ func (m *Manager) watch(pool *pool, desired []platform.ActiveDeployment) {
 	}
 }
 
-func socketsReady(host string, active []platform.ActiveDeployment) bool {
+func socketsReady(host string, active []nanoflare.ActiveDeployment) bool {
 	for _, item := range active {
 		connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprint(item.Deployment.Port)), 50*time.Millisecond)
 		if err != nil {
@@ -333,7 +333,7 @@ type CommandLauncher struct {
 	Output     *OutputBuffer
 }
 
-func (l CommandLauncher) Launch(configPath string, _ []platform.ActiveDeployment) (Process, error) {
+func (l CommandLauncher) Launch(configPath string, _ []nanoflare.ActiveDeployment) (Process, error) {
 	command := exec.Command(l.Executable, "serve", configPath)
 	command.Env = minimalEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

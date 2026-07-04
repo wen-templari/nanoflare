@@ -1,23 +1,23 @@
 package runner
 
-import "github.com/clas/platform/internal/platform"
+import "github.com/clas/nanoflare/internal/nanoflare"
 
 type PrepareRequest struct {
 	Deployments []runtimeDeployment `json:"deployments"`
 }
 
 type PrepareResponse struct {
-	Generation  string                      `json:"generation"`
-	Deployments []platform.ActiveDeployment `json:"deployments"`
+	Generation  string                       `json:"generation"`
+	Deployments []nanoflare.ActiveDeployment `json:"deployments"`
 }
 
 type runtimeDeployment struct {
-	App          platform.App        `json:"app"`
-	Deployment   platform.Deployment `json:"deployment"`
-	RuntimeToken string              `json:"runtime_token"`
+	App          nanoflare.App        `json:"app"`
+	Deployment   nanoflare.Deployment `json:"deployment"`
+	RuntimeToken string               `json:"runtime_token"`
 }
 
-func prepareRequest(deployments []platform.ActiveDeployment) PrepareRequest {
+func prepareRequest(deployments []nanoflare.ActiveDeployment) PrepareRequest {
 	items := make([]runtimeDeployment, len(deployments))
 	for i, deployment := range deployments {
 		items[i] = runtimeDeployment{
@@ -29,11 +29,11 @@ func prepareRequest(deployments []platform.ActiveDeployment) PrepareRequest {
 	return PrepareRequest{Deployments: items}
 }
 
-func (r PrepareRequest) activeDeployments() []platform.ActiveDeployment {
-	items := make([]platform.ActiveDeployment, len(r.Deployments))
+func (r PrepareRequest) activeDeployments() []nanoflare.ActiveDeployment {
+	items := make([]nanoflare.ActiveDeployment, len(r.Deployments))
 	for i, deployment := range r.Deployments {
 		deployment.App.RuntimeToken = deployment.RuntimeToken
-		items[i] = platform.ActiveDeployment{App: deployment.App, Deployment: deployment.Deployment}
+		items[i] = nanoflare.ActiveDeployment{App: deployment.App, Deployment: deployment.Deployment}
 	}
 	return items
 }

@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
-	starterworker "github.com/clas/platform/templates/starter-worker"
+	"github.com/clas/nanoflare/internal/nanoflare"
+	starterworker "github.com/clas/nanoflare/templates/starter-worker"
 )
 
 const (
-	projectFilename = "platform.json"
+	projectFilename = "nanoflare.json"
 	defaultAPIURL   = "http://127.0.0.1:8080"
 )
 
@@ -49,11 +49,11 @@ type Project struct {
 }
 
 type ProjectAssets struct {
-	Binding          string                  `json:"binding,omitempty"`
-	Directory        string                  `json:"directory,omitempty"`
-	HTMLHandling     string                  `json:"html_handling,omitempty"`
-	NotFoundHandling string                  `json:"not_found_handling,omitempty"`
-	RunWorkerFirst   platform.RunWorkerFirst `json:"run_worker_first,omitempty"`
+	Binding          string                   `json:"binding,omitempty"`
+	Directory        string                   `json:"directory,omitempty"`
+	HTMLHandling     string                   `json:"html_handling,omitempty"`
+	NotFoundHandling string                   `json:"not_found_handling,omitempty"`
+	RunWorkerFirst   nanoflare.RunWorkerFirst `json:"run_worker_first,omitempty"`
 }
 
 type ProjectAuth struct {
@@ -99,12 +99,12 @@ func (r *Runner) init(args []string) error {
 	flags.SetOutput(r.Stderr)
 	name := flags.String("name", "", "worker name")
 	hostname := flags.String("hostname", "", "worker DNS hostname")
-	apiURL := flags.String("api-url", envOrDefault("PLATFORMD_URL", defaultAPIURL), "platformd base URL")
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 1 {
-		return errors.New("usage: platform init [flags] [directory]")
+		return errors.New("usage: nanoflare init [flags] [directory]")
 	}
 	dir := "."
 	if flags.NArg() == 1 {
@@ -148,19 +148,19 @@ func (r *Runner) init(args []string) error {
 		return fmt.Errorf("write starter worker: %w", err)
 	}
 	fmt.Fprintf(r.Stdout, "Initialized worker project in %s\n", absDir)
-	fmt.Fprintln(r.Stdout, "Run `platform create` to register it, then `platform deploy`.")
+	fmt.Fprintln(r.Stdout, "Run `nanoflare create` to register it, then `nanoflare deploy`.")
 	return nil
 }
 
 func (r *Runner) create(args []string) error {
 	flags := flag.NewFlagSet("create", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	apiURL := flags.String("api-url", "", "platformd base URL")
+	apiURL := flags.String("api-url", "", "nanoflared base URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("usage: platform create [worker] [flags]")
+		return errors.New("usage: nanoflare create [worker] [flags]")
 	}
 	path, project, err := loadProject()
 	if err != nil {
@@ -170,11 +170,11 @@ func (r *Runner) create(args []string) error {
 		return fmt.Errorf("worker is already registered as %s", project.AppID)
 	}
 	baseURL := projectAPIURL(project, *apiURL)
-	var app platform.App
-	if err := r.request(http.MethodPost, baseURL+"/v1/apps", platform.CreateAppInput{
+	var app nanoflare.App
+	if err := r.request(http.MethodPost, baseURL+"/v1/apps", nanoflare.CreateAppInput{
 		Name:     project.Name,
 		Hostname: project.Hostname,
-		Auth:     platform.AuthConfig{ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...)},
+		Auth:     nanoflare.AuthConfig{ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...)},
 	}, &app); err != nil {
 		return err
 	}
@@ -191,14 +191,14 @@ func (r *Runner) create(args []string) error {
 func (r *Runner) list(args []string) error {
 	flags := flag.NewFlagSet("list", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	apiURL := flags.String("api-url", envOrDefault("PLATFORMD_URL", defaultAPIURL), "platformd base URL")
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("usage: platform list [worker] [flags]")
+		return errors.New("usage: nanoflare list [worker] [flags]")
 	}
-	var apps []platform.App
+	var apps []nanoflare.App
 	if err := r.request(http.MethodGet, strings.TrimRight(*apiURL, "/")+"/v1/apps", nil, &apps); err != nil {
 		return err
 	}
@@ -211,12 +211,12 @@ func (r *Runner) list(args []string) error {
 func (r *Runner) delete(args []string) error {
 	flags := flag.NewFlagSet("delete", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	apiURL := flags.String("api-url", "", "platformd base URL")
+	apiURL := flags.String("api-url", "", "nanoflared base URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 1 {
-		return errors.New("usage: platform delete [worker] [app-id] [flags]")
+		return errors.New("usage: nanoflare delete [worker] [app-id] [flags]")
 	}
 	appID := ""
 	var projectPath string
@@ -230,7 +230,7 @@ func (r *Runner) delete(args []string) error {
 			return err
 		}
 		if project.AppID == "" {
-			return errors.New("worker is not registered; run `platform create` first")
+			return errors.New("worker is not registered; run `nanoflare create` first")
 		}
 		appID = project.AppID
 	}
@@ -252,28 +252,28 @@ func (r *Runner) delete(args []string) error {
 func (r *Runner) deploy(args []string) error {
 	flags := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	apiURL := flags.String("api-url", "", "platformd base URL")
+	apiURL := flags.String("api-url", "", "nanoflared base URL")
 	compatibilityDate := flags.String("compatibility-date", "", "worker compatibility date (YYYY-MM-DD)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("usage: platform deploy [worker] [flags]")
+		return errors.New("usage: nanoflare deploy [worker] [flags]")
 	}
 	_, project, err := loadProject()
 	if err != nil {
 		return err
 	}
 	if project.AppID == "" {
-		return errors.New("worker is not registered; run `platform create` first")
+		return errors.New("worker is not registered; run `nanoflare create` first")
 	}
 	date := project.CompatibilityDate
 	if *compatibilityDate != "" {
 		date = *compatibilityDate
 	}
 	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodPatch, baseURL+"/v1/apps/"+project.AppID, platform.UpdateAppInput{
-		Auth: &platform.AuthConfig{
+	if err := r.request(http.MethodPatch, baseURL+"/v1/apps/"+project.AppID, nanoflare.UpdateAppInput{
+		Auth: &nanoflare.AuthConfig{
 			ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...),
 		},
 	}, nil); err != nil {
@@ -287,14 +287,14 @@ func (r *Runner) deploy(args []string) error {
 	if err != nil {
 		return err
 	}
-	var deployment platform.Deployment
-	if err := r.request(http.MethodPost, baseURL+"/v1/apps/"+project.AppID+"/deployments", platform.DeployInput{
+	var deployment nanoflare.Deployment
+	if err := r.request(http.MethodPost, baseURL+"/v1/apps/"+project.AppID+"/deployments", nanoflare.DeployInput{
 		Files:             files,
 		Assets:            assets,
 		Entrypoint:        project.Entrypoint,
 		Format:            project.Format,
 		CompatibilityDate: date,
-		AssetConfig: platform.AssetConfig{
+		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,
 			NotFoundHandling: project.Assets.NotFoundHandling,
@@ -333,7 +333,7 @@ func (r *Runner) request(method, url string, input, output any) error {
 			Error string `json:"error"`
 		}
 		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&apiError); err != nil || apiError.Error == "" {
-			return fmt.Errorf("%s %s: platformd returned %s", method, url, response.Status)
+			return fmt.Errorf("%s %s: nanoflared returned %s", method, url, response.Status)
 		}
 		return fmt.Errorf("%s %s: %s", method, url, apiError.Error)
 	}
@@ -341,7 +341,7 @@ func (r *Runner) request(method, url string, input, output any) error {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
-		return fmt.Errorf("decode platformd response: %w", err)
+		return fmt.Errorf("decode nanoflared response: %w", err)
 	}
 	return nil
 }
@@ -365,8 +365,8 @@ func loadProject() (string, Project, error) {
 	return path, project, nil
 }
 
-func loadWorkerFiles(paths []string) ([]platform.WorkerFile, error) {
-	files := make([]platform.WorkerFile, 0, len(paths))
+func loadWorkerFiles(paths []string) ([]nanoflare.WorkerFile, error) {
+	files := make([]nanoflare.WorkerFile, 0, len(paths))
 	for _, path := range paths {
 		clean := filepath.Clean(filepath.FromSlash(strings.TrimSpace(path)))
 		if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
@@ -376,12 +376,12 @@ func loadWorkerFiles(paths []string) ([]platform.WorkerFile, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read worker file %s: %w", clean, err)
 		}
-		files = append(files, platform.WorkerFile{Path: filepath.ToSlash(clean), Content: string(content)})
+		files = append(files, nanoflare.WorkerFile{Path: filepath.ToSlash(clean), Content: string(content)})
 	}
 	return files, nil
 }
 
-func loadAssetFiles(dir string) ([]platform.AssetFile, error) {
+func loadAssetFiles(dir string) ([]nanoflare.AssetFile, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return nil, nil
@@ -390,7 +390,7 @@ func loadAssetFiles(dir string) ([]platform.AssetFile, error) {
 	if cleanRoot == "." || filepath.IsAbs(cleanRoot) || cleanRoot == ".." || strings.HasPrefix(cleanRoot, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("asset directory %q must remain inside the project", dir)
 	}
-	var assets []platform.AssetFile
+	var assets []nanoflare.AssetFile
 	err := filepath.WalkDir(cleanRoot, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -410,7 +410,7 @@ func loadAssetFiles(dir string) ([]platform.AssetFile, error) {
 		if err != nil {
 			return fmt.Errorf("read asset file %s: %w", path, err)
 		}
-		assets = append(assets, platform.AssetFile{
+		assets = append(assets, nanoflare.AssetFile{
 			Path:        relative,
 			Size:        int64(len(data)),
 			ContentType: detectContentType(relative),
@@ -455,7 +455,7 @@ func projectAPIURL(project Project, override string) string {
 	if override != "" {
 		return strings.TrimRight(override, "/")
 	}
-	if value := os.Getenv("PLATFORMD_URL"); value != "" {
+	if value := os.Getenv("NANOFLARED_URL"); value != "" {
 		return strings.TrimRight(value, "/")
 	}
 	if project.APIURL != "" {
@@ -495,9 +495,9 @@ func slug(value string) string {
 
 func (r *Runner) usage() {
 	fmt.Fprintln(r.Stderr, `Usage:
-  platform init [flags] [directory]
-  platform create [worker] [flags]
-  platform list [worker] [flags]
-  platform delete [worker] [app-id] [flags]
-  platform deploy [worker] [flags]`)
+  nanoflare init [flags] [directory]
+  nanoflare create [worker] [flags]
+  nanoflare list [worker] [flags]
+  nanoflare delete [worker] [app-id] [flags]
+  nanoflare deploy [worker] [flags]`)
 }

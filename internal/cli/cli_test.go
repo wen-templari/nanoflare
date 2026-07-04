@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestInitCreatesStarterProject(t *testing.T) {
@@ -38,7 +38,7 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "hello from platform") {
+	if !strings.Contains(string(content), "hello from nanoflare") {
 		t.Fatalf("starter worker = %q", content)
 	}
 }
@@ -62,14 +62,14 @@ func TestInitPreservesExplicitHostname(t *testing.T) {
 
 func TestCreateAndDeployWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
-	var created platform.CreateAppInput
-	var updated platform.UpdateAppInput
-	var deployed platform.DeployInput
+	var created nanoflare.CreateAppInput
+	var updated nanoflare.UpdateAppInput
+	var deployed nanoflare.DeployInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/apps":
 			decodeRequest(t, r, &created)
-			writeJSON(t, w, http.StatusCreated, platform.App{ID: "app-123", Hostname: created.Hostname})
+			writeJSON(t, w, http.StatusCreated, nanoflare.App{ID: "app-123", Hostname: created.Hostname})
 		case "/v1/apps/app-123":
 			if r.Method != http.MethodPatch {
 				http.NotFound(w, r)
@@ -79,7 +79,7 @@ func TestCreateAndDeployWorker(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		case "/v1/apps/app-123/deployments":
 			decodeRequest(t, r, &deployed)
-			writeJSON(t, w, http.StatusCreated, platform.Deployment{ID: "deployment-456"})
+			writeJSON(t, w, http.StatusCreated, nanoflare.Deployment{ID: "deployment-456"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -152,14 +152,14 @@ func TestCreateAndDeployWorker(t *testing.T) {
 
 func TestCreatePersistsGeneratedHostname(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
-	var created platform.CreateAppInput
+	var created nanoflare.CreateAppInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps" {
 			http.NotFound(w, r)
 			return
 		}
 		decodeRequest(t, r, &created)
-		writeJSON(t, w, http.StatusCreated, platform.App{ID: "app-123", Name: created.Name, Hostname: "hello-a1b2c3d4.example.com"})
+		writeJSON(t, w, http.StatusCreated, nanoflare.App{ID: "app-123", Name: created.Name, Hostname: "hello-a1b2c3d4.example.com"})
 	}))
 	defer server.Close()
 
@@ -216,7 +216,7 @@ func TestListWorkers(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(t, w, http.StatusOK, []platform.App{
+		writeJSON(t, w, http.StatusOK, []nanoflare.App{
 			{ID: "app-123", Name: "Hello", Hostname: "hello.example.com"},
 			{ID: "app-456", Name: "World", Hostname: "world.example.com"},
 		})
@@ -297,12 +297,12 @@ func TestDeployRequiresRegisteredWorker(t *testing.T) {
 	})
 
 	err := NewRunner(io.Discard, io.Discard).Run([]string{"deploy"})
-	if err == nil || !strings.Contains(err.Error(), "platform create") {
+	if err == nil || !strings.Contains(err.Error(), "nanoflare create") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestCreateReportsPlatformError(t *testing.T) {
+func TestCreateReportsNanoflareError(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(t, w, http.StatusConflict, map[string]string{"error": "hostname already exists"})

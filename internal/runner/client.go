@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type TraefikWriter interface {
-	WriteTraefik([]platform.ActiveDeployment) error
+	WriteTraefik([]nanoflare.ActiveDeployment) error
 }
 
 type Client struct {
@@ -33,7 +33,7 @@ func NewClient(baseURL, token string, traefik TraefikWriter) *Client {
 	}
 }
 
-func (c *Client) Write(active []platform.ActiveDeployment) error {
+func (c *Client) Write(active []nanoflare.ActiveDeployment) error {
 	var prepared PrepareResponse
 	if err := c.request(http.MethodPost, "/v1/generations/prepare", prepareRequest(active), &prepared); err != nil {
 		return fmt.Errorf("prepare runner generation: %w", err)

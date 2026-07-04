@@ -1,7 +1,7 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const identity = request.headers.get("x-platform-context");
+    const identity = request.headers.get("x-nanoflare-context");
 
     if (request.method === "PUT" && url.pathname === "/api/files/latest.txt") {
       const contentType = request.headers.get("content-type") || "text/plain; charset=utf-8";
@@ -36,7 +36,7 @@ export default {
     });
     const latest = await env.OBJECTS.get("visits/latest.json");
     return Response.json({
-      message: "hello from platform",
+      message: "hello from nanoflare",
       visits,
       latest: latest ? await latest.json() : null,
       identity: identity ? JSON.parse(identity) : null,

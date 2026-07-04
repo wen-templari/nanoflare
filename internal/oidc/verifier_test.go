@@ -51,8 +51,8 @@ func TestVerifierValidatesJWTAndLoadsUserInfo(t *testing.T) {
 	defer server.Close()
 	issuer = server.URL
 
-	verifier := NewVerifier(issuer, "platform", "email", server.Client())
-	token := signedJWT(t, privateKey, issuer, "platform", map[string]any{"sub": "user-123", "email": "person@example.com"})
+	verifier := NewVerifier(issuer, "nanoflare", "email", server.Client())
+	token := signedJWT(t, privateKey, issuer, "nanoflare", map[string]any{"sub": "user-123", "email": "person@example.com"})
 
 	result, raw, err := verifier.UserInfo(context.Background(), token)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestVerifierRejectsWrongAudience(t *testing.T) {
 	defer server.Close()
 	issuer = server.URL
 
-	verifier := NewVerifier(issuer, "platform", "email", server.Client())
+	verifier := NewVerifier(issuer, "nanoflare", "email", server.Client())
 	token := signedJWT(t, privateKey, issuer, "different-audience", map[string]any{"sub": "user-123"})
 
 	_, err = verifier.ValidateToken(context.Background(), token)
@@ -142,8 +142,8 @@ func TestVerifierValidatesECIDToken(t *testing.T) {
 	defer server.Close()
 	issuer = server.URL
 
-	verifier := NewVerifier(issuer, "platform", "email", server.Client())
-	token := signedECDSAJWT(t, privateKey, issuer, "platform", "ec-key", map[string]any{"sub": "user-123", "email": "person@example.com"})
+	verifier := NewVerifier(issuer, "nanoflare", "email", server.Client())
+	token := signedECDSAJWT(t, privateKey, issuer, "nanoflare", "ec-key", map[string]any{"sub": "user-123", "email": "person@example.com"})
 
 	result, raw, err := verifier.UserInfo(context.Background(), token)
 	if err != nil {
@@ -198,7 +198,7 @@ func TestVerifierBrowserFlowCreatesSession(t *testing.T) {
 	defer server.Close()
 	issuer = server.URL
 
-	verifier := NewBrowserVerifier(issuer, "platform", "email", "client-id", "secret", "https://platform.example.com:8443", ".local.nbtca.space", server.Client())
+	verifier := NewBrowserVerifier(issuer, "nanoflare", "email", "client-id", "secret", "https://nanoflare.example.com:8443", ".local.nbtca.space", server.Client())
 	verifyRequest := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
 	verifyRequest.Header.Set("X-Forwarded-Proto", "https")
 	verifyRequest.Header.Set("X-Forwarded-Host", "worker.example.com")
@@ -291,7 +291,7 @@ func TestVerifierBrowserFlowCreatesSessionWithoutIDToken(t *testing.T) {
 	defer server.Close()
 	issuer = server.URL
 
-	verifier := NewBrowserVerifier(issuer, "platform", "email", "client-id", "secret", "https://platform.example.com:8443", ".local.nbtca.space", server.Client())
+	verifier := NewBrowserVerifier(issuer, "nanoflare", "email", "client-id", "secret", "https://nanoflare.example.com:8443", ".local.nbtca.space", server.Client())
 	verifyRequest := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
 	verifyRequest.Header.Set("X-Forwarded-Proto", "https")
 	verifyRequest.Header.Set("X-Forwarded-Host", "worker.example.com")
@@ -317,7 +317,7 @@ func TestVerifierBrowserFlowCreatesSessionWithoutIDToken(t *testing.T) {
 }
 
 func TestVerifierRejectsInvalidCookieDomain(t *testing.T) {
-	verifier := NewBrowserVerifier("https://auth.example.com/oidc", "platform", "email", "client-id", "", "https://platform.local.nbtca.space:8443", ".other.example.com", nil)
+	verifier := NewBrowserVerifier("https://auth.example.com/oidc", "nanoflare", "email", "client-id", "", "https://nanoflare.local.nbtca.space:8443", ".other.example.com", nil)
 	if err := verifier.ValidateBrowserConfig(); err == nil || !strings.Contains(err.Error(), "cookie domain") {
 		t.Fatalf("error = %v", err)
 	}

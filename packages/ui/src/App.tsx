@@ -111,7 +111,7 @@ export function App() {
         <div className="flex h-20 items-center border-b border-white/10 px-5">
           <div className="grid size-9 place-items-center rounded-lg bg-[#e25b3f] text-white shadow-lg shadow-black/15"><Boxes className="size-5" /></div>
           <div className="ml-3">
-            <p className="font-display text-xl leading-none">platform</p>
+            <p className="font-display text-xl leading-none">nanoflare</p>
             <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.18em] text-[#9eb0a8]">control plane</p>
           </div>
         </div>
@@ -344,7 +344,7 @@ function WorkerDetail({ worker, onBack, notify, apiConnected }: { worker: Worker
         {cards.map(({ label, value, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="paper-panel animate-rise rounded-lg border border-[#dcd6ca] bg-[#fbf9f3]/85 p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] uppercase tracking-[0.14em] text-[#90958e]">{label}</p><Icon className="size-3.5 text-[#d75a41]" /></div><p className="mt-3 font-display text-3xl tracking-[-0.04em]">{value}</p></div>)}
       </div>
 
-      {(loading || error) && <div className={cn("mt-6 rounded-lg border px-4 py-3 font-mono text-[10px] uppercase tracking-[0.12em]", error ? "border-[#ecc3b6] bg-[#fae5df] text-[#b14b37]" : "border-[#dcd6ca] bg-white/45 text-[#8c918b]")}>{error || "Loading worker detail from platformd"}</div>}
+      {(loading || error) && <div className={cn("mt-6 rounded-lg border px-4 py-3 font-mono text-[10px] uppercase tracking-[0.12em]", error ? "border-[#ecc3b6] bg-[#fae5df] text-[#b14b37]" : "border-[#dcd6ca] bg-white/45 text-[#8c918b]")}>{error || "Loading worker detail from nanoflared"}</div>}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.65fr_1fr]">
         <section className="paper-panel animate-rise overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
@@ -389,7 +389,7 @@ function WorkerConfig({ detail, apiConnected, notify }: { detail?: WorkerDetailD
 
   async function saveRoutes() {
     if (!apiConnected) {
-      notify("Protected routes are only editable when platformd is connected");
+      notify("Protected routes are only editable when nanoflared is connected");
       return;
     }
     setSaving(true);

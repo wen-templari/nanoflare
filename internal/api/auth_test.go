@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clas/platform/internal/config"
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestUpdateAppPersistsProtectedRoutes(t *testing.T) {
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(t.TempDir(), "workerd.capnp"),
 		filepath.Join(t.TempDir(), "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServer(service)
@@ -34,7 +34,7 @@ func TestUpdateAppPersistsProtectedRoutes(t *testing.T) {
 		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
 
-	var updated platform.App
+	var updated nanoflare.App
 	if err := json.Unmarshal(recorder.Body.Bytes(), &updated); err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +44,10 @@ func TestUpdateAppPersistsProtectedRoutes(t *testing.T) {
 }
 
 func TestVerifyAuthForwardsJWTAndEmail(t *testing.T) {
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(t.TempDir(), "workerd.capnp"),
 		filepath.Join(t.TempDir(), "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServerWithAuth(service, nil, "", fakeAuthenticator{
@@ -66,16 +66,16 @@ func TestVerifyAuthForwardsJWTAndEmail(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
-	if got := recorder.Header().Get("X-Platform-User-JWT"); got != "jwt-token" {
+	if got := recorder.Header().Get("X-Nanoflare-User-JWT"); got != "jwt-token" {
 		t.Fatalf("jwt header = %q", got)
 	}
-	if got := recorder.Header().Get("X-Platform-User-Email"); got != "worker@example.com" {
+	if got := recorder.Header().Get("X-Nanoflare-User-Email"); got != "worker@example.com" {
 		t.Fatalf("email header = %q", got)
 	}
 }
 
 func TestVerifyAuthRedirectsBrowserWithoutBearerToken(t *testing.T) {
-	server := NewServerWithAuth(platform.NewService(platform.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		beginAuthURL: "https://issuer.example.com/oauth2/authorize",
 	})
 	request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
@@ -94,7 +94,7 @@ func TestVerifyAuthRedirectsBrowserWithoutBearerToken(t *testing.T) {
 }
 
 func TestVerifyAuthUsesBrowserSession(t *testing.T) {
-	server := NewServerWithAuth(platform.NewService(platform.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		sessionResult: AuthResult{Valid: true, Subject: "user-123", Email: "browser@example.com"},
 		sessionToken:  "session-token",
 		sessionOK:     true,
@@ -106,16 +106,16 @@ func TestVerifyAuthUsesBrowserSession(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
-	if got := recorder.Header().Get("X-Platform-User-JWT"); got != "session-token" {
+	if got := recorder.Header().Get("X-Nanoflare-User-JWT"); got != "session-token" {
 		t.Fatalf("jwt header = %q", got)
 	}
-	if got := recorder.Header().Get("X-Platform-User-Email"); got != "browser@example.com" {
+	if got := recorder.Header().Get("X-Nanoflare-User-Email"); got != "browser@example.com" {
 		t.Fatalf("email header = %q", got)
 	}
 }
 
 func TestAuthCallbackDelegatesToBrowserAuthenticator(t *testing.T) {
-	server := NewServerWithAuth(platform.NewService(platform.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		callbackRedirectURL: "https://worker.example.com/preview/logo.svg",
 	})
 	request := httptest.NewRequest(http.MethodGet, "/internal/auth/callback?state=abc&code=xyz", nil)
@@ -131,7 +131,7 @@ func TestAuthCallbackDelegatesToBrowserAuthenticator(t *testing.T) {
 
 func TestAuthAPIsReturnNormalizedResponses(t *testing.T) {
 	expiresAt := timePointer(time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC))
-	server := NewServerWithAuth(platform.NewService(platform.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		validateResult: AuthResult{Valid: true, Subject: "user-123", Email: "person@example.com", ExpiresAt: expiresAt, Claims: map[string]any{"scope": "openid"}},
 		userInfoResult: AuthResult{Valid: true, Subject: "user-123", Email: "person@example.com", ExpiresAt: expiresAt, Claims: map[string]any{"scope": "openid"}},
 		userInfoRaw:    map[string]any{"sub": "user-123", "email": "person@example.com"},
@@ -201,14 +201,14 @@ func (f fakeAuthenticator) HandleCallback(w http.ResponseWriter, r *http.Request
 
 type noopWriter struct{}
 
-func (noopWriter) Write([]platform.ActiveDeployment) error { return nil }
+func (noopWriter) Write([]nanoflare.ActiveDeployment) error { return nil }
 
 func timePointer(value time.Time) *time.Time {
 	return &value
 }
 
 func TestVerifyAuthRejectsInvalidToken(t *testing.T) {
-	server := NewServerWithAuth(platform.NewService(platform.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		userInfoErr: errors.New("invalid token: signature mismatch"),
 	})
 	request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)

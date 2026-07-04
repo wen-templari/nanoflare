@@ -1,5 +1,15 @@
 export async function routeRequest(request, env) {
   const url = new URL(request.url);
+  if (url.pathname === "/preview/auth") {
+    const forwardedJwt = request.headers.get("x-nanoflare-user-jwt");
+    const forwardedEmail = request.headers.get("x-nanoflare-user-email");
+    return Response.json({
+      authed: Boolean(forwardedJwt && forwardedEmail),
+      email: forwardedEmail,
+      jwt: forwardedJwt,
+      path: url.pathname,
+    });
+  }
   if (url.pathname === "/api/visits") {
     const visits = Number((await env.KV.get("visits")) ?? "0") + 1;
     await env.KV.put("visits", String(visits));

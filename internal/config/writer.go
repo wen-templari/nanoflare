@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type Writer struct {
@@ -21,7 +21,7 @@ type Writer struct {
 }
 
 type TraefikWriter interface {
-	WriteTraefik([]platform.ActiveDeployment) error
+	WriteTraefik([]nanoflare.ActiveDeployment) error
 }
 
 type RuntimeWriter struct {
@@ -42,42 +42,42 @@ func NewRuntimeWriter(workerdPath string, traefik TraefikWriter) *RuntimeWriter 
 	return &RuntimeWriter{workerdPath: workerdPath, traefik: traefik, runtimeAddr: "127.0.0.1:8081"}
 }
 
-func (w *Writer) SetPlatformRuntimeAddr(addr string) {
+func (w *Writer) SetNanoflareRuntimeAddr(addr string) {
 	w.runtimeAddr = addr
 }
 
-func (w *RuntimeWriter) SetPlatformRuntimeAddr(addr string) {
+func (w *RuntimeWriter) SetNanoflareRuntimeAddr(addr string) {
 	w.runtimeAddr = addr
 }
 
-func (w *Writer) Write(active []platform.ActiveDeployment) error {
+func (w *Writer) Write(active []nanoflare.ActiveDeployment) error {
 	if err := w.WriteWorkerd(w.workerdPath, active); err != nil {
 		return err
 	}
 	return w.WriteTraefik(active)
 }
 
-func (w *Writer) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
+func (w *Writer) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
 	return writeAtomic(path, []byte(WorkerdWithRuntimeAddr(active, w.runtimeAddr)))
 }
 
-func (w *Writer) WriteTraefik(active []platform.ActiveDeployment) error {
+func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 	return writeAtomic(w.traefikPath, []byte(Traefik(active, w.authURL, w.authHost, w.workerHost)))
 }
 
-func (w *RuntimeWriter) WriteWorkerd(path string, active []platform.ActiveDeployment) error {
+func (w *RuntimeWriter) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
 	return writeAtomic(path, []byte(WorkerdWithRuntimeAddr(active, w.runtimeAddr)))
 }
 
-func (w *RuntimeWriter) WriteTraefik(active []platform.ActiveDeployment) error {
+func (w *RuntimeWriter) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 	return w.traefik.WriteTraefik(active)
 }
 
-func Workerd(active []platform.ActiveDeployment) string {
+func Workerd(active []nanoflare.ActiveDeployment) string {
 	return WorkerdWithRuntimeAddr(active, "127.0.0.1:8081")
 }
 
-func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr string) string {
+func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr string) string {
 	var out strings.Builder
 	out.WriteString("using Workerd = import \"/workerd/workerd.capnp\";\n\n")
 	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
@@ -87,7 +87,7 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
 			quote(kvServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
-		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Platform-Binding\", value = \"assets\")]))),\n",
+		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\")]))),\n",
 			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
 			quote(objectServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
@@ -109,13 +109,13 @@ func WorkerdWithRuntimeAddr(active []platform.ActiveDeployment, runtimeAddr stri
 	return out.String()
 }
 
-func writeWorkerSource(out *strings.Builder, deployment platform.Deployment) {
+func writeWorkerSource(out *strings.Builder, deployment nanoflare.Deployment) {
 	if deploymentFormat(deployment) == "service-worker" {
 		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content)))
 		return
 	}
 	out.WriteString("  modules = [\n")
-	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__platform_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig))))
+	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig))))
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
 	}
@@ -244,11 +244,11 @@ function wrapObjectsBinding(binding) {
       if (response.status === 404) return null;
       if (!response.ok) throw new Error("OBJECTS.get failed: " + response.status);
       const object = {
-        key: response.headers.get("x-platform-object-key") || key,
+        key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-platform-object-etag") || "",
+        etag: response.headers.get("x-nanoflare-object-etag") || "",
         httpEtag: response.headers.get("etag") || "",
-        uploaded: response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString(),
+        uploaded: response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString(),
         httpMetadata: {
           contentType: response.headers.get("content-type") || "",
         },
@@ -262,11 +262,11 @@ function wrapObjectsBinding(binding) {
       if (response.status === 404) return null;
       if (!response.ok) throw new Error("OBJECTS.head failed: " + response.status);
       return {
-        key: response.headers.get("x-platform-object-key") || key,
+        key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-platform-object-etag") || "",
+        etag: response.headers.get("x-nanoflare-object-etag") || "",
         httpEtag: response.headers.get("etag") || "",
-        uploaded: new Date(response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString()),
+        uploaded: new Date(response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString()),
         httpMetadata: {
           contentType: response.headers.get("content-type") || "",
         },
@@ -308,7 +308,7 @@ export default {
 }
 
 func serviceWorkerWrapper(script string) string {
-	return `function __platformBuildObjectBody(response, object) {
+	return `function __nanoflareBuildObjectBody(response, object) {
   if (!response) return null;
   return {
     key: object.key,
@@ -336,7 +336,7 @@ func serviceWorkerWrapper(script string) string {
   };
 }
 
-async function __platformToObjectRequestInit(value, options) {
+async function __nanoflareToObjectRequestInit(value, options) {
   if (value instanceof Request || value instanceof Response) {
     const contentLength = value.headers.get("content-length");
     return {
@@ -380,11 +380,11 @@ async function __platformToObjectRequestInit(value, options) {
   };
 }
 
-function __platformWrapObjectsBinding(binding) {
+function __nanoflareWrapObjectsBinding(binding) {
   if (!binding) return binding;
   return {
     async put(key, value, options) {
-      const init = await __platformToObjectRequestInit(value, options);
+      const init = await __nanoflareToObjectRequestInit(value, options);
       const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
         method: "PUT",
         headers: init.contentType ? { "content-type": init.contentType } : undefined,
@@ -412,12 +412,12 @@ function __platformWrapObjectsBinding(binding) {
       const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key)));
       if (response.status === 404) return null;
       if (!response.ok) throw new Error("OBJECTS.get failed: " + response.status);
-      return __platformBuildObjectBody(response, {
-        key: response.headers.get("x-platform-object-key") || key,
+      return __nanoflareBuildObjectBody(response, {
+        key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-platform-object-etag") || "",
+        etag: response.headers.get("x-nanoflare-object-etag") || "",
         httpEtag: response.headers.get("etag") || "",
-        uploaded: response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString(),
+        uploaded: response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString(),
         httpMetadata: {
           contentType: response.headers.get("content-type") || "",
         },
@@ -430,11 +430,11 @@ function __platformWrapObjectsBinding(binding) {
       if (response.status === 404) return null;
       if (!response.ok) throw new Error("OBJECTS.head failed: " + response.status);
       return {
-        key: response.headers.get("x-platform-object-key") || key,
+        key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-platform-object-etag") || "",
+        etag: response.headers.get("x-nanoflare-object-etag") || "",
         httpEtag: response.headers.get("etag") || "",
-        uploaded: new Date(response.headers.get("x-platform-object-uploaded") || new Date(0).toISOString()),
+        uploaded: new Date(response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString()),
         httpMetadata: {
           contentType: response.headers.get("content-type") || "",
         },
@@ -449,11 +449,11 @@ function __platformWrapObjectsBinding(binding) {
   };
 }
 
-globalThis.OBJECTS = __platformWrapObjectsBinding(globalThis.OBJECTS);
+globalThis.OBJECTS = __nanoflareWrapObjectsBinding(globalThis.OBJECTS);
 ` + "\n" + script
 }
 
-func deploymentFormat(deployment platform.Deployment) string {
+func deploymentFormat(deployment nanoflare.Deployment) string {
 	if deployment.Format != "" {
 		return deployment.Format
 	}
@@ -475,15 +475,15 @@ func objectServiceName(appID string) string {
 	return "objects-" + appID
 }
 
-func assetBindingName(config platform.AssetConfig) string {
+func assetBindingName(config nanoflare.AssetConfig) string {
 	if strings.TrimSpace(config.Binding) == "" {
 		return "ASSETS"
 	}
 	return strings.TrimSpace(config.Binding)
 }
 
-func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.WorkerFile {
-	result := make([]platform.WorkerFile, 0, len(files))
+func entrypointFirst(files []nanoflare.WorkerFile, entrypoint string) []nanoflare.WorkerFile {
+	result := make([]nanoflare.WorkerFile, 0, len(files))
 	for _, file := range files {
 		if file.Path == entrypoint {
 			result = append(result, file)
@@ -498,11 +498,11 @@ func entrypointFirst(files []platform.WorkerFile, entrypoint string) []platform.
 	return result
 }
 
-func Traefik(active []platform.ActiveDeployment, authURL, authHost, workerHost string) string {
+func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost string) string {
 	var out strings.Builder
-	out.WriteString("http:\n  middlewares:\n    platform-auth:\n      forwardAuth:\n")
-	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Platform-User-JWT\n          - X-Platform-User-Email\n", yamlQuote(authURL))
-	backendBase := platformdGatewayBase(authURL)
+	out.WriteString("http:\n  middlewares:\n    nanoflare-auth:\n      forwardAuth:\n")
+	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Nanoflare-User-JWT\n          - X-Nanoflare-User-Email\n", yamlQuote(authURL))
+	backendBase := nanoflaredGatewayBase(authURL)
 	for _, item := range active {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s-prefix:\n      addPrefix:\n        prefix: %s\n",
@@ -510,7 +510,7 @@ func Traefik(active []platform.ActiveDeployment, authURL, authHost, workerHost s
 	}
 	out.WriteString("  routers:\n")
 	if authHost != "" {
-		fmt.Fprintf(&out, "    platform_auth_callback:\n      rule: %s\n      priority: 1000\n      entryPoints:\n        - web\n        - websecure\n      service: platform_auth_callback\n      tls: {}\n",
+		fmt.Fprintf(&out, "    nanoflare_auth_callback:\n      rule: %s\n      priority: 1000\n      entryPoints:\n        - web\n        - websecure\n      service: nanoflare_auth_callback\n      tls: {}\n",
 			yamlQuote("Host(`"+authHost+"`) && PathPrefix(`/internal/auth/`)"))
 	}
 	for _, item := range active {
@@ -518,13 +518,13 @@ func Traefik(active []platform.ActiveDeployment, authURL, authHost, workerHost s
 		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      priority: 1\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - %s-prefix\n      service: %s\n      tls: {}\n",
 			name, yamlQuote("Host(`"+item.App.Hostname+"`)"), name, name)
 		for index, route := range item.App.Auth.ProtectedRoutes {
-			fmt.Fprintf(&out, "    %s-auth-%d:\n      rule: %s\n      priority: %d\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - platform-auth\n        - %s-prefix\n      service: %s\n      tls: {}\n",
+			fmt.Fprintf(&out, "    %s-auth-%d:\n      rule: %s\n      priority: %d\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - nanoflare-auth\n        - %s-prefix\n      service: %s\n      tls: {}\n",
 				name, index, yamlQuote(protectedRouteRule(item.App.Hostname, route)), protectedRoutePriority(route), name, name)
 		}
 	}
 	out.WriteString("  services:\n")
 	if authHost != "" {
-		fmt.Fprintf(&out, "    platform_auth_callback:\n      loadBalancer:\n        servers:\n          - url: %s\n", yamlQuote(backendBase))
+		fmt.Fprintf(&out, "    nanoflare_auth_callback:\n      loadBalancer:\n        servers:\n          - url: %s\n", yamlQuote(backendBase))
 	}
 	for _, item := range active {
 		name := identifier(item.App.ID)
@@ -548,7 +548,7 @@ func protectedRoutePriority(route string) int {
 	return 200
 }
 
-func platformdGatewayBase(authURL string) string {
+func nanoflaredGatewayBase(authURL string) string {
 	parsed, err := url.Parse(authURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return authURL
@@ -560,7 +560,7 @@ func writeAtomic(path string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".platformd-*")
+	file, err := os.CreateTemp(filepath.Dir(path), ".nanoflared-*")
 	if err != nil {
 		return err
 	}

@@ -12,17 +12,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clas/platform/internal/config"
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestCreateDeployAndScopedKV(t *testing.T) {
 	dir := t.TempDir()
-	store := platform.NewStore()
-	service := platform.NewService(store, config.NewWriter(
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServer(service)
@@ -44,17 +44,17 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 func TestWorkerConsoleAPIs(t *testing.T) {
 	dir := t.TempDir()
 	bundle := `addEventListener("fetch", () => {});`
-	service := platform.NewServiceWithConsole(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), nil, fakeOutput{}, fakeTraffic{})
 	server := NewServer(service)
 	app := createApp(t, server, "Console App", "console.example.com")
-	deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
+	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
 
-	var detail platform.WorkerDetail
+	var detail nanoflare.WorkerDetail
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment == nil || detail.Deployment.Entrypoint != "worker.js" || detail.Deployment.BundleSize != int64(len(bundle)) {
 		t.Fatalf("unexpected worker detail: %#v", detail)
@@ -63,25 +63,25 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 		t.Fatalf("compatibility date = %q", detail.Deployment.CompatibilityDate)
 	}
 
-	var files []platform.WorkerFile
+	var files []nanoflare.WorkerFile
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 1 || files[0].Name != "worker.js" || files[0].Content != bundle {
 		t.Fatalf("unexpected worker files: %#v", files)
 	}
 
-	var output []platform.WorkerOutputLine
+	var output []nanoflare.WorkerOutputLine
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/output", http.StatusOK, &output)
 	if len(output) != 1 || output[0].Message != "runtime ready" {
 		t.Fatalf("unexpected worker output: %#v", output)
 	}
 
-	var traffic platform.WorkerTraffic
+	var traffic nanoflare.WorkerTraffic
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/traffic", http.StatusOK, &traffic)
 	if !traffic.Available || traffic.RequestsPerSecond != 4.25 || len(traffic.Traffic) != 2 {
 		t.Fatalf("unexpected worker traffic: %#v", traffic)
 	}
 
-	var apps []platform.App
+	var apps []nanoflare.App
 	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &apps)
 	if len(apps) != 1 || apps[0].ID != app.ID {
 		t.Fatalf("unexpected app list: %#v", apps)
@@ -90,10 +90,10 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 
 func TestWorkerConsoleKV(t *testing.T) {
 	dir := t.TempDir()
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServer(service)
@@ -105,7 +105,7 @@ func TestWorkerConsoleKV(t *testing.T) {
 	if got := workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/color", nil, http.StatusOK); string(got) != "blue" {
 		t.Fatalf("got %q, want app-one value", got)
 	}
-	var keys []platform.WorkerKVKey
+	var keys []nanoflare.WorkerKVKey
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv", http.StatusOK, &keys)
 	if len(keys) != 2 || keys[0].Key != "color" || keys[0].Size != 4 || keys[1].Key != "count" || keys[1].Size != 2 {
 		t.Fatalf("unexpected KV keys: %#v", keys)
@@ -121,10 +121,10 @@ func TestWorkerConsoleKV(t *testing.T) {
 }
 
 func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(t.TempDir(), "workerd.capnp"),
 		filepath.Join(t.TempDir(), "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	if err := service.SetBaseHostname("workers.example.com"); err != nil {
@@ -139,7 +139,7 @@ func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	var app platform.App
+	var app nanoflare.App
 	if err := json.NewDecoder(recorder.Body).Decode(&app); err != nil {
 		t.Fatal(err)
 	}
@@ -150,10 +150,10 @@ func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
 
 func TestDeleteAppRemovesWorker(t *testing.T) {
 	dir := t.TempDir()
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServer(service)
@@ -166,32 +166,32 @@ func TestDeleteAppRemovesWorker(t *testing.T) {
 		t.Fatalf("delete app status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 
-	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &[]platform.App{})
+	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &[]nanoflare.App{})
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusNotFound, &map[string]string{})
 }
 
 func TestWorkerConsoleAPIsWithObjectBackedDeployment(t *testing.T) {
 	dir := t.TempDir()
-	store := &apiObjectBackedRepo{Store: platform.NewStore()}
+	store := &apiObjectBackedRepo{Store: nanoflare.NewStore()}
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithConsole(store, config.NewWriter(
+	service := nanoflare.NewServiceWithConsole(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects, fakeOutput{}, fakeTraffic{})
 	server := NewServer(service)
 	app := createApp(t, server, "Object App", "object.example.com")
 	bundle := `export default { async fetch() { return new Response("ok"); } }`
-	deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
+	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
 
-	var detail platform.WorkerDetail
+	var detail nanoflare.WorkerDetail
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment == nil || detail.Deployment.BundleSize != int64(len(bundle)) {
 		t.Fatalf("unexpected object-backed worker detail: %#v", detail)
 	}
 
-	var files []platform.WorkerFile
+	var files []nanoflare.WorkerFile
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 1 || files[0].Content != bundle {
 		t.Fatalf("unexpected object-backed worker files: %#v", files)
@@ -209,21 +209,21 @@ func TestWorkerConsoleAPIsWithObjectBackedDeployment(t *testing.T) {
 }
 
 func TestWorkerConsoleAPIsForRegisteredWorkerWithoutDeployment(t *testing.T) {
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(t.TempDir(), "workerd.capnp"),
 		filepath.Join(t.TempDir(), "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServer(service)
 	app := createApp(t, server, "Draft App", "draft.example.com")
 
-	var detail platform.WorkerDetail
+	var detail nanoflare.WorkerDetail
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment != nil {
 		t.Fatalf("unexpected deployment: %#v", detail.Deployment)
 	}
-	var files []platform.WorkerFile
+	var files []nanoflare.WorkerFile
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 0 {
 		t.Fatalf("unexpected files: %#v", files)
@@ -233,18 +233,18 @@ func TestWorkerConsoleAPIsForRegisteredWorkerWithoutDeployment(t *testing.T) {
 
 func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
 	dir := t.TempDir()
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServer(service)
 	app := createApp(t, server, "Ledger App", "ledger.example.com")
-	first := deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "first.js", Content: "first"}}, "")
-	second := deployContent(t, server, app.ID, []platform.WorkerFile{{Path: "second.js", Content: "second"}}, "")
+	first := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "first.js", Content: "first"}}, "")
+	second := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "second.js", Content: "second"}}, "")
 
-	var deployments []platform.ConsoleDeployment
+	var deployments []nanoflare.ConsoleDeployment
 	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/deployments", http.StatusOK, &deployments)
 	if len(deployments) != 2 {
 		t.Fatalf("deployments = %#v, want two records", deployments)
@@ -260,10 +260,10 @@ func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
 }
 
 func TestTraefikConfigRequiresToken(t *testing.T) {
-	service := platform.NewService(platform.NewStore(), config.NewWriter(
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(t.TempDir(), "workerd.capnp"),
 		filepath.Join(t.TempDir(), "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
 	server := NewServerWithTraefik(service, staticTraefikConfig("http:\n  routers: {}\n"), "secret")
@@ -290,17 +290,17 @@ func TestAppGatewayServesAttachedAsset(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithObjects(store, config.NewWriter(
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
 	server := NewServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssets(t, server, app.ID,
-		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
-		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
@@ -317,17 +317,17 @@ func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithObjects(store, config.NewWriter(
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
 	server := NewServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployment := deployWithAssets(t, server, app.ID,
-		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
-		[]platform.AssetFile{{Path: "logo.svg", ContentType: "image/svg+xml", Data: []byte("<svg />")}},
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{{Path: "logo.svg", ContentType: "image/svg+xml", Data: []byte("<svg />")}},
 	)
 	if len(deployment.Assets) != 1 {
 		t.Fatalf("deployment assets = %#v", deployment.Assets)
@@ -355,10 +355,10 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithObjects(store, config.NewWriter(
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
 	server := NewServer(service)
@@ -373,7 +373,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("put status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
-	var object platform.ObjectInfo
+	var object nanoflare.ObjectInfo
 	if err := json.NewDecoder(recorder.Body).Decode(&object); err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("head status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
-	if got := recorder.Header().Get("X-Platform-Object-Key"); got != "folder/hello.txt" {
+	if got := recorder.Header().Get("X-Nanoflare-Object-Key"); got != "folder/hello.txt" {
 		t.Fatalf("head key = %q", got)
 	}
 
@@ -421,17 +421,17 @@ func TestGatewayFallsBackToWorkerWhenAssetMissing(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithObjects(store, config.NewWriter(
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
 	server := NewServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssets(t, server, app.ID,
-		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
-		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
 	)
 	workerListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -467,18 +467,18 @@ func TestGatewayRunWorkerFirstTrueProxiesBeforeAssets(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithObjects(store, config.NewWriter(
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
 	server := NewServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssetsConfig(t, server, app.ID,
-		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
-		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
-		platform.AssetConfig{RunWorkerFirst: runWorkerFirstTrue(t)},
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+		nanoflare.AssetConfig{RunWorkerFirst: runWorkerFirstTrue(t)},
 	)
 	workerPort := startTestWorker(t, "worker")
 
@@ -494,20 +494,20 @@ func TestGatewayRunWorkerFirstRoutesOnlyMatchingPaths(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithObjects(store, config.NewWriter(
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
 	server := NewServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssetsConfig(t, server, app.ID,
-		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
-		[]platform.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
-		platform.AssetConfig{
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+		nanoflare.AssetConfig{
 			NotFoundHandling: "single-page-application",
-			RunWorkerFirst:   platform.RunWorkerFirst{"/api/*"},
+			RunWorkerFirst:   nanoflare.RunWorkerFirst{"/api/*"},
 		},
 	)
 	workerPort := startTestWorker(t, "worker")
@@ -531,23 +531,23 @@ func TestGatewayRunWorkerFirstNegativeRouteServesAsset(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
 	objects := newAPIObjectStore()
-	service := platform.NewServiceWithObjects(store, config.NewWriter(
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
-		"http://platformd/internal/auth/verify",
+		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
 	server := NewServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssetsConfig(t, server, app.ID,
-		[]platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
-		[]platform.AssetFile{
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{
 			{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")},
 			{Path: "api/docs/index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Docs</h1>")},
 		},
-		platform.AssetConfig{
+		nanoflare.AssetConfig{
 			NotFoundHandling: "single-page-application",
-			RunWorkerFirst:   platform.RunWorkerFirst{"/api/*", "!/api/docs/*"},
+			RunWorkerFirst:   nanoflare.RunWorkerFirst{"/api/*", "!/api/docs/*"},
 		},
 	)
 	workerPort := startTestWorker(t, "worker")
@@ -566,7 +566,7 @@ func (config staticTraefikConfig) TraefikConfig() []byte {
 	return []byte(config)
 }
 
-func createApp(t *testing.T, server http.Handler, name, hostname string) platform.App {
+func createApp(t *testing.T, server http.Handler, name, hostname string) nanoflare.App {
 	t.Helper()
 	body := `{"name":"` + name + `","hostname":"` + hostname + `"}`
 	recorder := httptest.NewRecorder()
@@ -576,7 +576,7 @@ func createApp(t *testing.T, server http.Handler, name, hostname string) platfor
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("create app status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	var app platform.App
+	var app nanoflare.App
 	if err := json.NewDecoder(recorder.Body).Decode(&app); err != nil {
 		t.Fatal(err)
 	}
@@ -586,14 +586,14 @@ func createApp(t *testing.T, server http.Handler, name, hostname string) platfor
 	return app
 }
 
-func deploy(t *testing.T, server http.Handler, appID string) platform.Deployment {
+func deploy(t *testing.T, server http.Handler, appID string) nanoflare.Deployment {
 	t.Helper()
-	return deployContent(t, server, appID, []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}}, "")
+	return deployContent(t, server, appID, []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}}, "")
 }
 
-func deployContent(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, entrypoint string) platform.Deployment {
+func deployContent(t *testing.T, server http.Handler, appID string, files []nanoflare.WorkerFile, entrypoint string) nanoflare.Deployment {
 	t.Helper()
-	body, err := json.Marshal(platform.DeployInput{Files: files, Entrypoint: entrypoint, CompatibilityDate: "2025-12-10"})
+	body, err := json.Marshal(nanoflare.DeployInput{Files: files, Entrypoint: entrypoint, CompatibilityDate: "2025-12-10"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,7 +604,7 @@ func deployContent(t *testing.T, server http.Handler, appID string, files []plat
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("deploy status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	var deployment platform.Deployment
+	var deployment nanoflare.Deployment
 	if err := json.NewDecoder(recorder.Body).Decode(&deployment); err != nil {
 		t.Fatal(err)
 	}
@@ -614,14 +614,14 @@ func deployContent(t *testing.T, server http.Handler, appID string, files []plat
 	return deployment
 }
 
-func deployWithAssets(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, assets []platform.AssetFile) platform.Deployment {
+func deployWithAssets(t *testing.T, server http.Handler, appID string, files []nanoflare.WorkerFile, assets []nanoflare.AssetFile) nanoflare.Deployment {
 	t.Helper()
-	return deployWithAssetsConfig(t, server, appID, files, assets, platform.AssetConfig{})
+	return deployWithAssetsConfig(t, server, appID, files, assets, nanoflare.AssetConfig{})
 }
 
-func deployWithAssetsConfig(t *testing.T, server http.Handler, appID string, files []platform.WorkerFile, assets []platform.AssetFile, assetConfig platform.AssetConfig) platform.Deployment {
+func deployWithAssetsConfig(t *testing.T, server http.Handler, appID string, files []nanoflare.WorkerFile, assets []nanoflare.AssetFile, assetConfig nanoflare.AssetConfig) nanoflare.Deployment {
 	t.Helper()
-	body, err := json.Marshal(platform.DeployInput{
+	body, err := json.Marshal(nanoflare.DeployInput{
 		Files:             files,
 		Assets:            assets,
 		CompatibilityDate: "2025-12-10",
@@ -637,16 +637,16 @@ func deployWithAssetsConfig(t *testing.T, server http.Handler, appID string, fil
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("deploy status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	var deployment platform.Deployment
+	var deployment nanoflare.Deployment
 	if err := json.NewDecoder(recorder.Body).Decode(&deployment); err != nil {
 		t.Fatal(err)
 	}
 	return deployment
 }
 
-func runWorkerFirstTrue(t *testing.T) platform.RunWorkerFirst {
+func runWorkerFirstTrue(t *testing.T) nanoflare.RunWorkerFirst {
 	t.Helper()
-	var runWorkerFirst platform.RunWorkerFirst
+	var runWorkerFirst nanoflare.RunWorkerFirst
 	if err := json.Unmarshal([]byte("true"), &runWorkerFirst); err != nil {
 		t.Fatal(err)
 	}
@@ -693,22 +693,22 @@ func requestJSON(t *testing.T, server http.Handler, method, path string, wantSta
 
 type fakeOutput struct{}
 
-func (fakeOutput) Output(string) []platform.WorkerOutputLine {
-	return []platform.WorkerOutputLine{{Timestamp: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC), Level: "info", Message: "runtime ready"}}
+func (fakeOutput) Output(string) []nanoflare.WorkerOutputLine {
+	return []nanoflare.WorkerOutputLine{{Timestamp: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC), Level: "info", Message: "runtime ready"}}
 }
 
 type fakeTraffic struct{}
 
-func (fakeTraffic) Traffic(string) (platform.WorkerTraffic, error) {
-	return platform.WorkerTraffic{Available: true, RequestsPerSecond: 4.25, Traffic: []float64{3, 4}}, nil
+func (fakeTraffic) Traffic(string) (nanoflare.WorkerTraffic, error) {
+	return nanoflare.WorkerTraffic{Available: true, RequestsPerSecond: 4.25, Traffic: []float64{3, 4}}, nil
 }
 
 type apiObjectStore struct {
-	objects map[string]platform.ObjectBody
+	objects map[string]nanoflare.ObjectBody
 }
 
 func newAPIObjectStore() *apiObjectStore {
-	return &apiObjectStore{objects: make(map[string]platform.ObjectBody)}
+	return &apiObjectStore{objects: make(map[string]nanoflare.ObjectBody)}
 }
 
 func (s *apiObjectStore) PresignUpload(string, string, time.Duration) (string, error) {
@@ -719,15 +719,15 @@ func (s *apiObjectStore) PresignDownload(string, string, time.Duration) (string,
 	return "", nil
 }
 
-func (s *apiObjectStore) Put(appID, path string, contentType string, data []byte) (platform.ObjectInfo, error) {
-	object := platform.ObjectBody{
-		ObjectInfo: platform.ObjectInfo{
+func (s *apiObjectStore) Put(appID, path string, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
+	object := nanoflare.ObjectBody{
+		ObjectInfo: nanoflare.ObjectInfo{
 			Key:      path,
 			Size:     int64(len(data)),
 			ETag:     "etag-" + path,
 			HTTPETag: `"etag-` + path + `"`,
 			Uploaded: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-			HTTPMetadata: platform.ObjectHTTPMetadata{
+			HTTPMetadata: nanoflare.ObjectHTTPMetadata{
 				ContentType: contentType,
 			},
 		},
@@ -737,19 +737,19 @@ func (s *apiObjectStore) Put(appID, path string, contentType string, data []byte
 	return object.ObjectInfo, nil
 }
 
-func (s *apiObjectStore) Get(appID, path string) (platform.ObjectBody, error) {
+func (s *apiObjectStore) Get(appID, path string) (nanoflare.ObjectBody, error) {
 	data, ok := s.objects[appID+":"+path]
 	if !ok {
-		return platform.ObjectBody{}, platform.ErrObjectNotFound
+		return nanoflare.ObjectBody{}, nanoflare.ErrObjectNotFound
 	}
 	data.Body = append([]byte(nil), data.Body...)
 	return data, nil
 }
 
-func (s *apiObjectStore) Head(appID, path string) (platform.ObjectInfo, error) {
+func (s *apiObjectStore) Head(appID, path string) (nanoflare.ObjectInfo, error) {
 	data, ok := s.objects[appID+":"+path]
 	if !ok {
-		return platform.ObjectInfo{}, platform.ErrObjectNotFound
+		return nanoflare.ObjectInfo{}, nanoflare.ErrObjectNotFound
 	}
 	return data.ObjectInfo, nil
 }
@@ -760,14 +760,14 @@ func (s *apiObjectStore) Delete(appID, path string) error {
 }
 
 type apiObjectBackedRepo struct {
-	*platform.Store
+	*nanoflare.Store
 }
 
 func newAPIObjectBackedRepo() *apiObjectBackedRepo {
-	return &apiObjectBackedRepo{Store: platform.NewStore()}
+	return &apiObjectBackedRepo{Store: nanoflare.NewStore()}
 }
 
-func (r *apiObjectBackedRepo) Activate(deployment platform.Deployment) error {
+func (r *apiObjectBackedRepo) Activate(deployment nanoflare.Deployment) error {
 	copy := deployment
 	if copy.ObjectKey != "" {
 		copy.Files = nil
@@ -775,7 +775,7 @@ func (r *apiObjectBackedRepo) Activate(deployment platform.Deployment) error {
 	return r.Store.Activate(copy)
 }
 
-func (r *apiObjectBackedRepo) ActiveDeployments() ([]platform.ActiveDeployment, error) {
+func (r *apiObjectBackedRepo) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	active, err := r.Store.ActiveDeployments()
 	if err != nil {
 		return nil, err
@@ -810,7 +810,7 @@ func request(t *testing.T, server http.Handler, method, path, capability, body s
 	return response
 }
 
-func runtimeTokens(t *testing.T, store platform.Repository) map[string]string {
+func runtimeTokens(t *testing.T, store nanoflare.Repository) map[string]string {
 	t.Helper()
 	apps, err := store.ListApps()
 	if err != nil {

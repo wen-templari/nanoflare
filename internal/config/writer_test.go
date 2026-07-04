@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
-	config := Workerd([]platform.ActiveDeployment{{
-		App: platform.App{ID: "hello-app", RuntimeToken: "secret"},
-		Deployment: platform.Deployment{
-			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: nanoflare.Deployment{
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
 			Entrypoint:        "worker.js",
 			CompatibilityDate: "2025-12-10",
 			Port:              9001,
@@ -20,11 +20,11 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	for _, expected := range []string{
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`address = "*:9001"`,
-		`globalThis.OBJECTS = __platformWrapObjectsBinding(globalThis.OBJECTS);`,
+		`globalThis.OBJECTS = __nanoflareWrapObjectsBinding(globalThis.OBJECTS);`,
 		`(name = "KV", kvNamespace = "kv-hello-app")`,
 		`(name = "ASSETS", service = "assets-hello-app")`,
 		`(name = "OBJECTS", service = "objects-hello-app")`,
-		`(name = "X-Platform-Binding", value = "assets")`,
+		`(name = "X-Nanoflare-Binding", value = "assets")`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
 	} {
@@ -35,14 +35,14 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 }
 
 func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
-	config := Workerd([]platform.ActiveDeployment{{
-		App: platform.App{ID: "hello-app", RuntimeToken: "secret"},
-		Deployment: platform.Deployment{
-			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: nanoflare.Deployment{
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
 			Entrypoint:        "worker.js",
 			Format:            "modules",
 			CompatibilityDate: "2025-12-10",
-			AssetConfig:       platform.AssetConfig{Binding: "STATIC"},
+			AssetConfig:       nanoflare.AssetConfig{Binding: "STATIC"},
 			Port:              9001,
 		},
 	}})
@@ -58,10 +58,10 @@ func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
 }
 
 func TestWorkerdGeneratesSingleFileModuleWorker(t *testing.T) {
-	config := Workerd([]platform.ActiveDeployment{{
-		App: platform.App{ID: "hello-app", RuntimeToken: "secret"},
-		Deployment: platform.Deployment{
-			Files:             []platform.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: nanoflare.Deployment{
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
 			Entrypoint:        "worker.js",
 			Format:            "modules",
 			CompatibilityDate: "2025-12-10",
@@ -77,10 +77,10 @@ func TestWorkerdGeneratesSingleFileModuleWorker(t *testing.T) {
 }
 
 func TestWorkerdGeneratesMultiFileModuleConfigWithEntrypointFirst(t *testing.T) {
-	config := Workerd([]platform.ActiveDeployment{{
-		App: platform.App{ID: "hello-app", Hostname: "hello.example.com"},
-		Deployment: platform.Deployment{
-			Files: []platform.WorkerFile{
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", Hostname: "hello.example.com"},
+		Deployment: nanoflare.Deployment{
+			Files: []nanoflare.WorkerFile{
 				{Path: "message.js", Content: `export const message = "hello";`},
 				{Path: "worker.js", Content: `import { message } from "./message.js"; export default { fetch() { return new Response(message); } };`},
 			},
@@ -97,20 +97,20 @@ func TestWorkerdGeneratesMultiFileModuleConfigWithEntrypointFirst(t *testing.T) 
 }
 
 func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
-	config := Traefik([]platform.ActiveDeployment{{
-		App:        platform.App{ID: "hello-app", Hostname: "hello.example.com"},
-		Deployment: platform.Deployment{Port: 9001},
-	}}, "http://platformd:8080/internal/auth/verify", "", "host.docker.internal")
+	config := Traefik([]nanoflare.ActiveDeployment{{
+		App:        nanoflare.App{ID: "hello-app", Hostname: "hello.example.com"},
+		Deployment: nanoflare.Deployment{Port: 9001},
+	}}, "http://nanoflared:8080/internal/auth/verify", "", "host.docker.internal")
 	for _, expected := range []string{
-		`address: "http://platformd:8080/internal/auth/verify"`,
-		`- X-Platform-User-JWT`,
-		`- X-Platform-User-Email`,
+		`address: "http://nanoflared:8080/internal/auth/verify"`,
+		`- X-Nanoflare-User-JWT`,
+		`- X-Nanoflare-User-Email`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
 		`- web`,
 		`- websecure`,
 		`- hello_app-prefix`,
 		`prefix: "/internal/http/apps/hello-app/9001"`,
-		`url: "http://platformd:8080"`,
+		`url: "http://nanoflared:8080"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)
@@ -119,14 +119,14 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 }
 
 func TestTraefikGeneratesProtectedRouteRouters(t *testing.T) {
-	config := Traefik([]platform.ActiveDeployment{{
-		App: platform.App{
+	config := Traefik([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{
 			ID:       "hello-app",
 			Hostname: "hello.example.com",
-			Auth:     platform.AuthConfig{ProtectedRoutes: []string{"/admin/*", "/reports"}},
+			Auth:     nanoflare.AuthConfig{ProtectedRoutes: []string{"/admin/*", "/reports"}},
 		},
-		Deployment: platform.Deployment{Port: 9001},
-	}}, "http://platformd:8080/internal/auth/verify", "", "host.docker.internal")
+		Deployment: nanoflare.Deployment{Port: 9001},
+	}}, "http://nanoflared:8080/internal/auth/verify", "", "host.docker.internal")
 	for _, expected := range []string{
 		`hello_app-auth-0`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `) && PathPrefix(` + "`" + `/admin/` + "`" + `)"`,
@@ -135,7 +135,7 @@ func TestTraefikGeneratesProtectedRouteRouters(t *testing.T) {
 		`priority: 200`,
 		`priority: 190`,
 		`middlewares:`,
-		`- platform-auth`,
+		`- nanoflare-auth`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)
@@ -144,21 +144,21 @@ func TestTraefikGeneratesProtectedRouteRouters(t *testing.T) {
 }
 
 func TestTraefikGeneratesControlPlaneAuthRouter(t *testing.T) {
-	config := Traefik([]platform.ActiveDeployment{{
-		App:        platform.App{ID: "hello-app", Hostname: "hello.example.com"},
-		Deployment: platform.Deployment{Port: 9001},
-	}}, "http://platformd:8080/internal/auth/verify", "platform.local.nbtca.space", "host.docker.internal")
+	config := Traefik([]nanoflare.ActiveDeployment{{
+		App:        nanoflare.App{ID: "hello-app", Hostname: "hello.example.com"},
+		Deployment: nanoflare.Deployment{Port: 9001},
+	}}, "http://nanoflared:8080/internal/auth/verify", "nanoflare.local.nbtca.space", "host.docker.internal")
 	for _, expected := range []string{
-		`platform_auth_callback`,
-		`rule: "Host(` + "`" + `platform.local.nbtca.space` + "`" + `) && PathPrefix(` + "`" + `/internal/auth/` + "`" + `)"`,
-		`service: platform_auth_callback`,
-		`url: "http://platformd:8080"`,
+		`nanoflare_auth_callback`,
+		`rule: "Host(` + "`" + `nanoflare.local.nbtca.space` + "`" + `) && PathPrefix(` + "`" + `/internal/auth/` + "`" + `)"`,
+		`service: nanoflare_auth_callback`,
+		`url: "http://nanoflared:8080"`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)
 		}
 	}
-	if strings.Contains(config, `platform_auth_callback-prefix`) {
+	if strings.Contains(config, `nanoflare_auth_callback-prefix`) {
 		t.Fatalf("callback router unexpectedly contains prefix middleware:\n%s", config)
 	}
 }

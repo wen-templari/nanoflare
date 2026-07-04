@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 const maxOutputLines = 200
@@ -16,7 +16,7 @@ const maxOutputLines = 200
 type OutputBuffer struct {
 	mu      sync.RWMutex
 	pending []byte
-	lines   []platform.WorkerOutputLine
+	lines   []nanoflare.WorkerOutputLine
 }
 
 func NewOutputBuffer() *OutputBuffer {
@@ -41,7 +41,7 @@ func (b *OutputBuffer) Write(value []byte) (int, error) {
 func (b *OutputBuffer) Append(level, message string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.lines = append(b.lines, platform.WorkerOutputLine{
+	b.lines = append(b.lines, nanoflare.WorkerOutputLine{
 		Timestamp: time.Now().UTC(),
 		Level:     level,
 		Message:   message,
@@ -49,10 +49,10 @@ func (b *OutputBuffer) Append(level, message string) {
 	b.trim()
 }
 
-func (b *OutputBuffer) Output(_ string) []platform.WorkerOutputLine {
+func (b *OutputBuffer) Output(_ string) []nanoflare.WorkerOutputLine {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	result := make([]platform.WorkerOutputLine, len(b.lines))
+	result := make([]nanoflare.WorkerOutputLine, len(b.lines))
 	copy(result, b.lines)
 	return result
 }
@@ -68,7 +68,7 @@ func (b *OutputBuffer) append(message string) {
 	} else if strings.Contains(lower, "warn") {
 		level = "warn"
 	}
-	b.lines = append(b.lines, platform.WorkerOutputLine{
+	b.lines = append(b.lines, nanoflare.WorkerOutputLine{
 		Timestamp: time.Now().UTC(),
 		Level:     level,
 		Message:   message,
@@ -78,6 +78,6 @@ func (b *OutputBuffer) append(message string) {
 
 func (b *OutputBuffer) trim() {
 	if len(b.lines) > maxOutputLines {
-		b.lines = append([]platform.WorkerOutputLine(nil), b.lines[len(b.lines)-maxOutputLines:]...)
+		b.lines = append([]nanoflare.WorkerOutputLine(nil), b.lines[len(b.lines)-maxOutputLines:]...)
 	}
 }

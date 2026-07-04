@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/clas/platform/internal/api"
+	"github.com/clas/nanoflare/internal/api"
 )
 
 const (
-	sessionCookieName = "platform_oidc_session"
+	sessionCookieName = "nanoflare_oidc_session"
 	defaultStateTTL   = 10 * time.Minute
 )
 

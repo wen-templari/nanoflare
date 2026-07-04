@@ -13,19 +13,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/clas/platform/internal/api"
-	"github.com/clas/platform/internal/config"
-	"github.com/clas/platform/internal/database"
-	"github.com/clas/platform/internal/metrics"
-	"github.com/clas/platform/internal/objects"
-	"github.com/clas/platform/internal/oidc"
-	"github.com/clas/platform/internal/platform"
-	"github.com/clas/platform/internal/runner"
-	"github.com/clas/platform/internal/runtime"
+	"github.com/clas/nanoflare/internal/api"
+	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/database"
+	"github.com/clas/nanoflare/internal/metrics"
+	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/objects"
+	"github.com/clas/nanoflare/internal/oidc"
+	"github.com/clas/nanoflare/internal/runner"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 type runtimePublisher interface {
-	Write([]platform.ActiveDeployment) error
+	Write([]nanoflare.ActiveDeployment) error
 }
 
 func main() {
@@ -40,21 +40,21 @@ func main() {
 		traefikFile  = flag.String("traefik-file", "", "optional Traefik dynamic configuration file fallback")
 		authURL      = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
 		workerHost   = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
-		baseHostname = flag.String("base-hostname", os.Getenv("PLATFORM_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
+		baseHostname = flag.String("base-hostname", os.Getenv("NANOFLARE_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
 		workerd      = flag.String("workerd", "workerd", "path to the workerd executable")
 		portHost     = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart    = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 		prometheus   = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
-		runnerURL    = flag.String("runner-url", "", "platform-runner control API URL; empty starts workerd directly")
-		runnerToken  = flag.String("runner-token", os.Getenv("PLATFORM_RUNNER_TOKEN"), "platform-runner authentication token")
-		traefikToken = flag.String("traefik-token", os.Getenv("PLATFORM_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
-		oidcIssuer   = flag.String("oidc-issuer", os.Getenv("PLATFORM_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
-		oidcAudience = flag.String("oidc-audience", os.Getenv("PLATFORM_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
-		oidcEmail    = flag.String("oidc-email-claim", envOrDefault("PLATFORM_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
-		oidcClientID = flag.String("oidc-client-id", os.Getenv("PLATFORM_OIDC_CLIENT_ID"), "OIDC client ID for browser login flow; defaults to oidc-audience when omitted")
-		oidcSecret   = flag.String("oidc-client-secret", os.Getenv("PLATFORM_OIDC_CLIENT_SECRET"), "OIDC client secret for browser login flow")
-		oidcPublic   = flag.String("oidc-public-url", os.Getenv("PLATFORM_OIDC_PUBLIC_URL"), "Public control-plane base URL for browser login callback routing, for example https://platform.example.com:8443")
-		oidcCookie   = flag.String("oidc-cookie-domain", os.Getenv("PLATFORM_OIDC_COOKIE_DOMAIN"), "Optional parent cookie domain shared by the callback host and worker hosts, for example .local.nbtca.space")
+		runnerURL    = flag.String("runner-url", "", "nanoflare-runner control API URL; empty starts workerd directly")
+		runnerToken  = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
+		traefikToken = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
+		oidcIssuer   = flag.String("oidc-issuer", os.Getenv("NANOFLARE_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
+		oidcAudience = flag.String("oidc-audience", os.Getenv("NANOFLARE_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
+		oidcEmail    = flag.String("oidc-email-claim", envOrDefault("NANOFLARE_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
+		oidcClientID = flag.String("oidc-client-id", os.Getenv("NANOFLARE_OIDC_CLIENT_ID"), "OIDC client ID for browser login flow; defaults to oidc-audience when omitted")
+		oidcSecret   = flag.String("oidc-client-secret", os.Getenv("NANOFLARE_OIDC_CLIENT_SECRET"), "OIDC client secret for browser login flow")
+		oidcPublic   = flag.String("oidc-public-url", os.Getenv("NANOFLARE_OIDC_PUBLIC_URL"), "Public control-plane base URL for browser login callback routing, for example https://nanoflare.example.com:8443")
+		oidcCookie   = flag.String("oidc-cookie-domain", os.Getenv("NANOFLARE_OIDC_COOKIE_DOMAIN"), "Optional parent cookie domain shared by the callback host and worker hosts, for example .local.nbtca.space")
 	)
 	flag.Parse()
 
@@ -71,8 +71,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var store platform.Repository = platform.NewStore()
-	var objectStore platform.ObjectStore
+	var store nanoflare.Repository = nanoflare.NewStore()
+	var objectStore nanoflare.ObjectStore
 	if endpoint := os.Getenv("MINIO_ENDPOINT"); endpoint != "" {
 		secure, err := strconv.ParseBool(envOrDefault("MINIO_SECURE", "false"))
 		if err != nil {
@@ -82,7 +82,7 @@ func main() {
 			Endpoint:  endpoint,
 			AccessKey: os.Getenv("MINIO_ACCESS_KEY"),
 			SecretKey: os.Getenv("MINIO_SECRET_KEY"),
-			Bucket:    envOrDefault("MINIO_BUCKET", "platform"),
+			Bucket:    envOrDefault("MINIO_BUCKET", "nanoflare"),
 			Secure:    secure,
 		})
 		if err != nil {
@@ -126,10 +126,10 @@ func main() {
 			log.Fatal("runner token is required when runner URL is configured")
 		}
 		publisher = runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
-		log.Printf("using platform-runner at %s", *runnerURL)
+		log.Printf("using nanoflare-runner at %s", *runnerURL)
 	} else {
 		writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
-		writer.SetPlatformRuntimeAddr(*runtimeAddr)
+		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
 		manager := runtime.NewManager(
 			writer,
 			runtime.CommandLauncher{Executable: *workerd, Output: output},
@@ -151,7 +151,7 @@ func main() {
 		defer closeRuntime()
 	}
 
-	service := platform.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewClient(*prometheus))
+	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewClient(*prometheus))
 	if *baseHostname != "" {
 		if err := service.SetBaseHostname(*baseHostname); err != nil {
 			log.Fatal(err)
@@ -175,7 +175,7 @@ func main() {
 			log.Fatal(err)
 		}
 		if verifier.BrowserFlowEnabled() {
-			log.Printf("platformd oidc callback URL %s", verifier.RedirectURL())
+			log.Printf("nanoflared oidc callback URL %s", verifier.RedirectURL())
 		}
 		authenticator = verifier
 	}
@@ -184,7 +184,7 @@ func main() {
 	runtimeKV := api.NewRuntimeKVServer(service)
 	runtimeAssets := api.NewRuntimeAssetServer(service)
 	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Platform-Binding") == "assets" {
+		if r.Header.Get("X-Nanoflare-Binding") == "assets" {
 			runtimeAssets.ServeHTTP(w, r)
 			return
 		}
@@ -193,13 +193,13 @@ func main() {
 	runtimeMux.Handle("/internal/runtime/assets/", runtimeAssets)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {
-		log.Printf("platformd runtime API listening on %s", *runtimeAddr)
+		log.Printf("nanoflared runtime API listening on %s", *runtimeAddr)
 		if err := runtimeServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("runtime API: %v", err)
 		}
 	}()
 
-	log.Printf("platformd listening on %s", *addr)
+	log.Printf("nanoflared listening on %s", *addr)
 	log.Printf("runtime configs will be written to %s", *configDir)
 	httpServer := &http.Server{Addr: *addr, Handler: server}
 	shutdown, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

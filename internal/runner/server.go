@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type RuntimeManager interface {
-	Prepare([]platform.ActiveDeployment) (string, []platform.ActiveDeployment, error)
+	Prepare([]nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error)
 	Commit(string) error
 	Abort(string) error
 }

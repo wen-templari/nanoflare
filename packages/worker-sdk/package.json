@@ -1,5 +1,5 @@
 {
-  "name": "@platform/worker-sdk",
+  "name": "@nanoflare/worker-sdk",
   "version": "0.0.1",
   "private": true,
   "type": "module",

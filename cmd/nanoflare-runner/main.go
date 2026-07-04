@@ -11,20 +11,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/clas/platform/internal/config"
-	"github.com/clas/platform/internal/runner"
-	"github.com/clas/platform/internal/runtime"
+	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/runner"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 func main() {
 	var (
-		addr                = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
-		configDir           = flag.String("config-dir", "./var/runner", "directory for generated runtime configuration")
-		workerd             = flag.String("workerd", "workerd", "path to the workerd executable")
-		portHost            = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
-		portStart           = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
-		platformRuntimeAddr = flag.String("platform-runtime-addr", "127.0.0.1:8081", "platformd private runtime KV API address reachable from workerd")
-		token               = flag.String("token", os.Getenv("PLATFORM_RUNNER_TOKEN"), "platformd authentication token")
+		addr                 = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
+		configDir            = flag.String("config-dir", "./var/runner", "directory for generated runtime configuration")
+		workerd              = flag.String("workerd", "workerd", "path to the workerd executable")
+		portHost             = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
+		portStart            = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
+		nanoflareRuntimeAddr = flag.String("nanoflare-runtime-addr", "127.0.0.1:8081", "nanoflared private runtime KV API address reachable from workerd")
+		token                = flag.String("token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflared authentication token")
 	)
 	flag.Parse()
 
@@ -45,7 +45,7 @@ func main() {
 		"",
 		"",
 	)
-	writer.SetPlatformRuntimeAddr(*platformRuntimeAddr)
+	writer.SetNanoflareRuntimeAddr(*nanoflareRuntimeAddr)
 	manager := runtime.NewManager(
 		writer,
 		runtime.CommandLauncher{Executable: *workerd, Output: output},
@@ -67,7 +67,7 @@ func main() {
 		<-shutdown.Done()
 		server.Close()
 	}()
-	log.Printf("platform-runner listening on %s", *addr)
+	log.Printf("nanoflare-runner listening on %s", *addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

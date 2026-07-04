@@ -4,13 +4,13 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
-  const platformd = env.PLATFORMD_URL || "http://127.0.0.1:8080";
+  const nanoflared = env.NANOFLARED_URL || "http://127.0.0.1:8080";
   return {
     plugins: [react(), tailwindcss()],
     server: {
       proxy: {
-        "/v1": platformd,
-        "/healthz": platformd,
+        "/v1": nanoflared,
+        "/healthz": nanoflared,
         "/prometheus": {
           target: "http://127.0.0.1:9090",
           rewrite: (path) => path.replace(/^\/prometheus/, ""),

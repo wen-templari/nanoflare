@@ -51,7 +51,7 @@ export interface R2Bucket {
   delete(key: string): Promise<void>;
 }
 
-export interface PlatformEnv {
+export interface NanoflareEnv {
   KV: KVNamespace;
   ASSETS: AssetFetcher;
   OBJECTS: R2Bucket;
@@ -79,7 +79,7 @@ export interface AssetFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
-export function createRuntimeClient(options: RuntimeClientOptions): Omit<PlatformEnv, "KV"> {
+export function createRuntimeClient(options: RuntimeClientOptions): Omit<NanoflareEnv, "KV"> {
   async function runtimeRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(new URL(path, options.baseURL), {
       ...init,
@@ -89,7 +89,7 @@ export function createRuntimeClient(options: RuntimeClientOptions): Omit<Platfor
       },
     });
     if (!response.ok) {
-      throw new Error(`platform runtime request failed: ${response.status}`);
+      throw new Error(`nanoflare runtime request failed: ${response.status}`);
     }
     if (response.status === 204) {
       return undefined as T;
@@ -125,7 +125,7 @@ export function createRuntimeClient(options: RuntimeClientOptions): Omit<Platfor
           return null;
         }
         if (!response.ok) {
-          throw new Error(`platform runtime request failed: ${response.status}`);
+          throw new Error(`nanoflare runtime request failed: ${response.status}`);
         }
         return buildObjectBody(response, deserializeHeaders(response.headers, key));
       },
@@ -138,7 +138,7 @@ export function createRuntimeClient(options: RuntimeClientOptions): Omit<Platfor
           return null;
         }
         if (!response.ok) {
-          throw new Error(`platform runtime request failed: ${response.status}`);
+          throw new Error(`nanoflare runtime request failed: ${response.status}`);
         }
         return deserializeHeaders(response.headers, key);
       },
@@ -148,13 +148,13 @@ export function createRuntimeClient(options: RuntimeClientOptions): Omit<Platfor
     },
     IDENTITY: {
       get(request: Request): Identity | null {
-        const context = request.headers.get("x-platform-context");
+        const context = request.headers.get("x-nanoflare-context");
         return context ? (JSON.parse(context) as Identity) : null;
       },
       headers(request: Request): RequestIdentityHeaders {
         return {
-          jwt: request.headers.get("x-platform-user-jwt"),
-          email: request.headers.get("x-platform-user-email"),
+          jwt: request.headers.get("x-nanoflare-user-jwt"),
+          email: request.headers.get("x-nanoflare-user-email"),
         };
       },
     },
@@ -183,11 +183,11 @@ function deserializeObject(value: SerializedR2Object): R2Object {
 
 function deserializeHeaders(headers: Headers, key: string): R2Object {
   return {
-    key: headers.get("x-platform-object-key") ?? key,
+    key: headers.get("x-nanoflare-object-key") ?? key,
     size: Number(headers.get("content-length") ?? "0"),
-    etag: headers.get("x-platform-object-etag") ?? "",
+    etag: headers.get("x-nanoflare-object-etag") ?? "",
     httpEtag: headers.get("etag") ?? "",
-    uploaded: new Date(headers.get("x-platform-object-uploaded") ?? new Date(0).toISOString()),
+    uploaded: new Date(headers.get("x-nanoflare-object-uploaded") ?? new Date(0).toISOString()),
     httpMetadata: {
       contentType: headers.get("content-type") ?? undefined,
     },

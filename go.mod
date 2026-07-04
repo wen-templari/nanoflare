@@ -1,4 +1,4 @@
-module github.com/clas/platform
+module github.com/clas/nanoflare
 
 go 1.25.0
 

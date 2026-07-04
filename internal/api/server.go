@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type Server struct {
-	service      *platform.Service
+	service      *nanoflare.Service
 	traefik      TraefikConfigReader
 	traefikToken string
 	auth         Authenticator
@@ -55,15 +55,15 @@ type TraefikConfigReader interface {
 	TraefikConfig() []byte
 }
 
-func NewServer(service *platform.Service) *Server {
+func NewServer(service *nanoflare.Service) *Server {
 	return NewServerWithAuth(service, nil, "", nil)
 }
 
-func NewServerWithTraefik(service *platform.Service, traefik TraefikConfigReader, token string) *Server {
+func NewServerWithTraefik(service *nanoflare.Service, traefik TraefikConfigReader, token string) *Server {
 	return NewServerWithAuth(service, traefik, token, nil)
 }
 
-func NewServerWithAuth(service *platform.Service, traefik TraefikConfigReader, token string, auth Authenticator) *Server {
+func NewServerWithAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator) *Server {
 	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, mux: http.NewServeMux()}
 	server.routes()
 	return server
@@ -159,11 +159,11 @@ func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 	traffic, err := s.service.WorkerTraffic(r.PathValue("appID"))
 	if err != nil {
-		if errors.Is(err, platform.ErrAppNotFound) {
+		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			writeWorkerError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, platform.WorkerTraffic{})
+		writeJSON(w, http.StatusOK, nanoflare.WorkerTraffic{})
 		return
 	}
 	writeJSON(w, http.StatusOK, traffic)
@@ -273,7 +273,7 @@ func runtimeObjectKey(r *http.Request) (string, error) {
 	return clean, nil
 }
 
-func writeRuntimeObjectHeaders(header http.Header, object platform.ObjectInfo) {
+func writeRuntimeObjectHeaders(header http.Header, object nanoflare.ObjectInfo) {
 	if object.HTTPMetadata.ContentType != "" {
 		header.Set("Content-Type", object.HTTPMetadata.ContentType)
 	} else {
@@ -286,9 +286,9 @@ func writeRuntimeObjectHeaders(header http.Header, object platform.ObjectInfo) {
 	if !object.Uploaded.IsZero() {
 		header.Set("Last-Modified", object.Uploaded.UTC().Format(http.TimeFormat))
 	}
-	header.Set("X-Platform-Object-Key", object.Key)
-	header.Set("X-Platform-Object-Etag", object.ETag)
-	header.Set("X-Platform-Object-Uploaded", object.Uploaded.UTC().Format(time.RFC3339Nano))
+	header.Set("X-Nanoflare-Object-Key", object.Key)
+	header.Set("X-Nanoflare-Object-Etag", object.ETag)
+	header.Set("X-Nanoflare-Object-Uploaded", object.Uploaded.UTC().Format(time.RFC3339Nano))
 }
 
 func (s *Server) listApps(w http.ResponseWriter, _ *http.Request) {
@@ -420,7 +420,7 @@ func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
-	var input platform.CreateAppInput
+	var input nanoflare.CreateAppInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -428,7 +428,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	app, err := s.service.CreateApp(input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, platform.ErrAppExists) {
+		if errors.Is(err, nanoflare.ErrAppExists) {
 			status = http.StatusConflict
 		}
 		writeError(w, status, err)
@@ -438,7 +438,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
-	var input platform.UpdateAppInput
+	var input nanoflare.UpdateAppInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -446,10 +446,10 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 	app, err := s.service.UpdateApp(r.PathValue("appID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, platform.ErrAppNotFound) {
+		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			status = http.StatusNotFound
 		}
-		if errors.Is(err, platform.ErrAppExists) {
+		if errors.Is(err, nanoflare.ErrAppExists) {
 			status = http.StatusConflict
 		}
 		writeError(w, status, err)
@@ -481,7 +481,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		port = runtimePort
 	}
 	if port == 0 {
-		writeWorkerError(w, platform.ErrAppNotFound)
+		writeWorkerError(w, nanoflare.ErrAppNotFound)
 		return
 	}
 	if !runWorkerFirst {
@@ -515,7 +515,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
-	var input platform.DeployInput
+	var input nanoflare.DeployInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -523,7 +523,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	deployment, err := s.service.Deploy(r.PathValue("appID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, platform.ErrAppNotFound) {
+		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			status = http.StatusNotFound
 		}
 		writeError(w, status, err)
@@ -537,8 +537,8 @@ func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		if browserAuth, ok := s.auth.(BrowserAuthenticator); ok {
 			if result, sessionToken, ok := browserAuth.Session(r); ok {
-				w.Header().Set("X-Platform-User-JWT", sessionToken)
-				w.Header().Set("X-Platform-User-Email", result.Email)
+				w.Header().Set("X-Nanoflare-User-JWT", sessionToken)
+				w.Header().Set("X-Nanoflare-User-Email", result.Email)
 				w.WriteHeader(http.StatusOK)
 				return
 			}
@@ -557,8 +557,8 @@ func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err)
 		return
 	}
-	w.Header().Set("X-Platform-User-JWT", token)
-	w.Header().Set("X-Platform-User-Email", result.Email)
+	w.Header().Set("X-Nanoflare-User-JWT", token)
+	w.Header().Set("X-Nanoflare-User-Email", result.Email)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -622,7 +622,7 @@ func (s *Server) authUserInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeRuntimeError(w http.ResponseWriter, err error) {
-	if errors.Is(err, platform.ErrInvalidCapability) {
+	if errors.Is(err, nanoflare.ErrInvalidCapability) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
@@ -630,7 +630,7 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 }
 
 func writeWorkerError(w http.ResponseWriter, err error) {
-	if errors.Is(err, platform.ErrAppNotFound) {
+	if errors.Is(err, nanoflare.ErrAppNotFound) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -721,7 +721,7 @@ func appGatewayPath(requestPath string) (string, int, string, bool) {
 	return appID, port, "/" + rest, true
 }
 
-func writeAssetResponse(w http.ResponseWriter, r *http.Request, response platform.AssetResponse) {
+func writeAssetResponse(w http.ResponseWriter, r *http.Request, response nanoflare.AssetResponse) {
 	if response.ContentType != "" {
 		w.Header().Set("Content-Type", response.ContentType)
 	}

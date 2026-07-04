@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type Client struct {
@@ -38,42 +38,42 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-func (c *Client) Traffic(appID string) (platform.WorkerTraffic, error) {
+func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
 	router := strconv.Quote(regexp.QuoteMeta(appID) + `@(http|file)`)
 	selector := `router=~` + router
 	requests, err := c.query(`sum(rate(traefik_router_requests_total{` + selector + `}[5m]))`)
 	if err != nil {
-		return platform.WorkerTraffic{}, err
+		return nanoflare.WorkerTraffic{}, err
 	}
 	latency, err := c.query(`histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{` + selector + `}[5m])))`)
 	if err != nil {
-		return platform.WorkerTraffic{}, err
+		return nanoflare.WorkerTraffic{}, err
 	}
 	errors, err := c.query(`sum(rate(traefik_router_requests_total{` + selector + `,code=~"5.."}[5m]))`)
 	if err != nil {
-		return platform.WorkerTraffic{}, err
+		return nanoflare.WorkerTraffic{}, err
 	}
 	traffic, err := c.queryRange(`sum(rate(traefik_router_requests_total{` + selector + `}[5m]))`)
 	if err != nil {
-		return platform.WorkerTraffic{}, err
+		return nanoflare.WorkerTraffic{}, err
 	}
 	statusCodes, err := c.query(`sum by (code) (rate(traefik_router_requests_total{` + selector + `}[5m]))`)
 	if err != nil {
-		return platform.WorkerTraffic{}, err
+		return nanoflare.WorkerTraffic{}, err
 	}
 	requestRate := resultNumber(requests)
-	result := platform.WorkerTraffic{
+	result := nanoflare.WorkerTraffic{
 		Available:         true,
 		RequestsPerSecond: requestRate,
 		P95Latency:        resultNumber(latency),
 		Traffic:           resultValues(traffic),
-		StatusCodes:       make([]platform.WorkerStatusCode, 0, len(statusCodes)),
+		StatusCodes:       make([]nanoflare.WorkerStatusCode, 0, len(statusCodes)),
 	}
 	if requestRate > 0 {
 		result.ErrorRate = resultNumber(errors) / requestRate
 	}
 	for _, item := range statusCodes {
-		result.StatusCodes = append(result.StatusCodes, platform.WorkerStatusCode{
+		result.StatusCodes = append(result.StatusCodes, nanoflare.WorkerStatusCode{
 			Code:  item.Metric["code"],
 			Value: valueNumber(item.Value),
 		})

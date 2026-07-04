@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 const (
@@ -16,10 +16,10 @@ const (
 )
 
 type RuntimeKVServer struct {
-	service *platform.Service
+	service *nanoflare.Service
 }
 
-func NewRuntimeKVServer(service *platform.Service) *RuntimeKVServer {
+func NewRuntimeKVServer(service *nanoflare.Service) *RuntimeKVServer {
 	return &RuntimeKVServer{service: service}
 }
 

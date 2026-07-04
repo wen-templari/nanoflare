@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestRuntimeKVSupportsNativeCoreOperations(t *testing.T) {
@@ -45,8 +45,8 @@ func TestRuntimeKVRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestRuntimeTokenSurvivesRedeployAndIsNotPublic(t *testing.T) {
-	store := platform.NewStore()
-	service := platform.NewService(store, discardWriter{})
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, discardWriter{})
 	server := NewServer(service)
 	app := createApp(t, server, "Stable Token", "stable.example.com")
 	first := deploy(t, server, app.ID)
@@ -55,7 +55,7 @@ func TestRuntimeTokenSurvivesRedeployAndIsNotPublic(t *testing.T) {
 	if token == "" || runtimeTokens(t, store)[app.ID] != token {
 		t.Fatal("runtime token changed across deployments")
 	}
-	for _, deployment := range []platform.Deployment{first, second} {
+	for _, deployment := range []nanoflare.Deployment{first, second} {
 		body := httptest.NewRecorder()
 		writeJSON(body, http.StatusOK, deployment)
 		if strings.Contains(body.Body.String(), token) || strings.Contains(body.Body.String(), "capability") {
@@ -64,11 +64,11 @@ func TestRuntimeTokenSurvivesRedeployAndIsNotPublic(t *testing.T) {
 	}
 }
 
-func runtimeKVFixture(t *testing.T) (*platform.Store, string, http.Handler) {
+func runtimeKVFixture(t *testing.T) (*nanoflare.Store, string, http.Handler) {
 	t.Helper()
-	store := platform.NewStore()
-	service := platform.NewService(store, discardWriter{})
-	app, err := service.CreateApp(platform.CreateAppInput{Name: "KV App", Hostname: "kv.example.com"})
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, discardWriter{})
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "KV App", Hostname: "kv.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +77,6 @@ func runtimeKVFixture(t *testing.T) (*platform.Store, string, http.Handler) {
 
 type discardWriter struct{}
 
-func (discardWriter) Write([]platform.ActiveDeployment) error {
+func (discardWriter) Write([]nanoflare.ActiveDeployment) error {
 	return nil
 }

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clas/platform/internal/platform"
+	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -75,52 +75,52 @@ func (m *MinIO) PresignDownload(appID, objectPath string, expiry time.Duration) 
 	return signed.String(), nil
 }
 
-func (m *MinIO) Put(appID, objectPath string, contentType string, data []byte) (platform.ObjectInfo, error) {
+func (m *MinIO) Put(appID, objectPath string, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
-		return platform.ObjectInfo{}, err
+		return nanoflare.ObjectInfo{}, err
 	}
 	_, err = m.client.PutObject(context.Background(), m.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
 		ContentType: contentType,
 	})
 	if err != nil {
-		return platform.ObjectInfo{}, err
+		return nanoflare.ObjectInfo{}, err
 	}
 	return m.Head(appID, objectPath)
 }
 
-func (m *MinIO) Get(appID, objectPath string) (platform.ObjectBody, error) {
+func (m *MinIO) Get(appID, objectPath string) (nanoflare.ObjectBody, error) {
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
-		return platform.ObjectBody{}, err
+		return nanoflare.ObjectBody{}, err
 	}
 	object, err := m.client.GetObject(context.Background(), m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return platform.ObjectBody{}, err
+		return nanoflare.ObjectBody{}, err
 	}
 	defer object.Close()
 	info, err := object.Stat()
 	if err != nil {
-		return platform.ObjectBody{}, minioNotFound(err)
+		return nanoflare.ObjectBody{}, minioNotFound(err)
 	}
 	body, err := io.ReadAll(object)
 	if err != nil {
-		return platform.ObjectBody{}, minioNotFound(err)
+		return nanoflare.ObjectBody{}, minioNotFound(err)
 	}
-	return platform.ObjectBody{
+	return nanoflare.ObjectBody{
 		ObjectInfo: objectInfo(objectPath, info),
 		Body:       body,
 	}, nil
 }
 
-func (m *MinIO) Head(appID, objectPath string) (platform.ObjectInfo, error) {
+func (m *MinIO) Head(appID, objectPath string) (nanoflare.ObjectInfo, error) {
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
-		return platform.ObjectInfo{}, err
+		return nanoflare.ObjectInfo{}, err
 	}
 	info, err := m.client.StatObject(context.Background(), m.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
-		return platform.ObjectInfo{}, minioNotFound(err)
+		return nanoflare.ObjectInfo{}, minioNotFound(err)
 	}
 	return objectInfo(objectPath, info), nil
 }
@@ -133,14 +133,14 @@ func (m *MinIO) Delete(appID, objectPath string) error {
 	return m.client.RemoveObject(context.Background(), m.bucket, key, minio.RemoveObjectOptions{})
 }
 
-func objectInfo(objectPath string, info minio.ObjectInfo) platform.ObjectInfo {
-	return platform.ObjectInfo{
+func objectInfo(objectPath string, info minio.ObjectInfo) nanoflare.ObjectInfo {
+	return nanoflare.ObjectInfo{
 		Key:      objectPath,
 		Size:     info.Size,
 		ETag:     strings.Trim(info.ETag, `"`),
 		HTTPETag: info.ETag,
 		Uploaded: info.LastModified.UTC(),
-		HTTPMetadata: platform.ObjectHTTPMetadata{
+		HTTPMetadata: nanoflare.ObjectHTTPMetadata{
 			ContentType: info.ContentType,
 		},
 	}
@@ -149,7 +149,7 @@ func objectInfo(objectPath string, info minio.ObjectInfo) platform.ObjectInfo {
 func minioNotFound(err error) error {
 	var response minio.ErrorResponse
 	if errors.As(err, &response) && response.StatusCode == 404 {
-		return platform.ErrObjectNotFound
+		return nanoflare.ErrObjectNotFound
 	}
 	return err
 }
