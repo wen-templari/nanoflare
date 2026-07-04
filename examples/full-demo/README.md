@@ -17,7 +17,7 @@ This example combines the main Nanoflare platform capabilities in one app:
 - `OBJECTS` stores and retrieves `uploads/latest.txt`.
 - protected routes show how Nanoflare forwards authenticated user headers into the Worker.
 
-The Worker entrypoint is [worker.js](/Users/clas/Developer/platform/examples/full-demo/worker.js), with route handling in [router.js](/Users/clas/Developer/platform/examples/full-demo/router.js).
+The Worker entrypoint is [worker.js](worker.js), with route handling in [router.js](router.js).
 
 ## Setup
 
@@ -28,7 +28,7 @@ nanoflare create
 nanoflare kv namespace create visits
 ```
 
-Update [nanoflare.json](/Users/clas/Developer/platform/examples/full-demo/nanoflare.json) so `kv_namespaces[0].id` matches the namespace id returned by the create command, then deploy:
+Update [nanoflare.json](nanoflare.json) so `kv_namespaces[0].id` matches the namespace id returned by the create command, then deploy:
 
 ```sh
 nanoflare deploy
