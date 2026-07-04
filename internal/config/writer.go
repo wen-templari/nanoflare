@@ -85,8 +85,10 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(item.App.ID), workerName(item.App.ID))
 	}
 	for _, item := range active {
-		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
-			quote(kvServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
+		for index, binding := range item.Deployment.KVNamespaces {
+			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-KV-Namespace-ID\", value = %s)]))),\n",
+				quote(kvServiceName(item.App.ID, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.ID))
+		}
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\")]))),\n",
 			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
@@ -101,12 +103,24 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(item.App.ID))
 		writeWorkerSource(&out, item.Deployment)
-		fmt.Fprintf(&out, "  bindings = [(name = \"KV\", kvNamespace = %s), (name = %s, service = %s), (name = \"OBJECTS\", service = %s)],\n",
-			quote(kvServiceName(item.App.ID)), quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID)), quote(objectServiceName(item.App.ID)))
+		fmt.Fprintf(&out, "  bindings = [%s],\n",
+			strings.Join(workerBindings(item), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		out.WriteString(");\n")
 	}
 	return out.String()
+}
+
+func workerBindings(item nanoflare.ActiveDeployment) []string {
+	bindings := make([]string, 0, len(item.Deployment.KVNamespaces)+2)
+	for index, binding := range item.Deployment.KVNamespaces {
+		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", quote(binding.Binding), quote(kvServiceName(item.App.ID, index))))
+	}
+	bindings = append(bindings,
+		fmt.Sprintf("(name = %s, service = %s)", quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID))),
+		fmt.Sprintf("(name = \"OBJECTS\", service = %s)", quote(objectServiceName(item.App.ID))),
+	)
+	return bindings
 }
 
 func writeWorkerSource(out *strings.Builder, deployment nanoflare.Deployment) {
@@ -463,8 +477,8 @@ func deploymentFormat(deployment nanoflare.Deployment) string {
 	return "modules"
 }
 
-func kvServiceName(appID string) string {
-	return "kv-" + appID
+func kvServiceName(appID string, index int) string {
+	return fmt.Sprintf("kv-%s-%d", appID, index)
 }
 
 func assetServiceName(appID string) string {

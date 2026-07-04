@@ -29,16 +29,18 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 
 	appOne := createApp(t, server, "App One", "one.example.com")
 	appTwo := createApp(t, server, "App Two", "two.example.com")
-	deploy(t, server, appOne.ID)
-	deploy(t, server, appTwo.ID)
+	namespaceOne := createKVNamespace(t, server, "app-one")
+	namespaceTwo := createKVNamespace(t, server, "app-two")
+	deployWithKV(t, server, appOne.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceOne.ID}})
+	deployWithKV(t, server, appTwo.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceTwo.ID}})
 	tokens := runtimeTokens(t, store)
 	kv := NewRuntimeKVServer(service)
 
-	runtimeKVRequest(t, kv, http.MethodPut, "/color?urlencoded=true", tokens[appOne.ID], []byte("blue"), http.StatusNoContent)
-	if got := runtimeKVRequest(t, kv, http.MethodGet, "/color?urlencoded=true", tokens[appOne.ID], nil, http.StatusOK); string(got) != "blue" {
+	runtimeKVRequest(t, kv, http.MethodPut, "/color?urlencoded=true", tokens[appOne.ID], namespaceOne.ID, []byte("blue"), http.StatusNoContent)
+	if got := runtimeKVRequest(t, kv, http.MethodGet, "/color?urlencoded=true", tokens[appOne.ID], namespaceOne.ID, nil, http.StatusOK); string(got) != "blue" {
 		t.Fatalf("got %q, want app-one value", got)
 	}
-	runtimeKVRequest(t, kv, http.MethodGet, "/color?urlencoded=true", tokens[appTwo.ID], nil, http.StatusNotFound)
+	runtimeKVRequest(t, kv, http.MethodGet, "/color?urlencoded=true", tokens[appTwo.ID], namespaceTwo.ID, nil, http.StatusNotFound)
 }
 
 func TestWorkerConsoleAPIs(t *testing.T) {
@@ -99,25 +101,47 @@ func TestWorkerConsoleKV(t *testing.T) {
 	server := NewServer(service)
 	appOne := createApp(t, server, "Console KV One", "console-kv-one.example.com")
 	appTwo := createApp(t, server, "Console KV Two", "console-kv-two.example.com")
+	namespaceOne := createKVNamespace(t, server, "console-one")
+	namespaceTwo := createKVNamespace(t, server, "console-two")
+	deployWithKV(t, server, appOne.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceOne.ID}})
+	deployWithKV(t, server, appTwo.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceTwo.ID}})
 
-	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/color", []byte("blue"), http.StatusNoContent)
-	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/count", []byte("42"), http.StatusNoContent)
-	if got := workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/color", nil, http.StatusOK); string(got) != "blue" {
+	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNoContent)
+	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/count", []byte("42"), http.StatusNoContent)
+	if got := workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusOK); string(got) != "blue" {
 		t.Fatalf("got %q, want app-one value", got)
 	}
 	var keys []nanoflare.WorkerKVKey
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv", http.StatusOK, &keys)
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID, http.StatusOK, &keys)
 	if len(keys) != 2 || keys[0].Key != "color" || keys[0].Size != 4 || keys[1].Key != "count" || keys[1].Size != 2 {
 		t.Fatalf("unexpected KV keys: %#v", keys)
 	}
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/", http.StatusOK, &keys)
-	if len(keys) != 2 {
-		t.Fatalf("unexpected trailing-slash KV keys: %#v", keys)
+	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appTwo.ID+"/kv/namespaces/"+namespaceTwo.ID+"/color", nil, http.StatusNotFound)
+	workerKVRequest(t, server, http.MethodDelete, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNoContent)
+	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNotFound)
+	workerKVRequest(t, server, http.MethodPut, "/v1/apps/missing/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNotFound)
+}
+
+func TestKVNamespaceAPIs(t *testing.T) {
+	service := nanoflare.NewService(nanoflare.NewStore(), discardWriter{})
+	server := NewServer(service)
+
+	namespace := createKVNamespace(t, server, "shared-cache")
+	var namespaces []nanoflare.KVNamespace
+	requestJSON(t, server, http.MethodGet, "/v1/kv/namespaces", http.StatusOK, &namespaces)
+	if len(namespaces) != 1 || namespaces[0].ID != namespace.ID || namespaces[0].Name != "shared-cache" {
+		t.Fatalf("unexpected namespaces: %#v", namespaces)
 	}
-	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appTwo.ID+"/kv/color", nil, http.StatusNotFound)
-	workerKVRequest(t, server, http.MethodDelete, "/v1/apps/"+appOne.ID+"/kv/color", nil, http.StatusNoContent)
-	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/color", nil, http.StatusNotFound)
-	workerKVRequest(t, server, http.MethodPut, "/v1/apps/missing/kv/color", []byte("blue"), http.StatusNotFound)
+
+	app := createApp(t, server, "Bound App", "bound.example.com")
+	deployWithKV(t, server, app.ID, []nanoflare.KVBinding{{Binding: "CACHE", ID: namespace.ID}})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/kv/namespaces/"+namespace.ID, nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("delete status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
@@ -586,9 +610,50 @@ func createApp(t *testing.T, server http.Handler, name, hostname string) nanofla
 	return app
 }
 
+func createKVNamespace(t *testing.T, server http.Handler, name string) nanoflare.KVNamespace {
+	t.Helper()
+	body := `{"name":"` + name + `"}`
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/kv/namespaces", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create kv namespace status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var namespace nanoflare.KVNamespace
+	if err := json.NewDecoder(recorder.Body).Decode(&namespace); err != nil {
+		t.Fatal(err)
+	}
+	return namespace
+}
+
 func deploy(t *testing.T, server http.Handler, appID string) nanoflare.Deployment {
 	t.Helper()
 	return deployContent(t, server, appID, []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}}, "")
+}
+
+func deployWithKV(t *testing.T, server http.Handler, appID string, kvNamespaces []nanoflare.KVBinding) nanoflare.Deployment {
+	t.Helper()
+	body, err := json.Marshal(nanoflare.DeployInput{
+		Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
+		CompatibilityDate: "2025-12-10",
+		KVNamespaces:      kvNamespaces,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/apps/"+appID+"/deployments", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("deploy status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var deployment nanoflare.Deployment
+	if err := json.NewDecoder(recorder.Body).Decode(&deployment); err != nil {
+		t.Fatal(err)
+	}
+	return deployment
 }
 
 func deployContent(t *testing.T, server http.Handler, appID string, files []nanoflare.WorkerFile, entrypoint string) nanoflare.Deployment {
@@ -823,12 +888,15 @@ func runtimeTokens(t *testing.T, store nanoflare.Repository) map[string]string {
 	return tokens
 }
 
-func runtimeKVRequest(t *testing.T, server http.Handler, method, path, token string, body []byte, wantStatus int) []byte {
+func runtimeKVRequest(t *testing.T, server http.Handler, method, path, token, namespaceID string, body []byte, wantStatus int) []byte {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, path, bytes.NewReader(body))
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if namespaceID != "" {
+		request.Header.Set("X-Nanoflare-KV-Namespace-ID", namespaceID)
 	}
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != wantStatus {

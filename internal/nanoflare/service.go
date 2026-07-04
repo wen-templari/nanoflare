@@ -130,6 +130,34 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	return App{}, errors.New("could not create app")
 }
 
+func (s *Service) CreateKVNamespace(input CreateKVNamespaceInput) (KVNamespace, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return KVNamespace{}, errors.New("name is required")
+	}
+	namespaceID, err := randomToken()
+	if err != nil {
+		return KVNamespace{}, err
+	}
+	namespace := KVNamespace{ID: namespaceID, Name: name, CreatedAt: time.Now().UTC()}
+	if err := s.store.CreateKVNamespace(namespace); err != nil {
+		return KVNamespace{}, err
+	}
+	return namespace, nil
+}
+
+func (s *Service) ListKVNamespaces() ([]KVNamespace, error) {
+	return s.store.ListKVNamespaces()
+}
+
+func (s *Service) DeleteKVNamespace(namespaceID string) error {
+	namespaceID = strings.TrimSpace(namespaceID)
+	if namespaceID == "" {
+		return ErrKVNamespaceNotFound
+	}
+	return s.store.DeleteKVNamespace(namespaceID)
+}
+
 func (s *Service) UpdateApp(appID string, input UpdateAppInput) (App, error) {
 	app, _, err := s.worker(appID)
 	if err != nil {
@@ -218,6 +246,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		BundleSize:        active.Deployment.BundleSize,
 		AssetCount:        len(active.Deployment.Assets),
 		CompatibilityDate: active.Deployment.CompatibilityDate,
+		KVNamespaces:      append([]KVBinding(nil), active.Deployment.KVNamespaces...),
 		AssetConfig:       active.Deployment.AssetConfig,
 		Port:              active.Deployment.Port,
 		CreatedAt:         active.Deployment.CreatedAt,
@@ -330,6 +359,10 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
+	kvNamespaces, err := s.normalizeKVNamespaces(input.KVNamespaces)
+	if err != nil {
+		return Deployment{}, err
+	}
 	format, err := workerFormat(input.Format, len(files))
 	if err != nil {
 		return Deployment{}, err
@@ -353,6 +386,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Entrypoint:        entrypoint,
 		Format:            format,
 		CompatibilityDate: input.CompatibilityDate,
+		KVNamespaces:      kvNamespaces,
 		AssetConfig:       assetConfig,
 		BundleSize:        bundleSize(files),
 		Port:              port,
@@ -523,6 +557,34 @@ func validateRunWorkerFirst(runWorkerFirst RunWorkerFirst) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) normalizeKVNamespaces(bindings []KVBinding) ([]KVBinding, error) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+	normalized := make([]KVBinding, 0, len(bindings))
+	seenBindings := make(map[string]bool, len(bindings))
+	for _, binding := range bindings {
+		binding.Binding = strings.TrimSpace(binding.Binding)
+		binding.ID = strings.TrimSpace(binding.ID)
+		binding.PreviewID = strings.TrimSpace(binding.PreviewID)
+		if binding.Binding == "" {
+			return nil, errors.New("kv_namespaces.binding is required")
+		}
+		if binding.ID == "" {
+			return nil, errors.New("kv_namespaces.id is required")
+		}
+		if seenBindings[binding.Binding] {
+			return nil, fmt.Errorf("kv_namespaces binding %q is duplicated", binding.Binding)
+		}
+		if _, err := s.store.GetKVNamespace(binding.ID); err != nil {
+			return nil, err
+		}
+		seenBindings[binding.Binding] = true
+		normalized = append(normalized, binding)
+	}
+	return normalized, nil
 }
 
 func normalizeAuthConfig(config AuthConfig) (AuthConfig, error) {
@@ -726,48 +788,76 @@ func (s *Service) appIDForCapability(capability string) (string, error) {
 	return s.store.AppIDForCapability(capability)
 }
 
-func (s *Service) KVGet(capability, key string) ([]byte, bool, error) {
-	return s.store.KVGet(capability, key)
+func (s *Service) KVGet(capability, namespaceID, key string) ([]byte, bool, error) {
+	return s.store.KVGet(capability, namespaceID, key)
 }
 
-func (s *Service) KVPut(capability, key string, value []byte) error {
-	return s.store.KVPut(capability, key, value)
+func (s *Service) KVPut(capability, namespaceID, key string, value []byte) error {
+	return s.store.KVPut(capability, namespaceID, key, value)
 }
 
-func (s *Service) KVDelete(capability, key string) error {
-	return s.store.KVDelete(capability, key)
+func (s *Service) KVDelete(capability, namespaceID, key string) error {
+	return s.store.KVDelete(capability, namespaceID, key)
 }
 
-func (s *Service) WorkerKVList(appID string) ([]WorkerKVKey, error) {
+func (s *Service) WorkerKVList(appID, namespaceID string) ([]WorkerKVKey, error) {
 	app, _, err := s.worker(appID)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.KVList(app.RuntimeToken)
+	if err := s.ensureActiveDeploymentBindsNamespace(appID, namespaceID); err != nil {
+		return nil, err
+	}
+	return s.store.KVList(app.RuntimeToken, namespaceID)
 }
 
-func (s *Service) WorkerKVGet(appID, key string) ([]byte, bool, error) {
+func (s *Service) WorkerKVGet(appID, namespaceID, key string) ([]byte, bool, error) {
 	app, _, err := s.worker(appID)
 	if err != nil {
 		return nil, false, err
 	}
-	return s.store.KVGet(app.RuntimeToken, key)
+	if err := s.ensureActiveDeploymentBindsNamespace(appID, namespaceID); err != nil {
+		return nil, false, err
+	}
+	return s.store.KVGet(app.RuntimeToken, namespaceID, key)
 }
 
-func (s *Service) WorkerKVPut(appID, key string, value []byte) error {
+func (s *Service) WorkerKVPut(appID, namespaceID, key string, value []byte) error {
 	app, _, err := s.worker(appID)
 	if err != nil {
 		return err
 	}
-	return s.store.KVPut(app.RuntimeToken, key, value)
+	if err := s.ensureActiveDeploymentBindsNamespace(appID, namespaceID); err != nil {
+		return err
+	}
+	return s.store.KVPut(app.RuntimeToken, namespaceID, key, value)
 }
 
-func (s *Service) WorkerKVDelete(appID, key string) error {
+func (s *Service) WorkerKVDelete(appID, namespaceID, key string) error {
 	app, _, err := s.worker(appID)
 	if err != nil {
 		return err
 	}
-	return s.store.KVDelete(app.RuntimeToken, key)
+	if err := s.ensureActiveDeploymentBindsNamespace(appID, namespaceID); err != nil {
+		return err
+	}
+	return s.store.KVDelete(app.RuntimeToken, namespaceID, key)
+}
+
+func (s *Service) ensureActiveDeploymentBindsNamespace(appID, namespaceID string) error {
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return err
+	}
+	if active == nil {
+		return ErrKVNamespaceNotBound
+	}
+	for _, binding := range active.Deployment.KVNamespaces {
+		if binding.ID == namespaceID {
+			return nil
+		}
+	}
+	return ErrKVNamespaceNotBound
 }
 
 func (s *Service) AssetFetch(capability, assetPath string) (AssetResponse, error) {

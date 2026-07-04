@@ -51,7 +51,12 @@ func (s *RuntimeKVServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *RuntimeKVServer) get(w http.ResponseWriter, r *http.Request, key string) {
-	value, ok, err := s.service.KVGet(bearerToken(r), key)
+	namespaceID, err := runtimeKVNamespaceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	value, ok, err := s.service.KVGet(bearerToken(r), namespaceID, key)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -66,6 +71,11 @@ func (s *RuntimeKVServer) get(w http.ResponseWriter, r *http.Request, key string
 }
 
 func (s *RuntimeKVServer) put(w http.ResponseWriter, r *http.Request, key string) {
+	namespaceID, err := runtimeKVNamespaceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	defer r.Body.Close()
 	value, err := io.ReadAll(io.LimitReader(r.Body, maxKVValueSize+1))
 	if err != nil {
@@ -76,7 +86,7 @@ func (s *RuntimeKVServer) put(w http.ResponseWriter, r *http.Request, key string
 		writeError(w, http.StatusRequestEntityTooLarge, errors.New("KV value exceeds 25 MiB limit"))
 		return
 	}
-	if err := s.service.KVPut(bearerToken(r), key, value); err != nil {
+	if err := s.service.KVPut(bearerToken(r), namespaceID, key, value); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
@@ -84,11 +94,24 @@ func (s *RuntimeKVServer) put(w http.ResponseWriter, r *http.Request, key string
 }
 
 func (s *RuntimeKVServer) delete(w http.ResponseWriter, r *http.Request, key string) {
-	if err := s.service.KVDelete(bearerToken(r), key); err != nil {
+	namespaceID, err := runtimeKVNamespaceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.KVDelete(bearerToken(r), namespaceID, key); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func runtimeKVNamespaceID(r *http.Request) (string, error) {
+	namespaceID := strings.TrimSpace(r.Header.Get("X-Nanoflare-KV-Namespace-ID"))
+	if namespaceID == "" {
+		return "", errors.New("kv namespace id header is required")
+	}
+	return namespaceID, nil
 }
 
 func runtimeKVKey(r *http.Request) (string, error) {

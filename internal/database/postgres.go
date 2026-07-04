@@ -58,12 +58,18 @@ CREATE TABLE IF NOT EXISTS deployments (
 	entrypoint text NOT NULL,
 	format text NOT NULL DEFAULT '',
 	compatibility_date text NOT NULL,
+	kv_namespaces jsonb NOT NULL DEFAULT '[]'::jsonb,
 	asset_config jsonb NOT NULL DEFAULT '{}'::jsonb,
 	bundle_size bigint NOT NULL DEFAULT 0,
 	object_key text NOT NULL DEFAULT '',
 	port integer NOT NULL,
 	created_at timestamptz NOT NULL,
 	active boolean NOT NULL DEFAULT false
+);
+CREATE TABLE IF NOT EXISTS kv_namespaces (
+	id text PRIMARY KEY,
+	name text NOT NULL UNIQUE,
+	created_at timestamptz NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS deployments_active_app_idx
 	ON deployments(app_id) WHERE active;
@@ -75,6 +81,7 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS assets jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS entrypoint text NOT NULL DEFAULT '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS format text NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS kv_namespaces jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
@@ -87,10 +94,10 @@ UPDATE deployments SET bundle_size = COALESCE((
 	FROM jsonb_array_elements(files) AS entry
 ), 0) WHERE bundle_size = 0;
 CREATE TABLE IF NOT EXISTS runtime_kv (
-	app_id text NOT NULL REFERENCES apps(id),
+	kv_namespace_id text NOT NULL REFERENCES kv_namespaces(id),
 	key text NOT NULL,
 	value bytea NOT NULL,
-	PRIMARY KEY (app_id, key)
+	PRIMARY KEY (kv_namespace_id, key)
 );
 DO $$
 BEGIN
@@ -114,12 +121,105 @@ END $$;`)
 	if err := p.migrateRuntimeTokens(ctx); err != nil {
 		return err
 	}
+	if err := p.migrateKVNamespaces(ctx); err != nil {
+		return err
+	}
 	_, err = p.db.ExecContext(ctx, `
 ALTER TABLE apps ALTER COLUMN runtime_token SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS apps_runtime_token_idx ON apps(runtime_token);
 ALTER TABLE deployments DROP COLUMN IF EXISTS bundle_path;
 ALTER TABLE deployments DROP COLUMN IF EXISTS capability_token;`)
 	return err
+}
+
+func (p *Postgres) migrateKVNamespaces(ctx context.Context) error {
+	hasAppID, err := p.columnExists(ctx, "runtime_kv", "app_id")
+	if err != nil {
+		return err
+	}
+	hasNamespaceID, err := p.columnExists(ctx, "runtime_kv", "kv_namespace_id")
+	if err != nil {
+		return err
+	}
+	if !hasAppID {
+		return nil
+	}
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if hasAppID && !hasNamespaceID {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE runtime_kv ADD COLUMN kv_namespace_id text`); err != nil {
+			return err
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM apps ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var appIDs []string
+	for rows.Next() {
+		var appID string
+		if err := rows.Scan(&appID); err != nil {
+			rows.Close()
+			return err
+		}
+		appIDs = append(appIDs, appID)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, appID := range appIDs {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO kv_namespaces (id, name, created_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (id) DO NOTHING`,
+			legacyKVNamespaceID(appID), legacyKVNamespaceName(appID)); err != nil {
+			return err
+		}
+		if hasAppID {
+			if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_kv
+SET kv_namespace_id = $1
+WHERE app_id = $2 AND (kv_namespace_id IS NULL OR kv_namespace_id = '')`,
+				legacyKVNamespaceID(appID), appID); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_kv WHERE kv_namespace_id IS NULL OR kv_namespace_id = ''`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE runtime_kv DROP CONSTRAINT IF EXISTS runtime_kv_pkey`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'runtime_kv_namespace_fk'
+	) THEN
+		ALTER TABLE runtime_kv
+			ADD CONSTRAINT runtime_kv_namespace_fk
+			FOREIGN KEY (kv_namespace_id) REFERENCES kv_namespaces(id);
+	END IF;
+END $$;`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE runtime_kv ALTER COLUMN kv_namespace_id SET NOT NULL`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE runtime_kv ADD PRIMARY KEY (kv_namespace_id, key)`); err != nil {
+		return err
+	}
+	if hasAppID {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE runtime_kv DROP COLUMN app_id`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (p *Postgres) migrateRuntimeTokens(ctx context.Context) error {
@@ -196,6 +296,42 @@ func (p *Postgres) CreateApp(app nanoflare.App) error {
 	return err
 }
 
+func (p *Postgres) CreateKVNamespace(namespace nanoflare.KVNamespace) error {
+	_, err := p.db.Exec(`INSERT INTO kv_namespaces (id, name, created_at) VALUES ($1, $2, $3)`,
+		namespace.ID, namespace.Name, namespace.CreatedAt)
+	if isUniqueViolation(err) {
+		return nanoflare.ErrKVNamespaceExists
+	}
+	return err
+}
+
+func (p *Postgres) ListKVNamespaces() ([]nanoflare.KVNamespace, error) {
+	rows, err := p.db.Query(`SELECT id, name, created_at FROM kv_namespaces ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var namespaces []nanoflare.KVNamespace
+	for rows.Next() {
+		var namespace nanoflare.KVNamespace
+		if err := rows.Scan(&namespace.ID, &namespace.Name, &namespace.CreatedAt); err != nil {
+			return nil, err
+		}
+		namespaces = append(namespaces, namespace)
+	}
+	return namespaces, rows.Err()
+}
+
+func (p *Postgres) GetKVNamespace(namespaceID string) (nanoflare.KVNamespace, error) {
+	var namespace nanoflare.KVNamespace
+	err := p.db.QueryRow(`SELECT id, name, created_at FROM kv_namespaces WHERE id = $1`, namespaceID).
+		Scan(&namespace.ID, &namespace.Name, &namespace.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.KVNamespace{}, nanoflare.ErrKVNamespaceNotFound
+	}
+	return namespace, err
+}
+
 func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 	rows, err := p.db.Query(`SELECT id, name, hostname, auth, runtime_token, created_at FROM apps ORDER BY id`)
 	if err != nil {
@@ -242,9 +378,6 @@ func (p *Postgres) DeleteApp(appID string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM runtime_kv WHERE app_id = $1`, appID); err != nil {
-		return err
-	}
 	if _, err := tx.Exec(`DELETE FROM deployments WHERE app_id = $1`, appID); err != nil {
 		return err
 	}
@@ -258,6 +391,42 @@ func (p *Postgres) DeleteApp(appID string) error {
 	}
 	if deleted == 0 {
 		return nanoflare.ErrAppNotFound
+	}
+	return tx.Commit()
+}
+
+func (p *Postgres) DeleteKVNamespace(namespaceID string) error {
+	var inUse bool
+	err := p.db.QueryRow(`
+SELECT EXISTS (
+	SELECT 1
+	FROM deployments d, jsonb_array_elements(d.kv_namespaces) AS binding
+	WHERE binding->>'id' = $1
+)`, namespaceID).Scan(&inUse)
+	if err != nil {
+		return err
+	}
+	if inUse {
+		return nanoflare.ErrKVNamespaceInUse
+	}
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM runtime_kv WHERE kv_namespace_id = $1`, namespaceID); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM kv_namespaces WHERE id = $1`, namespaceID)
+	if err != nil {
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
+		return nanoflare.ErrKVNamespaceNotFound
 	}
 	return tx.Commit()
 }
@@ -292,10 +461,10 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, app_id, files, assets, entrypoint, format, compatibility_date, asset_config, bundle_size, object_key, port, created_at, active)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)`,
+	(id, app_id, files, assets, entrypoint, format, compatibility_date, kv_namespaces, asset_config, bundle_size, object_key, port, created_at, active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)`,
 		deployment.ID, deployment.AppID, files, assets, deployment.Entrypoint, deployment.Format,
-		deployment.CompatibilityDate, mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
+		deployment.CompatibilityDate, mustJSON(deployment.KVNamespaces), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
 		return nanoflare.ErrAppNotFound
 	}
@@ -339,7 +508,7 @@ func (p *Postgres) DeleteDeployment(id string) error {
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
-	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
+	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.kv_namespaces, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
 WHERE d.active
@@ -351,11 +520,11 @@ ORDER BY a.id`)
 	var active []nanoflare.ActiveDeployment
 	for rows.Next() {
 		var item nanoflare.ActiveDeployment
-		var files, assets, assetConfig, auth []byte
+		var files, assets, kvNamespaces, assetConfig, auth []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &assetConfig, &item.Deployment.BundleSize,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &kvNamespaces, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt,
 		)
@@ -371,6 +540,9 @@ ORDER BY a.id`)
 		if err := json.Unmarshal(assets, &item.Deployment.Assets); err != nil {
 			return nil, err
 		}
+		if err := json.Unmarshal(kvNamespaces, &item.Deployment.KVNamespaces); err != nil {
+			return nil, err
+		}
 		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {
 			return nil, err
 		}
@@ -382,7 +554,7 @@ ORDER BY a.id`)
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
 	SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
-		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
+		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.kv_namespaces, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
 	ORDER BY d.created_at DESC`)
@@ -393,11 +565,11 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	var records []nanoflare.DeploymentRecord
 	for rows.Next() {
 		var item nanoflare.DeploymentRecord
-		var assets, assetConfig, auth []byte
+		var assets, kvNamespaces, assetConfig, auth []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &assetConfig, &item.Deployment.BundleSize,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &kvNamespaces, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.Active,
 		)
@@ -408,6 +580,9 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &item.App.Auth); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(kvNamespaces, &item.Deployment.KVNamespaces); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {
@@ -427,25 +602,29 @@ func (p *Postgres) AppIDForCapability(capability string) (string, error) {
 	return appID, err
 }
 
-func (p *Postgres) KVGet(capability, key string) ([]byte, bool, error) {
-	appID, err := p.AppIDForCapability(capability)
-	if err != nil {
+func (p *Postgres) KVGet(capability, namespaceID, key string) ([]byte, bool, error) {
+	if _, err := p.AppIDForCapability(capability); err != nil {
+		return nil, false, err
+	}
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return nil, false, err
 	}
 	var value []byte
-	err = p.db.QueryRow(`SELECT value FROM runtime_kv WHERE app_id = $1 AND key = $2`, appID, key).Scan(&value)
+	err := p.db.QueryRow(`SELECT value FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
 	return value, err == nil, err
 }
 
-func (p *Postgres) KVList(capability string) ([]nanoflare.WorkerKVKey, error) {
-	appID, err := p.AppIDForCapability(capability)
-	if err != nil {
+func (p *Postgres) KVList(capability, namespaceID string) ([]nanoflare.WorkerKVKey, error) {
+	if _, err := p.AppIDForCapability(capability); err != nil {
 		return nil, err
 	}
-	rows, err := p.db.Query(`SELECT key, octet_length(value) FROM runtime_kv WHERE app_id = $1 ORDER BY key`, appID)
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return nil, err
+	}
+	rows, err := p.db.Query(`SELECT key, octet_length(value) FROM runtime_kv WHERE kv_namespace_id = $1 ORDER BY key`, namespaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -461,14 +640,16 @@ func (p *Postgres) KVList(capability string) ([]nanoflare.WorkerKVKey, error) {
 	return keys, rows.Err()
 }
 
-func (p *Postgres) KVPut(capability, key string, value []byte) error {
-	appID, err := p.AppIDForCapability(capability)
-	if err != nil {
+func (p *Postgres) KVPut(capability, namespaceID, key string, value []byte) error {
+	if _, err := p.AppIDForCapability(capability); err != nil {
 		return err
 	}
-	_, err = p.db.Exec(`
-INSERT INTO runtime_kv (app_id, key, value) VALUES ($1, $2, $3)
-ON CONFLICT (app_id, key) DO UPDATE SET value = EXCLUDED.value`, appID, key, value)
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO runtime_kv (kv_namespace_id, key, value) VALUES ($1, $2, $3)
+ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value`, namespaceID, key, value)
 	return err
 }
 
@@ -480,12 +661,14 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(value), nil
 }
 
-func (p *Postgres) KVDelete(capability, key string) error {
-	appID, err := p.AppIDForCapability(capability)
-	if err != nil {
+func (p *Postgres) KVDelete(capability, namespaceID, key string) error {
+	if _, err := p.AppIDForCapability(capability); err != nil {
 		return err
 	}
-	_, err = p.db.Exec(`DELETE FROM runtime_kv WHERE app_id = $1 AND key = $2`, appID, key)
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`DELETE FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key)
 	return err
 }
 
@@ -511,4 +694,24 @@ func sqlState(err error) string {
 func mustJSON(value any) []byte {
 	data, _ := json.Marshal(value)
 	return data
+}
+
+func (p *Postgres) columnExists(ctx context.Context, table, column string) (bool, error) {
+	var exists bool
+	err := p.db.QueryRowContext(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM information_schema.columns
+	WHERE table_schema = current_schema()
+		AND table_name = $1
+		AND column_name = $2
+)`, table, column).Scan(&exists)
+	return exists, err
+}
+
+func legacyKVNamespaceID(appID string) string {
+	return "legacy-" + appID
+}
+
+func legacyKVNamespaceName(appID string) string {
+	return "legacy-" + appID
 }

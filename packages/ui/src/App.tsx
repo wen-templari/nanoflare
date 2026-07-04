@@ -16,7 +16,8 @@ type Section = "overview" | "workers" | "monitoring";
 type WorkerAuth = { protected_routes?: string[] };
 type Worker = { id: string; name: string; hostname: string; created_at: string; auth?: WorkerAuth; status?: "live" | "draft"; requests?: string; deployment?: string };
 type WorkerDetailTab = "files" | "kv" | "config" | "deployments" | "output";
-type WorkerDeployment = { id: string; entrypoint: string; bundle_size: number; compatibility_date: string; created_at: string };
+type WorkerKVNamespaceBinding = { binding: string; id: string; preview_id?: string };
+type WorkerDeployment = { id: string; entrypoint: string; bundle_size: number; compatibility_date: string; created_at: string; kv_namespaces?: WorkerKVNamespaceBinding[] };
 type WorkerDetailData = { app: Worker; deployment?: WorkerDeployment };
 type ConsoleDeployment = { id: string; app_id: string; app_name: string; hostname: string; entrypoint: string; bundle_size: number; compatibility_date: string; state: "active" | "inactive"; created_at: string };
 type WorkerFile = { name: string; path: string; size: number; content: string };
@@ -353,7 +354,7 @@ function WorkerDetail({ worker, onBack, notify, apiConnected }: { worker: Worker
             <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#a1a49e]">{tab === "deployments" ? "revision ledger" : tab === "kv" ? "key lookup" : "bundle / latest"}</p>
           </header>
           {tab === "files" && <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />}
-          {tab === "kv" && <WorkerKV workerID={worker.id} notify={notify} />}
+          {tab === "kv" && <WorkerKV workerID={worker.id} deployment={detail?.deployment} notify={notify} />}
           {tab === "config" && <WorkerConfig detail={detail} apiConnected={apiConnected} notify={notify} />}
           {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
           {tab === "output" && <WorkerOutput lines={output} />}
@@ -412,18 +413,33 @@ function WorkerConfig({ detail, apiConnected, notify }: { detail?: WorkerDetailD
   return <div className="p-5"><div className="mb-5 flex items-center gap-3 rounded-lg border border-[#dce2d9] bg-[#eef4ed] px-4 py-3 text-xs font-bold text-[#4d7057]"><Check className="size-4" />Configuration loaded from the active deployment.</div><div className="overflow-hidden rounded-lg border border-[#e2ddd2]">{rows.map(([label, value]) => <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"><span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#93978f]">{label}</span><span className="font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span></div>)}</div><div className="mt-5 rounded-lg border border-[#e2ddd2] bg-white/50 p-4"><div className="mb-2 flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#7f857e]">Protected routes</p><Button type="button" onClick={() => void saveRoutes()} disabled={saving}><Save className="size-3.5" />Save routes</Button></div><p className="mb-3 text-xs text-[#6f766f]">One absolute path per line. Example: <span className="font-mono">/admin/*</span></p><textarea value={protectedRoutes} onChange={(event) => setProtectedRoutes(event.target.value)} spellCheck={false} className="min-h-40 w-full rounded-md border border-[#d6d0c3] bg-[#fdfbf6] p-3 font-mono text-[11px] leading-6 text-[#35413e] outline-none" placeholder="/admin/*&#10;/api/private/*" /></div></div>;
 }
 
-function WorkerKV({ workerID, notify }: { workerID: string; notify: (text: string) => void }) {
+function WorkerKV({ workerID, deployment, notify }: { workerID: string; deployment?: WorkerDeployment; notify: (text: string) => void }) {
   const [keys, setKeys] = useState<WorkerKVKey[]>([]);
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const path = key.trim() ? `/v1/apps/${workerID}/kv/${encodeURIComponent(key.trim())}` : "";
+  const namespaces = deployment?.kv_namespaces ?? [];
+  const [namespaceID, setNamespaceID] = useState("");
+  const namespaceBase = namespaceID ? `/v1/apps/${workerID}/kv/namespaces/${encodeURIComponent(namespaceID)}` : "";
+  const path = key.trim() && namespaceBase ? `${namespaceBase}/${encodeURIComponent(key.trim())}` : "";
+
+  useEffect(() => {
+    setNamespaceID((current) => current && namespaces.some((namespace) => namespace.id === current) ? current : (namespaces[0]?.id ?? ""));
+    setKeys([]);
+    setKey("");
+    setValue("");
+  }, [workerID, deployment?.id]);
 
   async function refreshKeys() {
+    if (!namespaceBase) {
+      setKeys([]);
+      setStatus(namespaces.length ? "Select a KV namespace" : "No KV namespaces bound");
+      return;
+    }
     setLoading(true); setStatus("");
     try {
-      setKeys(await fetchJSON<WorkerKVKey[]>(`/v1/apps/${workerID}/kv`));
+      setKeys(await fetchJSON<WorkerKVKey[]>(namespaceBase));
       setStatus("Keys refreshed");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "KV list failed");
@@ -433,11 +449,11 @@ function WorkerKV({ workerID, notify }: { workerID: string; notify: (text: strin
   }
 
   async function readKey(nextKey = key.trim()) {
-    if (!nextKey) return;
+    if (!nextKey || !namespaceBase) return;
     setLoading(true); setStatus("");
     try {
       setKey(nextKey);
-      const response = await fetch(`/v1/apps/${workerID}/kv/${encodeURIComponent(nextKey)}`);
+      const response = await fetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`);
       if (response.status === 404) {
         setValue(""); setStatus("Key not found");
         return;
@@ -454,7 +470,7 @@ function WorkerKV({ workerID, notify }: { workerID: string; notify: (text: strin
 
   useEffect(() => {
     void refreshKeys();
-  }, [workerID]);
+  }, [workerID, namespaceBase]);
 
   async function writeKey() {
     if (!path) return;
@@ -463,7 +479,7 @@ function WorkerKV({ workerID, notify }: { workerID: string; notify: (text: strin
       const response = await fetch(path, { method: "PUT", body: value });
       if (!response.ok) throw new Error(`KV write failed (${response.status})`);
       setStatus("Value saved");
-      setKeys(await fetchJSON<WorkerKVKey[]>(`/v1/apps/${workerID}/kv`));
+      setKeys(await fetchJSON<WorkerKVKey[]>(namespaceBase));
       notify(`${key.trim()} saved`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "KV write failed");
@@ -480,7 +496,7 @@ function WorkerKV({ workerID, notify }: { workerID: string; notify: (text: strin
       if (!response.ok) throw new Error(`KV delete failed (${response.status})`);
       setValue("");
       setStatus("Key deleted");
-      setKeys(await fetchJSON<WorkerKVKey[]>(`/v1/apps/${workerID}/kv`));
+      setKeys(await fetchJSON<WorkerKVKey[]>(namespaceBase));
       notify(`${key.trim()} deleted`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "KV delete failed");
@@ -495,6 +511,12 @@ function WorkerKV({ workerID, notify }: { workerID: string; notify: (text: strin
         <div className="flex items-center justify-between px-4 pb-2">
           <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-[#a0a39c]">KV keys</p>
           <Button type="button" variant="ghost" size="icon" aria-label="Refresh KV keys" onClick={() => void refreshKeys()} disabled={loading}><RefreshCw className={cn("size-3.5", loading && "animate-spin")} /></Button>
+        </div>
+        <div className="px-4 pb-3">
+          <select value={namespaceID} onChange={(event) => setNamespaceID(event.target.value)} className="w-full rounded-md border border-[#d6d0c3] bg-white/75 px-3 py-2 font-mono text-[10px] text-[#4c5853] outline-none" disabled={!namespaces.length}>
+            {!namespaces.length && <option value="">No KV namespaces</option>}
+            {namespaces.map((namespace) => <option key={namespace.id} value={namespace.id}>{namespace.binding}</option>)}
+          </select>
         </div>
         <button onClick={() => { setKey(""); setValue(""); setStatus("Ready for a new key"); }} className="flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] font-bold text-[#68716c] transition hover:bg-white/60"><Plus className="size-3.5 text-[#d75a41]" />new key</button>
         {keys.map((item) => (

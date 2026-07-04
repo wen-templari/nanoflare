@@ -394,6 +394,49 @@ func TestDeleteAppRemovesDeploymentsAndCapability(t *testing.T) {
 	}
 }
 
+func TestDeployRejectsUnknownKVNamespace(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2025-12-10",
+		KVNamespaces:      []KVBinding{{Binding: "KV", ID: "missing"}},
+	})
+	if !errors.Is(err, ErrKVNamespaceNotFound) {
+		t.Fatalf("error = %v, want ErrKVNamespaceNotFound", err)
+	}
+}
+
+func TestDeployRejectsDuplicateKVBindings(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2025-12-10",
+		KVNamespaces: []KVBinding{
+			{Binding: "KV", ID: first.ID},
+			{Binding: "KV", ID: second.ID},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("error = %v, want duplicate binding error", err)
+	}
+}
+
 type recordingWriter struct{}
 
 func (w *recordingWriter) Write([]ActiveDeployment) error {

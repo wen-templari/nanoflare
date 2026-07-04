@@ -28,6 +28,7 @@ type Deployment struct {
 	Entrypoint        string       `json:"entrypoint"`
 	Format            string       `json:"format"`
 	CompatibilityDate string       `json:"compatibility_date"`
+	KVNamespaces      []KVBinding  `json:"kv_namespaces,omitempty"`
 	AssetConfig       AssetConfig  `json:"asset_config,omitempty"`
 	BundleSize        int64        `json:"-"`
 	ObjectKey         string       `json:"-"`
@@ -52,6 +53,10 @@ type CreateAppInput struct {
 	Auth     AuthConfig `json:"auth,omitempty"`
 }
 
+type CreateKVNamespaceInput struct {
+	Name string `json:"name"`
+}
+
 type UpdateAppInput struct {
 	Auth *AuthConfig `json:"auth,omitempty"`
 }
@@ -62,6 +67,7 @@ type DeployInput struct {
 	Entrypoint        string       `json:"entrypoint,omitempty"`
 	Format            string       `json:"format,omitempty"`
 	CompatibilityDate string       `json:"compatibility_date"`
+	KVNamespaces      []KVBinding  `json:"kv_namespaces,omitempty"`
 	AssetConfig       AssetConfig  `json:"asset_config,omitempty"`
 }
 
@@ -72,6 +78,7 @@ type WorkerDeployment struct {
 	BundleSize        int64       `json:"bundle_size"`
 	AssetCount        int         `json:"asset_count,omitempty"`
 	CompatibilityDate string      `json:"compatibility_date"`
+	KVNamespaces      []KVBinding `json:"kv_namespaces,omitempty"`
 	AssetConfig       AssetConfig `json:"asset_config,omitempty"`
 	Port              int         `json:"port"`
 	CreatedAt         time.Time   `json:"created_at"`
@@ -116,6 +123,18 @@ type AssetConfig struct {
 	HTMLHandling     string         `json:"html_handling,omitempty"`
 	NotFoundHandling string         `json:"not_found_handling,omitempty"`
 	RunWorkerFirst   RunWorkerFirst `json:"run_worker_first,omitempty"`
+}
+
+type KVBinding struct {
+	Binding   string `json:"binding"`
+	ID        string `json:"id"`
+	PreviewID string `json:"preview_id,omitempty"`
+}
+
+type KVNamespace struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type RunWorkerFirst []string

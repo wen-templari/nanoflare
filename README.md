@@ -20,8 +20,8 @@ The current repository is the first runnable integration slice of `nanoflared`. 
 - Managed `workerd` pool generations with readiness checks and blue-green traffic
   replacement.
 - App-scoped runtime KV capabilities with PostgreSQL persistence when configured.
-- A native `env.KV` binding for each worker with core `get`, `put`, and `delete`
-  operations.
+- Explicit Cloudflare-style KV namespace bindings with native `env.BINDING`
+  `get`, `put`, and `delete` operations.
 - A Cloudflare-style static assets binding for deployed assets through
   `env.ASSETS.fetch(...)`.
 - A Cloudflare R2-style `env.OBJECTS` binding with core `put`, `get`, `head`, and `delete` operations backed by MinIO.
@@ -155,17 +155,38 @@ discovery, and then stops the previous generation. In direct mode,
 
 Deployments store worker file content, not host filesystem paths. New projects
 use ES-module syntax and set `"format": "modules"` in `nanoflare.json`, so their
-handler receives bindings through `env`, including `env.KV` and `env.OBJECTS`. Existing projects
-without an explicit format remain compatible: one file uses service-worker
-syntax and multiple files use ES-module syntax.
+handler receives bindings through `env`, including any configured KV bindings
+and `env.OBJECTS`. Existing projects without an explicit format remain
+compatible: one file uses service-worker syntax and multiple files use
+ES-module syntax.
 
-The native KV binding is app-scoped:
+KV namespaces are explicit and follow Cloudflare's `kv_namespaces` pattern. Create
+namespaces first:
+
+```sh
+nanoflare kv namespace create sessions
+nanoflare kv namespace create cache
+nanoflare kv namespace list
+```
+
+Then bind them in `nanoflare.json`:
+
+```json
+{
+  "kv_namespaces": [
+    { "binding": "SESSIONS", "id": "kvns_sessions" },
+    { "binding": "CACHE", "id": "kvns_cache" }
+  ]
+}
+```
+
+Each binding is native inside the Worker:
 
 ```js
 export default {
   async fetch(request, env) {
-    await env.KV.put("message", "hello");
-    return new Response(await env.KV.get("message"));
+    await env.SESSIONS.put("message", "hello");
+    return new Response(await env.SESSIONS.get("message"));
   },
 };
 ```

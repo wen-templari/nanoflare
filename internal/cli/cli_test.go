@@ -323,6 +323,43 @@ func TestCreateReportsNanoflareError(t *testing.T) {
 	}
 }
 
+func TestKVNamespaceCommands(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	var created nanoflare.CreateKVNamespaceInput
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/kv/namespaces":
+			decodeRequest(t, r, &created)
+			writeJSON(t, w, http.StatusCreated, nanoflare.KVNamespace{ID: "kvns-123", Name: created.Name})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/kv/namespaces":
+			writeJSON(t, w, http.StatusOK, []nanoflare.KVNamespace{{ID: "kvns-123", Name: "sessions"}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/kv/namespaces/kvns-123":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"kv", "namespace", "create", "--api-url", server.URL, "sessions"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"kv", "namespace", "list", "--api-url", server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"kv", "namespace", "delete", "--api-url", server.URL, "kvns-123"}); err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != "sessions" {
+		t.Fatalf("create payload = %#v", created)
+	}
+	if got := stdout.String(); got != "Created KV namespace kvns-123\tsessions\nkvns-123\tsessions\nDeleted KV namespace kvns-123\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func withWorkingDirectory(t *testing.T, dir string) {
 	t.Helper()
 	previous, err := os.Getwd()

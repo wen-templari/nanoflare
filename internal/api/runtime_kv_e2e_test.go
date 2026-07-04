@@ -30,6 +30,10 @@ func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := nanoflare.NewService(store, discardWriter{})
+	namespace, err := service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{Name: "native-kv"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	runtimeServer := httptest.NewServer(api.NewRuntimeKVServer(service))
 	defer runtimeServer.Close()
 
@@ -43,6 +47,7 @@ func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
 			Entrypoint:        "worker.js",
 			Format:            "modules",
 			CompatibilityDate: "2025-12-10",
+			KVNamespaces:      []nanoflare.KVBinding{{Binding: "KV", ID: namespace.ID}},
 			Port:              port,
 			CreatedAt:         time.Now().UTC(),
 		},

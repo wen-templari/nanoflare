@@ -36,16 +36,17 @@ type Runner struct {
 }
 
 type Project struct {
-	Name              string        `json:"name"`
-	Hostname          string        `json:"hostname"`
-	AppID             string        `json:"app_id,omitempty"`
-	APIURL            string        `json:"api_url"`
-	Entrypoint        string        `json:"entrypoint"`
-	Format            string        `json:"format,omitempty"`
-	CompatibilityDate string        `json:"compatibility_date"`
-	Files             []string      `json:"files"`
-	Assets            ProjectAssets `json:"assets,omitempty"`
-	Auth              ProjectAuth   `json:"auth,omitempty"`
+	Name              string                `json:"name"`
+	Hostname          string                `json:"hostname"`
+	AppID             string                `json:"app_id,omitempty"`
+	APIURL            string                `json:"api_url"`
+	Entrypoint        string                `json:"entrypoint"`
+	Format            string                `json:"format,omitempty"`
+	CompatibilityDate string                `json:"compatibility_date"`
+	Files             []string              `json:"files"`
+	KVNamespaces      []nanoflare.KVBinding `json:"kv_namespaces,omitempty"`
+	Assets            ProjectAssets         `json:"assets,omitempty"`
+	Auth              ProjectAuth           `json:"auth,omitempty"`
 }
 
 type ProjectAssets struct {
@@ -85,6 +86,8 @@ func (r *Runner) Run(args []string) error {
 		return r.delete(withoutWorkerNoun(args[1:]))
 	case "deploy":
 		return r.deploy(withoutWorkerNoun(args[1:]))
+	case "kv":
+		return r.kv(args[1:])
 	case "help", "-h", "--help":
 		r.usage()
 		return nil
@@ -294,6 +297,7 @@ func (r *Runner) deploy(args []string) error {
 		Entrypoint:        project.Entrypoint,
 		Format:            project.Format,
 		CompatibilityDate: date,
+		KVNamespaces:      append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,
@@ -478,6 +482,99 @@ func withoutWorkerNoun(args []string) []string {
 	return args
 }
 
+func (r *Runner) kv(args []string) error {
+	if len(args) == 0 {
+		r.usage()
+		return errors.New("kv command is required")
+	}
+	switch args[0] {
+	case "namespace":
+		return r.kvNamespace(args[1:])
+	default:
+		r.usage()
+		return fmt.Errorf("unknown kv command %q", args[0])
+	}
+}
+
+func (r *Runner) kvNamespace(args []string) error {
+	if len(args) == 0 {
+		r.usage()
+		return errors.New("kv namespace command is required")
+	}
+	switch args[0] {
+	case "create":
+		return r.kvNamespaceCreate(args[1:])
+	case "list":
+		return r.kvNamespaceList(args[1:])
+	case "delete":
+		return r.kvNamespaceDelete(args[1:])
+	default:
+		r.usage()
+		return fmt.Errorf("unknown kv namespace command %q", args[0])
+	}
+}
+
+func (r *Runner) kvNamespaceCreate(args []string) error {
+	flags := flag.NewFlagSet("kv namespace create", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare kv namespace create [flags] <name>")
+	}
+	var namespace nanoflare.KVNamespace
+	if err := r.request(http.MethodPost, strings.TrimRight(*apiURL, "/")+"/v1/kv/namespaces", nanoflare.CreateKVNamespaceInput{
+		Name: flags.Arg(0),
+	}, &namespace); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Created KV namespace %s\t%s\n", namespace.ID, namespace.Name)
+	return nil
+}
+
+func (r *Runner) kvNamespaceList(args []string) error {
+	flags := flag.NewFlagSet("kv namespace list", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: nanoflare kv namespace list [flags]")
+	}
+	var namespaces []nanoflare.KVNamespace
+	if err := r.request(http.MethodGet, strings.TrimRight(*apiURL, "/")+"/v1/kv/namespaces", nil, &namespaces); err != nil {
+		return err
+	}
+	for _, namespace := range namespaces {
+		fmt.Fprintf(r.Stdout, "%s\t%s\n", namespace.ID, namespace.Name)
+	}
+	return nil
+}
+
+func (r *Runner) kvNamespaceDelete(args []string) error {
+	flags := flag.NewFlagSet("kv namespace delete", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare kv namespace delete [flags] <namespace-id>")
+	}
+	namespaceID := strings.TrimSpace(flags.Arg(0))
+	if namespaceID == "" {
+		return errors.New("namespace id is required")
+	}
+	if err := r.request(http.MethodDelete, strings.TrimRight(*apiURL, "/")+"/v1/kv/namespaces/"+namespaceID, nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Deleted KV namespace %s\n", namespaceID)
+	return nil
+}
+
 func slug(value string) string {
 	var result strings.Builder
 	dash := false
@@ -499,5 +596,8 @@ func (r *Runner) usage() {
   nanoflare create [worker] [flags]
   nanoflare list [worker] [flags]
   nanoflare delete [worker] [app-id] [flags]
-  nanoflare deploy [worker] [flags]`)
+  nanoflare deploy [worker] [flags]
+  nanoflare kv namespace create [flags] <name>
+  nanoflare kv namespace list [flags]
+  nanoflare kv namespace delete [flags] <namespace-id>`)
 }

@@ -7,10 +7,14 @@ import (
 )
 
 var (
-	ErrAppExists         = errors.New("app already exists")
-	ErrAppNotFound       = errors.New("app not found")
-	ErrInvalidCapability = errors.New("invalid runtime capability")
-	ErrObjectNotFound    = errors.New("object not found")
+	ErrAppExists           = errors.New("app already exists")
+	ErrAppNotFound         = errors.New("app not found")
+	ErrInvalidCapability   = errors.New("invalid runtime capability")
+	ErrObjectNotFound      = errors.New("object not found")
+	ErrKVNamespaceExists   = errors.New("kv namespace already exists")
+	ErrKVNamespaceNotFound = errors.New("kv namespace not found")
+	ErrKVNamespaceInUse    = errors.New("kv namespace is still referenced by a deployment")
+	ErrKVNamespaceNotBound = errors.New("kv namespace is not bound by the app's active deployment")
 )
 
 type Repository interface {
@@ -18,6 +22,10 @@ type Repository interface {
 	ListApps() ([]App, error)
 	UpdateApp(App) error
 	DeleteApp(string) error
+	CreateKVNamespace(KVNamespace) error
+	ListKVNamespaces() ([]KVNamespace, error)
+	GetKVNamespace(string) (KVNamespace, error)
+	DeleteKVNamespace(string) error
 	NextPort() (int, error)
 	Activate(Deployment) error
 	DeleteDeployment(id string) error
@@ -25,15 +33,16 @@ type Repository interface {
 	ActiveDeployments() ([]ActiveDeployment, error)
 	ListDeployments() ([]DeploymentRecord, error)
 	AppIDForCapability(string) (string, error)
-	KVList(capability string) ([]WorkerKVKey, error)
-	KVGet(capability, key string) ([]byte, bool, error)
-	KVPut(capability, key string, value []byte) error
-	KVDelete(capability, key string) error
+	KVList(capability, namespaceID string) ([]WorkerKVKey, error)
+	KVGet(capability, namespaceID, key string) ([]byte, bool, error)
+	KVPut(capability, namespaceID, key string, value []byte) error
+	KVDelete(capability, namespaceID, key string) error
 }
 
 type Store struct {
 	mu              sync.RWMutex
 	apps            map[string]App
+	kvNamespaces    map[string]KVNamespace
 	deployments     map[string][]Deployment
 	active          map[string]string
 	capabilityToApp map[string]string
@@ -43,6 +52,7 @@ type Store struct {
 func NewStore() *Store {
 	return &Store{
 		apps:            make(map[string]App),
+		kvNamespaces:    make(map[string]KVNamespace),
 		deployments:     make(map[string][]Deployment),
 		active:          make(map[string]string),
 		capabilityToApp: make(map[string]string),
@@ -105,8 +115,63 @@ func (s *Store) DeleteApp(appID string) error {
 	delete(s.apps, appID)
 	delete(s.deployments, appID)
 	delete(s.active, appID)
-	delete(s.kv, appID)
 	delete(s.capabilityToApp, app.RuntimeToken)
+	return nil
+}
+
+func (s *Store) CreateKVNamespace(namespace KVNamespace) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.kvNamespaces[namespace.ID]; exists {
+		return ErrKVNamespaceExists
+	}
+	for _, existing := range s.kvNamespaces {
+		if existing.Name == namespace.Name {
+			return ErrKVNamespaceExists
+		}
+	}
+	s.kvNamespaces[namespace.ID] = namespace
+	return nil
+}
+
+func (s *Store) ListKVNamespaces() ([]KVNamespace, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	namespaces := make([]KVNamespace, 0, len(s.kvNamespaces))
+	for _, namespace := range s.kvNamespaces {
+		namespaces = append(namespaces, namespace)
+	}
+	sort.Slice(namespaces, func(i, j int) bool { return namespaces[i].Name < namespaces[j].Name })
+	return namespaces, nil
+}
+
+func (s *Store) GetKVNamespace(namespaceID string) (KVNamespace, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	namespace, ok := s.kvNamespaces[namespaceID]
+	if !ok {
+		return KVNamespace{}, ErrKVNamespaceNotFound
+	}
+	return namespace, nil
+}
+
+func (s *Store) DeleteKVNamespace(namespaceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return ErrKVNamespaceNotFound
+	}
+	for _, deployments := range s.deployments {
+		for _, deployment := range deployments {
+			for _, binding := range deployment.KVNamespaces {
+				if binding.ID == namespaceID {
+					return ErrKVNamespaceInUse
+				}
+			}
+		}
+	}
+	delete(s.kvNamespaces, namespaceID)
+	delete(s.kv, namespaceID)
 	return nil
 }
 
@@ -217,53 +282,61 @@ func (s *Store) AppIDForCapability(capability string) (string, error) {
 	return appID, nil
 }
 
-func (s *Store) KVGet(capability, key string) ([]byte, bool, error) {
+func (s *Store) KVGet(capability, namespaceID, key string) ([]byte, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	appID, ok := s.capabilityToApp[capability]
-	if !ok {
+	if _, ok := s.capabilityToApp[capability]; !ok {
 		return nil, false, ErrInvalidCapability
 	}
-	value, ok := s.kv[appID][key]
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return nil, false, ErrKVNamespaceNotFound
+	}
+	value, ok := s.kv[namespaceID][key]
 	return append([]byte(nil), value...), ok, nil
 }
 
-func (s *Store) KVList(capability string) ([]WorkerKVKey, error) {
+func (s *Store) KVList(capability, namespaceID string) ([]WorkerKVKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	appID, ok := s.capabilityToApp[capability]
-	if !ok {
+	if _, ok := s.capabilityToApp[capability]; !ok {
 		return nil, ErrInvalidCapability
 	}
-	items := make([]WorkerKVKey, 0, len(s.kv[appID]))
-	for key, value := range s.kv[appID] {
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return nil, ErrKVNamespaceNotFound
+	}
+	items := make([]WorkerKVKey, 0, len(s.kv[namespaceID]))
+	for key, value := range s.kv[namespaceID] {
 		items = append(items, WorkerKVKey{Key: key, Size: int64(len(value))})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
 	return items, nil
 }
 
-func (s *Store) KVPut(capability, key string, value []byte) error {
+func (s *Store) KVPut(capability, namespaceID, key string, value []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	appID, ok := s.capabilityToApp[capability]
-	if !ok {
+	if _, ok := s.capabilityToApp[capability]; !ok {
 		return ErrInvalidCapability
 	}
-	if s.kv[appID] == nil {
-		s.kv[appID] = make(map[string][]byte)
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return ErrKVNamespaceNotFound
 	}
-	s.kv[appID][key] = append([]byte(nil), value...)
+	if s.kv[namespaceID] == nil {
+		s.kv[namespaceID] = make(map[string][]byte)
+	}
+	s.kv[namespaceID][key] = append([]byte(nil), value...)
 	return nil
 }
 
-func (s *Store) KVDelete(capability, key string) error {
+func (s *Store) KVDelete(capability, namespaceID, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	appID, ok := s.capabilityToApp[capability]
-	if !ok {
+	if _, ok := s.capabilityToApp[capability]; !ok {
 		return ErrInvalidCapability
 	}
-	delete(s.kv[appID], key)
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return ErrKVNamespaceNotFound
+	}
+	delete(s.kv[namespaceID], key)
 	return nil
 }

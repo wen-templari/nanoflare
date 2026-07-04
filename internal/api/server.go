@@ -79,6 +79,9 @@ func (s *Server) routes() {
 	})
 	s.mux.HandleFunc("GET /v1/apps", s.listApps)
 	s.mux.HandleFunc("POST /v1/apps", s.createApp)
+	s.mux.HandleFunc("GET /v1/kv/namespaces", s.listKVNamespaces)
+	s.mux.HandleFunc("POST /v1/kv/namespaces", s.createKVNamespace)
+	s.mux.HandleFunc("DELETE /v1/kv/namespaces/{namespaceID}", s.deleteKVNamespace)
 	s.mux.HandleFunc("PATCH /v1/apps/{appID}", s.updateApp)
 	s.mux.HandleFunc("DELETE /v1/apps/{appID}", s.deleteApp)
 	s.mux.HandleFunc("GET /v1/apps/{appID}", s.workerDetail)
@@ -87,10 +90,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/traffic", s.workerTraffic)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("POST /v1/apps/{appID}/deployments", s.deploy)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/kv", s.workerKVList)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/{key...}", s.workerKVGet)
-	s.mux.HandleFunc("PUT /v1/apps/{appID}/kv/{key...}", s.workerKVPut)
-	s.mux.HandleFunc("DELETE /v1/apps/{appID}/kv/{key...}", s.workerKVDelete)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/namespaces/{namespaceID}", s.workerKVList)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVGet)
+	s.mux.HandleFunc("PUT /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVPut)
+	s.mux.HandleFunc("DELETE /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVDelete)
 	s.mux.HandleFunc("POST /v1/auth/validate", s.validateAuthToken)
 	s.mux.HandleFunc("POST /v1/auth/userinfo", s.authUserInfo)
 	s.mux.HandleFunc("GET /internal/auth/verify", s.verifyAuth)
@@ -170,7 +173,7 @@ func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {
-	keys, err := s.service.WorkerKVList(r.PathValue("appID"))
+	keys, err := s.service.WorkerKVList(r.PathValue("appID"), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -188,7 +191,7 @@ func (s *Server) workerKVGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	value, ok, err := s.service.WorkerKVGet(r.PathValue("appID"), key)
+	value, ok, err := s.service.WorkerKVGet(r.PathValue("appID"), r.PathValue("namespaceID"), key)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -218,7 +221,7 @@ func (s *Server) workerKVPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, errors.New("KV value exceeds 25 MiB limit"))
 		return
 	}
-	if err := s.service.WorkerKVPut(r.PathValue("appID"), key, value); err != nil {
+	if err := s.service.WorkerKVPut(r.PathValue("appID"), r.PathValue("namespaceID"), key, value); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -231,7 +234,38 @@ func (s *Server) workerKVDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.WorkerKVDelete(r.PathValue("appID"), key); err != nil {
+	if err := s.service.WorkerKVDelete(r.PathValue("appID"), r.PathValue("namespaceID"), key); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listKVNamespaces(w http.ResponseWriter, _ *http.Request) {
+	namespaces, err := s.service.ListKVNamespaces()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, namespaces)
+}
+
+func (s *Server) createKVNamespace(w http.ResponseWriter, r *http.Request) {
+	var input nanoflare.CreateKVNamespaceInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	namespace, err := s.service.CreateKVNamespace(input)
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, namespace)
+}
+
+func (s *Server) deleteKVNamespace(w http.ResponseWriter, r *http.Request) {
+	if err := s.service.DeleteKVNamespace(r.PathValue("namespaceID")); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -626,12 +660,24 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
+	if errors.Is(err, nanoflare.ErrKVNamespaceNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
 	writeError(w, http.StatusInternalServerError, err)
 }
 
 func writeWorkerError(w http.ResponseWriter, err error) {
 	if errors.Is(err, nanoflare.ErrAppNotFound) {
 		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrKVNamespaceNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrKVNamespaceExists) || errors.Is(err, nanoflare.ErrKVNamespaceInUse) || errors.Is(err, nanoflare.ErrKVNamespaceNotBound) {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeError(w, http.StatusInternalServerError, err)

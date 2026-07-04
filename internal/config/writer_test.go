@@ -14,6 +14,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
 			Entrypoint:        "worker.js",
 			CompatibilityDate: "2025-12-10",
+			KVNamespaces:      []nanoflare.KVBinding{{Binding: "KV", ID: "kvns-1"}},
 			Port:              9001,
 		},
 	}})
@@ -21,7 +22,9 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`address = "*:9001"`,
 		`globalThis.OBJECTS = __nanoflareWrapObjectsBinding(globalThis.OBJECTS);`,
-		`(name = "KV", kvNamespace = "kv-hello-app")`,
+		`(name = "kv-hello-app-0", external = (address = "127.0.0.1:8081"`,
+		`(name = "X-Nanoflare-KV-Namespace-ID", value = "kvns-1")`,
+		`(name = "KV", kvNamespace = "kv-hello-app-0")`,
 		`(name = "ASSETS", service = "assets-hello-app")`,
 		`(name = "OBJECTS", service = "objects-hello-app")`,
 		`(name = "X-Nanoflare-Binding", value = "assets")`,
