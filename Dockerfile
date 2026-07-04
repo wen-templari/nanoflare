@@ -23,4 +23,4 @@ RUN npm run build
 FROM scratch AS packages
 COPY --from=go-build /out/ /bin/
 COPY --from=ui-build /src/packages/ui/dist/ /ui/
-COPY packages/worker-sdk/ /packages/worker-sdk/
+COPY packages/workers-types/ /packages/workers-types/

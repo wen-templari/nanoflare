@@ -1,4 +1,17 @@
-export async function routeRequest(request, env) {
+import type { KVNamespace, NanoflareEnv } from "@nanoflare/workers-types";
+
+interface FullDemoEnv extends Omit<NanoflareEnv, "KV"> {
+  VISITS_KV: KVNamespace;
+}
+
+interface UploadMetadata {
+  key: string;
+  size: number;
+  uploaded: string;
+  contentType: string;
+}
+
+export async function routeRequest(request: Request, env: FullDemoEnv): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/preview/auth") {
     const forwardedJwt = request.headers.get("x-nanoflare-user-jwt");
@@ -21,7 +34,7 @@ export async function routeRequest(request, env) {
     await env.OBJECTS.put("uploads/latest.txt", body, {
       httpMetadata: { contentType },
     });
-    const uploaded = {
+    const uploaded: UploadMetadata = {
       key: "uploads/latest.txt",
       size: body.byteLength,
       uploaded: new Date().toISOString(),
@@ -40,7 +53,7 @@ export async function routeRequest(request, env) {
     if (!file) {
       return new Response("Not found", { status: 404 });
     }
-    const meta = await env.VISITS_KV.get("uploads:latest.txt:meta", "json");
+    const meta = await env.VISITS_KV.get<UploadMetadata>("uploads:latest.txt:meta", "json");
     return new Response(file.body, {
       headers: {
         "content-type": meta?.contentType || file.httpMetadata.contentType || "text/plain; charset=utf-8",

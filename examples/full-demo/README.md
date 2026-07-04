@@ -17,13 +17,16 @@ This example combines the main Nanoflare platform capabilities in one app:
 - `OBJECTS` stores and retrieves `uploads/latest.txt`.
 - protected routes show how Nanoflare forwards authenticated user headers into the Worker.
 
-The Worker entrypoint is [worker.js](worker.js), with route handling in [router.js](router.js).
+The source lives in [src/worker.ts](src/worker.ts) and [src/router.ts](src/router.ts).
+The compiled deploy artifacts are written to `dist/` and deployed from there.
 
 ## Setup
 
 Start Nanoflare locally, then from this directory:
 
 ```sh
+npm install
+npm run build
 nanoflare create
 nanoflare kv namespace create visits
 ```
@@ -35,6 +38,7 @@ nanoflare deploy
 ```
 
 If your local API is not at `http://127.0.0.1:8080`, either update `api_url` in `nanoflare.json` or pass `--api-url`.
+`nanoflare deploy` uploads the built files from `dist/`, so rerun `npm run build` after changing the TypeScript sources.
 
 ## Routes To Try
 
@@ -52,5 +56,6 @@ This example uses:
 - `auth.protected_routes` for `/api/files/*` and `/preview/*`
 - `assets.run_worker_first` so dynamic API and preview routes hit the Worker before static asset resolution
 - `kv_namespaces` with an explicit binding name, `VISITS_KV`
+- a local `file:` dependency on `@nanoflare/workers-types` for Worker env typing while the package is still unpublished
 
 The frontend in `public/` expects the Worker APIs above and is mainly there to make the asset and KV pieces visible immediately after deploy.

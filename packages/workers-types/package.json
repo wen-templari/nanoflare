@@ -1,0 +1,6 @@
+{
+  "name": "@nanoflare/workers-types",
+  "version": "0.0.1",
+  "private": true,
+  "types": "./index.d.ts"
+}

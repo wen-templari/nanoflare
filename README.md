@@ -25,7 +25,7 @@ The current repository is the first runnable integration slice of `nanoflared`. 
 - A Cloudflare-style static assets binding for deployed assets through
   `env.ASSETS.fetch(...)`.
 - A Cloudflare R2-style `env.OBJECTS` binding with core `put`, `get`, `head`, and `delete` operations backed by MinIO.
-- A small TypeScript worker SDK and starter Worker.
+- A starter Worker and a TypeScript types package for Worker bindings.
 
 Podman sandbox lifecycle management, OIDC validation, explicit rollback APIs,
 and runner reconciliation after an unexpected `workerd` exit remain integration
@@ -128,7 +128,9 @@ docker build --output type=local,dest=./dist .
 
 The exported artifacts include the `nanoflare`, `nanoflare-runner`, and
 `nanoflared` binaries under `dist/bin`, the web console under `dist/ui`, and the
-TypeScript Worker SDK under `dist/packages/worker-sdk`.
+TypeScript Worker binding types under `dist/packages/workers-types`.
+Use them alongside standard Worker runtime types to type `env.KV`,
+`env.ASSETS`, `env.OBJECTS`, and `env.IDENTITY` in TypeScript workers.
 
 Initialize, register, and deploy a worker:
 
