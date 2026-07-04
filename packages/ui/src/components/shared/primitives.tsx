@@ -6,8 +6,8 @@ export function PageHeading({ eyebrow, title, copy, actions }: { eyebrow: string
   return (
     <div className="animate-rise mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
       <div>
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#d75a41]">{eyebrow}</p>
-        <h1 className="font-display mt-1 text-4xl tracking-[-0.04em] text-[#26332f] md:text-5xl">{title}</h1>
+        {/* <p className="font-mono text-[10px]   text-[#d75a41]">{eyebrow}</p> */}
+        <h1 className="text-4xl text-[#26332f] md:text-5xl">{title}</h1>
         <p className="mt-2 max-w-xl text-sm leading-6 text-[#7a8079]">{copy}</p>
       </div>
       {actions}
@@ -15,16 +15,20 @@ export function PageHeading({ eyebrow, title, copy, actions }: { eyebrow: string
   );
 }
 
-export function Panel({ title, eyebrow, children, flush = false }: { title: string; eyebrow: string; children: ReactNode; flush?: boolean }) {
+export function Panel({ title, eyebrow, children, flush = false }: { title?: string; eyebrow?: string; children: ReactNode; flush?: boolean }) {
+  const hasHeader = Boolean(title || eyebrow);
+
   return (
     <section className="paper-panel animate-rise overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
-      <header className="flex items-center justify-between border-b border-[#e7e1d6] px-5 py-4">
-        <div>
-          <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-[#d35c45]">{eyebrow}</p>
-          <h2 className="mt-1 text-sm font-extrabold">{title}</h2>
-        </div>
-        <MoreHorizontal className="size-4 text-[#a1a49d]" />
-      </header>
+      {hasHeader && (
+        <header className="flex items-center justify-between border-b border-[#e7e1d6] px-5 py-4">
+          <div>
+            {eyebrow && <p className="font-mono text-[9px]   text-[#d35c45]">{eyebrow}</p>}
+            {title && <h2 className="mt-1 text-sm font-extrabold">{title}</h2>}
+          </div>
+          <MoreHorizontal className="size-4 text-[#a1a49d]" />
+        </header>
+      )}
       <div className={flush ? "" : "p-5"}>{children}</div>
     </section>
   );
@@ -41,15 +45,15 @@ export function Event({ icon, text, time }: { icon: ReactNode; text: string; tim
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="block"><span className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#7e847d]">{label}</span>{children}</label>;
+  return <label className="block"><span className="mb-1.5 block font-mono text-[10px]   text-[#7e847d]">{label}</span>{children}</label>;
 }
 
 export function WorkerDetailEmpty({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
-  return <div className="grid min-h-[510px] place-items-center bg-white/30 text-center"><div className="[&_svg]:mx-auto [&_svg]:size-5 [&_svg]:text-[#b7b4ac]">{icon}<p className="mt-3 text-xs font-extrabold text-[#777e78]">{title}</p><p className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#a1a49e]">{copy}</p></div></div>;
+  return <div className="grid min-h-[510px] place-items-center bg-white/30 text-center"><div className="[&_svg]:mx-auto [&_svg]:size-5 [&_svg]:text-[#b7b4ac]">{icon}<p className="mt-3 text-xs font-extrabold text-[#777e78]">{title}</p><p className="mt-1 font-mono text-[9px]   text-[#a1a49e]">{copy}</p></div></div>;
 }
 
 export function EmptyMetrics() {
-  return <div className="grid h-52 place-items-center rounded-lg border border-dashed border-[#d8d2c7] bg-white/30 text-center"><div><Activity className="mx-auto size-5 text-[#b7b4ac]" /><p className="mt-3 text-xs font-extrabold text-[#777e78]">No traffic samples yet</p><p className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#a1a49e]">Start the stack or send a request through Traefik</p></div></div>;
+  return <div className="grid h-52 place-items-center rounded-lg border border-dashed border-[#d8d2c7] bg-white/30 text-center"><div><Activity className="mx-auto size-5 text-[#b7b4ac]" /><p className="mt-3 text-xs font-extrabold text-[#777e78]">No traffic samples yet</p><p className="mt-1 font-mono text-[9px]   text-[#a1a49e]">Start the stack or send a request through Traefik</p></div></div>;
 }
 
 export function StatusCodeMix({ values }: { values: { code: string; value: number }[] }) {

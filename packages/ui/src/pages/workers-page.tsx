@@ -8,15 +8,15 @@ import { Button } from "../components/ui/button";
 
 export function WorkersPage() {
   const navigate = useNavigate();
-  const { workers, setWorkers, openWorkerDialog, notify, apiConnected } = useWorkspace();
+  const { workers, setWorkers, openWorkerDialog, notify } = useWorkspace();
 
   return (
     <>
       <PageHeading eyebrow="Runtime" title="Workers" copy="Register isolated services, deploy bundles, and watch the runtime pool." actions={<Button onClick={openWorkerDialog}><Plus className="size-4" />New worker</Button>} />
-      <Panel title={`${workers.length} registered workers`} eyebrow={apiConnected ? "Live inventory" : "Demo inventory"} flush>
+      <Panel flush>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-left">
-            <thead><tr className="border-b border-[#e3ded3] font-mono text-[9px] uppercase tracking-[0.14em] text-[#989b95]"><th className="px-5 py-3">Worker</th><th>State</th><th>Requests</th><th>Deployment</th><th>Created</th><th className="pr-4 text-right">Actions</th></tr></thead>
+            <thead><tr className="border-b border-[#e3ded3] font-mono text-[9px]   text-[#989b95]"><th className="px-5 py-3">Worker</th><th>State</th><th>Requests</th><th>Deployment</th><th>Created</th><th className="pr-4 text-right">Actions</th></tr></thead>
             <tbody>{workers.map((worker) => <WorkerRow key={worker.id} worker={worker} workers={workers} setWorkers={(nextWorkers) => setWorkers(nextWorkers)} notify={notify} onSelect={() => navigate(`/workers/${worker.id}`)} />)}</tbody>
           </table>
         </div>

@@ -3,6 +3,12 @@ import type { Dispatch, SetStateAction } from "react";
 export type Section = "overview" | "workers" | "kv";
 export type WorkerAuth = { protected_routes?: string[] };
 export type WorkerKVNamespaceBinding = { binding: string; id: string; preview_id?: string };
+export type WorkerAssetConfig = {
+  binding?: string;
+  html_handling?: string;
+  not_found_handling?: string;
+  run_worker_first?: true | string[];
+};
 
 export type Worker = {
   id: string;
@@ -16,12 +22,14 @@ export type Worker = {
   kv_bindings?: WorkerKVNamespaceBinding[];
 };
 
-export type WorkerDetailTab = "files" | "kv" | "config" | "deployments" | "output";
+export type WorkerDetailTab = "overview" | "deployments" | "files" | "output" | "settings";
 
 export type WorkerDeployment = {
   id: string;
   entrypoint: string;
   bundle_size: number;
+  asset_count?: number;
+  asset_config?: WorkerAssetConfig;
   compatibility_date: string;
   created_at: string;
   kv_namespaces?: WorkerKVNamespaceBinding[];

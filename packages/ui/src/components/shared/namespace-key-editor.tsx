@@ -120,7 +120,7 @@ export function NamespaceKeyEditor({
     <div className="grid min-h-[510px] gap-0 md:grid-cols-[260px_1fr]">
       <aside className="border-b border-[#e7e1d6] bg-[#f5f1e9]/75 py-3 md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-4 pb-2">
-          <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-[#a0a39c]">KV keys</p>
+          <p className="font-mono text-[9px]   text-[#a0a39c]">KV keys</p>
           <Button type="button" variant="ghost" size="icon" aria-label="Refresh KV keys" onClick={() => void refreshKeys()} disabled={loading}><RefreshCw className={cn("size-3.5", loading && "animate-spin")} /></Button>
         </div>
         <div className="px-4 pb-3">
@@ -137,8 +137,8 @@ export function NamespaceKeyEditor({
             <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
           </button>
         ))}
-        {!keys.length && <p className="px-4 py-8 text-center font-mono text-[9px] uppercase tracking-[0.08em] text-[#a1a49e]">No keys yet</p>}
-        {status && <p className="mx-4 mt-3 rounded-md border border-[#ded8cd] bg-white/55 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[#727a74]">{status}</p>}
+        {!keys.length && <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">No keys yet</p>}
+        {status && <p className="mx-4 mt-3 rounded-md border border-[#ded8cd] bg-white/55 px-3 py-2 font-mono text-[10px]   text-[#727a74]">{status}</p>}
       </aside>
       <div className="p-5">
         <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void readKey(); }}>
@@ -151,7 +151,7 @@ export function NamespaceKeyEditor({
         <div className="mt-4 overflow-hidden rounded-lg border border-[#d9d3c7] bg-[#202b29]">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
             <p className="font-mono text-[10px] text-[#b5c1bb]">{key.trim() || "Select a key"}</p>
-            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#778781]">{value.length} bytes</span>
+            <span className="font-mono text-[9px]   text-[#778781]">{value.length} bytes</span>
           </div>
           <textarea value={value} onChange={(event) => setValue(event.target.value)} spellCheck={false} className="min-h-80 w-full resize-y bg-transparent p-4 font-mono text-[11px] leading-6 text-[#d8dfd8] outline-none" placeholder="Value" />
         </div>

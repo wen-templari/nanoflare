@@ -19,7 +19,7 @@ export function OverviewPage() {
         {stats.map(({ label, value, note, icon: Icon, href }, index) => (
           <button key={label} onClick={() => navigate(href)} style={{ animationDelay: `${index * 80}ms` }} className="paper-panel animate-rise group rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85 p-5 text-left transition hover:-translate-y-0.5 hover:border-[#c7c0b4]">
             <div className="flex justify-between"><Icon className="size-5 text-[#d75a41]" /><ArrowUpRight className="size-4 text-[#b8b7b0] transition group-hover:text-[#d75a41]" /></div>
-            <p className="mt-8 font-display text-5xl tracking-[-0.06em]">{value}</p>
+            <p className="mt-8  text-5xl ">{value}</p>
             <p className="mt-2 text-sm font-extrabold">{label}</p><p className="mt-1 font-mono text-[10px] text-[#91958e]">{note}</p>
           </button>
         ))}
