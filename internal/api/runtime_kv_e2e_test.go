@@ -207,23 +207,26 @@ func TestWorkerdObjectsBindingEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := nanoflare.NewServiceWithObjects(store, discardWriter{}, objects)
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "objects"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	runtimeServer := httptest.NewServer(api.NewServer(service))
 	defer runtimeServer.Close()
 
 	port := availablePort(t)
-	active := []nanoflare.ActiveDeployment{{
-		App: app,
-		Deployment: nanoflare.Deployment{
-			ID:                "deployment",
-			AppID:             app.ID,
-			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeObjectsWorker}},
-			Entrypoint:        "worker.js",
-			Format:            "modules",
-			CompatibilityDate: "2025-12-10",
-			Port:              port,
-			CreatedAt:         time.Now().UTC(),
-		},
-	}}
+	deployment, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:                []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeObjectsWorker}},
+		Entrypoint:           "worker.js",
+		Format:               "modules",
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := []nanoflare.ActiveDeployment{{App: app, Deployment: deployment}}
+	active[0].Deployment.Port = port
 	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
 	if err := os.WriteFile(configPath, []byte(config.WorkerdWithRuntimeAddr(active, strings.TrimPrefix(runtimeServer.URL, "http://"))), 0o600); err != nil {
 		t.Fatal(err)
@@ -308,12 +311,19 @@ func (s *e2eObjectStore) PresignDownload(string, string, time.Duration) (string,
 }
 
 func (s *e2eObjectStore) Put(appID, path string, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
+	visiblePath := path
+	if strings.HasPrefix(path, "buckets/") {
+		parts := strings.SplitN(path, "/", 3)
+		if len(parts) == 3 {
+			visiblePath = parts[2]
+		}
+	}
 	object := nanoflare.ObjectBody{
 		ObjectInfo: nanoflare.ObjectInfo{
 			Key:      path,
 			Size:     int64(len(data)),
-			ETag:     "etag-" + path,
-			HTTPETag: `"etag-` + path + `"`,
+			ETag:     "etag-" + visiblePath,
+			HTTPETag: `"etag-` + visiblePath + `"`,
 			Uploaded: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 			HTTPMetadata: nanoflare.ObjectHTTPMetadata{
 				ContentType: contentType,
@@ -340,6 +350,19 @@ func (s *e2eObjectStore) Head(appID, path string) (nanoflare.ObjectInfo, error) 
 		return nanoflare.ObjectInfo{}, nanoflare.ErrObjectNotFound
 	}
 	return object.ObjectInfo, nil
+}
+
+func (s *e2eObjectStore) List(appID, prefix string) ([]nanoflare.ObjectInfo, error) {
+	items := make([]nanoflare.ObjectInfo, 0)
+	for key, data := range s.objects {
+		if !strings.HasPrefix(key, appID+"/"+prefix+"/") {
+			continue
+		}
+		object := data.ObjectInfo
+		object.Key = strings.TrimPrefix(object.Key, prefix+"/")
+		items = append(items, object)
+	}
+	return items, nil
 }
 
 func (s *e2eObjectStore) Delete(appID, path string) error {

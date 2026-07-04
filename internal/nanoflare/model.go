@@ -21,19 +21,20 @@ type AuthConfig struct {
 }
 
 type Deployment struct {
-	ID                string       `json:"id"`
-	AppID             string       `json:"app_id"`
-	Files             []WorkerFile `json:"files"`
-	Assets            []AssetFile  `json:"assets,omitempty"`
-	Entrypoint        string       `json:"entrypoint"`
-	Format            string       `json:"format"`
-	CompatibilityDate string       `json:"compatibility_date"`
-	KVNamespaces      []KVBinding  `json:"kv_namespaces,omitempty"`
-	AssetConfig       AssetConfig  `json:"asset_config,omitempty"`
-	BundleSize        int64        `json:"-"`
-	ObjectKey         string       `json:"-"`
-	Port              int          `json:"port"`
-	CreatedAt         time.Time    `json:"created_at"`
+	ID                   string                       `json:"id"`
+	AppID                string                       `json:"app_id"`
+	Files                []WorkerFile                 `json:"files"`
+	Assets               []AssetFile                  `json:"assets,omitempty"`
+	Entrypoint           string                       `json:"entrypoint"`
+	Format               string                       `json:"format"`
+	CompatibilityDate    string                       `json:"compatibility_date"`
+	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
+	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
+	BundleSize           int64                        `json:"-"`
+	ObjectKey            string                       `json:"-"`
+	Port                 int                          `json:"port"`
+	CreatedAt            time.Time                    `json:"created_at"`
 }
 
 type ActiveDeployment struct {
@@ -61,31 +62,42 @@ type UpdateKVNamespaceInput struct {
 	Name string `json:"name"`
 }
 
+type CreateObjectStorageBucketInput struct {
+	Name string `json:"name"`
+}
+
+type UpdateObjectStorageBucketInput struct {
+	Name string `json:"name"`
+}
+
 type UpdateAppInput struct {
 	Auth *AuthConfig `json:"auth,omitempty"`
 }
 
 type DeployInput struct {
-	Files             []WorkerFile `json:"files"`
-	Assets            []AssetFile  `json:"assets,omitempty"`
-	Entrypoint        string       `json:"entrypoint,omitempty"`
-	Format            string       `json:"format,omitempty"`
-	CompatibilityDate string       `json:"compatibility_date"`
-	KVNamespaces      []KVBinding  `json:"kv_namespaces,omitempty"`
-	AssetConfig       AssetConfig  `json:"asset_config,omitempty"`
+	Files                []WorkerFile                 `json:"files"`
+	Assets               []AssetFile                  `json:"assets,omitempty"`
+	Entrypoint           string                       `json:"entrypoint,omitempty"`
+	Format               string                       `json:"format,omitempty"`
+	CompatibilityDate    string                       `json:"compatibility_date"`
+	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
+	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 }
 
 type WorkerDeployment struct {
-	ID                string      `json:"id"`
-	Entrypoint        string      `json:"entrypoint"`
-	Format            string      `json:"format"`
-	BundleSize        int64       `json:"bundle_size"`
-	AssetCount        int         `json:"asset_count,omitempty"`
-	CompatibilityDate string      `json:"compatibility_date"`
-	KVNamespaces      []KVBinding `json:"kv_namespaces,omitempty"`
-	AssetConfig       AssetConfig `json:"asset_config,omitempty"`
-	Port              int         `json:"port"`
-	CreatedAt         time.Time   `json:"created_at"`
+	ID                   string                       `json:"id"`
+	Entrypoint           string                       `json:"entrypoint"`
+	Format               string                       `json:"format"`
+	BundleSize           int64                        `json:"bundle_size"`
+	AssetCount           int                          `json:"asset_count,omitempty"`
+	CompatibilityDate    string                       `json:"compatibility_date"`
+	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
+	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
+	Bindings             []Binding                    `json:"bindings,omitempty"`
+	Port                 int                          `json:"port"`
+	CreatedAt            time.Time                    `json:"created_at"`
 }
 
 type WorkerDetail struct {
@@ -105,6 +117,16 @@ type ConsoleDeployment struct {
 	CompatibilityDate string    `json:"compatibility_date"`
 	State             string    `json:"state"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type Binding struct {
+	Kind          string `json:"kind"`
+	Binding       string `json:"binding"`
+	NamespaceID   string `json:"namespace_id,omitempty"`
+	NamespaceName string `json:"namespace_name,omitempty"`
+	BucketID      string `json:"bucket_id,omitempty"`
+	BucketName    string `json:"bucket_name,omitempty"`
+	AssetCount    int    `json:"asset_count,omitempty"`
 }
 
 type WorkerFile struct {
@@ -135,7 +157,35 @@ type KVBinding struct {
 	PreviewID string `json:"preview_id,omitempty"`
 }
 
+type ObjectStorageBucketBinding struct {
+	Binding  string `json:"binding"`
+	BucketID string `json:"bucket_id"`
+}
+
+func (d *DeployInput) UnmarshalJSON(data []byte) error {
+	type deployInputAlias DeployInput
+	type deployInputCompat struct {
+		deployInputAlias
+		ObjectStorageBucket []ObjectStorageBucketBinding `json:"object_storage_bucket"`
+	}
+	var value deployInputCompat
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*d = DeployInput(value.deployInputAlias)
+	if len(d.ObjectStorageBuckets) == 0 && len(value.ObjectStorageBucket) > 0 {
+		d.ObjectStorageBuckets = value.ObjectStorageBucket
+	}
+	return nil
+}
+
 type KVNamespace struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ObjectStorageBucket struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`

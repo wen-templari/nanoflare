@@ -408,10 +408,24 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	), objects)
 	server := NewServer(service)
 	app := createApp(t, server, "Objects", "objects.example.com")
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "objects"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:                []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { async fetch() { return new Response("ok"); } };`}},
+		Entrypoint:           "worker.js",
+		Format:               "modules",
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	token := runtimeTokens(t, store)[app.ID]
 
 	request := httptest.NewRequest(http.MethodPut, "/internal/runtime/objects/folder%2Fhello.txt", bytes.NewReader([]byte("hello")))
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-Nanoflare-Object-Bucket-ID", bucket.ID)
 	request.Header.Set("Content-Type", "text/plain")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -428,6 +442,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 
 	request = httptest.NewRequest(http.MethodHead, "/internal/runtime/objects/folder%2Fhello.txt", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-Nanoflare-Object-Bucket-ID", bucket.ID)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -439,6 +454,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 
 	request = httptest.NewRequest(http.MethodGet, "/internal/runtime/objects/folder%2Fhello.txt", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-Nanoflare-Object-Bucket-ID", bucket.ID)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "hello" {
@@ -447,6 +463,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 
 	request = httptest.NewRequest(http.MethodDelete, "/internal/runtime/objects/folder%2Fhello.txt", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-Nanoflare-Object-Bucket-ID", bucket.ID)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNoContent {
@@ -455,6 +472,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 
 	request = httptest.NewRequest(http.MethodGet, "/internal/runtime/objects/folder%2Fhello.txt", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-Nanoflare-Object-Bucket-ID", bucket.ID)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotFound {
@@ -806,12 +824,19 @@ func (s *apiObjectStore) PresignDownload(string, string, time.Duration) (string,
 }
 
 func (s *apiObjectStore) Put(appID, path string, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
+	visiblePath := path
+	if strings.HasPrefix(path, "buckets/") {
+		parts := strings.SplitN(path, "/", 3)
+		if len(parts) == 3 {
+			visiblePath = parts[2]
+		}
+	}
 	object := nanoflare.ObjectBody{
 		ObjectInfo: nanoflare.ObjectInfo{
 			Key:      path,
 			Size:     int64(len(data)),
-			ETag:     "etag-" + path,
-			HTTPETag: `"etag-` + path + `"`,
+			ETag:     "etag-" + visiblePath,
+			HTTPETag: `"etag-` + visiblePath + `"`,
 			Uploaded: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 			HTTPMetadata: nanoflare.ObjectHTTPMetadata{
 				ContentType: contentType,
@@ -838,6 +863,19 @@ func (s *apiObjectStore) Head(appID, path string) (nanoflare.ObjectInfo, error) 
 		return nanoflare.ObjectInfo{}, nanoflare.ErrObjectNotFound
 	}
 	return data.ObjectInfo, nil
+}
+
+func (s *apiObjectStore) List(appID, prefix string) ([]nanoflare.ObjectInfo, error) {
+	items := make([]nanoflare.ObjectInfo, 0)
+	for key, data := range s.objects {
+		if !strings.HasPrefix(key, appID+":"+prefix+"/") {
+			continue
+		}
+		object := data.ObjectInfo
+		object.Key = strings.TrimPrefix(object.Key, prefix+"/")
+		items = append(items, object)
+	}
+	return items, nil
 }
 
 func (s *apiObjectStore) Delete(appID, path string) error {

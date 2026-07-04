@@ -21,12 +21,10 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	for _, expected := range []string{
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`address = "*:9001"`,
-		`globalThis.OBJECTS = __nanoflareWrapObjectsBinding(globalThis.OBJECTS);`,
 		`(name = "kv-hello-app-0", external = (address = "127.0.0.1:8081"`,
 		`(name = "X-Nanoflare-KV-Namespace-ID", value = "kvns-1")`,
 		`(name = "KV", kvNamespace = "kv-hello-app-0")`,
 		`(name = "ASSETS", service = "assets-hello-app")`,
-		`(name = "OBJECTS", service = "objects-hello-app")`,
 		`(name = "X-Nanoflare-Binding", value = "assets")`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
@@ -52,11 +50,31 @@ func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
 	if !strings.Contains(config, `(name = "STATIC", service = "assets-hello-app")`) {
 		t.Fatalf("config does not contain custom asset binding:\n%s", config)
 	}
-	if !strings.Contains(config, `(name = "OBJECTS", service = "objects-hello-app")`) {
-		t.Fatalf("config does not contain objects binding:\n%s", config)
-	}
 	if strings.Contains(config, `(name = "ASSETS", service = "assets-hello-app")`) {
 		t.Fatalf("config unexpectedly contains default asset binding:\n%s", config)
+	}
+}
+
+func TestWorkerdObjectBindingErrorsIncludeRuntimeDetails(t *testing.T) {
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: nanoflare.Deployment{
+			Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
+			Entrypoint:           "worker.js",
+			Format:               "modules",
+			CompatibilityDate:    "2025-12-10",
+			ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: "bucket-1"}},
+			Port:                 9001,
+		},
+	}})
+	for _, expected := range []string{
+		`async function objectBindingError(bindingName, operation, response)`,
+		`objectBindingError(bindingName, \"get\", response)`,
+		`objectBindingError(bindingName, \"put\", response)`,
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, config)
+		}
 	}
 }
 

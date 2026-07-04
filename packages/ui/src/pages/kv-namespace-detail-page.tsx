@@ -48,8 +48,8 @@ function KVNamespaceDetailContent({
   const [submittingKey, setSubmittingKey] = useState(false);
   const [deletingKey, setDeletingKey] = useState("");
   const bindings = workers.flatMap((worker) =>
-    (worker.kv_bindings ?? [])
-      .filter((binding) => binding.id === namespace.id)
+    (worker.bindings ?? [])
+      .filter((binding) => binding.kind === "kv" && binding.namespace_id === namespace.id)
       .map((binding) => ({ worker, binding })),
   );
   const accessorWorkers = bindings.map(({ worker }) => worker).filter((worker, index, all) => all.findIndex((candidate) => candidate.id === worker.id) === index);

@@ -84,6 +84,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/kv/namespaces/{namespaceID}", s.getKVNamespace)
 	s.mux.HandleFunc("PATCH /v1/kv/namespaces/{namespaceID}", s.updateKVNamespace)
 	s.mux.HandleFunc("DELETE /v1/kv/namespaces/{namespaceID}", s.deleteKVNamespace)
+	s.mux.HandleFunc("GET /v1/object-storage-buckets", s.listObjectStorageBuckets)
+	s.mux.HandleFunc("POST /v1/object-storage-buckets", s.createObjectStorageBucket)
+	s.mux.HandleFunc("GET /v1/object-storage-buckets/{bucketID}", s.getObjectStorageBucket)
+	s.mux.HandleFunc("PATCH /v1/object-storage-buckets/{bucketID}", s.updateObjectStorageBucket)
+	s.mux.HandleFunc("DELETE /v1/object-storage-buckets/{bucketID}", s.deleteObjectStorageBucket)
 	s.mux.HandleFunc("PATCH /v1/apps/{appID}", s.updateApp)
 	s.mux.HandleFunc("DELETE /v1/apps/{appID}", s.deleteApp)
 	s.mux.HandleFunc("GET /v1/apps/{appID}", s.workerDetail)
@@ -96,6 +101,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVGet)
 	s.mux.HandleFunc("PUT /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVPut)
 	s.mux.HandleFunc("DELETE /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVDelete)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/object-storage-buckets/{bucketID}", s.workerObjectList)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectGet)
+	s.mux.HandleFunc("PUT /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectPut)
+	s.mux.HandleFunc("DELETE /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectDelete)
 	s.mux.HandleFunc("POST /v1/auth/validate", s.validateAuthToken)
 	s.mux.HandleFunc("POST /v1/auth/userinfo", s.authUserInfo)
 	s.mux.HandleFunc("GET /internal/auth/verify", s.verifyAuth)
@@ -243,6 +252,68 @@ func (s *Server) workerKVDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) workerObjectList(w http.ResponseWriter, r *http.Request) {
+	objects, err := s.service.WorkerObjectList(r.PathValue("appID"), r.PathValue("bucketID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, objects)
+}
+
+func (s *Server) workerObjectGet(w http.ResponseWriter, r *http.Request) {
+	key, err := runtimeObjectKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, ok, err := s.service.WorkerObjectGet(r.PathValue("appID"), r.PathValue("bucketID"), key)
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	writeRuntimeObjectHeaders(w.Header(), object.ObjectInfo)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(object.Body)
+}
+
+func (s *Server) workerObjectPut(w http.ResponseWriter, r *http.Request) {
+	key, err := runtimeObjectKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, err := s.service.WorkerObjectPut(r.PathValue("appID"), r.PathValue("bucketID"), key, r.Header.Get("Content-Type"), body)
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, object)
+}
+
+func (s *Server) workerObjectDelete(w http.ResponseWriter, r *http.Request) {
+	key, err := runtimeObjectKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.WorkerObjectDelete(r.PathValue("appID"), r.PathValue("bucketID"), key); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) listKVNamespaces(w http.ResponseWriter, _ *http.Request) {
 	namespaces, err := s.service.ListKVNamespaces()
 	if err != nil {
@@ -264,6 +335,83 @@ func (s *Server) createKVNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, namespace)
+}
+
+func (s *Server) listObjectStorageBuckets(w http.ResponseWriter, _ *http.Request) {
+	buckets, err := s.service.ListObjectStorageBuckets()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, buckets)
+}
+
+func (s *Server) createObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	var input nanoflare.CreateObjectStorageBucketInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	bucket, err := s.service.CreateObjectStorageBucket(input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrObjectStorageBucketExists) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, bucket)
+}
+
+func (s *Server) getObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	bucket, err := s.service.GetObjectStorageBucket(r.PathValue("bucketID"))
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bucket)
+}
+
+func (s *Server) updateObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	var input nanoflare.UpdateObjectStorageBucketInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	bucket, err := s.service.UpdateObjectStorageBucket(r.PathValue("bucketID"), input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
+			status = http.StatusNotFound
+		}
+		if errors.Is(err, nanoflare.ErrObjectStorageBucketExists) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bucket)
+}
+
+func (s *Server) deleteObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	err := s.service.DeleteObjectStorageBucket(r.PathValue("bucketID"))
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
+			status = http.StatusNotFound
+		}
+		if errors.Is(err, nanoflare.ErrObjectStorageBucketInUse) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) getKVNamespace(w http.ResponseWriter, r *http.Request) {
@@ -360,7 +508,16 @@ func (s *Server) listApps(w http.ResponseWriter, _ *http.Request) {
 }
 
 type objectRequest struct {
-	Path string `json:"path"`
+	Path     string `json:"path"`
+	BucketID string `json:"bucket_id,omitempty"`
+}
+
+func runtimeObjectBucketID(r *http.Request) (string, error) {
+	bucketID := strings.TrimSpace(r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if bucketID == "" {
+		return "", errors.New("missing object storage bucket id")
+	}
+	return bucketID, nil
 }
 
 func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
@@ -369,7 +526,12 @@ func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.ObjectGet(bearerToken(r), key)
+	bucketID, err := runtimeObjectBucketID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, ok, err := s.service.ObjectGet(bearerToken(r), bucketID, key)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -389,7 +551,12 @@ func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.ObjectHead(bearerToken(r), key)
+	bucketID, err := runtimeObjectBucketID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, ok, err := s.service.ObjectHead(bearerToken(r), bucketID, key)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -414,7 +581,12 @@ func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, err := s.service.ObjectPut(bearerToken(r), key, r.Header.Get("Content-Type"), body)
+	bucketID, err := runtimeObjectBucketID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	object, err := s.service.ObjectPut(bearerToken(r), bucketID, key, r.Header.Get("Content-Type"), body)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -428,7 +600,12 @@ func (s *Server) runtimeObjectDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.DeleteObject(bearerToken(r), key); err != nil {
+	bucketID, err := runtimeObjectBucketID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.DeleteObject(bearerToken(r), bucketID, key); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
@@ -443,7 +620,7 @@ func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 	s.presignObject(w, r, s.service.PresignDownload)
 }
 
-func (s *Server) presignObject(w http.ResponseWriter, r *http.Request, presign func(string, string) (string, error)) {
+func (s *Server) presignObject(w http.ResponseWriter, r *http.Request, presign func(string, string, string) (string, error)) {
 	var input objectRequest
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -453,7 +630,11 @@ func (s *Server) presignObject(w http.ResponseWriter, r *http.Request, presign f
 		writeError(w, http.StatusBadRequest, errors.New("path is required"))
 		return
 	}
-	url, err := presign(bearerToken(r), input.Path)
+	if input.BucketID == "" {
+		writeError(w, http.StatusBadRequest, errors.New("bucket_id is required"))
+		return
+	}
+	url, err := presign(bearerToken(r), input.BucketID, input.Path)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -471,7 +652,11 @@ func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("path is required"))
 		return
 	}
-	if err := s.service.DeleteObject(bearerToken(r), input.Path); err != nil {
+	if input.BucketID == "" {
+		writeError(w, http.StatusBadRequest, errors.New("bucket_id is required"))
+		return
+	}
+	if err := s.service.DeleteObject(bearerToken(r), input.BucketID, input.Path); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
@@ -689,6 +874,10 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
 	writeError(w, http.StatusInternalServerError, err)
 }
 
@@ -701,7 +890,15 @@ func writeWorkerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrKVNamespaceExists) || errors.Is(err, nanoflare.ErrKVNamespaceInUse) || errors.Is(err, nanoflare.ErrKVNamespaceNotBound) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrObjectStorageBucketExists) || errors.Is(err, nanoflare.ErrObjectStorageBucketInUse) || errors.Is(err, nanoflare.ErrObjectStorageBucketNotBound) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

@@ -1,4 +1,4 @@
-import type { KVNamespace } from "./types";
+import type { KVNamespace, ObjectStorageBucket } from "./types";
 
 export function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
@@ -11,4 +11,8 @@ export function formatDuration(seconds: number) {
 
 export function sortNamespaces(namespaces: KVNamespace[]) {
   return [...namespaces].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function sortObjectStorageBuckets(buckets: ObjectStorageBucket[]) {
+  return [...buckets].sort((a, b) => a.name.localeCompare(b.name));
 }

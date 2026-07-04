@@ -1,7 +1,8 @@
-import { Boxes, Check, ChevronDown, CircleGauge, KeyRound, Settings, Waypoints } from "lucide-react"
+import { Boxes, Check, ChevronDown, CircleGauge, DatabaseZap, KeyRound, Settings, Waypoints } from "lucide-react"
 import { NavLink, Outlet, useLocation } from "react-router-dom"
 import { useWorkspace } from "../../app/workspace-context"
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
+import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog"
 import { CreateWorkerDialog } from "../dialogs/create-worker-dialog"
 import { cn } from "../../lib/utils"
 
@@ -9,6 +10,7 @@ const navItems = [
   { href: "/", match: "/", label: "Overview", icon: CircleGauge },
   { href: "/workers", match: "/workers", label: "Workers", icon: Waypoints },
   { href: "/kv", match: "/kv", label: "KV", icon: KeyRound },
+  { href: "/object-storage", match: "/object-storage", label: "Object storage", icon: DatabaseZap },
 ]
 
 export function ConsoleLayout() {
@@ -18,13 +20,17 @@ export function ConsoleLayout() {
     setWorkers,
     namespaces,
     setNamespaces,
+    objectStorageBuckets,
+    setObjectStorageBuckets,
     apiConnected,
     workerDialogOpen,
     namespaceDialogOpen,
+    objectStorageBucketDialogOpen,
     openWorkerDialog,
     closeWorkerDialog,
     openNamespaceDialog,
     closeNamespaceDialog,
+    closeObjectStorageBucketDialog,
     toast,
     notify,
   } = useWorkspace()
@@ -108,6 +114,7 @@ export function ConsoleLayout() {
 
       <CreateWorkerDialog open={workerDialogOpen} onClose={closeWorkerDialog} workers={workers} setWorkers={(nextWorkers) => setWorkers(nextWorkers)} notify={notify} apiConnected={apiConnected} />
       <CreateKVNamespaceDialog open={namespaceDialogOpen} onClose={closeNamespaceDialog} namespaces={namespaces} setNamespaces={setNamespaces} notify={notify} apiConnected={apiConnected} />
+      <CreateObjectStorageBucketDialog open={objectStorageBucketDialogOpen} onClose={closeObjectStorageBucketDialog} buckets={objectStorageBuckets} setBuckets={setObjectStorageBuckets} notify={notify} apiConnected={apiConnected} />
 
       {toast && (
         <div className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-lg bg-[#26332f] px-4 py-3 text-xs font-bold text-white shadow-xl">

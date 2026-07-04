@@ -36,17 +36,29 @@ type Runner struct {
 }
 
 type Project struct {
-	Name              string                `json:"name"`
-	Hostname          string                `json:"hostname"`
-	AppID             string                `json:"app_id,omitempty"`
-	APIURL            string                `json:"api_url"`
-	Entrypoint        string                `json:"entrypoint"`
-	Format            string                `json:"format,omitempty"`
-	CompatibilityDate string                `json:"compatibility_date"`
-	Files             []string              `json:"files"`
-	KVNamespaces      []nanoflare.KVBinding `json:"kv_namespaces,omitempty"`
-	Assets            ProjectAssets         `json:"assets,omitempty"`
-	Auth              ProjectAuth           `json:"auth,omitempty"`
+	Name                 string                                 `json:"name"`
+	Hostname             string                                 `json:"hostname"`
+	AppID                string                                 `json:"app_id,omitempty"`
+	APIURL               string                                 `json:"api_url"`
+	Entrypoint           string                                 `json:"entrypoint"`
+	Format               string                                 `json:"format,omitempty"`
+	CompatibilityDate    string                                 `json:"compatibility_date"`
+	Files                []string                               `json:"files"`
+	KVNamespaces         []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
+	ObjectStorageBuckets []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Assets               ProjectAssets                          `json:"assets,omitempty"`
+	Auth                 ProjectAuth                            `json:"auth,omitempty"`
+}
+
+type projectAlias struct {
+	ObjectStorageBuckets      []legacyObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	ObjectStorageBucketLegacy []legacyObjectStorageBucketBinding `json:"object_storage_bucket,omitempty"`
+}
+
+type legacyObjectStorageBucketBinding struct {
+	Binding  string `json:"binding"`
+	ID       string `json:"id,omitempty"`
+	BucketID string `json:"bucket_id,omitempty"`
 }
 
 type ProjectAssets struct {
@@ -88,6 +100,8 @@ func (r *Runner) Run(args []string) error {
 		return r.deploy(withoutWorkerNoun(args[1:]))
 	case "kv":
 		return r.kv(args[1:])
+	case "object-storage":
+		return r.objectStorage(args[1:])
 	case "help", "-h", "--help":
 		r.usage()
 		return nil
@@ -292,12 +306,13 @@ func (r *Runner) deploy(args []string) error {
 	}
 	var deployment nanoflare.Deployment
 	if err := r.request(http.MethodPost, baseURL+"/v1/apps/"+project.AppID+"/deployments", nanoflare.DeployInput{
-		Files:             files,
-		Assets:            assets,
-		Entrypoint:        project.Entrypoint,
-		Format:            project.Format,
-		CompatibilityDate: date,
-		KVNamespaces:      append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
+		Files:                files,
+		Assets:               assets,
+		Entrypoint:           project.Entrypoint,
+		Format:               project.Format,
+		CompatibilityDate:    date,
+		KVNamespaces:         append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
+		ObjectStorageBuckets: append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,
@@ -363,10 +378,42 @@ func loadProject() (string, Project, error) {
 	if err := json.Unmarshal(content, &project); err != nil {
 		return "", Project{}, fmt.Errorf("decode %s: %w", path, err)
 	}
+	var alias projectAlias
+	if err := json.Unmarshal(content, &alias); err != nil {
+		return "", Project{}, fmt.Errorf("decode %s aliases: %w", path, err)
+	}
+	if len(project.ObjectStorageBuckets) == 0 || hasEmptyObjectStorageBucketIDs(project.ObjectStorageBuckets) {
+		legacy := alias.ObjectStorageBuckets
+		if len(legacy) == 0 {
+			legacy = alias.ObjectStorageBucketLegacy
+		}
+		if len(legacy) > 0 {
+			project.ObjectStorageBuckets = project.ObjectStorageBuckets[:0]
+		}
+		for _, binding := range legacy {
+			bucketID := strings.TrimSpace(binding.BucketID)
+			if bucketID == "" {
+				bucketID = strings.TrimSpace(binding.ID)
+			}
+			project.ObjectStorageBuckets = append(project.ObjectStorageBuckets, nanoflare.ObjectStorageBucketBinding{
+				Binding:  binding.Binding,
+				BucketID: bucketID,
+			})
+		}
+	}
 	if project.Name == "" || project.Entrypoint == "" || project.CompatibilityDate == "" || len(project.Files) == 0 {
 		return "", Project{}, fmt.Errorf("%s is missing required worker configuration", path)
 	}
 	return path, project, nil
+}
+
+func hasEmptyObjectStorageBucketIDs(bindings []nanoflare.ObjectStorageBucketBinding) bool {
+	for _, binding := range bindings {
+		if strings.TrimSpace(binding.BucketID) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func loadWorkerFiles(paths []string) ([]nanoflare.WorkerFile, error) {
@@ -496,6 +543,38 @@ func (r *Runner) kv(args []string) error {
 	}
 }
 
+func (r *Runner) objectStorage(args []string) error {
+	if len(args) == 0 {
+		r.usage()
+		return errors.New("object-storage command is required")
+	}
+	switch args[0] {
+	case "bucket":
+		return r.objectStorageBucket(args[1:])
+	default:
+		r.usage()
+		return fmt.Errorf("unknown object-storage command %q", args[0])
+	}
+}
+
+func (r *Runner) objectStorageBucket(args []string) error {
+	if len(args) == 0 {
+		r.usage()
+		return errors.New("object-storage bucket command is required")
+	}
+	switch args[0] {
+	case "create":
+		return r.objectStorageBucketCreate(args[1:])
+	case "list":
+		return r.objectStorageBucketList(args[1:])
+	case "delete":
+		return r.objectStorageBucketDelete(args[1:])
+	default:
+		r.usage()
+		return fmt.Errorf("unknown object-storage bucket command %q", args[0])
+	}
+}
+
 func (r *Runner) kvNamespace(args []string) error {
 	if len(args) == 0 {
 		r.usage()
@@ -575,6 +654,67 @@ func (r *Runner) kvNamespaceDelete(args []string) error {
 	return nil
 }
 
+func (r *Runner) objectStorageBucketCreate(args []string) error {
+	flags := flag.NewFlagSet("object-storage bucket create", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare object-storage bucket create [flags] <name>")
+	}
+	var bucket nanoflare.ObjectStorageBucket
+	if err := r.request(http.MethodPost, strings.TrimRight(*apiURL, "/")+"/v1/object-storage-buckets", nanoflare.CreateObjectStorageBucketInput{
+		Name: flags.Arg(0),
+	}, &bucket); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Created object storage bucket %s\t%s\n", bucket.ID, bucket.Name)
+	return nil
+}
+
+func (r *Runner) objectStorageBucketList(args []string) error {
+	flags := flag.NewFlagSet("object-storage bucket list", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: nanoflare object-storage bucket list [flags]")
+	}
+	var buckets []nanoflare.ObjectStorageBucket
+	if err := r.request(http.MethodGet, strings.TrimRight(*apiURL, "/")+"/v1/object-storage-buckets", nil, &buckets); err != nil {
+		return err
+	}
+	for _, bucket := range buckets {
+		fmt.Fprintf(r.Stdout, "%s\t%s\n", bucket.ID, bucket.Name)
+	}
+	return nil
+}
+
+func (r *Runner) objectStorageBucketDelete(args []string) error {
+	flags := flag.NewFlagSet("object-storage bucket delete", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare object-storage bucket delete [flags] <bucket-id>")
+	}
+	bucketID := strings.TrimSpace(flags.Arg(0))
+	if bucketID == "" {
+		return errors.New("bucket id is required")
+	}
+	if err := r.request(http.MethodDelete, strings.TrimRight(*apiURL, "/")+"/v1/object-storage-buckets/"+bucketID, nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Deleted object storage bucket %s\n", bucketID)
+	return nil
+}
+
 func slug(value string) string {
 	var result strings.Builder
 	dash := false
@@ -599,5 +739,8 @@ func (r *Runner) usage() {
   nanoflare deploy [worker] [flags]
   nanoflare kv namespace create [flags] <name>
   nanoflare kv namespace list [flags]
-  nanoflare kv namespace delete [flags] <namespace-id>`)
+  nanoflare kv namespace delete [flags] <namespace-id>
+  nanoflare object-storage bucket create [flags] <name>
+  nanoflare object-storage bucket list [flags]
+  nanoflare object-storage bucket delete [flags] <bucket-id>`)
 }

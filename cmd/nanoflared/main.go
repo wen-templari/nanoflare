@@ -180,17 +180,7 @@ func main() {
 		authenticator = verifier
 	}
 	server := api.NewServerWithAuth(service, traefikStore, *traefikToken, authenticator)
-	runtimeMux := http.NewServeMux()
-	runtimeKV := api.NewRuntimeKVServer(service)
-	runtimeAssets := api.NewRuntimeAssetServer(service)
-	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Nanoflare-Binding") == "assets" {
-			runtimeAssets.ServeHTTP(w, r)
-			return
-		}
-		runtimeKV.ServeHTTP(w, r)
-	}))
-	runtimeMux.Handle("/internal/runtime/assets/", runtimeAssets)
+	runtimeMux := newRuntimeMux(service, server)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {
 		log.Printf("nanoflared runtime API listening on %s", *runtimeAddr)
@@ -221,4 +211,20 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func newRuntimeMux(service *nanoflare.Service, server *api.Server) *http.ServeMux {
+	runtimeMux := http.NewServeMux()
+	runtimeKV := api.NewRuntimeKVServer(service)
+	runtimeAssets := api.NewRuntimeAssetServer(service)
+	runtimeMux.Handle("/internal/runtime/objects/", server)
+	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanoflare-Binding") == "assets" {
+			runtimeAssets.ServeHTTP(w, r)
+			return
+		}
+		runtimeKV.ServeHTTP(w, r)
+	}))
+	runtimeMux.Handle("/internal/runtime/assets/", runtimeAssets)
+	return runtimeMux
 }

@@ -506,6 +506,22 @@ func (s *memoryObjectStore) Head(appID, path string) (ObjectInfo, error) {
 	return data.ObjectInfo, nil
 }
 
+func (s *memoryObjectStore) List(appID, prefix string) ([]ObjectInfo, error) {
+	items := make([]ObjectInfo, 0)
+	for key, data := range s.objects {
+		if !strings.HasPrefix(key, appID+"/") {
+			continue
+		}
+		if !strings.HasPrefix(key, appID+"/"+prefix+"/") {
+			continue
+		}
+		object := data.ObjectInfo
+		object.Key = strings.TrimPrefix(object.Key, prefix+"/")
+		items = append(items, object)
+	}
+	return items, nil
+}
+
 func (s *memoryObjectStore) Delete(appID, path string) error {
 	delete(s.objects, appID+":"+path)
 	return nil

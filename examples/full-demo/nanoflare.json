@@ -1,5 +1,5 @@
 {
-  "name": "Hello worker kv test",
+  "name": "full-demo",
   "hostname": "hellokv.local.nbtca.space",
   "app_id": "3802c6caf4ed0a591edffab79527a98a355ba847b5d7917b",
   "api_url": "http://127.0.0.1:8080",
@@ -14,6 +14,12 @@
     {
       "binding": "VISITS_KV",
       "id": "6a1e4c215cb2fbc1377510b382f16605ee55fcef025652d5"
+    }
+  ],
+  "object_storage_buckets": [
+    {
+      "binding": "OBJECTS",
+      "bucket_id": "b4bfc4aa260d455ca5c46ea4fab650748b63110a77e7d9d5"
     }
   ],
   "auth": {

@@ -12,7 +12,7 @@
 
 This example combines the main Nanoflare platform capabilities in one app:
 
-- `VISITS_KV` stores a visit counter and file metadata.
+- `VISITS_KV` stores a visit counter.
 - `ASSETS` serves the static frontend from `public/`.
 - `OBJECTS` stores and retrieves `uploads/latest.txt`.
 - protected routes show how Nanoflare forwards authenticated user headers into the Worker.
@@ -44,7 +44,7 @@ If your local API is not at `http://127.0.0.1:8080`, either update `api_url` in 
 
 - `/` serves the attached static site.
 - `/api/visits` increments and returns the counter stored in `VISITS_KV`.
-- `PUT /api/files/latest.txt` uploads a file to `OBJECTS` and stores metadata in `VISITS_KV`.
+- `PUT /api/files/latest.txt` uploads a file to `OBJECTS`.
 - `GET /api/files/latest.txt` reads the uploaded file back from `OBJECTS`.
 - `/preview/logo.svg` fetches an attached asset through `env.ASSETS.fetch(...)`.
 - `/preview/auth` returns the forwarded auth headers on a protected route.

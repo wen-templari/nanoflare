@@ -23,6 +23,7 @@ type ObjectStore interface {
 	Put(appID, path string, contentType string, data []byte) (ObjectInfo, error)
 	Get(appID, path string) (ObjectBody, error)
 	Head(appID, path string) (ObjectInfo, error)
+	List(appID, prefix string) ([]ObjectInfo, error)
 	Delete(appID, path string) error
 }
 
@@ -150,6 +151,62 @@ func (s *Service) ListKVNamespaces() ([]KVNamespace, error) {
 	return s.store.ListKVNamespaces()
 }
 
+func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput) (ObjectStorageBucket, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return ObjectStorageBucket{}, errors.New("name is required")
+	}
+	bucketID, err := randomToken()
+	if err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	bucket := ObjectStorageBucket{ID: bucketID, Name: name, CreatedAt: time.Now().UTC()}
+	if err := s.store.CreateObjectStorageBucket(bucket); err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	return bucket, nil
+}
+
+func (s *Service) ListObjectStorageBuckets() ([]ObjectStorageBucket, error) {
+	return s.store.ListObjectStorageBuckets()
+}
+
+func (s *Service) GetObjectStorageBucket(bucketID string) (ObjectStorageBucket, error) {
+	bucketID = strings.TrimSpace(bucketID)
+	if bucketID == "" {
+		return ObjectStorageBucket{}, ErrObjectStorageBucketNotFound
+	}
+	return s.store.GetObjectStorageBucket(bucketID)
+}
+
+func (s *Service) UpdateObjectStorageBucket(bucketID string, input UpdateObjectStorageBucketInput) (ObjectStorageBucket, error) {
+	bucketID = strings.TrimSpace(bucketID)
+	if bucketID == "" {
+		return ObjectStorageBucket{}, ErrObjectStorageBucketNotFound
+	}
+	bucket, err := s.store.GetObjectStorageBucket(bucketID)
+	if err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return ObjectStorageBucket{}, errors.New("name is required")
+	}
+	bucket.Name = name
+	if err := s.store.UpdateObjectStorageBucket(bucket); err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	return bucket, nil
+}
+
+func (s *Service) DeleteObjectStorageBucket(bucketID string) error {
+	bucketID = strings.TrimSpace(bucketID)
+	if bucketID == "" {
+		return ErrObjectStorageBucketNotFound
+	}
+	return s.store.DeleteObjectStorageBucket(bucketID)
+}
+
 func (s *Service) GetKVNamespace(namespaceID string) (KVNamespace, error) {
 	namespaceID = strings.TrimSpace(namespaceID)
 	if namespaceID == "" {
@@ -268,16 +325,18 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		return detail, nil
 	}
 	detail.Deployment = &WorkerDeployment{
-		ID:                active.Deployment.ID,
-		Entrypoint:        active.Deployment.Entrypoint,
-		Format:            active.Deployment.Format,
-		BundleSize:        active.Deployment.BundleSize,
-		AssetCount:        len(active.Deployment.Assets),
-		CompatibilityDate: active.Deployment.CompatibilityDate,
-		KVNamespaces:      append([]KVBinding(nil), active.Deployment.KVNamespaces...),
-		AssetConfig:       active.Deployment.AssetConfig,
-		Port:              active.Deployment.Port,
-		CreatedAt:         active.Deployment.CreatedAt,
+		ID:                   active.Deployment.ID,
+		Entrypoint:           active.Deployment.Entrypoint,
+		Format:               active.Deployment.Format,
+		BundleSize:           active.Deployment.BundleSize,
+		AssetCount:           len(active.Deployment.Assets),
+		CompatibilityDate:    active.Deployment.CompatibilityDate,
+		KVNamespaces:         append([]KVBinding(nil), active.Deployment.KVNamespaces...),
+		ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), active.Deployment.ObjectStorageBuckets...),
+		AssetConfig:          active.Deployment.AssetConfig,
+		Bindings:             s.deploymentBindings(active.Deployment),
+		Port:                 active.Deployment.Port,
+		CreatedAt:            active.Deployment.CreatedAt,
 	}
 	return detail, nil
 }
@@ -391,6 +450,10 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
+	objectStorageBuckets, err := s.normalizeObjectStorageBuckets(input.ObjectStorageBuckets)
+	if err != nil {
+		return Deployment{}, err
+	}
 	format, err := workerFormat(input.Format, len(files))
 	if err != nil {
 		return Deployment{}, err
@@ -407,18 +470,19 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		return Deployment{}, err
 	}
 	deployment := Deployment{
-		ID:                deploymentID,
-		AppID:             appID,
-		Files:             files,
-		Assets:            assets,
-		Entrypoint:        entrypoint,
-		Format:            format,
-		CompatibilityDate: input.CompatibilityDate,
-		KVNamespaces:      kvNamespaces,
-		AssetConfig:       assetConfig,
-		BundleSize:        bundleSize(files),
-		Port:              port,
-		CreatedAt:         time.Now().UTC(),
+		ID:                   deploymentID,
+		AppID:                appID,
+		Files:                files,
+		Assets:               assets,
+		Entrypoint:           entrypoint,
+		Format:               format,
+		CompatibilityDate:    input.CompatibilityDate,
+		KVNamespaces:         kvNamespaces,
+		ObjectStorageBuckets: objectStorageBuckets,
+		AssetConfig:          assetConfig,
+		BundleSize:           bundleSize(files),
+		Port:                 port,
+		CreatedAt:            time.Now().UTC(),
 	}
 	if len(deployment.Assets) > 0 && s.objects == nil {
 		return Deployment{}, errors.New("object storage is not configured")
@@ -615,6 +679,66 @@ func (s *Service) normalizeKVNamespaces(bindings []KVBinding) ([]KVBinding, erro
 	return normalized, nil
 }
 
+func (s *Service) normalizeObjectStorageBuckets(bindings []ObjectStorageBucketBinding) ([]ObjectStorageBucketBinding, error) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+	normalized := make([]ObjectStorageBucketBinding, 0, len(bindings))
+	seenBindings := make(map[string]bool, len(bindings))
+	for _, binding := range bindings {
+		binding.Binding = strings.TrimSpace(binding.Binding)
+		binding.BucketID = strings.TrimSpace(binding.BucketID)
+		if binding.Binding == "" {
+			return nil, errors.New("object_storage_buckets.binding is required")
+		}
+		if binding.BucketID == "" {
+			return nil, errors.New("object_storage_buckets.bucket_id is required")
+		}
+		if seenBindings[binding.Binding] {
+			return nil, fmt.Errorf("object_storage_buckets binding %q is duplicated", binding.Binding)
+		}
+		if _, err := s.store.GetObjectStorageBucket(binding.BucketID); err != nil {
+			return nil, err
+		}
+		seenBindings[binding.Binding] = true
+		normalized = append(normalized, binding)
+	}
+	return normalized, nil
+}
+
+func (s *Service) deploymentBindings(deployment Deployment) []Binding {
+	bindings := make([]Binding, 0, len(deployment.KVNamespaces)+len(deployment.ObjectStorageBuckets)+1)
+	for _, binding := range deployment.KVNamespaces {
+		item := Binding{Kind: "kv", Binding: binding.Binding, NamespaceID: binding.ID}
+		if namespace, err := s.store.GetKVNamespace(binding.ID); err == nil {
+			item.NamespaceName = namespace.Name
+		}
+		bindings = append(bindings, item)
+	}
+	if len(deployment.Assets) > 0 {
+		bindings = append(bindings, Binding{
+			Kind:       "asset",
+			Binding:    deploymentAssetBindingName(deployment.AssetConfig),
+			AssetCount: len(deployment.Assets),
+		})
+	}
+	for _, binding := range deployment.ObjectStorageBuckets {
+		item := Binding{Kind: "object_storage_bucket", Binding: binding.Binding, BucketID: binding.BucketID}
+		if bucket, err := s.store.GetObjectStorageBucket(binding.BucketID); err == nil {
+			item.BucketName = bucket.Name
+		}
+		bindings = append(bindings, item)
+	}
+	return bindings
+}
+
+func deploymentAssetBindingName(config AssetConfig) string {
+	if strings.TrimSpace(config.Binding) == "" {
+		return "ASSETS"
+	}
+	return strings.TrimSpace(config.Binding)
+}
+
 func normalizeAuthConfig(config AuthConfig) (AuthConfig, error) {
 	if len(config.ProtectedRoutes) == 0 {
 		return AuthConfig{}, nil
@@ -753,60 +877,108 @@ func deploymentAssetObjectPath(deploymentID, assetPath string) string {
 	return path.Join("deployments", deploymentID, "assets", assetPath)
 }
 
-func (s *Service) PresignUpload(capability, path string) (string, error) {
+func objectStorageBucketPath(bucketID, objectPath string) string {
+	return path.Join("buckets", bucketID, strings.TrimPrefix(objectPath, "/"))
+}
+
+func (s *Service) PresignUpload(capability, bucketID, objectPath string) (string, error) {
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return "", err
 	}
-	return s.objects.PresignUpload(appID, path, 15*time.Minute)
+	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return "", err
+	}
+	return s.objects.PresignUpload(appID, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
 }
 
-func (s *Service) PresignDownload(capability, path string) (string, error) {
+func (s *Service) PresignDownload(capability, bucketID, objectPath string) (string, error) {
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return "", err
 	}
-	return s.objects.PresignDownload(appID, path, 15*time.Minute)
+	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return "", err
+	}
+	return s.objects.PresignDownload(appID, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
 }
 
-func (s *Service) DeleteObject(capability, path string) error {
+func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return err
 	}
-	return s.objects.Delete(appID, path)
+	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return err
+	}
+	return s.objects.Delete(appID, objectStorageBucketPath(bucketID, objectPath))
 }
 
-func (s *Service) ObjectPut(capability, objectPath, contentType string, data []byte) (ObjectInfo, error) {
+func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	return s.objects.Put(appID, objectPath, contentType, data)
+	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return ObjectInfo{}, err
+	}
+	object, err := s.objects.Put(appID, objectStorageBucketPath(bucketID, objectPath), contentType, data)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	object.Key = strings.TrimPrefix(objectPath, "/")
+	return object, nil
 }
 
-func (s *Service) ObjectGet(capability, objectPath string) (ObjectBody, bool, error) {
+func (s *Service) ObjectGet(capability, bucketID, objectPath string) (ObjectBody, bool, error) {
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return ObjectBody{}, false, err
 	}
-	object, err := s.objects.Get(appID, objectPath)
+	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return ObjectBody{}, false, err
+	}
+	object, err := s.objects.Get(appID, objectStorageBucketPath(bucketID, objectPath))
 	if errors.Is(err, ErrObjectNotFound) {
 		return ObjectBody{}, false, nil
 	}
+	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, err == nil, err
 }
 
-func (s *Service) ObjectHead(capability, objectPath string) (ObjectInfo, bool, error) {
+func (s *Service) ObjectHead(capability, bucketID, objectPath string) (ObjectInfo, bool, error) {
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return ObjectInfo{}, false, err
 	}
-	object, err := s.objects.Head(appID, objectPath)
+	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return ObjectInfo{}, false, err
+	}
+	object, err := s.objects.Head(appID, objectStorageBucketPath(bucketID, objectPath))
 	if errors.Is(err, ErrObjectNotFound) {
 		return ObjectInfo{}, false, nil
 	}
+	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, err == nil, err
+}
+
+func (s *Service) ObjectList(capability, bucketID string) ([]ObjectInfo, error) {
+	appID, err := s.appIDForCapability(capability)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return nil, err
+	}
+	objects, err := s.objects.List(appID, objectStorageBucketPath(bucketID, ""))
+	if err != nil {
+		return nil, err
+	}
+	prefix := objectStorageBucketPath(bucketID, "") + "/"
+	for i := range objects {
+		objects[i].Key = strings.TrimPrefix(objects[i].Key, prefix)
+	}
+	return objects, nil
 }
 
 func (s *Service) appIDForCapability(capability string) (string, error) {
@@ -872,6 +1044,50 @@ func (s *Service) WorkerKVDelete(appID, namespaceID, key string) error {
 	return s.store.KVDelete(app.RuntimeToken, namespaceID, key)
 }
 
+func (s *Service) WorkerObjectList(appID, bucketID string) ([]ObjectInfo, error) {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureActiveDeploymentBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return nil, err
+	}
+	return s.ObjectList(app.RuntimeToken, bucketID)
+}
+
+func (s *Service) WorkerObjectGet(appID, bucketID, key string) (ObjectBody, bool, error) {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return ObjectBody{}, false, err
+	}
+	if err := s.ensureActiveDeploymentBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return ObjectBody{}, false, err
+	}
+	return s.ObjectGet(app.RuntimeToken, bucketID, key)
+}
+
+func (s *Service) WorkerObjectPut(appID, bucketID, key, contentType string, data []byte) (ObjectInfo, error) {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := s.ensureActiveDeploymentBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return ObjectInfo{}, err
+	}
+	return s.ObjectPut(app.RuntimeToken, bucketID, key, contentType, data)
+}
+
+func (s *Service) WorkerObjectDelete(appID, bucketID, key string) error {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return err
+	}
+	if err := s.ensureActiveDeploymentBindsObjectStorageBucket(appID, bucketID); err != nil {
+		return err
+	}
+	return s.DeleteObject(app.RuntimeToken, bucketID, key)
+}
+
 func (s *Service) ensureActiveDeploymentBindsNamespace(appID, namespaceID string) error {
 	_, active, err := s.worker(appID)
 	if err != nil {
@@ -886,6 +1102,38 @@ func (s *Service) ensureActiveDeploymentBindsNamespace(appID, namespaceID string
 		}
 	}
 	return ErrKVNamespaceNotBound
+}
+
+func (s *Service) ensureActiveDeploymentBindsObjectStorageBucket(appID, bucketID string) error {
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return err
+	}
+	if active == nil {
+		return ErrObjectStorageBucketNotBound
+	}
+	for _, binding := range active.Deployment.ObjectStorageBuckets {
+		if binding.BucketID == bucketID {
+			return nil
+		}
+	}
+	return ErrObjectStorageBucketNotBound
+}
+
+func (s *Service) ensureCapabilityBindsObjectStorageBucket(appID, bucketID string) error {
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return err
+	}
+	if active == nil {
+		return ErrObjectStorageBucketNotBound
+	}
+	for _, binding := range active.Deployment.ObjectStorageBuckets {
+		if binding.BucketID == bucketID {
+			return nil
+		}
+	}
+	return ErrObjectStorageBucketNotBound
 }
 
 func (s *Service) AssetFetch(capability, assetPath string) (AssetResponse, error) {

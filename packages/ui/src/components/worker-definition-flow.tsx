@@ -13,7 +13,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import { FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react";
+import { DatabaseZap, FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import type { KVNamespace, Worker, WorkerDeployment } from "../app/types";
 import { cn } from "../lib/utils";
@@ -22,6 +22,7 @@ import { Badge } from "./ui/badge";
 type WorkerDefinitionFlowProps = {
   deployment?: WorkerDeployment;
   namespaces: KVNamespace[];
+  onOpenBucket: (bucketID: string) => void;
   onOpenNamespace: (namespaceID: string) => void;
   worker: Worker;
 };
@@ -36,9 +37,10 @@ type DefinitionNodeData = {
 
 type BindingItem = {
   binding: string;
+  bucketID?: string;
   namespaceID?: string;
   subtitle: string;
-  type: "asset" | "kv";
+  type: "asset" | "kv" | "object";
 };
 
 type BindingsNodeData = {
@@ -55,6 +57,7 @@ const nodeTypes = {
 };
 
 const NamespaceNavigationContext = createContext<((namespaceID: string) => void) | null>(null);
+const BucketNavigationContext = createContext<((bucketID: string) => void) | null>(null);
 
 const getLayoutedElements = (nodes: FlowNode[], edges: Edge[], direction: "LR" | "TB") => {
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
@@ -85,9 +88,11 @@ const getLayoutedElements = (nodes: FlowNode[], edges: Edge[], direction: "LR" |
 export function WorkerDefinitionFlow(props: WorkerDefinitionFlowProps) {
   return (
     <NamespaceNavigationContext.Provider value={props.onOpenNamespace}>
-      <ReactFlowProvider>
-        <LayoutedWorkerDefinitionFlow {...props} />
-      </ReactFlowProvider>
+      <BucketNavigationContext.Provider value={props.onOpenBucket}>
+        <ReactFlowProvider>
+          <LayoutedWorkerDefinitionFlow {...props} />
+        </ReactFlowProvider>
+      </BucketNavigationContext.Provider>
     </NamespaceNavigationContext.Provider>
   );
 }
@@ -99,13 +104,12 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
   const initialGraph = useMemo(() => buildGraph(worker, deployment, namespaces), [deployment, namespaces, worker]);
   const graphKey = useMemo(
     () => JSON.stringify({
-      assetBinding: deployment?.asset_config?.binding ?? (deployment?.asset_count ? "ASSETS" : undefined),
+      bindings: deployment?.bindings ?? worker.bindings ?? [],
       hostname: worker.hostname,
-      kvBindings: (deployment?.kv_namespaces ?? worker.kv_bindings ?? []).map((binding) => [binding.binding, binding.id]),
       protectedRoutes: worker.auth?.protected_routes ?? [],
       workerName: worker.name,
     }),
-    [deployment?.asset_config?.binding, deployment?.asset_count, deployment?.kv_namespaces, worker.auth?.protected_routes, worker.hostname, worker.kv_bindings, worker.name],
+    [deployment?.bindings, worker.auth?.protected_routes, worker.bindings, worker.hostname, worker.name],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initialGraph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialGraph.edges);
@@ -167,23 +171,30 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
 function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deployment"], namespaces: KVNamespace[]) {
   const namespaceByID = new Map(namespaces.map((namespace) => [namespace.id, namespace]));
   const protectedRoutes = worker.auth?.protected_routes ?? [];
-  const assetBinding = deployment?.asset_config?.binding ?? (deployment?.asset_count ? "ASSETS" : undefined);
-  const kvBindings = deployment?.kv_namespaces ?? worker.kv_bindings ?? [];
-  const bindingItems: BindingItem[] = [
-    ...(assetBinding
-      ? [{
-          binding: assetBinding,
-          subtitle: `${deployment?.asset_count ?? 0} static asset${deployment?.asset_count === 1 ? "" : "s"}`,
-          type: "asset" as const,
-        }]
-      : []),
-    ...kvBindings.map((binding) => ({
+  const bindings = deployment?.bindings ?? worker.bindings ?? [];
+  const bindingItems: BindingItem[] = bindings.map((binding) => {
+    if (binding.kind === "asset") {
+      return {
+        binding: binding.binding,
+        subtitle: `${binding.asset_count ?? 0} static asset${binding.asset_count === 1 ? "" : "s"}`,
+        type: "asset" as const,
+      };
+    }
+    if (binding.kind === "object_storage_bucket") {
+      return {
+        binding: binding.binding,
+        bucketID: binding.bucket_id,
+        subtitle: binding.bucket_name ?? binding.bucket_id ?? "bucket",
+        type: "object" as const,
+      };
+    }
+    return {
       binding: binding.binding,
-      namespaceID: binding.id,
-      subtitle: namespaceByID.get(binding.id)?.name ?? binding.id,
+      namespaceID: binding.namespace_id,
+      subtitle: binding.namespace_name ?? namespaceByID.get(binding.namespace_id ?? "")?.name ?? binding.namespace_id ?? "namespace",
       type: "kv" as const,
-    })),
-  ];
+    };
+  });
 
   const nodes: FlowNode[] = [
     {
@@ -308,11 +319,11 @@ function BindingsNode({ data }: NodeProps<Node<BindingsNodeData>>) {
 
       <div className="divide-y divide-[#e4dfd8]">
         {data.items.length ? data.items.map((item) => (
-          <BindingRow key={`${item.type}-${item.binding}-${item.namespaceID ?? "asset"}`} item={item} />
+          <BindingRow key={`${item.type}-${item.binding}-${item.namespaceID ?? item.bucketID ?? "asset"}`} item={item} />
         )) : (
           <div className="px-7 py-8">
             <p className="text-[18px] text-[#777975]">No bindings attached</p>
-            <p className="mt-2 font-mono text-[11px]   text-[#9ca19a]">Deploy assets or KV namespaces to populate this section.</p>
+            <p className="mt-2 font-mono text-[11px]   text-[#9ca19a]">Deploy assets, KV namespaces, or object buckets to populate this section.</p>
           </div>
         )}
       </div>
@@ -322,13 +333,15 @@ function BindingsNode({ data }: NodeProps<Node<BindingsNodeData>>) {
 
 function BindingRow({ item }: { item: BindingItem }) {
   const openNamespace = useContext(NamespaceNavigationContext);
+  const openBucket = useContext(BucketNavigationContext);
   const isKV = item.type === "kv";
-  const label = isKV ? "KV" : "Assets";
+  const isObject = item.type === "object";
+  const label = isKV ? "KV" : isObject ? "Object storage" : "Assets";
 
   return (
     <div className="pointer-events-auto px-7 py-5">
       <div className="mb-2 flex items-center gap-2">
-        {isKV ? <KeyRound className="size-4 text-[#5d7667]" /> : <FolderOpen className="size-4 text-[#7f6d4f]" />}
+        {isKV ? <KeyRound className="size-4 text-[#5d7667]" /> : isObject ? <DatabaseZap className="size-4 text-[#52748e]" /> : <FolderOpen className="size-4 text-[#7f6d4f]" />}
         <p className="text-[15px] font-semibold text-[#666864]">{label}</p>
       </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[16px] font-semibold  text-[#1f2522]">
@@ -351,6 +364,26 @@ function BindingRow({ item }: { item: BindingItem }) {
               openNamespace?.(item.namespaceID!);
             }}
             className="nodrag nopan pointer-events-auto relative z-10 rounded-sm text-[#3b6550] underline decoration-[#9ec0ad] underline-offset-4 transition hover:text-[#264737]"
+          >
+            {item.subtitle}
+          </button>
+        ) : isObject && item.bucketID ? (
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openBucket?.(item.bucketID!);
+            }}
+            className="nodrag nopan pointer-events-auto relative z-10 rounded-sm text-[#3b5e7d] underline decoration-[#b2c7da] underline-offset-4 transition hover:text-[#29435b]"
           >
             {item.subtitle}
           </button>

@@ -7,14 +7,18 @@ import (
 )
 
 var (
-	ErrAppExists           = errors.New("app already exists")
-	ErrAppNotFound         = errors.New("app not found")
-	ErrInvalidCapability   = errors.New("invalid runtime capability")
-	ErrObjectNotFound      = errors.New("object not found")
-	ErrKVNamespaceExists   = errors.New("kv namespace already exists")
-	ErrKVNamespaceNotFound = errors.New("kv namespace not found")
-	ErrKVNamespaceInUse    = errors.New("kv namespace is still referenced by a deployment")
-	ErrKVNamespaceNotBound = errors.New("kv namespace is not bound by the app's active deployment")
+	ErrAppExists                   = errors.New("app already exists")
+	ErrAppNotFound                 = errors.New("app not found")
+	ErrInvalidCapability           = errors.New("invalid runtime capability")
+	ErrObjectNotFound              = errors.New("object not found")
+	ErrKVNamespaceExists           = errors.New("kv namespace already exists")
+	ErrKVNamespaceNotFound         = errors.New("kv namespace not found")
+	ErrKVNamespaceInUse            = errors.New("kv namespace is still referenced by a deployment")
+	ErrKVNamespaceNotBound         = errors.New("kv namespace is not bound by the app's active deployment")
+	ErrObjectStorageBucketExists   = errors.New("object storage bucket already exists")
+	ErrObjectStorageBucketNotFound = errors.New("object storage bucket not found")
+	ErrObjectStorageBucketInUse    = errors.New("object storage bucket is still referenced by a deployment")
+	ErrObjectStorageBucketNotBound = errors.New("object storage bucket is not bound by the app's active deployment")
 )
 
 type Repository interface {
@@ -27,6 +31,11 @@ type Repository interface {
 	GetKVNamespace(string) (KVNamespace, error)
 	UpdateKVNamespace(KVNamespace) error
 	DeleteKVNamespace(string) error
+	CreateObjectStorageBucket(ObjectStorageBucket) error
+	ListObjectStorageBuckets() ([]ObjectStorageBucket, error)
+	GetObjectStorageBucket(string) (ObjectStorageBucket, error)
+	UpdateObjectStorageBucket(ObjectStorageBucket) error
+	DeleteObjectStorageBucket(string) error
 	NextPort() (int, error)
 	Activate(Deployment) error
 	DeleteDeployment(id string) error
@@ -44,6 +53,7 @@ type Store struct {
 	mu              sync.RWMutex
 	apps            map[string]App
 	kvNamespaces    map[string]KVNamespace
+	objectBuckets   map[string]ObjectStorageBucket
 	deployments     map[string][]Deployment
 	active          map[string]string
 	capabilityToApp map[string]string
@@ -54,6 +64,7 @@ func NewStore() *Store {
 	return &Store{
 		apps:            make(map[string]App),
 		kvNamespaces:    make(map[string]KVNamespace),
+		objectBuckets:   make(map[string]ObjectStorageBucket),
 		deployments:     make(map[string][]Deployment),
 		active:          make(map[string]string),
 		capabilityToApp: make(map[string]string),
@@ -190,6 +201,78 @@ func (s *Store) DeleteKVNamespace(namespaceID string) error {
 	}
 	delete(s.kvNamespaces, namespaceID)
 	delete(s.kv, namespaceID)
+	return nil
+}
+
+func (s *Store) CreateObjectStorageBucket(bucket ObjectStorageBucket) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.objectBuckets[bucket.ID]; exists {
+		return ErrObjectStorageBucketExists
+	}
+	for _, existing := range s.objectBuckets {
+		if existing.Name == bucket.Name {
+			return ErrObjectStorageBucketExists
+		}
+	}
+	s.objectBuckets[bucket.ID] = bucket
+	return nil
+}
+
+func (s *Store) ListObjectStorageBuckets() ([]ObjectStorageBucket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	buckets := make([]ObjectStorageBucket, 0, len(s.objectBuckets))
+	for _, bucket := range s.objectBuckets {
+		buckets = append(buckets, bucket)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].Name < buckets[j].Name })
+	return buckets, nil
+}
+
+func (s *Store) GetObjectStorageBucket(bucketID string) (ObjectStorageBucket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	bucket, ok := s.objectBuckets[bucketID]
+	if !ok {
+		return ObjectStorageBucket{}, ErrObjectStorageBucketNotFound
+	}
+	return bucket, nil
+}
+
+func (s *Store) UpdateObjectStorageBucket(bucket ObjectStorageBucket) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.objectBuckets[bucket.ID]
+	if !ok {
+		return ErrObjectStorageBucketNotFound
+	}
+	for _, candidate := range s.objectBuckets {
+		if candidate.ID != bucket.ID && candidate.Name == bucket.Name {
+			return ErrObjectStorageBucketExists
+		}
+	}
+	bucket.CreatedAt = existing.CreatedAt
+	s.objectBuckets[bucket.ID] = bucket
+	return nil
+}
+
+func (s *Store) DeleteObjectStorageBucket(bucketID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.objectBuckets[bucketID]; !ok {
+		return ErrObjectStorageBucketNotFound
+	}
+	for _, deployments := range s.deployments {
+		for _, deployment := range deployments {
+			for _, binding := range deployment.ObjectStorageBuckets {
+				if binding.BucketID == bucketID {
+					return ErrObjectStorageBucketInUse
+				}
+			}
+		}
+	}
+	delete(s.objectBuckets, bucketID)
 	return nil
 }
 

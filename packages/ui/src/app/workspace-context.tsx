@@ -1,16 +1,17 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { fetchJSON } from "./api";
-import { demoNamespaces, demoWorkers } from "./demo-data";
-import type { KVNamespace, Worker, WorkerDetailData, WorkerTraffic, WorkspaceContextValue } from "./types";
-import { sortNamespaces } from "./utils";
+import type { KVNamespace, ObjectStorageBucket, Worker, WorkerDetailData, WorkerTraffic, WorkspaceContextValue } from "./types";
+import { sortNamespaces, sortObjectStorageBuckets } from "./utils";
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
-  const [workers, setWorkers] = useState<Worker[]>(demoWorkers);
-  const [namespaces, setNamespaces] = useState<KVNamespace[]>(demoNamespaces);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [namespaces, setNamespaces] = useState<KVNamespace[]>([]);
+  const [objectStorageBuckets, setObjectStorageBuckets] = useState<ObjectStorageBucket[]>([]);
   const [workerDialogOpen, setWorkerDialogOpen] = useState(false);
   const [namespaceDialogOpen, setNamespaceDialogOpen] = useState(false);
+  const [objectStorageBucketDialogOpen, setObjectStorageBucketDialogOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [apiConnected, setApiConnected] = useState(false);
 
@@ -19,13 +20,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     async function refreshWorkspace() {
       try {
-        const [apps, kvNamespaces] = await Promise.all([
-          fetchJSON<Worker[]>("/v1/apps"),
-          fetchJSON<KVNamespace[]>("/v1/kv/namespaces"),
+        const [apps, kvNamespaces, buckets] = await Promise.all([
+          fetchJSON<Worker[] | null>("/v1/apps"),
+          fetchJSON<KVNamespace[] | null>("/v1/kv/namespaces"),
+          fetchJSON<ObjectStorageBucket[] | null>("/v1/object-storage-buckets"),
         ]);
         if (cancelled) return;
         setApiConnected(true);
-        const nextWorkers = await Promise.all(apps.map(async (app) => {
+        const nextWorkers = await Promise.all((apps ?? []).map(async (app) => {
           const [detail, traffic] = await Promise.all([
             fetchJSON<WorkerDetailData>(`/v1/apps/${app.id}`).catch(() => undefined),
             fetchJSON<WorkerTraffic>(`/v1/apps/${app.id}/traffic`).catch(() => undefined),
@@ -36,17 +38,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             status: detail?.deployment ? "live" as const : "draft" as const,
             requests: traffic?.available ? `${traffic.requests_per_second.toFixed(2)}/s` : "unavailable",
             deployment: detail?.deployment?.id ?? "awaiting deploy",
-            kv_bindings: detail?.deployment?.kv_namespaces ?? [],
+            bindings: detail?.deployment?.bindings ?? [],
           };
         }));
         if (cancelled) return;
         setWorkers(nextWorkers);
-        setNamespaces(sortNamespaces(kvNamespaces));
+        setNamespaces(sortNamespaces(kvNamespaces ?? []));
+        setObjectStorageBuckets(sortObjectStorageBuckets(buckets ?? []));
       } catch {
         if (cancelled) return;
         setApiConnected(false);
-        setWorkers(demoWorkers);
-        setNamespaces(demoNamespaces);
+        setWorkers([]);
+        setNamespaces([]);
+        setObjectStorageBuckets([]);
       }
     }
 
@@ -71,13 +75,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setWorkers,
         namespaces,
         setNamespaces,
+        objectStorageBuckets,
+        setObjectStorageBuckets,
         apiConnected,
         workerDialogOpen,
         namespaceDialogOpen,
+        objectStorageBucketDialogOpen,
         openWorkerDialog: () => setWorkerDialogOpen(true),
         closeWorkerDialog: () => setWorkerDialogOpen(false),
         openNamespaceDialog: () => setNamespaceDialogOpen(true),
         closeNamespaceDialog: () => setNamespaceDialogOpen(false),
+        openObjectStorageBucketDialog: () => setObjectStorageBucketDialogOpen(true),
+        closeObjectStorageBucketDialog: () => setObjectStorageBucketDialogOpen(false),
         toast,
         notify,
       }}

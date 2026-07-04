@@ -158,7 +158,7 @@ discovery, and then stops the previous generation. In direct mode,
 Deployments store worker file content, not host filesystem paths. New projects
 use ES-module syntax and set `"format": "modules"` in `nanoflare.json`, so their
 handler receives bindings through `env`, including any configured KV bindings
-and `env.OBJECTS`. Existing projects without an explicit format remain
+and any configured object storage bindings such as `env.OBJECTS`. Existing projects without an explicit format remain
 compatible: one file uses service-worker syntax and multiple files use
 ES-module syntax.
 
@@ -218,7 +218,25 @@ export default {
 };
 ```
 
-Application object storage is app-scoped and exposed with an R2-style binding:
+Object storage buckets use explicit storage-oriented CLI commands. Create
+buckets first:
+
+```sh
+nanoflare object-storage bucket create customer-files
+nanoflare object-storage bucket list
+```
+
+Then bind them in `nanoflare.json`:
+
+```json
+{
+  "object_storage_buckets": [
+    { "binding": "OBJECTS", "bucket_id": "bucket_123" }
+  ]
+}
+```
+
+Application object storage is bucket-scoped and exposed with an R2-style binding:
 
 ```js
 export default {

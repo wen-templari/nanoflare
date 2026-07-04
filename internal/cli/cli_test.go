@@ -360,6 +360,71 @@ func TestKVNamespaceCommands(t *testing.T) {
 	}
 }
 
+func TestObjectStorageBucketCommands(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	var created nanoflare.CreateObjectStorageBucketInput
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/object-storage-buckets":
+			decodeRequest(t, r, &created)
+			writeJSON(t, w, http.StatusCreated, nanoflare.ObjectStorageBucket{ID: "bucket-123", Name: created.Name})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/object-storage-buckets":
+			writeJSON(t, w, http.StatusOK, []nanoflare.ObjectStorageBucket{{ID: "bucket-123", Name: "customer-files"}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/object-storage-buckets/bucket-123":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"object-storage", "bucket", "create", "--api-url", server.URL, "customer-files"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"object-storage", "bucket", "list", "--api-url", server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"object-storage", "bucket", "delete", "--api-url", server.URL, "bucket-123"}); err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != "customer-files" {
+		t.Fatalf("create payload = %#v", created)
+	}
+	if got := stdout.String(); got != "Created object storage bucket bucket-123\tcustomer-files\nbucket-123\tcustomer-files\nDeleted object storage bucket bucket-123\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestLoadProjectAcceptsLegacyObjectStorageBucketShape(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	if err := os.WriteFile(projectFilename, []byte(`{
+  "name": "Hello",
+  "hostname": "hello.example.com",
+  "api_url": "http://127.0.0.1:8080",
+  "entrypoint": "worker.js",
+  "compatibility_date": "2025-12-10",
+  "files": ["worker.js"],
+  "object_storage_buckets": [
+    { "binding": "OBJECTS", "id": "bucket-123" }
+  ]
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, project, err := loadProject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(project.ObjectStorageBuckets) != 1 {
+		t.Fatalf("object storage buckets = %#v", project.ObjectStorageBuckets)
+	}
+	if project.ObjectStorageBuckets[0].Binding != "OBJECTS" || project.ObjectStorageBuckets[0].BucketID != "bucket-123" {
+		t.Fatalf("legacy object storage bucket = %#v", project.ObjectStorageBuckets[0])
+	}
+}
+
 func withWorkingDirectory(t *testing.T, dir string) {
 	t.Helper()
 	previous, err := os.Getwd()

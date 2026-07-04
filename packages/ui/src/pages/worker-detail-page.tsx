@@ -5,7 +5,6 @@ import {
 } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { fetchJSON } from "../app/api";
-import { demoDeployments } from "../app/demo-data";
 import { useWorkspace } from "../app/workspace-context";
 import type {
   ConsoleDeployment, WorkerDeployment, WorkerDetailData, WorkerDetailTab, WorkerFile,
@@ -32,13 +31,13 @@ export function WorkerDetailPage() {
   return <WorkerDetailContent worker={worker} onBack={() => navigate("/workers")} notify={notify} apiConnected={apiConnected} />
 }
 
-function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; kv_bindings?: WorkerDeployment["kv_namespaces"]; created_at: string }; onBack: () => void; notify: (text: string) => void; apiConnected: boolean }) {
+function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; bindings?: WorkerDeployment["bindings"]; created_at: string }; onBack: () => void; notify: (text: string) => void; apiConnected: boolean }) {
   const navigate = useNavigate()
   const { namespaces } = useWorkspace()
   const [tab, setTab] = useState<WorkerDetailTab>("overview")
   const [detail, setDetail] = useState<WorkerDetailData>()
   const [files, setFiles] = useState<WorkerFile[]>([])
-  const [deployments, setDeployments] = useState<ConsoleDeployment[]>(() => demoDeployments.filter((deployment) => deployment.app_id === worker.id))
+  const [deployments, setDeployments] = useState<ConsoleDeployment[]>([])
   const [selectedFile, setSelectedFile] = useState<WorkerFile>()
   const [output, setOutput] = useState<WorkerOutputLine[]>([])
   const [traffic, setTraffic] = useState<WorkerTraffic>({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] })
@@ -50,23 +49,12 @@ function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker:
 
     async function refresh() {
       if (!apiConnected) {
-        const demoDeployment = demoDeployments.find((deployment) => deployment.app_id === worker.id)
-        setDetail({
-          app: worker,
-          deployment: demoDeployment && {
-            id: demoDeployment.id,
-            entrypoint: demoDeployment.entrypoint,
-            bundle_size: demoDeployment.bundle_size,
-            compatibility_date: demoDeployment.compatibility_date,
-            created_at: demoDeployment.created_at,
-            kv_namespaces: worker.kv_bindings,
-          },
-        })
+        setDetail(undefined)
         setFiles([])
-        setDeployments(demoDeployments.filter((deployment) => deployment.app_id === worker.id))
+        setDeployments([])
         setOutput([])
         setTraffic({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] })
-        setError("")
+        setError("Worker detail API unavailable")
         setLoading(false)
         return
       }
@@ -128,7 +116,7 @@ function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker:
           </div>
           <p className="font-mono text-[9px]   text-[#a1a49e]">{tab === "overview" ? "topology, metrics, recent history" : tab === "deployments" ? "full deployment history" : tab === "files" ? "bundle explorer" : tab === "output" ? "runtime stream" : "worker configuration"}</p>
         </header>
-        {tab === "overview" && <WorkerOverview worker={detail?.app ?? worker} deployment={detail?.deployment} namespaces={namespaces} onOpenNamespace={(namespaceID) => navigate(`/kv/${namespaceID}`)} onOpenDeployments={() => setTab("deployments")} recentDeployments={recentDeployments} traffic={traffic} />}
+        {tab === "overview" && <WorkerOverview worker={detail?.app ?? worker} deployment={detail?.deployment} namespaces={namespaces} onOpenNamespace={(namespaceID) => navigate(`/kv/${namespaceID}`)} onOpenBucket={(bucketID) => navigate(`/object-storage/${bucketID}`)} onOpenDeployments={() => setTab("deployments")} recentDeployments={recentDeployments} traffic={traffic} />}
         {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
         {tab === "files" && <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />}
         {tab === "output" && <WorkerOutput lines={output} />}
@@ -142,6 +130,7 @@ function WorkerOverview({
   deployment,
   namespaces,
   onOpenNamespace,
+  onOpenBucket,
   onOpenDeployments,
   recentDeployments,
   traffic,
@@ -150,13 +139,16 @@ function WorkerOverview({
   deployment?: WorkerDeployment
   namespaces: { id: string; name: string; created_at: string }[]
   onOpenNamespace: (namespaceID: string) => void
+  onOpenBucket: (bucketID: string) => void
   onOpenDeployments: () => void
   recentDeployments: ConsoleDeployment[]
   traffic: WorkerTraffic
   worker: WorkerDetailData["app"]
 }) {
-  const kvBindings = deployment?.kv_namespaces ?? worker.kv_bindings ?? []
-  const assetBinding = deployment?.asset_config?.binding ?? (deployment?.asset_count ? "ASSETS" : undefined)
+  const bindings = deployment?.bindings ?? worker.bindings ?? []
+  const kvBindingCount = bindings.filter((binding) => binding.kind === "kv").length
+  const objectBindingCount = bindings.filter((binding) => binding.kind === "object_storage_bucket").length
+  const assetBinding = bindings.find((binding) => binding.kind === "asset")?.binding
 
   return (
     <div className="space-y-6 p-5">
@@ -167,14 +159,15 @@ function WorkerOverview({
         </div>
         <div className="flex flex-wrap gap-2">
           {assetBinding ? <Badge tone="green">asset: {assetBinding}</Badge> : null}
-          <Badge tone={kvBindings.length ? "green" : "orange"}>{kvBindings.length} KV binding{kvBindings.length === 1 ? "" : "s"}</Badge>
+          <Badge tone={kvBindingCount ? "green" : "orange"}>{kvBindingCount} KV binding{kvBindingCount === 1 ? "" : "s"}</Badge>
+          <Badge tone={objectBindingCount ? "green" : "orange"}>{objectBindingCount} object bucket{objectBindingCount === 1 ? "" : "s"}</Badge>
           <Badge tone={worker.auth?.protected_routes?.length ? "orange" : "green"}>{worker.auth?.protected_routes?.length ? "auth enabled" : "auth bypassed"}</Badge>
         </div>
       </div>
       <div className="space-y-6">
         <section>
           <Suspense fallback={<div className="h-[420px] animate-pulse rounded-xl border border-[#e2ddd2] bg-[#f5f1e9]/70" />}>
-            <WorkerDefinitionFlow worker={worker} deployment={deployment} namespaces={namespaces} onOpenNamespace={onOpenNamespace} />
+            <WorkerDefinitionFlow worker={worker} deployment={deployment} namespaces={namespaces} onOpenNamespace={onOpenNamespace} onOpenBucket={onOpenBucket} />
           </Suspense>
         </section>
 

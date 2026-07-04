@@ -125,6 +125,25 @@ func (m *MinIO) Head(appID, objectPath string) (nanoflare.ObjectInfo, error) {
 	return objectInfo(objectPath, info), nil
 }
 
+func (m *MinIO) List(appID, prefix string) ([]nanoflare.ObjectInfo, error) {
+	key, err := objectKey(appID, prefix)
+	if err != nil {
+		return nil, err
+	}
+	objects := make([]nanoflare.ObjectInfo, 0)
+	for object := range m.client.ListObjects(context.Background(), m.bucket, minio.ListObjectsOptions{
+		Prefix:    key + "/",
+		Recursive: true,
+	}) {
+		if object.Err != nil {
+			return nil, object.Err
+		}
+		relative := strings.TrimPrefix(object.Key, path.Join("apps", appID)+"/")
+		objects = append(objects, objectInfo(relative, object))
+	}
+	return objects, nil
+}
+
 func (m *MinIO) Delete(appID, objectPath string) error {
 	key, err := objectKey(appID, objectPath)
 	if err != nil {

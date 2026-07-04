@@ -91,8 +91,10 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 		}
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\")]))),\n",
 			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
-		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n",
-			quote(objectServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
+		for index, binding := range item.Deployment.ObjectStorageBuckets {
+			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Object-Bucket-ID\", value = %s)]))),\n",
+				quote(objectServiceName(item.App.ID, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.BucketID))
+		}
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
@@ -112,34 +114,35 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 }
 
 func workerBindings(item nanoflare.ActiveDeployment) []string {
-	bindings := make([]string, 0, len(item.Deployment.KVNamespaces)+2)
+	bindings := make([]string, 0, len(item.Deployment.KVNamespaces)+len(item.Deployment.ObjectStorageBuckets)+1)
 	for index, binding := range item.Deployment.KVNamespaces {
 		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", quote(binding.Binding), quote(kvServiceName(item.App.ID, index))))
 	}
-	bindings = append(bindings,
-		fmt.Sprintf("(name = %s, service = %s)", quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID))),
-		fmt.Sprintf("(name = \"OBJECTS\", service = %s)", quote(objectServiceName(item.App.ID))),
-	)
+	bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID))))
+	for index, binding := range item.Deployment.ObjectStorageBuckets {
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(objectServiceName(item.App.ID, index))))
+	}
 	return bindings
 }
 
 func writeWorkerSource(out *strings.Builder, deployment nanoflare.Deployment) {
 	if deploymentFormat(deployment) == "service-worker" {
-		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content)))
+		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content, deployment.ObjectStorageBuckets)))
 		return
 	}
 	out.WriteString("  modules = [\n")
-	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig))))
+	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.ObjectStorageBuckets)))
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
 	}
 	out.WriteString("  ],\n")
 }
 
-func entrypointWrapper(entrypoint, binding string) string {
+func entrypointWrapper(entrypoint, binding string, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
 	return fmt.Sprintf(`import userWorker from %s;
 
 const assetBindingName = %s;
+const objectBindingNames = %s;
 
 function wrapAssetBinding(binding) {
   if (!binding) return binding;
@@ -179,6 +182,11 @@ function buildObjectBody(response, object) {
       return response.blob();
     },
   };
+}
+
+async function objectBindingError(bindingName, operation, response) {
+  const detail = (await response.text()).trim();
+  return new Error(detail ? bindingName + "." + operation + " failed: " + response.status + " - " + detail : bindingName + "." + operation + " failed: " + response.status);
 }
 
 async function toObjectRequestInit(value, options) {
@@ -225,7 +233,7 @@ async function toObjectRequestInit(value, options) {
   };
 }
 
-function wrapObjectsBinding(binding) {
+function wrapObjectsBinding(bindingName, binding) {
   if (!binding) return binding;
   return {
     async put(key, value, options) {
@@ -235,7 +243,7 @@ function wrapObjectsBinding(binding) {
         headers: init.contentType ? { "content-type": init.contentType } : undefined,
         body: init.body,
       }));
-      if (!response.ok) throw new Error("OBJECTS.put failed: " + response.status);
+      if (!response.ok) throw await objectBindingError(bindingName, "put", response);
       const raw = await response.text();
       if (!raw.trim()) {
         return {
@@ -256,7 +264,7 @@ function wrapObjectsBinding(binding) {
     async get(key) {
       const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key)));
       if (response.status === 404) return null;
-      if (!response.ok) throw new Error("OBJECTS.get failed: " + response.status);
+      if (!response.ok) throw await objectBindingError(bindingName, "get", response);
       const object = {
         key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
@@ -274,7 +282,7 @@ function wrapObjectsBinding(binding) {
         method: "HEAD",
       }));
       if (response.status === 404) return null;
-      if (!response.ok) throw new Error("OBJECTS.head failed: " + response.status);
+      if (!response.ok) throw await objectBindingError(bindingName, "head", response);
       return {
         key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
@@ -290,7 +298,7 @@ function wrapObjectsBinding(binding) {
       const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
         method: "DELETE",
       }));
-      if (!response.ok) throw new Error("OBJECTS.delete failed: " + response.status);
+      if (!response.ok) throw await objectBindingError(bindingName, "delete", response);
     },
   };
 }
@@ -304,9 +312,10 @@ function wrapEnv(env) {
       enumerable: true,
     });
   }
-  if (env.OBJECTS) {
-    Object.defineProperty(wrapped, "OBJECTS", {
-      value: wrapObjectsBinding(env.OBJECTS),
+  for (const name of objectBindingNames) {
+    if (!env[name]) continue;
+    Object.defineProperty(wrapped, name, {
+      value: wrapObjectsBinding(name, env[name]),
       enumerable: true,
     });
   }
@@ -318,10 +327,10 @@ export default {
   fetch(request, env, ctx) {
     return userWorker.fetch(request, wrapEnv(env), ctx);
   },
-};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding))
+};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), objectBindingNamesJSON(objectBindings))
 }
 
-func serviceWorkerWrapper(script string) string {
+func serviceWorkerWrapper(script string, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
 	return `function __nanoflareBuildObjectBody(response, object) {
   if (!response) return null;
   return {
@@ -348,6 +357,11 @@ func serviceWorkerWrapper(script string) string {
       return response.blob();
     },
   };
+}
+
+async function __nanoflareObjectBindingError(bindingName, operation, response) {
+  const detail = (await response.text()).trim();
+  return new Error(detail ? bindingName + "." + operation + " failed: " + response.status + " - " + detail : bindingName + "." + operation + " failed: " + response.status);
 }
 
 async function __nanoflareToObjectRequestInit(value, options) {
@@ -394,7 +408,9 @@ async function __nanoflareToObjectRequestInit(value, options) {
   };
 }
 
-function __nanoflareWrapObjectsBinding(binding) {
+const __nanoflareObjectBindingNames = ` + objectBindingNamesJSON(objectBindings) + `;
+
+function __nanoflareWrapObjectsBinding(bindingName, binding) {
   if (!binding) return binding;
   return {
     async put(key, value, options) {
@@ -404,7 +420,7 @@ function __nanoflareWrapObjectsBinding(binding) {
         headers: init.contentType ? { "content-type": init.contentType } : undefined,
         body: init.body,
       }));
-      if (!response.ok) throw new Error("OBJECTS.put failed: " + response.status);
+      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "put", response);
       const raw = await response.text();
       if (!raw.trim()) {
         return {
@@ -425,7 +441,7 @@ function __nanoflareWrapObjectsBinding(binding) {
     async get(key) {
       const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key)));
       if (response.status === 404) return null;
-      if (!response.ok) throw new Error("OBJECTS.get failed: " + response.status);
+      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "get", response);
       return __nanoflareBuildObjectBody(response, {
         key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
@@ -442,7 +458,7 @@ function __nanoflareWrapObjectsBinding(binding) {
         method: "HEAD",
       }));
       if (response.status === 404) return null;
-      if (!response.ok) throw new Error("OBJECTS.head failed: " + response.status);
+      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "head", response);
       return {
         key: response.headers.get("x-nanoflare-object-key") || key,
         size: Number(response.headers.get("content-length") || "0"),
@@ -458,12 +474,14 @@ function __nanoflareWrapObjectsBinding(binding) {
       const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
         method: "DELETE",
       }));
-      if (!response.ok) throw new Error("OBJECTS.delete failed: " + response.status);
+      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "delete", response);
     },
   };
 }
 
-globalThis.OBJECTS = __nanoflareWrapObjectsBinding(globalThis.OBJECTS);
+for (const __nanoflareName of __nanoflareObjectBindingNames) {
+  globalThis[__nanoflareName] = __nanoflareWrapObjectsBinding(__nanoflareName, globalThis[__nanoflareName]);
+}
 ` + "\n" + script
 }
 
@@ -485,8 +503,16 @@ func assetServiceName(appID string) string {
 	return "assets-" + appID
 }
 
-func objectServiceName(appID string) string {
-	return "objects-" + appID
+func objectServiceName(appID string, index int) string {
+	return fmt.Sprintf("objects-%s-%d", appID, index)
+}
+
+func objectBindingNamesJSON(bindings []nanoflare.ObjectStorageBucketBinding) string {
+	names := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		names = append(names, quote(binding.Binding))
+	}
+	return "[" + strings.Join(names, ", ") + "]"
 }
 
 func assetBindingName(config nanoflare.AssetConfig) string {

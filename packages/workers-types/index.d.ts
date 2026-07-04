@@ -18,7 +18,7 @@ export interface ObjectHTTPMetadata {
   contentType?: string;
 }
 
-export interface R2Object {
+export interface ObjectStorageObject {
   key: string;
   size: number;
   etag: string;
@@ -27,7 +27,7 @@ export interface R2Object {
   httpMetadata: ObjectHTTPMetadata;
 }
 
-export interface R2ObjectBody extends R2Object {
+export interface ObjectStorageObjectBody extends ObjectStorageObject {
   body: ReadableStream | null;
   readonly bodyUsed: boolean;
   arrayBuffer(): Promise<ArrayBuffer>;
@@ -36,11 +36,11 @@ export interface R2ObjectBody extends R2Object {
   blob(): Promise<Blob>;
 }
 
-export interface R2PutOptions {
+export interface ObjectStoragePutOptions {
   httpMetadata?: ObjectHTTPMetadata;
 }
 
-export type R2PutValue =
+export type ObjectStoragePutValue =
   | string
   | ArrayBuffer
   | ArrayBufferView
@@ -49,10 +49,10 @@ export type R2PutValue =
   | Request
   | Response;
 
-export interface R2Bucket {
-  put(key: string, value: R2PutValue, options?: R2PutOptions): Promise<R2Object>;
-  get(key: string): Promise<R2ObjectBody | null>;
-  head(key: string): Promise<R2Object | null>;
+export interface ObjectStorageBucket {
+  put(key: string, value: ObjectStoragePutValue, options?: ObjectStoragePutOptions): Promise<ObjectStorageObject>;
+  get(key: string): Promise<ObjectStorageObjectBody | null>;
+  head(key: string): Promise<ObjectStorageObject | null>;
   delete(key: string): Promise<void>;
 }
 
@@ -72,7 +72,7 @@ export interface AssetFetcher {
 export interface NanoflareEnv {
   KV: KVNamespace;
   ASSETS: AssetFetcher;
-  OBJECTS: R2Bucket;
+  OBJECTS: ObjectStorageBucket;
   IDENTITY: IdentityBinding;
 }
 

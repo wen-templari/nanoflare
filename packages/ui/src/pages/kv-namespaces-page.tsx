@@ -18,7 +18,7 @@ export function KVNamespacesPage() {
             <thead><tr className="border-b border-[#e3ded3] font-mono text-[9px]   text-[#989b95]"><th className="px-5 py-3">Namespace</th><th>ID</th><th>Bindings</th><th>Created</th><th className="pr-5 text-right">Open</th></tr></thead>
             <tbody>
               {namespaces.map((namespace) => {
-                const boundCount = workers.filter((worker) => worker.kv_bindings?.some((binding) => binding.id === namespace.id)).length
+                const boundCount = workers.filter((worker) => worker.bindings?.some((binding) => binding.kind === "kv" && binding.namespace_id === namespace.id)).length
                 return (
                   <tr key={namespace.id} className="cursor-pointer border-b border-[#ece7dc] text-xs transition last:border-0 hover:bg-white/70" onClick={() => navigate(`/kv/${namespace.id}`)}>
                     <td className="px-5 py-4">
