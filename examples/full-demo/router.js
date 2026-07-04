@@ -11,8 +11,8 @@ export async function routeRequest(request, env) {
     });
   }
   if (url.pathname === "/api/visits") {
-    const visits = Number((await env.KV.get("visits")) ?? "0") + 1;
-    await env.KV.put("visits", String(visits));
+    const visits = Number((await env.VISITS_KV.get("visits")) ?? "0") + 1;
+    await env.VISITS_KV.put("visits", String(visits));
     return Response.json({ visits });
   }
   if (url.pathname === "/api/files/latest.txt" && request.method === "PUT") {
@@ -27,7 +27,7 @@ export async function routeRequest(request, env) {
       uploaded: new Date().toISOString(),
       contentType,
     };
-    await env.KV.put("uploads:latest.txt:meta", JSON.stringify(uploaded));
+    await env.VISITS_KV.put("uploads:latest.txt:meta", JSON.stringify(uploaded));
     return Response.json({
       ok: true,
       key: uploaded.key,
@@ -40,7 +40,7 @@ export async function routeRequest(request, env) {
     if (!file) {
       return new Response("Not found", { status: 404 });
     }
-    const meta = await env.KV.get("uploads:latest.txt:meta", "json");
+    const meta = await env.VISITS_KV.get("uploads:latest.txt:meta", "json");
     return new Response(file.body, {
       headers: {
         "content-type": meta?.contentType || file.httpMetadata.contentType || "text/plain; charset=utf-8",

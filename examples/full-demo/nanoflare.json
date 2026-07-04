@@ -1,0 +1,32 @@
+{
+  "name": "Hello worker kv test",
+  "hostname": "hellokv.local.nbtca.space",
+  "app_id": "3802c6caf4ed0a591edffab79527a98a355ba847b5d7917b",
+  "api_url": "http://127.0.0.1:8080",
+  "entrypoint": "worker.js",
+  "format": "modules",
+  "compatibility_date": "2025-12-10",
+  "files": [
+    "worker.js",
+    "router.js"
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "VISITS_KV",
+      "id": "6a1e4c215cb2fbc1377510b382f16605ee55fcef025652d5"
+    }
+  ],
+  "auth": {
+    "protected_routes": [
+      "/api/files/*",
+      "/preview/*"
+    ]
+  },
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/preview/*"]
+  }
+}

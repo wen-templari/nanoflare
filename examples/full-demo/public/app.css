@@ -1,0 +1,69 @@
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  background:
+    radial-gradient(circle at top, #f6d365, transparent 30%),
+    linear-gradient(160deg, #0f1c2e, #132b45 60%, #0a1523);
+  color: #f4efe5;
+}
+
+.shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 72px 24px;
+}
+
+.logo {
+  width: 92px;
+  height: 92px;
+}
+
+.eyebrow {
+  margin: 24px 0 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font: 600 12px/1.4 ui-monospace, "SFMono-Regular", monospace;
+  color: #f6d365;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.6rem, 8vw, 4.8rem);
+  line-height: 0.95;
+}
+
+.copy {
+  max-width: 56ch;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: #d7deea;
+}
+
+.card {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 24px;
+  padding: 20px 24px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.card span {
+  font-size: 0.9rem;
+  color: #c4d0df;
+}
+
+.card strong {
+  font-size: 2rem;
+}
+
+.actions {
+  margin-top: 24px;
+}
+
+a {
+  color: #f6d365;
+}
