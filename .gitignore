@@ -11,3 +11,4 @@ packages/ui/vite.config.d.ts
 
 
 # hello-worker-kv
+.DS_Store
