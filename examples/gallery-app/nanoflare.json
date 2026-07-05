@@ -1,6 +1,7 @@
 {
   "name": "gallery-app",
   "hostname": "gallery.local.nbtca.space",
+  "app_id": "074dea8e7519bb450b29f03c63d2426eadac60d701bc0811",
   "api_url": "http://127.0.0.1:8080",
   "entrypoint": "dist/worker.js",
   "format": "modules",
@@ -11,20 +12,23 @@
   "kv_namespaces": [
     {
       "binding": "GALLERY_KV",
-      "id": "replace-with-kv-namespace-id"
+      "id": "465cee71042247bea27bf69dc74bf5b0dfe905fcb847e108"
     }
   ],
   "object_storage_buckets": [
     {
       "binding": "OBJECTS",
-      "bucket_id": "replace-with-object-storage-bucket-id"
+      "bucket_id": "b59d05ef2e9f129e3649f7ed26dd8cace062012bdf2fc7c4"
     }
   ],
   "assets": {
-    "directory": "public",
     "binding": "ASSETS",
+    "directory": "dist/client",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
-  }
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "auth": {}
 }

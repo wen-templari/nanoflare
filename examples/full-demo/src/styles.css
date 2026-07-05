@@ -22,7 +22,7 @@ body {
 .eyebrow {
   margin: 24px 0 8px;
   letter-spacing: 0.14em;
-  text-transform: ;
+  text-transform: uppercase;
   font: 600 12px/1.4 ui-monospace, "SFMono-Regular", monospace;
   color: #f6d365;
 }

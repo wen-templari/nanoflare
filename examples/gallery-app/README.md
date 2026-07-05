@@ -1,14 +1,17 @@
 # gallery-app
 
-`gallery-app` is a small browser-based example that makes Nanoflare storage
-visible right away.
+`gallery-app` is a React gallery example that makes Nanoflare storage visible
+right away.
 
 ## What It Demonstrates
 
-- static assets served from `public/` through `ASSETS`
+- a Vite-powered React SPA under `src/`
+- a dedicated Worker entrypoint under `worker/`
+- static assets built into `dist/client/` and served through `ASSETS`
 - uploaded image files stored in `OBJECTS`
 - gallery metadata stored in `GALLERY_KV`
-- a Worker-first asset setup where `/api/*` stays dynamic and `/` stays static
+- a bundled Worker artifact at `dist/worker.js`
+- a Worker-first asset setup where `/api/*` stays dynamic and `/` serves the SPA
 
 ## Setup
 
@@ -28,6 +31,18 @@ storage bucket id match what the CLI returned, then deploy:
 ```sh
 nanoflare deploy
 ```
+
+`npm run build` now bundles both the React client and the Worker. The deploy
+artifacts are written to `dist/`, so rerun the build after changing either the
+frontend or the Worker. TypeScript validation is split between
+`tsconfig.app.json` for the UI and `tsconfig.worker.json` for the Worker.
+
+## Project Layout
+
+- `src/main.tsx`, `src/App.tsx`, and `src/styles.css` drive the Vite React UI
+- `worker/index.ts` contains the gallery API and asset-serving Worker
+- `tsconfig.app.json` checks the browser UI source
+- `tsconfig.worker.json` checks the Worker source
 
 ## Routes To Try
 

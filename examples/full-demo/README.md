@@ -13,12 +13,12 @@
 This example combines the main Nanoflare platform capabilities in one app:
 
 - `VISITS_KV` stores a visit counter.
-- `ASSETS` serves the static frontend from `public/`.
+- `ASSETS` serves the Vite-built static frontend from `dist/client/`.
 - `OBJECTS` stores and retrieves `uploads/latest.txt`.
 - protected routes show how Nanoflare forwards authenticated user headers into the Worker.
 
-The source lives in [src/worker.ts](src/worker.ts) and [src/router.ts](src/router.ts).
-The compiled deploy artifacts are written to `dist/` and deployed from there.
+The source lives in [src/worker.ts](src/worker.ts), [src/main.ts](src/main.ts), and [index.html](index.html).
+The built deploy artifacts are written to `dist/` and deployed from there.
 
 ## Setup
 
@@ -38,7 +38,8 @@ nanoflare deploy
 ```
 
 If your local API is not at `http://127.0.0.1:8080`, either update `api_url` in `nanoflare.json` or pass `--api-url`.
-`nanoflare deploy` uploads the built files from `dist/`, so rerun `npm run build` after changing the TypeScript sources.
+`npm run build` now runs Vite for both the client assets and the Worker bundle.
+`nanoflare deploy` uploads the built files from `dist/`, so rerun `npm run build` after changing the app or Worker sources.
 
 ## Routes To Try
 
@@ -58,4 +59,4 @@ This example uses:
 - `kv_namespaces` with an explicit binding name, `VISITS_KV`
 - a local `file:` dependency on `@nanoflare/workers-types` for Worker env typing while the package is still unpublished
 
-The frontend in `public/` expects the Worker APIs above and is mainly there to make the asset and KV pieces visible immediately after deploy.
+The frontend is bundled by Vite and expects the Worker APIs above. It is mainly there to make the asset and KV pieces visible immediately after deploy.

@@ -3,11 +3,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "dev": "vite",
+    "build": "vite build && vite build --config vite.worker.config.ts",
+    "check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@nanoflare/workers-types": "file:../../packages/workers-types",
-    "typescript": "^5.8.3"
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
   }
 }

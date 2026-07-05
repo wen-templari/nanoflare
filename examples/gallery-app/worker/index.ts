@@ -1,4 +1,4 @@
-import type { KVNamespace, NanoflareEnv, ObjectStorageBucket } from "@nanoflare/workers-types";
+import type { AssetFetcher, KVNamespace, ObjectStorageBucket } from "@nanoflare/workers-types";
 
 interface GalleryItem {
   id: string;
@@ -9,7 +9,8 @@ interface GalleryItem {
   size: number;
 }
 
-interface GalleryEnv extends Omit<NanoflareEnv, "KV" | "OBJECTS"> {
+interface GalleryEnv {
+  ASSETS: AssetFetcher;
   GALLERY_KV: KVNamespace;
   OBJECTS: ObjectStorageBucket;
 }

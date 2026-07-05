@@ -7,8 +7,7 @@
   "format": "modules",
   "compatibility_date": "2025-12-10",
   "files": [
-    "dist/worker.js",
-    "dist/router.js"
+    "dist/worker.js"
   ],
   "kv_namespaces": [
     {
@@ -29,7 +28,7 @@
     ]
   },
   "assets": {
-    "directory": "public",
+    "directory": "dist/client",
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "single-page-application",

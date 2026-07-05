@@ -5,9 +5,7 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
-    "rootDir": "worker",
-    "outDir": "dist/worker",
-    "baseUrl": ".",
+    "noEmit": true,
     "paths": {
       "@nanoflare/workers-types": ["../../packages/workers-types"]
     }

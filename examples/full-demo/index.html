@@ -4,7 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Nanoflare Assets Demo</title>
-    <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
     <main class="shell">
@@ -12,8 +11,8 @@
       <p class="eyebrow">Static assets attached to a Worker deployment</p>
       <h1>full-demo now serves a static site</h1>
       <p class="copy">
-        HTML, CSS, JavaScript, and the logo are deployed as attached assets. The
-        Worker still handles dynamic API routes and can fetch assets through the
+        HTML, CSS, JavaScript, and the logo are bundled with Vite and deployed as attached assets.
+        The Worker still handles dynamic API routes and can fetch assets through the
         <code>ASSETS</code> binding.
       </p>
       <p class="copy">
@@ -30,6 +29,6 @@
         <a href="/preview/logo.svg" target="_blank" rel="noreferrer">Fetch logo through ASSETS binding</a>
       </div>
     </main>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

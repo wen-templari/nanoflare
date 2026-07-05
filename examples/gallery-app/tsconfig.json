@@ -1,15 +1,7 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "strict": true,
-    "rootDir": "src",
-    "outDir": "dist",
-    "paths": {
-      "@nanoflare/workers-types": ["../../packages/workers-types"]
-    }
-  },
-  "include": ["src/**/*.ts"]
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.worker.json" }
+  ]
 }
