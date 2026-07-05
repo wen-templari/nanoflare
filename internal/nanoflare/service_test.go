@@ -437,6 +437,55 @@ func TestDeployRejectsDuplicateKVBindings(t *testing.T) {
 	}
 }
 
+func TestPutSecretRollsActiveDeploymentAndExposesVars(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	codec, err := NewSecretCodec("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetSecretCodec(codec)
+
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2025-12-10",
+		Vars: map[string]json.RawMessage{
+			"API_HOST":      json.RawMessage(`"example.com"`),
+			"FEATURE_FLAGS": json.RawMessage(`{"beta":true}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.PutSecret(app.ID, "DB_CONNECTION_STRING", "postgres://secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := service.WorkerDetail(app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Deployment == nil || detail.Deployment.ID == first.ID {
+		t.Fatalf("deployment = %#v, want secret rollout to create a new deployment", detail.Deployment)
+	}
+	if got := string(detail.Deployment.Vars["API_HOST"]); got != `"example.com"` {
+		t.Fatalf("API_HOST = %s", got)
+	}
+	if len(detail.Secrets) != 1 || detail.Secrets[0].Name != "DB_CONNECTION_STRING" {
+		t.Fatalf("secrets = %#v", detail.Secrets)
+	}
+	active, err := service.ActiveDeployments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].App.SecretValues["DB_CONNECTION_STRING"] != "postgres://secret" {
+		t.Fatalf("active = %#v", active)
+	}
+}
+
 type recordingWriter struct{}
 
 func (w *recordingWriter) Write([]ActiveDeployment) error {

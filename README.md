@@ -27,6 +27,14 @@ The current repository is the first runnable integration slice of `nanoflared`. 
 - A Cloudflare R2-style `env.OBJECTS` binding with core `put`, `get`, `head`, and `delete` operations backed by MinIO.
 - A starter Worker and a TypeScript types package for Worker bindings.
 
+Example workers live under `examples/`:
+
+- [examples/simple-kv](examples/simple-kv/) shows a hello-world counter backed by an explicit KV binding.
+- [examples/gallery-app](examples/gallery-app/) serves a static UI, uploads images to object storage, and stores gallery metadata in KV.
+- [examples/protected-app](examples/protected-app/) protects `/api/auth/*` routes and returns resolved auth information from the Worker.
+- [examples/vite-react-spa](examples/vite-react-spa/) pairs a Vite-built React SPA with a separate `worker/` API entrypoint.
+- [examples/full-demo](examples/full-demo/) combines all of the above in one larger app.
+
 Podman sandbox lifecycle management, OIDC validation, explicit rollback APIs,
 and runner reconciliation after an unexpected `workerd` exit remain integration
 work.

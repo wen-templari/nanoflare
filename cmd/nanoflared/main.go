@@ -157,6 +157,13 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	if value := os.Getenv("NANOFLARE_SECRET_KEY"); value != "" {
+		codec, err := nanoflare.NewSecretCodec(value)
+		if err != nil {
+			log.Fatal(err)
+		}
+		service.SetSecretCodec(codec)
+	}
 	active, err := service.ActiveDeployments()
 	if err != nil {
 		log.Fatal(err)

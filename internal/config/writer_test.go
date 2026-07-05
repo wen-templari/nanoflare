@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -55,11 +56,37 @@ func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
 	}
 }
 
+func TestWorkerdIncludesVarsAndSecretsBindings(t *testing.T) {
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret", SecretValues: map[string]string{"DB_URL": "postgres://secret"}},
+		Deployment: nanoflare.Deployment{
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Vars: map[string]json.RawMessage{
+				"API_HOST":      json.RawMessage(`"example.com"`),
+				"FEATURE_FLAGS": json.RawMessage(`{"beta":true}`),
+			},
+			Port: 9001,
+		},
+	}})
+	for _, expected := range []string{
+		`(name = "API_HOST", text = "example.com")`,
+		`(name = "FEATURE_FLAGS", json = "{\"beta\":true}")`,
+		`(name = "DB_URL", text = "postgres://secret")`,
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, config)
+		}
+	}
+}
+
 func TestWorkerdObjectBindingErrorsIncludeRuntimeDetails(t *testing.T) {
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
 		Deployment: nanoflare.Deployment{
-			Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
+			Files:                []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() {} };`}},
 			Entrypoint:           "worker.js",
 			Format:               "modules",
 			CompatibilityDate:    "2025-12-10",

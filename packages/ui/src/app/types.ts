@@ -41,13 +41,15 @@ export type WorkerDeployment = {
   asset_count?: number;
   asset_config?: WorkerAssetConfig;
   compatibility_date: string;
+  vars?: Record<string, unknown>;
   created_at: string;
   kv_namespaces?: WorkerKVNamespaceBinding[];
   object_storage_buckets?: WorkerObjectStorageBucketBinding[];
   bindings?: WorkerBinding[];
 };
 
-export type WorkerDetailData = { app: Worker; deployment?: WorkerDeployment };
+export type WorkerSecret = { name: string; created_at: string; updated_at: string };
+export type WorkerDetailData = { app: Worker; deployment?: WorkerDeployment; secrets?: WorkerSecret[] };
 
 export type ConsoleDeployment = {
   id: string;

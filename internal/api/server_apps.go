@@ -28,6 +28,9 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/traffic", s.workerTraffic)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("POST /v1/apps/{appID}/deployments", s.deploy)
+	s.mux.HandleFunc("GET /v1/apps/{appID}/secrets", s.listSecrets)
+	s.mux.HandleFunc("PUT /v1/apps/{appID}/secrets/{name}", s.putSecret)
+	s.mux.HandleFunc("DELETE /v1/apps/{appID}/secrets/{name}", s.deleteSecret)
 	s.mux.HandleFunc("/internal/http/apps/", s.appGateway)
 }
 
@@ -152,6 +155,36 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, deployment)
+}
+
+func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
+	secrets, err := s.service.ListSecrets(r.PathValue("appID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, secrets)
+}
+
+func (s *Server) putSecret(w http.ResponseWriter, r *http.Request) {
+	var input nanoflare.PutSecretInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.PutSecret(r.PathValue("appID"), r.PathValue("name"), input.Value); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
+	if err := s.service.DeleteSecret(r.PathValue("appID"), r.PathValue("name")); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {

@@ -92,7 +92,10 @@ func TestCreateAndDeployWorker(t *testing.T) {
 		APIURL:            server.URL,
 		Entrypoint:        "worker.js",
 		CompatibilityDate: "2025-12-10",
-		Files:             []string{"worker.js"},
+		Vars: map[string]json.RawMessage{
+			"API_HOST": json.RawMessage(`"example.com"`),
+		},
+		Files: []string{"worker.js"},
 		Auth: ProjectAuth{
 			ProtectedRoutes: []string{"/admin/*"},
 		},
@@ -139,6 +142,9 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	if deployed.Entrypoint != "worker.js" || deployed.CompatibilityDate != "2025-12-10" {
 		t.Fatalf("deploy payload = %#v", deployed)
 	}
+	if got := string(deployed.Vars["API_HOST"]); got != `"example.com"` {
+		t.Fatalf("deploy vars = %#v", deployed.Vars)
+	}
 	if len(deployed.Files) != 1 || deployed.Files[0].Path != "worker.js" || deployed.Files[0].Content == "" {
 		t.Fatalf("deploy files = %#v", deployed.Files)
 	}
@@ -147,6 +153,84 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if deployed.AssetConfig.Binding != "STATIC" || deployed.AssetConfig.NotFoundHandling != "404-page" {
 		t.Fatalf("asset config = %#v", deployed.AssetConfig)
+	}
+}
+
+func TestSecretListAndDelete(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/app-123/secrets":
+			writeJSON(t, w, http.StatusOK, []nanoflare.Secret{{Name: "DB_URL", UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/app-123/secrets/DB_URL":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	writeProjectFile(t, Project{
+		Name:              "Hello",
+		Hostname:          "hello.example.com",
+		AppID:             "app-123",
+		APIURL:            server.URL,
+		Entrypoint:        "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+	})
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"secret", "list"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "DB_URL\t2026-01-02T03:04:05Z") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	stdout.Reset()
+	if err := runner.Run([]string{"secret", "delete", "DB_URL"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "Deleted secret DB_URL\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestSecretPutUsesValueArgument(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	var payload nanoflare.PutSecretInput
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/app-123/secrets/DB_URL":
+			decodeRequest(t, r, &payload)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	writeProjectFile(t, Project{
+		Name:              "Hello",
+		Hostname:          "hello.example.com",
+		AppID:             "app-123",
+		APIURL:            server.URL,
+		Entrypoint:        "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+	})
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"secret", "put", "DB_URL", "postgres://secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Value != "postgres://secret" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if got := stdout.String(); got != "Updated secret DB_URL\n" {
+		t.Fatalf("stdout = %q", got)
 	}
 }
 

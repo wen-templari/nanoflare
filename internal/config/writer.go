@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -114,7 +116,32 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 }
 
 func workerBindings(item nanoflare.ActiveDeployment) []string {
-	bindings := make([]string, 0, len(item.Deployment.KVNamespaces)+len(item.Deployment.ObjectStorageBuckets)+1)
+	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.ObjectStorageBuckets)+1)
+	varNames := make([]string, 0, len(item.Deployment.Vars))
+	for name := range item.Deployment.Vars {
+		varNames = append(varNames, name)
+	}
+	sort.Strings(varNames)
+	for _, name := range varNames {
+		value := item.Deployment.Vars[name]
+		if len(value) > 0 && value[0] == '"' {
+			var text string
+			if err := json.Unmarshal(value, &text); err == nil {
+				bindings = append(bindings, fmt.Sprintf("(name = %s, text = %s)", quote(name), quote(text)))
+				continue
+			}
+		}
+		bindings = append(bindings, fmt.Sprintf("(name = %s, json = %s)", quote(name), quote(string(value))))
+	}
+	secretNames := make([]string, 0, len(item.App.SecretValues))
+	for name := range item.App.SecretValues {
+		secretNames = append(secretNames, name)
+	}
+	sort.Strings(secretNames)
+	for _, name := range secretNames {
+		value := item.App.SecretValues[name]
+		bindings = append(bindings, fmt.Sprintf("(name = %s, text = %s)", quote(name), quote(value)))
+	}
 	for index, binding := range item.Deployment.KVNamespaces {
 		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", quote(binding.Binding), quote(kvServiceName(item.App.ID, index))))
 	}

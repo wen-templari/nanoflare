@@ -90,6 +90,37 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	}
 }
 
+func TestSecretAPIsReturnMetadataOnly(t *testing.T) {
+	dir := t.TempDir()
+	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	), nil, fakeOutput{}, fakeTraffic{})
+	codec, err := nanoflare.NewSecretCodec("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetSecretCodec(codec)
+	server := NewServer(service)
+	app := createApp(t, server, "Console App", "console.example.com")
+
+	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/secrets/DB_URL", []byte(`{"value":"postgres://secret"}`), http.StatusNoContent, nil)
+
+	var secrets []nanoflare.Secret
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/secrets", http.StatusOK, &secrets)
+	if len(secrets) != 1 || secrets[0].Name != "DB_URL" {
+		t.Fatalf("unexpected secrets: %#v", secrets)
+	}
+
+	var detail nanoflare.WorkerDetail
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	if len(detail.Secrets) != 1 || detail.Secrets[0].Name != "DB_URL" {
+		t.Fatalf("unexpected worker detail secrets: %#v", detail.Secrets)
+	}
+}
+
 func TestWorkerConsoleKV(t *testing.T) {
 	dir := t.TempDir()
 	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
@@ -792,6 +823,22 @@ func requestJSON(t *testing.T, server http.Handler, method, path string, wantSta
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(target); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func requestJSONBytes(t *testing.T, server http.Handler, method, path string, body []byte, wantStatus int, target any) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != wantStatus {
+		t.Fatalf("%s %s status = %d, body = %s", method, path, recorder.Code, recorder.Body.String())
+	}
+	if target != nil {
+		if err := json.NewDecoder(recorder.Body).Decode(target); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

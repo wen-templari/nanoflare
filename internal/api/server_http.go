@@ -39,11 +39,19 @@ func writeWorkerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if errors.Is(err, nanoflare.ErrSecretNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrKVNamespaceExists) || errors.Is(err, nanoflare.ErrKVNamespaceInUse) || errors.Is(err, nanoflare.ErrKVNamespaceNotBound) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	if errors.Is(err, nanoflare.ErrObjectStorageBucketExists) || errors.Is(err, nanoflare.ErrObjectStorageBucketInUse) || errors.Is(err, nanoflare.ErrObjectStorageBucketNotBound) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.Contains(err.Error(), "binding") || strings.Contains(err.Error(), "NANOFLARE_SECRET_KEY") || strings.Contains(err.Error(), "secret name is required") {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

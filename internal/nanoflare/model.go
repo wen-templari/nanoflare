@@ -8,12 +8,13 @@ import (
 )
 
 type App struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Hostname     string     `json:"hostname"`
-	Auth         AuthConfig `json:"auth,omitempty"`
-	RuntimeToken string     `json:"-"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Hostname     string            `json:"hostname"`
+	Auth         AuthConfig        `json:"auth,omitempty"`
+	RuntimeToken string            `json:"-"`
+	SecretValues map[string]string `json:"-"`
+	CreatedAt    time.Time         `json:"created_at"`
 }
 
 type AuthConfig struct {
@@ -28,6 +29,7 @@ type Deployment struct {
 	Entrypoint           string                       `json:"entrypoint"`
 	Format               string                       `json:"format"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
@@ -80,6 +82,7 @@ type DeployInput struct {
 	Entrypoint           string                       `json:"entrypoint,omitempty"`
 	Format               string                       `json:"format,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
@@ -92,6 +95,7 @@ type WorkerDeployment struct {
 	BundleSize           int64                        `json:"bundle_size"`
 	AssetCount           int                          `json:"asset_count,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
@@ -103,6 +107,7 @@ type WorkerDeployment struct {
 type WorkerDetail struct {
 	App        App               `json:"app"`
 	Deployment *WorkerDeployment `json:"deployment,omitempty"`
+	Secrets    []Secret          `json:"secrets,omitempty"`
 }
 
 type ConsoleDeployment struct {
@@ -127,6 +132,22 @@ type Binding struct {
 	BucketID      string `json:"bucket_id,omitempty"`
 	BucketName    string `json:"bucket_name,omitempty"`
 	AssetCount    int    `json:"asset_count,omitempty"`
+}
+
+type Secret struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type SecretRecord struct {
+	Secret
+	Nonce      []byte `json:"-"`
+	Ciphertext []byte `json:"-"`
+}
+
+type PutSecretInput struct {
+	Value string `json:"value"`
 }
 
 type WorkerFile struct {

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS deployments (
 	entrypoint text NOT NULL,
 	format text NOT NULL DEFAULT '',
 	compatibility_date text NOT NULL,
+	vars jsonb NOT NULL DEFAULT '{}'::jsonb,
 	kv_namespaces jsonb NOT NULL DEFAULT '[]'::jsonb,
 	object_storage_bucket jsonb NOT NULL DEFAULT '[]'::jsonb,
 	asset_config jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -77,6 +78,15 @@ CREATE TABLE IF NOT EXISTS object_storage_buckets (
 	name text NOT NULL UNIQUE,
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS app_secrets (
+	app_id text NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+	name text NOT NULL,
+	nonce bytea NOT NULL,
+	ciphertext bytea NOT NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	PRIMARY KEY (app_id, name)
+);
 CREATE UNIQUE INDEX IF NOT EXISTS deployments_active_app_idx
 	ON deployments(app_id) WHERE active;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
@@ -87,6 +97,7 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS assets jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS entrypoint text NOT NULL DEFAULT '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS format text NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS vars jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS kv_namespaces jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_storage_bucket jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEFAULT '{}'::jsonb;
@@ -432,6 +443,23 @@ func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 	return apps, rows.Err()
 }
 
+func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
+	var app nanoflare.App
+	var auth []byte
+	err := p.db.QueryRow(`SELECT id, name, hostname, auth, runtime_token, created_at FROM apps WHERE id = $1`, appID).
+		Scan(&app.ID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.App{}, nanoflare.ErrAppNotFound
+	}
+	if err != nil {
+		return nanoflare.App{}, err
+	}
+	if err := json.Unmarshal(auth, &app.Auth); err != nil {
+		return nanoflare.App{}, err
+	}
+	return app, nil
+}
+
 func (p *Postgres) UpdateApp(app nanoflare.App) error {
 	result, err := p.db.Exec(`UPDATE apps SET name = $2, hostname = $3, auth = $4 WHERE id = $1`,
 		app.ID, app.Name, app.Hostname, mustJSON(app.Auth))
@@ -472,6 +500,57 @@ func (p *Postgres) DeleteApp(appID string) error {
 		return nanoflare.ErrAppNotFound
 	}
 	return tx.Commit()
+}
+
+func (p *Postgres) ListSecrets(appID string) ([]nanoflare.SecretRecord, error) {
+	if _, err := p.getApp(appID); err != nil {
+		return nil, err
+	}
+	rows, err := p.db.Query(`SELECT name, nonce, ciphertext, created_at, updated_at FROM app_secrets WHERE app_id = $1 ORDER BY name`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := []nanoflare.SecretRecord{}
+	for rows.Next() {
+		var record nanoflare.SecretRecord
+		if err := rows.Scan(&record.Name, &record.Nonce, &record.Ciphertext, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (p *Postgres) PutSecret(appID string, secret nanoflare.SecretRecord) error {
+	_, err := p.db.Exec(`
+INSERT INTO app_secrets (app_id, name, nonce, ciphertext, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (app_id, name)
+DO UPDATE SET nonce = EXCLUDED.nonce, ciphertext = EXCLUDED.ciphertext, updated_at = EXCLUDED.updated_at`,
+		appID, secret.Name, secret.Nonce, secret.Ciphertext, secret.CreatedAt, secret.UpdatedAt)
+	if isForeignKeyViolation(err) {
+		return nanoflare.ErrAppNotFound
+	}
+	return err
+}
+
+func (p *Postgres) DeleteSecret(appID, name string) error {
+	result, err := p.db.Exec(`DELETE FROM app_secrets WHERE app_id = $1 AND name = $2`, appID, name)
+	if err != nil {
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
+		if _, err := p.getApp(appID); err != nil {
+			return err
+		}
+		return nanoflare.ErrSecretNotFound
+	}
+	return nil
 }
 
 func (p *Postgres) DeleteKVNamespace(namespaceID string) error {
@@ -568,10 +647,10 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, app_id, files, assets, entrypoint, format, compatibility_date, kv_namespaces, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true)`,
+	(id, app_id, files, assets, entrypoint, format, compatibility_date, vars, kv_namespaces, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, true)`,
 		deployment.ID, deployment.AppID, files, assets, deployment.Entrypoint, deployment.Format,
-		deployment.CompatibilityDate, mustJSON(deployment.KVNamespaces), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
+		deployment.CompatibilityDate, mustJSON(deployment.Vars), mustJSON(deployment.KVNamespaces), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
 		return nanoflare.ErrAppNotFound
 	}
@@ -615,7 +694,7 @@ func (p *Postgres) DeleteDeployment(id string) error {
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
-	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
+	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.vars, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
 WHERE d.active
@@ -627,11 +706,11 @@ ORDER BY a.id`)
 	var active []nanoflare.ActiveDeployment
 	for rows.Next() {
 		var item nanoflare.ActiveDeployment
-		var files, assets, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
+		var files, assets, vars, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &vars, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt,
 		)
@@ -645,6 +724,9 @@ ORDER BY a.id`)
 			return nil, err
 		}
 		if err := json.Unmarshal(assets, &item.Deployment.Assets); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(vars, &item.Deployment.Vars); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(kvNamespaces, &item.Deployment.KVNamespaces); err != nil {
@@ -664,7 +746,7 @@ ORDER BY a.id`)
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
 	SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
-		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
+		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.vars, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
 	ORDER BY d.created_at DESC`)
@@ -675,11 +757,11 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	var records []nanoflare.DeploymentRecord
 	for rows.Next() {
 		var item nanoflare.DeploymentRecord
-		var assets, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
+		var assets, vars, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &vars, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.Active,
 		)
@@ -687,6 +769,9 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal(assets, &item.Deployment.Assets); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(vars, &item.Deployment.Vars); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &item.App.Auth); err != nil {

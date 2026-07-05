@@ -19,6 +19,7 @@ var (
 	ErrObjectStorageBucketNotFound = errors.New("object storage bucket not found")
 	ErrObjectStorageBucketInUse    = errors.New("object storage bucket is still referenced by a deployment")
 	ErrObjectStorageBucketNotBound = errors.New("object storage bucket is not bound by the app's active deployment")
+	ErrSecretNotFound              = errors.New("secret not found")
 )
 
 type Repository interface {
@@ -36,6 +37,9 @@ type Repository interface {
 	GetObjectStorageBucket(string) (ObjectStorageBucket, error)
 	UpdateObjectStorageBucket(ObjectStorageBucket) error
 	DeleteObjectStorageBucket(string) error
+	ListSecrets(string) ([]SecretRecord, error)
+	PutSecret(string, SecretRecord) error
+	DeleteSecret(string, string) error
 	NextPort() (int, error)
 	Activate(Deployment) error
 	DeleteDeployment(id string) error
@@ -54,6 +58,7 @@ type Store struct {
 	apps            map[string]App
 	kvNamespaces    map[string]KVNamespace
 	objectBuckets   map[string]ObjectStorageBucket
+	secrets         map[string]map[string]SecretRecord
 	deployments     map[string][]Deployment
 	active          map[string]string
 	capabilityToApp map[string]string
@@ -65,6 +70,7 @@ func NewStore() *Store {
 		apps:            make(map[string]App),
 		kvNamespaces:    make(map[string]KVNamespace),
 		objectBuckets:   make(map[string]ObjectStorageBucket),
+		secrets:         make(map[string]map[string]SecretRecord),
 		deployments:     make(map[string][]Deployment),
 		active:          make(map[string]string),
 		capabilityToApp: make(map[string]string),
@@ -125,6 +131,7 @@ func (s *Store) DeleteApp(appID string) error {
 		return ErrAppNotFound
 	}
 	delete(s.apps, appID)
+	delete(s.secrets, appID)
 	delete(s.deployments, appID)
 	delete(s.active, appID)
 	delete(s.capabilityToApp, app.RuntimeToken)
@@ -273,6 +280,52 @@ func (s *Store) DeleteObjectStorageBucket(bucketID string) error {
 		}
 	}
 	delete(s.objectBuckets, bucketID)
+	return nil
+}
+
+func (s *Store) ListSecrets(appID string) ([]SecretRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, exists := s.apps[appID]; !exists {
+		return nil, ErrAppNotFound
+	}
+	records := make([]SecretRecord, 0, len(s.secrets[appID]))
+	for _, secret := range s.secrets[appID] {
+		copy := secret
+		copy.Nonce = append([]byte(nil), secret.Nonce...)
+		copy.Ciphertext = append([]byte(nil), secret.Ciphertext...)
+		records = append(records, copy)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
+	return records, nil
+}
+
+func (s *Store) PutSecret(appID string, secret SecretRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.apps[appID]; !exists {
+		return ErrAppNotFound
+	}
+	if s.secrets[appID] == nil {
+		s.secrets[appID] = make(map[string]SecretRecord)
+	}
+	copy := secret
+	copy.Nonce = append([]byte(nil), secret.Nonce...)
+	copy.Ciphertext = append([]byte(nil), secret.Ciphertext...)
+	s.secrets[appID][secret.Name] = copy
+	return nil
+}
+
+func (s *Store) DeleteSecret(appID, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.apps[appID]; !exists {
+		return ErrAppNotFound
+	}
+	if _, exists := s.secrets[appID][name]; !exists {
+		return ErrSecretNotFound
+	}
+	delete(s.secrets[appID], name)
 	return nil
 }
 

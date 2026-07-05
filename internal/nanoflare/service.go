@@ -1,6 +1,7 @@
 package nanoflare
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -41,6 +42,7 @@ type Service struct {
 	objects              ObjectStore
 	output               WorkerOutputReader
 	traffic              WorkerTrafficReader
+	secrets              *SecretCodec
 	baseHostname         string
 	randomHostnameSuffix func() (string, error)
 }
@@ -70,6 +72,10 @@ func (s *Service) SetBaseHostname(hostname string) error {
 	}
 	s.baseHostname = normalized
 	return nil
+}
+
+func (s *Service) SetSecretCodec(codec *SecretCodec) {
+	s.secrets = codec
 }
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
@@ -268,6 +274,85 @@ func (s *Service) UpdateApp(appID string, input UpdateAppInput) (App, error) {
 	return app, nil
 }
 
+func (s *Service) ListSecrets(appID string) ([]Secret, error) {
+	if _, _, err := s.worker(appID); err != nil {
+		return nil, err
+	}
+	records, err := s.store.ListSecrets(appID)
+	if err != nil {
+		return nil, err
+	}
+	secrets := make([]Secret, 0, len(records))
+	for _, record := range records {
+		secrets = append(secrets, record.Secret)
+	}
+	return secrets, nil
+}
+
+func (s *Service) PutSecret(appID, name, value string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("secret name is required")
+	}
+	if s.secrets == nil {
+		return errors.New("NANOFLARE_SECRET_KEY is required for secret operations")
+	}
+	if _, _, err := s.worker(appID); err != nil {
+		return err
+	}
+	records, err := s.store.ListSecrets(appID)
+	if err != nil {
+		return err
+	}
+	secretValues := make(map[string]string, len(records)+1)
+	var createdAt time.Time
+	for _, record := range records {
+		secretValues[record.Name] = ""
+		if record.Name == name {
+			createdAt = record.CreatedAt
+		}
+	}
+	secretValues[name] = value
+	active, err := s.activeDeployments()
+	if err != nil {
+		return err
+	}
+	if item := activeForApp(active, appID); item != nil {
+		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.ObjectStorageBuckets, item.Deployment.AssetConfig); err != nil {
+			return err
+		}
+	}
+	nonce, ciphertext, err := s.secrets.Encrypt(value)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	if err := s.store.PutSecret(appID, SecretRecord{
+		Secret: Secret{Name: name, CreatedAt: createdAt, UpdatedAt: now},
+		Nonce:  nonce, Ciphertext: ciphertext,
+	}); err != nil {
+		return err
+	}
+	return s.rolloutSecretsIfActive(appID)
+}
+
+func (s *Service) DeleteSecret(appID, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("secret name is required")
+	}
+	if _, _, err := s.worker(appID); err != nil {
+		return err
+	}
+	if err := s.store.DeleteSecret(appID, name); err != nil {
+		return err
+	}
+	return s.rolloutSecretsIfActive(appID)
+}
+
 func (s *Service) ListApps() ([]App, error) {
 	return s.store.ListApps()
 }
@@ -321,6 +406,11 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		return WorkerDetail{}, err
 	}
 	detail := WorkerDetail{App: app}
+	secrets, err := s.ListSecrets(appID)
+	if err != nil {
+		return WorkerDetail{}, err
+	}
+	detail.Secrets = secrets
 	if active == nil {
 		return detail, nil
 	}
@@ -331,6 +421,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		BundleSize:           active.Deployment.BundleSize,
 		AssetCount:           len(active.Deployment.Assets),
 		CompatibilityDate:    active.Deployment.CompatibilityDate,
+		Vars:                 cloneVars(active.Deployment.Vars),
 		KVNamespaces:         append([]KVBinding(nil), active.Deployment.KVNamespaces...),
 		ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), active.Deployment.ObjectStorageBuckets...),
 		AssetConfig:          active.Deployment.AssetConfig,
@@ -454,6 +545,17 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
+	vars, err := normalizeVars(input.Vars)
+	if err != nil {
+		return Deployment{}, err
+	}
+	secrets, err := s.resolvedSecretValues(appID)
+	if err != nil && !errors.Is(err, ErrAppNotFound) {
+		return Deployment{}, err
+	}
+	if err := validateBindingCollisions(vars, secrets, kvNamespaces, objectStorageBuckets, input.AssetConfig); err != nil {
+		return Deployment{}, err
+	}
 	format, err := workerFormat(input.Format, len(files))
 	if err != nil {
 		return Deployment{}, err
@@ -477,6 +579,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Entrypoint:           entrypoint,
 		Format:               format,
 		CompatibilityDate:    input.CompatibilityDate,
+		Vars:                 vars,
 		KVNamespaces:         kvNamespaces,
 		ObjectStorageBuckets: objectStorageBuckets,
 		AssetConfig:          assetConfig,
@@ -706,6 +809,63 @@ func (s *Service) normalizeObjectStorageBuckets(bindings []ObjectStorageBucketBi
 	return normalized, nil
 }
 
+func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	if len(vars) == 0 {
+		return nil, nil
+	}
+	normalized := make(map[string]json.RawMessage, len(vars))
+	for name, value := range vars {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, errors.New("vars binding name is required")
+		}
+		trimmed := bytes.TrimSpace(value)
+		if len(trimmed) == 0 {
+			return nil, fmt.Errorf("vars.%s must be valid JSON", name)
+		}
+		if !json.Valid(trimmed) {
+			return nil, fmt.Errorf("vars.%s must be valid JSON", name)
+		}
+		normalized[name] = append(json.RawMessage(nil), trimmed...)
+	}
+	return normalized, nil
+}
+
+func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, objectBindings []ObjectStorageBucketBinding, assetConfig AssetConfig) error {
+	seen := make(map[string]string)
+	add := func(name, kind string) error {
+		if existing, exists := seen[name]; exists {
+			return fmt.Errorf("binding %q is defined by both %s and %s", name, existing, kind)
+		}
+		seen[name] = kind
+		return nil
+	}
+	for name := range vars {
+		if err := add(name, "vars"); err != nil {
+			return err
+		}
+	}
+	for name := range secrets {
+		if err := add(name, "secrets"); err != nil {
+			return err
+		}
+	}
+	for _, binding := range kvBindings {
+		if err := add(binding.Binding, "kv_namespaces"); err != nil {
+			return err
+		}
+	}
+	if err := add(deploymentAssetBindingName(assetConfig), "assets"); err != nil {
+		return err
+	}
+	for _, binding := range objectBindings {
+		if err := add(binding.Binding, "object_storage_buckets"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) deploymentBindings(deployment Deployment) []Binding {
 	bindings := make([]Binding, 0, len(deployment.KVNamespaces)+len(deployment.ObjectStorageBuckets)+1)
 	for _, binding := range deployment.KVNamespaces {
@@ -791,6 +951,26 @@ func activeDeploymentID(active []ActiveDeployment, appID string) string {
 	return ""
 }
 
+func activeForApp(active []ActiveDeployment, appID string) *ActiveDeployment {
+	for i := range active {
+		if active[i].App.ID == appID {
+			return &active[i]
+		}
+	}
+	return nil
+}
+
+func cloneVars(vars map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(vars) == 0 {
+		return nil
+	}
+	cloned := make(map[string]json.RawMessage, len(vars))
+	for name, value := range vars {
+		cloned[name] = append(json.RawMessage(nil), value...)
+	}
+	return cloned
+}
+
 func (s *Service) activeDeployments() ([]ActiveDeployment, error) {
 	active, err := s.store.ActiveDeployments()
 	if err != nil {
@@ -800,6 +980,11 @@ func (s *Service) activeDeployments() ([]ActiveDeployment, error) {
 		if err := s.hydrateDeploymentFiles(&active[i].Deployment); err != nil {
 			return nil, err
 		}
+		secretValues, err := s.resolvedSecretValues(active[i].App.ID)
+		if err != nil {
+			return nil, err
+		}
+		active[i].App.SecretValues = secretValues
 	}
 	return active, nil
 }
@@ -826,6 +1011,77 @@ func (s *Service) hydrateDeploymentFiles(deployment *Deployment) error {
 	}
 	if deployment.BundleSize == 0 {
 		deployment.BundleSize = bundleSize(deployment.Files)
+	}
+	return nil
+}
+
+func (s *Service) resolvedSecretValues(appID string) (map[string]string, error) {
+	records, err := s.store.ListSecrets(appID)
+	if err != nil {
+		if errors.Is(err, ErrAppNotFound) {
+			return nil, err
+		}
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	if s.secrets == nil {
+		return nil, errors.New("NANOFLARE_SECRET_KEY is required for secret operations")
+	}
+	values := make(map[string]string, len(records))
+	for _, record := range records {
+		value, err := s.secrets.Decrypt(record.Nonce, record.Ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		values[record.Name] = value
+	}
+	return values, nil
+}
+
+func (s *Service) rolloutSecretsIfActive(appID string) error {
+	active, err := s.activeDeployments()
+	if err != nil {
+		return err
+	}
+	current := activeForApp(active, appID)
+	if current == nil {
+		return nil
+	}
+	port, err := s.store.NextPort()
+	if err != nil {
+		return err
+	}
+	deploymentID, err := randomToken()
+	if err != nil {
+		return err
+	}
+	next := current.Deployment
+	next.ID = deploymentID
+	next.Port = port
+	next.CreatedAt = time.Now().UTC()
+	next.Vars = cloneVars(current.Deployment.Vars)
+	next.KVNamespaces = append([]KVBinding(nil), current.Deployment.KVNamespaces...)
+	next.ObjectStorageBuckets = append([]ObjectStorageBucketBinding(nil), current.Deployment.ObjectStorageBuckets...)
+	next.Assets = append([]AssetFile(nil), current.Deployment.Assets...)
+	next.Files = append([]WorkerFile(nil), current.Deployment.Files...)
+	previousID := current.Deployment.ID
+	if err := s.store.Activate(next); err != nil {
+		return err
+	}
+	updated, err := s.activeDeployments()
+	if err != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousID, next); rollbackErr != nil {
+			return fmt.Errorf("list active deployments: %w; rollback active deployment: %v", err, rollbackErr)
+		}
+		return err
+	}
+	if err := s.writer.Write(updated); err != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousID, next); rollbackErr != nil {
+			return fmt.Errorf("write generated config: %w; rollback active deployment: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("write generated config: %w", err)
 	}
 	return nil
 }

@@ -1,12 +1,28 @@
-## Object storage binding 
+## Codebase organize
+- complete support for worker init
 
-https://developers.cloudflare.com/r2/api/workers/workers-api-usage/
+## Better typescript support
 
-## Var and Secrets
-https://developers.cloudflare.com/workers/configuration/secrets/
+Generate type from worker config file
+
+https://developers.cloudflare.com/workers/languages/typescript/
+
+## Metrics
+
+Worker
+- bundle size
+- cpu time
+- requests per second
+- request sub paths
+
+KV
+- read/write
+
+Object storage
+- read/write
+- size
 
 ## Local development environment support
 
 ## Worker triggers 
-
 https://developers.cloudflare.com/workers/configuration/cron-triggers/

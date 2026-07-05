@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,7 @@ type Project struct {
 	Entrypoint           string                                 `json:"entrypoint"`
 	Format               string                                 `json:"format,omitempty"`
 	CompatibilityDate    string                                 `json:"compatibility_date"`
+	Vars                 map[string]json.RawMessage             `json:"vars,omitempty"`
 	Files                []string                               `json:"files"`
 	KVNamespaces         []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
 	ObjectStorageBuckets []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
@@ -102,6 +104,8 @@ func (r *Runner) Run(args []string) error {
 		return r.kv(args[1:])
 	case "object-storage":
 		return r.objectStorage(args[1:])
+	case "secret":
+		return r.secret(args[1:])
 	case "help", "-h", "--help":
 		r.usage()
 		return nil
@@ -311,6 +315,7 @@ func (r *Runner) deploy(args []string) error {
 		Entrypoint:           project.Entrypoint,
 		Format:               project.Format,
 		CompatibilityDate:    date,
+		Vars:                 cloneProjectVars(project.Vars),
 		KVNamespaces:         append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
 		ObjectStorageBuckets: append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
 		AssetConfig: nanoflare.AssetConfig{
@@ -414,6 +419,17 @@ func hasEmptyObjectStorageBucketIDs(bindings []nanoflare.ObjectStorageBucketBind
 		}
 	}
 	return false
+}
+
+func cloneProjectVars(vars map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(vars) == 0 {
+		return nil
+	}
+	cloned := make(map[string]json.RawMessage, len(vars))
+	for name, value := range vars {
+		cloned[name] = append(json.RawMessage(nil), value...)
+	}
+	return cloned
 }
 
 func loadWorkerFiles(paths []string) ([]nanoflare.WorkerFile, error) {
@@ -527,6 +543,106 @@ func withoutWorkerNoun(args []string) []string {
 		return args[1:]
 	}
 	return args
+}
+
+func (r *Runner) secretPut(args []string) error {
+	flags := flag.NewFlagSet("secret put", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", "", "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 2 {
+		return errors.New("usage: nanoflare secret put [flags] <name> <value>")
+	}
+	_, project, err := loadProject()
+	if err != nil {
+		return err
+	}
+	if project.AppID == "" {
+		return errors.New("worker is not registered; run `nanoflare create` first")
+	}
+	secretValue := flags.Arg(1)
+	if secretValue == "" {
+		return errors.New("secret value is required")
+	}
+	baseURL := projectAPIURL(project, *apiURL)
+	if err := r.request(http.MethodPut, baseURL+"/v1/apps/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nanoflare.PutSecretInput{Value: secretValue}, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Updated secret %s\n", flags.Arg(0))
+	return nil
+}
+
+func (r *Runner) secretList(args []string) error {
+	flags := flag.NewFlagSet("secret list", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", "", "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: nanoflare secret list [flags]")
+	}
+	_, project, err := loadProject()
+	if err != nil {
+		return err
+	}
+	if project.AppID == "" {
+		return errors.New("worker is not registered; run `nanoflare create` first")
+	}
+	var secrets []nanoflare.Secret
+	baseURL := projectAPIURL(project, *apiURL)
+	if err := r.request(http.MethodGet, baseURL+"/v1/apps/"+project.AppID+"/secrets", nil, &secrets); err != nil {
+		return err
+	}
+	for _, secret := range secrets {
+		fmt.Fprintf(r.Stdout, "%s\t%s\n", secret.Name, secret.UpdatedAt.Format(time.RFC3339))
+	}
+	return nil
+}
+
+func (r *Runner) secretDelete(args []string) error {
+	flags := flag.NewFlagSet("secret delete", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", "", "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare secret delete [flags] <name>")
+	}
+	_, project, err := loadProject()
+	if err != nil {
+		return err
+	}
+	if project.AppID == "" {
+		return errors.New("worker is not registered; run `nanoflare create` first")
+	}
+	baseURL := projectAPIURL(project, *apiURL)
+	if err := r.request(http.MethodDelete, baseURL+"/v1/apps/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Deleted secret %s\n", flags.Arg(0))
+	return nil
+}
+
+func (r *Runner) secret(args []string) error {
+	if len(args) == 0 {
+		r.usage()
+		return errors.New("secret command is required")
+	}
+	switch args[0] {
+	case "put":
+		return r.secretPut(args[1:])
+	case "list":
+		return r.secretList(args[1:])
+	case "delete":
+		return r.secretDelete(args[1:])
+	default:
+		r.usage()
+		return fmt.Errorf("unknown secret command %q", args[0])
+	}
 }
 
 func (r *Runner) kv(args []string) error {
