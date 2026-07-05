@@ -1,0 +1,16 @@
+{
+  "name": "protected-app",
+  "hostname": "protected.local.nbtca.space",
+  "api_url": "http://127.0.0.1:8080",
+  "entrypoint": "dist/worker.js",
+  "format": "modules",
+  "compatibility_date": "2025-12-10",
+  "files": [
+    "dist/worker.js"
+  ],
+  "auth": {
+    "protected_routes": [
+      "/api/auth/*"
+    ]
+  }
+}

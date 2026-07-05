@@ -5,11 +5,12 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
-    "rootDir": "src",
-    "outDir": "dist",
+    "rootDir": "worker",
+    "outDir": "dist/worker",
+    "baseUrl": ".",
     "paths": {
       "@nanoflare/workers-types": ["../../packages/workers-types"]
     }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["worker/**/*.ts"]
 }
