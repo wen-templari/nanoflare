@@ -10,8 +10,8 @@ interface Env {
 async function routeRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   if (url.pathname === "/preview/auth") {
-    const forwardedJwt = request.headers.get("x-nanoflare-user-jwt")
     const forwardedEmail = request.headers.get("x-nanoflare-user-email")
+    const forwardedJwt = request.headers.get("x-nanoflare-user-email")
     return Response.json({
       authed: Boolean(forwardedJwt && forwardedEmail),
       email: forwardedEmail,

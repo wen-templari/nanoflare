@@ -1,14 +1,9 @@
-## Codebase organize
-- complete support for worker init
-
-## Better typescript support
-
-Generate type from worker config file
-
-https://developers.cloudflare.com/workers/languages/typescript/
+## Tool chain
+- dev server ( bindings in dev env, bundling , typescript, run in workerd... )
+- Generate type from worker config file (https://developers.cloudflare.com/workers/languages/typescript/)
+- worker init
 
 ## Metrics
-
 Worker
 - bundle size
 - cpu time
@@ -22,7 +17,6 @@ Object storage
 - read/write
 - size
 
-## Local development environment support
-
 ## Worker triggers 
+
 https://developers.cloudflare.com/workers/configuration/cron-triggers/
