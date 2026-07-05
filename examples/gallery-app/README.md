@@ -1,7 +1,6 @@
 # gallery-app
 
-`gallery-app` is a React gallery example that makes Nanoflare storage visible
-right away.
+`gallery-app` is a gallery app using nanoflare Workers, KV, and Object Storage.
 
 ## What It Demonstrates
 
@@ -9,7 +8,7 @@ right away.
 - a dedicated Worker entrypoint under `worker/`
 - static assets built into `dist/client/` and served through `ASSETS`
 - uploaded image files stored in `OBJECTS`
-- gallery metadata stored in `GALLERY_KV`
+- gallery metadata and preview counts stored in `GALLERY_KV`
 - a bundled Worker artifact at `dist/worker.js`
 - a Worker-first asset setup where `/api/*` stays dynamic and `/` serves the SPA
 
@@ -49,4 +48,6 @@ frontend or the Worker. TypeScript validation is split between
 - `/` serves the gallery UI
 - `GET /api/gallery` returns the saved image metadata list
 - `POST /api/gallery` accepts a multipart upload with an `image` file field
+- `POST /api/gallery/:id/preview` increments and returns that image's preview count
 - `GET /api/gallery/:id` streams a stored image back from object storage
+- `DELETE /api/gallery/:id` removes the image from object storage and the gallery index

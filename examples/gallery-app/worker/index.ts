@@ -1,4 +1,5 @@
 import type { AssetFetcher, KVNamespace, ObjectStorageBucket } from "@nanoflare/workers-types";
+import mime from "mime";
 
 interface GalleryItem {
   id: string;
@@ -7,6 +8,7 @@ interface GalleryItem {
   contentType: string;
   uploadedAt: string;
   size: number;
+  previewCount: number;
 }
 
 interface GalleryEnv {
@@ -30,6 +32,14 @@ export default {
       return uploadImage(request, env);
     }
 
+    if (request.method === "POST" && url.pathname.startsWith("/api/gallery/") && url.pathname.endsWith("/preview")) {
+      return trackPreview(url.pathname, env);
+    }
+
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/gallery/")) {
+      return deleteImage(url.pathname, env);
+    }
+
     if (request.method === "GET" && url.pathname.startsWith("/api/gallery/")) {
       return serveImage(url.pathname, env);
     }
@@ -47,9 +57,9 @@ async function uploadImage(request: Request, env: GalleryEnv): Promise<Response>
 
   const timestamp = Date.now().toString(36);
   const id = crypto.randomUUID().replace(/-/g, "");
-  const extension = extensionFromFile(uploaded.name, uploaded.type);
+  const contentType = mime.getType(uploaded.name) || uploaded.type || "application/octet-stream";
+  const extension = mime.getExtension(contentType) || "bin";
   const key = `gallery/${timestamp}-${id}.${extension}`;
-  const contentType = uploaded.type || "application/octet-stream";
   const bytes = await uploaded.arrayBuffer();
 
   await env.OBJECTS.put(key, bytes, {
@@ -63,6 +73,7 @@ async function uploadImage(request: Request, env: GalleryEnv): Promise<Response>
     contentType,
     uploadedAt: new Date().toISOString(),
     size: bytes.byteLength,
+    previewCount: 0,
   };
 
   const items = await readGalleryIndex(env);
@@ -98,19 +109,63 @@ async function serveImage(pathname: string, env: GalleryEnv): Promise<Response> 
   });
 }
 
-async function readGalleryIndex(env: GalleryEnv): Promise<GalleryItem[]> {
-  return (await env.GALLERY_KV.get<GalleryItem[]>(GALLERY_INDEX_KEY, "json")) ?? [];
+async function trackPreview(pathname: string, env: GalleryEnv): Promise<Response> {
+  const id = pathname
+    .slice("/api/gallery/".length)
+    .replace(/\/preview$/, "");
+
+  if (!id) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const items = await readGalleryIndex(env);
+  const item = items.find((candidate) => candidate.id === id);
+  if (!item) {
+    return Response.json({ ok: false, error: "Image not found" }, { status: 404 });
+  }
+
+  const nextItem = {
+    ...item,
+    previewCount: item.previewCount + 1,
+  };
+
+  await writeGalleryIndex(
+    env,
+    items.map((candidate) => (candidate.id === id ? nextItem : candidate)),
+  );
+
+  return Response.json({ ok: true, item: nextItem });
 }
 
-function extensionFromFile(filename: string, contentType: string): string {
-  const trimmed = filename.trim();
-  const dotIndex = trimmed.lastIndexOf(".");
-  if (dotIndex > -1 && dotIndex < trimmed.length - 1) {
-    return trimmed.slice(dotIndex + 1).toLowerCase();
+async function deleteImage(pathname: string, env: GalleryEnv): Promise<Response> {
+  const id = pathname.slice("/api/gallery/".length);
+  if (!id) {
+    return new Response("Not found", { status: 404 });
   }
-  if (contentType === "image/png") return "png";
-  if (contentType === "image/webp") return "webp";
-  if (contentType === "image/gif") return "gif";
-  if (contentType === "image/jpeg") return "jpg";
-  return "bin";
+
+  const items = await readGalleryIndex(env);
+  const item = items.find((candidate) => candidate.id === id);
+  if (!item) {
+    return Response.json({ ok: false, error: "Image not found" }, { status: 404 });
+  }
+
+  await env.OBJECTS.delete(item.key);
+  await writeGalleryIndex(
+    env,
+    items.filter((candidate) => candidate.id !== id),
+  );
+
+  return Response.json({ ok: true, id });
+}
+
+async function readGalleryIndex(env: GalleryEnv): Promise<GalleryItem[]> {
+  const items = (await env.GALLERY_KV.get<GalleryItem[]>(GALLERY_INDEX_KEY, "json")) ?? [];
+  return items.map((item) => ({
+    ...item,
+    previewCount: item.previewCount ?? 0,
+  }));
+}
+
+async function writeGalleryIndex(env: GalleryEnv, items: GalleryItem[]): Promise<void> {
+  await env.GALLERY_KV.put(GALLERY_INDEX_KEY, JSON.stringify(items.slice(0, MAX_ITEMS)));
 }
