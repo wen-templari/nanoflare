@@ -24,3 +24,11 @@ FROM scratch AS packages
 COPY --from=go-build /out/ /bin/
 COPY --from=ui-build /src/packages/ui/dist/ /ui/
 COPY packages/workers-types/ /packages/workers-types/
+
+FROM scratch AS nanoflared
+COPY --from=go-build /out/nanoflared /nanoflared
+ENTRYPOINT ["/nanoflared"]
+
+FROM scratch AS nanoflare-runner
+COPY --from=go-build /out/nanoflare-runner /nanoflare-runner
+ENTRYPOINT ["/nanoflare-runner"]

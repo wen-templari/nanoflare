@@ -24,7 +24,7 @@ The current repository is the first runnable integration slice of `nanoflared`. 
   `get`, `put`, and `delete` operations.
 - A Cloudflare-style static assets binding for deployed assets through
   `env.ASSETS.fetch(...)`.
-- A Cloudflare R2-style `env.OBJECTS` binding with core `put`, `get`, `head`, and `delete` operations backed by MinIO.
+- A bucket-scoped, Cloudflare R2-style `env.OBJECTS` binding backed by MinIO, with `put`, `get`, `head`, and `delete` operations plus object metadata/body helpers.
 - A starter Worker and a TypeScript types package for Worker bindings.
 
 Example workers live under `examples/`:
@@ -32,14 +32,21 @@ Example workers live under `examples/`:
 - [examples/simple-kv](examples/simple-kv/) shows a hello-world counter backed by an explicit KV binding.
 - [examples/gallery-app](examples/gallery-app/) serves a static UI, uploads images to object storage, and stores gallery metadata in KV.
 - [examples/protected-app](examples/protected-app/) protects `/api/auth/*` routes and returns resolved auth information from the Worker.
-- [examples/vite-react-spa](examples/vite-react-spa/) pairs a Vite-built React SPA with a separate `worker/` API entrypoint.
-- [examples/full-demo](examples/full-demo/) combines all of the above in one larger app.
+
+Each example directory includes its own README with setup steps and routes to try.
 
 Podman sandbox lifecycle management, OIDC validation, explicit rollback APIs,
 and runner reconciliation after an unexpected `workerd` exit remain integration
 work.
 
 ## Run
+
+Prerequisites:
+
+- Docker with Compose for Traefik, PostgreSQL, MinIO, and Prometheus.
+- Go to run `./cmd/nanoflare`, `./cmd/nanoflared`, and `./cmd/nanoflare-runner`.
+- Node.js and npm for the example apps and web console.
+- `workerd` on `PATH`, or pass `-workerd /path/to/workerd` to the control plane or runner.
 
 Create the local environment and start the infrastructure:
 
@@ -48,6 +55,10 @@ cp .env.example .env
 docker compose -f docker/compose.yml up -d
 ```
 
+The checked-in `.env.example` already includes development values for
+`DATABASE_URL`, MinIO, Traefik, the runner token, and
+`NANOFLARE_BASE_HOSTNAME=workers.example.test`.
+
 Run `nanoflared` with PostgreSQL, MinIO, and a base hostname for workers that do
 not provide an explicit hostname:
 
@@ -55,7 +66,7 @@ not provide an explicit hostname:
 go run ./cmd/nanoflared \
   -addr :8080 \
   -config-dir ./var/generated \
-  -base-hostname workers.example.com
+  -base-hostname workers.example.test
 ```
 
 `nanoflared` automatically loads `.env` when it starts. Existing shell
@@ -65,7 +76,7 @@ uses its intentionally ephemeral in-memory repository.
 
 When a worker is registered without a hostname, `nanoflared` uses
 `-base-hostname` or `NANOFLARE_BASE_HOSTNAME` to generate one in the form
-`worker-name-a1b2c3d4.workers.example.com`. Requests without a hostname are
+`worker-name-a1b2c3d4.workers.example.test`. Requests without a hostname are
 rejected when no base hostname is configured.
 
 `nanoflared` also listens on `127.0.0.1:8081` for the private Worker KV adapter.
@@ -156,6 +167,10 @@ create` registers the worker and saves its generated app ID and final hostname
 locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 `--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
 `http://127.0.0.1:8080`.
+
+The starter project is plain JavaScript and can be deployed immediately. The
+example apps under `examples/` use npm-based build steps first because they
+bundle TypeScript, React, or both before `nanoflare deploy`.
 
 The deploy command starts a new `workerd` pool generation on fresh runtime
 ports, health-checks every socket, publishes healthy upstreams for Traefik

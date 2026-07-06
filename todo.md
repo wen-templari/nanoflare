@@ -20,3 +20,13 @@ Object storage
 ## Worker triggers 
 
 https://developers.cloudflare.com/workers/configuration/cron-triggers/
+
+## Env based deployments
+
+support deploy to different envs (dev, staging, prod) with different config files.
+
+
+## Design review
+
+- should we keep using X-Nanoflare-* for kv namespace and object storagebucket?
+****
