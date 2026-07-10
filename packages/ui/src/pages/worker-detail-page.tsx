@@ -1,9 +1,11 @@
+import { Alert, Anchor, Card, Group, SegmentedControl, SimpleGrid, Text, ThemeIcon, Title } from "@mantine/core"
 import { lazy, Suspense, useEffect, useState } from "react"
 import {
-  Activity, AlertTriangle, Archive, ArrowLeft, Copy, FileCode2, FileJson, Folder,
+  Activity, AlertTriangle, Archive, FileCode2, FileJson, Folder,
   GitBranch, Globe2, Save, SlidersHorizontal, Terminal,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router-dom"
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { fetchJSON } from "../app/api"
 import { useWorkspace } from "../app/workspace-context"
 import type {
@@ -21,17 +23,16 @@ const WorkerDefinitionFlow = lazy(() =>
 )
 
 export function WorkerDetailPage() {
-  const navigate = useNavigate()
   const { workerId } = useParams()
   const { workers, notify, apiConnected } = useWorkspace()
   const worker = workers.find((item) => item.id === workerId)
 
   if (!worker) return <Navigate to="/workers" replace />
 
-  return <WorkerDetailContent worker={worker} onBack={() => navigate("/workers")} notify={notify} apiConnected={apiConnected} />
+  return <WorkerDetailContent worker={worker} notify={notify} apiConnected={apiConnected} />
 }
 
-function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; bindings?: WorkerDeployment["bindings"]; created_at: string }; onBack: () => void; notify: (text: string) => void; apiConnected: boolean }) {
+function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; bindings?: WorkerDeployment["bindings"]; created_at: string }; notify: (text: string) => void; apiConnected: boolean }) {
   const navigate = useNavigate()
   const { namespaces } = useWorkspace()
   const [tab, setTab] = useState<WorkerDetailTab>("overview")
@@ -92,35 +93,39 @@ function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker:
 
   return (
     <>
-      <button onClick={onBack} className="animate-rise mb-5 flex items-center gap-2 font-mono text-[10px] font-bold   text-[#77817a] transition hover:text-[#d75a41]"><ArrowLeft className="size-3.5" />All workers</button>
-      <div className="animate-rise mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <div className="mb-10 flex flex-col justify-between gap-4 py-2 md:flex-row md:items-start">
         <div>
-          <h1 className="text-4xl  text-[#26332f] md:text-5xl">{worker.name}</h1>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-[#858b84]"><span className="flex items-center gap-1.5"><Globe2 className="size-3" />{worker.hostname}</span><span className="flex items-center gap-1.5"><GitBranch className="size-3" />{deployment?.id ?? "awaiting deploy"}</span></div>
+          <Title className="flex h-12 items-center" order={1}>{worker.name}</Title>
+          <Group c="dimmed" gap="md" mt="xs"><Text ff="monospace" size="xs"><Globe2 className="mr-1 inline size-3" /><Anchor ff="monospace" href={hostnameHref(worker.hostname)} size="xs" target="_blank">{worker.hostname}</Anchor></Text><Text ff="monospace" size="xs"><GitBranch className="mr-1 inline size-3" />{deployment?.id ?? "awaiting deploy"}</Text></Group>
         </div>
-        <Button variant="outline" onClick={() => notify(`${worker.name} hostname copied`)}><Copy className="size-3.5" />Copy hostname</Button>
       </div>
 
-      {(loading || error) && <div className={cn("mt-6 rounded-lg border px-4 py-3 font-mono text-[10px]  ", error ? "border-[#ecc3b6] bg-[#fae5df] text-[#b14b37]" : "border-[#dcd6ca] bg-white/45 text-[#8c918b]")}>{error || "Loading worker detail from nanoflared"}</div>}
+      {(loading || error) && <Alert color={error ? "red" : "blue"} mb="md" variant="light">{error || "Loading worker detail from nanoflared"}</Alert>}
 
-      <section className="paper-panel animate-rise mt-6 overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7e1d6] px-4 py-3">
-          <div className="flex gap-1">
-            {([
+      <div className="mt-4">
+        <div className="mb-4">
+          <SegmentedControl
+            classNames={{
+              control: "w-32",
+              label: "justify-center",
+            }}
+            data={([
               { id: "overview", label: "Overview", icon: GitBranch },
               { id: "deployments", label: "Deployments", icon: Archive },
               { id: "files", label: "Files", icon: FileCode2 },
               { id: "output", label: "Output", icon: Terminal },
               { id: "settings", label: "Settings", icon: SlidersHorizontal },
-            ] as const).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={cn("flex items-center gap-2 rounded-md px-3 py-2 font-mono text-[10px] font-bold   transition", tab === id ? "bg-[#26332f] text-white" : "text-[#80867f] hover:bg-[#efebe2] hover:text-[#35413e]")}><Icon className="size-3.5" />{label}</button>)}
-          </div>
-        </header>
+            ] as const).map(({ id, label }) => ({ label, value: id }))}
+            onChange={(value) => setTab(value as WorkerDetailTab)}
+            value={tab}
+          />
+        </div>
         {tab === "overview" && <WorkerOverview worker={detail?.app ?? worker} deployment={detail?.deployment} namespaces={namespaces} onOpenNamespace={(namespaceID) => navigate(`/kv/${namespaceID}`)} onOpenBucket={(bucketID) => navigate(`/object-storage/${bucketID}`)} onOpenDeployments={() => setTab("deployments")} recentDeployments={recentDeployments} traffic={traffic} />}
         {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
         {tab === "files" && <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />}
         {tab === "output" && <WorkerOutput lines={output} />}
         {tab === "settings" && <WorkerConfig detail={detail} apiConnected={apiConnected} notify={notify} />}
-      </section>
+      </div>
     </>
   )
 }
@@ -150,62 +155,54 @@ function WorkerOverview({
   const assetBinding = bindings.find((binding) => binding.kind === "asset")?.binding
 
   return (
-    <div className="space-y-6 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-extrabold text-[#26332f]">Overview</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-[#707670]">Trace how traffic enters this worker, inspect live request shape, and skim the latest rollout history without leaving the overview tab.</p>
+    <div className="space-y-6">
+      <section>
+        <Suspense fallback={<div className="h-[420px] animate-pulse rounded-xl border border-gray-200 bg-white" />}>
+          <WorkerDefinitionFlow worker={worker} deployment={deployment} namespaces={namespaces} onOpenNamespace={onOpenNamespace} onOpenBucket={onOpenBucket} />
+        </Suspense>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-2">
+        <SimpleGrid cols={{ base: 1, sm: 3 }} className="xl:col-span-2" spacing="md">
+          {[
+            { label: "Invocations", value: compactNumber(traffic.invocations), note: "routed worker requests", icon: Activity },
+            { label: "Errors", value: compactNumber(traffic.errors), note: "5xx responses", icon: AlertTriangle },
+            { label: "Bundle", value: formatBytes(traffic.bundle_size || deployment?.bundle_size || 0), note: "active deployment size", icon: FileCode2 },
+          ].map(({ label, value, note, icon: Icon }) => (
+            <Card key={label} padding="md" radius="md" withBorder>
+              <Group justify="space-between">
+                <Text c="dimmed" fw={700} size="xs" tt="uppercase">{label}</Text>
+                <ThemeIcon size="sm" variant="light"><Icon size={14} /></ThemeIcon>
+              </Group>
+              <Title mt="sm" order={3}>{value}</Title>
+              <Text c="dimmed" size="xs">{note}</Text>
+            </Card>
+          ))}
+        </SimpleGrid>
+        <Panel title="Worker traffic" eyebrow={traffic.available ? "Last 60 minutes" : "Prometheus unavailable"}>
+          <MiniTrafficChart values={traffic.traffic} />
+        </Panel>
+        <Panel title="Response codes" eyebrow="5 minute rate">
+          <StatusCodeMix values={traffic.status_codes} />
+        </Panel>
+      </section>
+
+      <section className="rounded-xl border border-gray-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
+          <div>
+            <p className="font-mono text-[9px]   text-[#d35c45]">Recent rollout</p>
+            <h3 className="mt-1 text-sm font-extrabold text-[#26332f]">Recent deployments</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenDeployments}
+            className="font-mono text-[10px] font-bold   text-[#d35c45] transition hover:text-[#b94a34]"
+          >
+            Open deployments tab
+          </button>
         </div>
-      </div>
-      <div className="space-y-6">
-        <section>
-          <Suspense fallback={<div className="h-[420px] animate-pulse rounded-xl border border-[#e2ddd2] bg-[#f5f1e9]/70" />}>
-            <WorkerDefinitionFlow worker={worker} deployment={deployment} namespaces={namespaces} onOpenNamespace={onOpenNamespace} onOpenBucket={onOpenBucket} />
-          </Suspense>
-        </section>
-
-        <section className="grid gap-6 xl:grid-cols-2">
-          <div className="grid gap-3 sm:grid-cols-3 xl:col-span-2">
-            {[
-              { label: "Invocations", value: compactNumber(traffic.invocations), note: "routed worker requests", icon: Activity },
-              { label: "Errors", value: compactNumber(traffic.errors), note: "5xx responses", icon: AlertTriangle },
-              { label: "Bundle", value: formatBytes(traffic.bundle_size || deployment?.bundle_size || 0), note: "active deployment size", icon: FileCode2 },
-            ].map(({ label, value, note, icon: Icon }) => (
-              <div key={label} className="rounded-lg border border-[#e2ddd2] bg-white/45 p-4">
-                <div className="flex items-center justify-between">
-                  <p className="font-mono text-[9px]   text-[#90958e]">{label}</p>
-                  <Icon className="size-3.5 text-[#d75a41]" />
-                </div>
-                <p className="mt-3 text-2xl font-extrabold text-[#26332f]">{value}</p>
-                <p className="mt-1 font-mono text-[9px]   text-[#999d97]">{note}</p>
-              </div>
-            ))}
-          </div>
-          <Panel title="Worker traffic" eyebrow={traffic.available ? "Last 60 minutes" : "Prometheus unavailable"}>
-            <MiniTrafficChart values={traffic.traffic} />
-          </Panel>
-          <Panel title="Response codes" eyebrow="5 minute rate">
-            <StatusCodeMix values={traffic.status_codes} />
-          </Panel>
-        </section>
-
-        <section className="rounded-xl border border-[#e2ddd2] bg-white/45">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7e1d6] px-5 py-4">
-            <div>
-              <p className="font-mono text-[9px]   text-[#d35c45]">Recent rollout</p>
-              <h3 className="mt-1 text-sm font-extrabold text-[#26332f]">Recent deployments</h3>
-            </div>
-            <button
-              type="button"
-              onClick={onOpenDeployments}
-              className="font-mono text-[10px] font-bold   text-[#d35c45] transition hover:text-[#b94a34]"
-            >
-              Open deployments tab
-            </button>
-          </div>
-          <WorkerDeploymentsTable deployments={recentDeployments} />
-        </section>
-      </div>
+        <WorkerDeploymentsTable deployments={recentDeployments} />
+      </section>
     </div>
   )
 }
@@ -213,7 +210,7 @@ function WorkerOverview({
 function WorkerFileViewer({ files, selectedFile, onSelect }: { files: WorkerFile[]; selectedFile?: WorkerFile; onSelect: (file: WorkerFile) => void }) {
   if (!selectedFile) return <WorkerDetailEmpty icon={<FileCode2 />} title="No deployed bundle" copy="Deploy this worker to inspect its bundle file." />
   return (
-    <div className="grid min-h-[510px] md:grid-cols-[190px_1fr]"><aside className="border-b border-[#e7e1d6] bg-[#f5f1e9]/75 py-3 md:border-b-0 md:border-r"><div className="flex items-center gap-2 px-4 py-1.5 font-mono text-[10px] font-bold text-[#68716c]"><Folder className="size-3.5 text-[#d75a41]" />active</div>{files.map((file) => <button key={file.path} onClick={() => onSelect(file)} className={cn("flex w-full items-center gap-2 px-4 py-2 pl-8 text-left font-mono text-[10px] transition", selectedFile.path === file.path ? "bg-[#e5e0d6] font-bold text-[#35413e]" : "text-[#848a83] hover:bg-white/60 hover:text-[#4c5853]")}>{file.name.endsWith(".json") ? <FileJson className="size-3.5 text-[#bd7e35]" /> : <FileCode2 className="size-3.5 text-[#668e7a]" />}{file.name}</button>)}</aside><div className="min-w-0 bg-[#202b29] text-[#d8dfd8]"><div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><p className="font-mono text-[10px] text-[#b5c1bb]">{selectedFile.path}</p><span className="font-mono text-[9px]   text-[#778781]">{formatBytes(selectedFile.size)} / read only</span></div><pre className="overflow-x-auto p-4 font-mono text-[11px] leading-6"><code>{selectedFile.content.split("\n").map((line, index) => <span key={`${line}-${index}`} className="block"><span className="mr-5 inline-block w-5 select-none text-right text-[#61706b]">{index + 1}</span>{line || " "}</span>)}</code></pre></div></div>
+    <div className="grid min-h-[510px] overflow-hidden rounded-xl border border-gray-200 md:grid-cols-[190px_1fr]"><aside className="border-b border-gray-200 bg-gray-50 py-3 md:border-b-0 md:border-r"><div className="flex items-center gap-2 px-4 py-1.5 font-mono text-[10px] font-bold text-gray-700"><Folder className="size-3.5 text-blue-600" />active</div>{files.map((file) => <button key={file.path} onClick={() => onSelect(file)} className={cn("flex w-full items-center gap-2 px-4 py-2 pl-8 text-left font-mono text-[10px] transition", selectedFile.path === file.path ? "bg-gray-200 font-bold text-gray-900" : "text-gray-600 hover:bg-white hover:text-gray-900")}>{file.name.endsWith(".json") ? <FileJson className="size-3.5 text-orange-600" /> : <FileCode2 className="size-3.5 text-green-700" />}{file.name}</button>)}</aside><div className="min-w-0 bg-[#202b29] text-[#d8dfd8]"><div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><p className="font-mono text-[10px] text-[#b5c1bb]">{selectedFile.path}</p><span className="font-mono text-[9px]   text-[#778781]">{formatBytes(selectedFile.size)} / read only</span></div><pre className="overflow-x-auto p-4 font-mono text-[11px] leading-6"><code>{selectedFile.content.split("\n").map((line, index) => <span key={`${line}-${index}`} className="block"><span className="mr-5 inline-block w-5 select-none text-right text-[#61706b]">{index + 1}</span>{line || " "}</span>)}</code></pre></div></div>
   )
 }
 
@@ -254,7 +251,7 @@ function WorkerConfig({ detail, apiConnected, notify }: { detail?: WorkerDetailD
   const vars = detail.deployment.vars ? Object.entries(detail.deployment.vars) : []
   const secrets = detail.secrets ?? []
 
-  return <div className="p-5"><div className="overflow-hidden rounded-lg border border-[#e2ddd2]">{rows.map(([label, value]) => <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"><span className="font-mono text-[10px]   text-[#93978f]">{label}</span><span className="font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span></div>)}</div><div className="mt-5 overflow-hidden rounded-lg border border-[#e2ddd2] bg-white/50"><div className="border-b border-[#e8e3d9] px-4 py-3"><p className="font-mono text-[10px]   text-[#7f857e]">Environment vars</p></div>{vars.length ? <table className="w-full text-left"><thead><tr className="border-b border-[#e8e3d9] font-mono text-[9px] text-[#989b95]"><th className="px-4 py-3">Name</th><th className="pr-4">Value</th></tr></thead><tbody>{vars.map(([name, value]) => <tr key={name} className="border-b border-[#ece7dc] align-top text-xs last:border-0"><td className="px-4 py-3 font-mono text-[10px] font-bold text-[#4f5a55]">{name}</td><td className="pr-4 py-3"><pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#5f6863]"><code>{JSON.stringify(value)}</code></pre></td></tr>)}</tbody></table> : <p className="px-4 py-4 text-xs text-[#6f766f]">No deployment vars configured.</p>}</div><div className="mt-5 overflow-hidden rounded-lg border border-[#e2ddd2] bg-white/50"><div className="border-b border-[#e8e3d9] px-4 py-3"><p className="font-mono text-[10px]   text-[#7f857e]">Secrets</p></div>{secrets.length ? <table className="w-full text-left"><thead><tr className="border-b border-[#e8e3d9] font-mono text-[9px] text-[#989b95]"><th className="px-4 py-3">Name</th><th className="pr-4">Updated</th></tr></thead><tbody>{secrets.map((secret) => <tr key={secret.name} className="border-b border-[#ece7dc] text-xs last:border-0"><td className="px-4 py-3 font-mono text-[10px] font-bold text-[#4f5a55]">{secret.name}</td><td className="pr-4 py-3 font-mono text-[10px] text-[#7f857e]">{new Date(secret.updated_at).toLocaleString()}</td></tr>)}</tbody></table> : <p className="px-4 py-4 text-xs text-[#6f766f]">No secrets configured.</p>}</div><div className="mt-5 rounded-lg border border-[#e2ddd2] bg-white/50 p-4"><div className="mb-2 flex items-center justify-between"><p className="font-mono text-[10px]   text-[#7f857e]">Protected routes</p><Button type="button" onClick={() => void saveRoutes()} disabled={saving}><Save className="size-3.5" />Save routes</Button></div><p className="mb-3 text-xs text-[#6f766f]">One absolute path per line. Example: <span className="font-mono">/admin/*</span></p><textarea value={protectedRoutes} onChange={(event) => setProtectedRoutes(event.target.value)} spellCheck={false} className="min-h-40 w-full rounded-md border border-[#d6d0c3] bg-[#fdfbf6] p-3 font-mono text-[11px] leading-6 text-[#35413e] outline-none" placeholder="/admin/*&#10;/api/private/*" /></div></div>
+  return <div className=""><div className="overflow-hidden rounded-lg border border-[#e2ddd2]">{rows.map(([label, value]) => <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"><span className="font-mono text-[10px]   text-[#93978f]">{label}</span><span className="font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span></div>)}</div><div className="mt-5 overflow-hidden rounded-lg border border-[#e2ddd2] bg-white/50"><div className="border-b border-[#e8e3d9] px-4 py-3"><p className="font-mono text-[10px]   text-[#7f857e]">Environment vars</p></div>{vars.length ? <table className="w-full text-left"><thead><tr className="border-b border-[#e8e3d9] font-mono text-[9px] text-[#989b95]"><th className="px-4 py-3">Name</th><th className="pr-4">Value</th></tr></thead><tbody>{vars.map(([name, value]) => <tr key={name} className="border-b border-[#ece7dc] align-top text-xs last:border-0"><td className="px-4 py-3 font-mono text-[10px] font-bold text-[#4f5a55]">{name}</td><td className="pr-4 py-3"><pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#5f6863]"><code>{JSON.stringify(value)}</code></pre></td></tr>)}</tbody></table> : <p className="px-4 py-4 text-xs text-[#6f766f]">No deployment vars configured.</p>}</div><div className="mt-5 overflow-hidden rounded-lg border border-[#e2ddd2] bg-white/50"><div className="border-b border-[#e8e3d9] px-4 py-3"><p className="font-mono text-[10px]   text-[#7f857e]">Secrets</p></div>{secrets.length ? <table className="w-full text-left"><thead><tr className="border-b border-[#e8e3d9] font-mono text-[9px] text-[#989b95]"><th className="px-4 py-3">Name</th><th className="pr-4">Updated</th></tr></thead><tbody>{secrets.map((secret) => <tr key={secret.name} className="border-b border-[#ece7dc] text-xs last:border-0"><td className="px-4 py-3 font-mono text-[10px] font-bold text-[#4f5a55]">{secret.name}</td><td className="pr-4 py-3 font-mono text-[10px] text-[#7f857e]">{new Date(secret.updated_at).toLocaleString()}</td></tr>)}</tbody></table> : <p className="px-4 py-4 text-xs text-[#6f766f]">No secrets configured.</p>}</div><div className="mt-5 rounded-lg border border-[#e2ddd2] bg-white/50 p-4"><div className="mb-2 flex items-center justify-between"><p className="font-mono text-[10px]   text-[#7f857e]">Protected routes</p><Button type="button" onClick={() => void saveRoutes()} disabled={saving}><Save className="size-3.5" />Save routes</Button></div><p className="mb-3 text-xs text-[#6f766f]">One absolute path per line. Example: <span className="font-mono">/admin/*</span></p><textarea value={protectedRoutes} onChange={(event) => setProtectedRoutes(event.target.value)} spellCheck={false} className="min-h-40 w-full rounded-md border border-[#d6d0c3] bg-[#fdfbf6] p-3 font-mono text-[11px] leading-6 text-[#35413e] outline-none" placeholder="/admin/*&#10;/api/private/*" /></div></div>
 }
 
 function WorkerDeployments({ deployments }: { deployments: ConsoleDeployment[] }) {
@@ -263,17 +260,32 @@ function WorkerDeployments({ deployments }: { deployments: ConsoleDeployment[] }
 }
 
 function WorkerOutput({ lines }: { lines: WorkerOutputLine[] }) {
-  return <div className="min-h-[510px] bg-[#202b29] p-4"><div className="mb-4 flex items-center gap-2 font-mono text-[9px]   text-[#82928c]"><span className="size-1.5 rounded-full bg-[#78b88b]" />Shared workerd process output</div>{lines.length ? <div className="space-y-1.5">{lines.map(({ timestamp, level, message }, index) => <p key={`${timestamp}-${index}`} className="font-mono text-[11px] leading-5 text-[#c6d0cb]"><span className="mr-3 text-[#71817b]">{new Date(timestamp).toLocaleTimeString()}</span><span className={cn("mr-3", level === "error" ? "text-[#e87962]" : level === "warn" ? "text-[#e3a65a]" : "text-[#78b88b]")}>{level.toUpperCase()}</span>{message}</p>)}</div> : <p className="pt-16 text-center font-mono text-[10px]   text-[#71817b]">No runtime output captured yet</p>}</div>
+  return <div className="min-h-[510px] bg-[#202b29] p-4 rounded-lg"><div className="mb-4 flex items-center gap-2 font-mono text-[9px]   text-[#82928c]"><span className="size-1.5 rounded-full bg-[#78b88b]" />Shared workerd process output</div>{lines.length ? <div className="space-y-1.5">{lines.map(({ timestamp, level, message }, index) => <p key={`${timestamp}-${index}`} className="font-mono text-[11px] leading-5 text-[#c6d0cb]"><span className="mr-3 text-[#71817b]">{new Date(timestamp).toLocaleTimeString()}</span><span className={cn("mr-3", level === "error" ? "text-[#e87962]" : level === "warn" ? "text-[#e3a65a]" : "text-[#78b88b]")}>{level.toUpperCase()}</span>{message}</p>)}</div> : <p className="pt-16 text-center font-mono text-[10px]   text-[#71817b]">No runtime output captured yet</p>}</div>
 }
 
 function MiniTrafficChart({ values }: { values: number[] }) {
-  const max = Math.max(...values, 0.01)
   if (!values.length) return <EmptyMetrics />
-  return <><div className="flex h-32 items-end gap-1">{values.map((value, index) => <div key={index} title={`${value.toFixed(2)} requests/s`} className="flex-1 rounded-t-sm bg-[#bfd0c6] transition hover:bg-[#e25b3f]" style={{ height: `${Math.max((value / max) * 100, 2)}%` }} />)}</div><div className="mt-3 flex justify-between font-mono text-[9px] text-[#9ba09a]"><span>60 MIN AGO</span><span>NOW</span></div></>
+  const data = values.map((value, index) => ({ minute: index === values.length - 1 ? "NOW" : `${values.length - index}m`, value }))
+  return (
+    <div className="h-52">
+      <ResponsiveContainer height="100%" width="100%">
+        <AreaChart data={data}>
+          <XAxis axisLine={false} dataKey="minute" interval="preserveStartEnd" tickLine={false} />
+          <YAxis hide />
+          <Tooltip cursor={{ stroke: "var(--mantine-color-blue-4)" }} formatter={(value) => [`${Number(value).toFixed(2)} requests/s`, "Traffic"]} />
+          <Area dataKey="value" fill="var(--mantine-color-blue-1)" stroke="var(--mantine-color-blue-6)" strokeWidth={2} type="monotone" />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
 }
 
 function compactNumber(value: number) {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value || 0)
+}
+
+function hostnameHref(hostname: string) {
+  return /^https?:\/\//i.test(hostname) ? hostname : `https://${hostname}`
 }
 
 function WorkerDeploymentsTable({ deployments }: { deployments: ConsoleDeployment[] }) {

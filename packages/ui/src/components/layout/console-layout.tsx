@@ -1,10 +1,11 @@
-import { Boxes, Check, ChevronDown, CircleGauge, DatabaseZap, KeyRound, Settings, Waypoints } from "lucide-react"
-import { NavLink, Outlet, useLocation } from "react-router-dom"
+import { Anchor, AppShell, Box, Breadcrumbs, Burger, Group, NavLink as MantineNavLink, Notification, Stack, Text, Title } from "@mantine/core"
+import { useDisclosure } from "@mantine/hooks"
+import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, Waypoints } from "lucide-react"
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import { useWorkspace } from "../../app/workspace-context"
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
 import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog"
 import { CreateWorkerDialog } from "../dialogs/create-worker-dialog"
-import { cn } from "../../lib/utils"
 
 const navItems = [
   { href: "/", match: "/", label: "Overview", icon: CircleGauge },
@@ -15,6 +16,7 @@ const navItems = [
 
 export function ConsoleLayout() {
   const location = useLocation()
+  const [opened, { toggle, close }] = useDisclosure()
   const {
     workers,
     setWorkers,
@@ -35,86 +37,106 @@ export function ConsoleLayout() {
     notify,
   } = useWorkspace()
 
-  const activeSection = navItems.find(({ match }) => location.pathname === match || (match !== "/" && location.pathname.startsWith(match)))?.label.toLowerCase() ?? "overview"
+  const breadcrumbs = getBreadcrumbs(location.pathname, { workers, namespaces, objectStorageBuckets })
 
   return (
-    <div className="console-grid min-h-screen">
-      <aside className="nav-noise fixed inset-y-0 left-0 z-30 hidden w-60 flex-col bg-[#1c2926] text-[#e7e4da] lg:flex">
-        <div className="flex h-16 items-center px-5">
-          <div className="grid size-9 place-items-center rounded-lg bg-[#e25b3f] text-white shadow-lg shadow-black/15"><Boxes className="size-5" /></div>
-          <div className="ml-3">
-            <p className=" text-xl leading-none">nanoflare</p>
-            <p className="mt-1 font-mono text-[9px]   text-[#9eb0a8]">control plane</p>
-          </div>
-        </div>
-        <nav className="flex-1 space-y-1 px-3">
+    <AppShell
+      header={{ height: 64 }}
+      layout="alt"
+      navbar={{ width: 260, breakpoint: "md", collapsed: { mobile: !opened } }}
+      padding="lg"
+    >
+      <AppShell.Header>
+        <Group h="100%" px="lg" justify="space-between">
+          <Group>
+            <Burger opened={opened} onClick={toggle} hiddenFrom="md" size="sm" />
+            <Breadcrumbs>
+              {breadcrumbs.map((item, index) => (
+                item.href && index < breadcrumbs.length - 1
+                  ? <Anchor component={Link} key={item.href} size="sm" to={item.href}>{item.label}</Anchor>
+                  : <Text c="dimmed" key={`${item.label}-${index}`} size="sm">{item.label}</Text>
+              ))}
+            </Breadcrumbs>
+          </Group>
+          <Text fw={700} size="sm">clas</Text>
+        </Group>
+      </AppShell.Header>
+
+      <AppShell.Navbar p="md">
+        <Group mb="xl">
+          <Box bg="blue" c="white" className="grid size-9 place-items-center rounded-md">
+            <Boxes size={18} />
+          </Box>
+          <Box>
+            <Title order={2} size="h4">nanoflare</Title>
+            <Text c="dimmed" ff="monospace" size="xs">control plane</Text>
+          </Box>
+        </Group>
+        <div className="flex flex-col gap-1">
           {navItems.map(({ href, match, label, icon: Icon }) => {
             const active = location.pathname === match || (match !== "/" && location.pathname.startsWith(match))
 
             return (
-              <NavLink
+              <MantineNavLink
+                active={active}
+                className="w-full rounded-xl px-4 py-3"
+                component={NavLink}
                 key={href}
+                label={label}
+                leftSection={<Icon size={18} />}
+                onClick={close}
                 to={href}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] font-semibold transition",
-                  active ? "bg-white/11 text-white shadow-sm" : "text-[#aebdb7] hover:bg-white/6 hover:text-white",
-                )}
-              >
-                <Icon className={cn("size-4", active && "text-[#ee765c]")} />
-                {label}
-              </NavLink>
+              />
             )
           })}
-        </nav>
-        {/* <button className="flex items-center gap-3 border-t border-white/10 px-5 py-4 text-xs font-semibold text-[#aebdb7] hover:text-white"><Settings className="size-4" />Settings</button> */}
-      </aside>
-
-      <main className="pb-20 lg:pb-0 lg:pl-60">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-[#ded9ce] bg-[#f4f0e7]/85 px-4 backdrop-blur-md md:px-8">
-          <div>
-            <p className="text-sm  text-[#90958e]">
-              <span className="text-[#cf563d] capitalize">{activeSection}</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 rounded-full bg-[#26332f] py-1.5 pl-1.5 pr-3 text-xs font-bold text-white">
-              <span className="grid size-6 place-items-center rounded-full bg-[#e25b3f] text-[10px]">CL</span> clas <ChevronDown className="size-3" />
-            </button>
-          </div>
-        </header>
-
-        <div className="mx-auto max-w-7xl p-4 md:p-8">
-          <Outlet />
         </div>
-      </main>
+      </AppShell.Navbar>
 
-      <nav className="fixed inset-x-3 bottom-3 z-30 flex justify-around rounded-xl border border-white/10 bg-[#1c2926]/95 p-1.5 text-[#aebdb7] shadow-2xl backdrop-blur-md lg:hidden">
-        {navItems.map(({ href, match, label, icon: Icon }) => {
-          const active = location.pathname === match || (match !== "/" && location.pathname.startsWith(match))
-
-          return (
-            <NavLink
-              key={href}
-              to={href}
-              className={cn("flex min-w-16 flex-col items-center gap-1 rounded-lg px-2 py-2 font-mono text-[8px]   transition", active && "bg-white/10 text-white")}
-            >
-              <Icon className={cn("size-4", active && "text-[#ee765c]")} />
-              {label}
-            </NavLink>
-          )
-        })}
-      </nav>
+      <AppShell.Main>
+        <Box maw={1280} mx="auto">
+          <Outlet />
+        </Box>
+      </AppShell.Main>
 
       <CreateWorkerDialog open={workerDialogOpen} onClose={closeWorkerDialog} workers={workers} setWorkers={(nextWorkers) => setWorkers(nextWorkers)} notify={notify} apiConnected={apiConnected} />
       <CreateKVNamespaceDialog open={namespaceDialogOpen} onClose={closeNamespaceDialog} namespaces={namespaces} setNamespaces={setNamespaces} notify={notify} apiConnected={apiConnected} />
       <CreateObjectStorageBucketDialog open={objectStorageBucketDialogOpen} onClose={closeObjectStorageBucketDialog} buckets={objectStorageBuckets} setBuckets={setObjectStorageBuckets} notify={notify} apiConnected={apiConnected} />
 
       {toast && (
-        <div className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-lg bg-[#26332f] px-4 py-3 text-xs font-bold text-white shadow-xl">
-          <Check className="size-4 text-[#8dc99b]" />
+        <Notification className="fixed bottom-5 right-5 z-[60]" color="green" icon={<Check size={16} />} withCloseButton={false}>
           {toast}
-        </div>
+        </Notification>
       )}
-    </div>
+    </AppShell>
   )
+}
+
+function getBreadcrumbs(
+  pathname: string,
+  workspace: {
+    objectStorageBuckets: { id: string; name: string }[]
+    namespaces: { id: string; name: string }[]
+    workers: { id: string; name: string }[]
+  },
+) {
+  const [, section, id] = pathname.split("/")
+
+  if (!section) return [{ label: "Overview" }]
+
+  if (section === "workers") {
+    const worker = workspace.workers.find((item) => item.id === id)
+    return id ? [{ href: "/workers", label: "Workers" }, { label: worker?.name ?? id }] : [{ label: "Workers" }]
+  }
+
+  if (section === "kv") {
+    const namespace = workspace.namespaces.find((item) => item.id === id)
+    return id ? [{ href: "/kv", label: "KV" }, { label: namespace?.name ?? id }] : [{ label: "KV" }]
+  }
+
+  if (section === "object-storage") {
+    const bucket = workspace.objectStorageBuckets.find((item) => item.id === id)
+    return id ? [{ href: "/object-storage", label: "Object storage" }, { label: bucket?.name ?? id }] : [{ label: "Object storage" }]
+  }
+
+  return [{ label: "Overview" }]
 }

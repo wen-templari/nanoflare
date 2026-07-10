@@ -39,25 +39,45 @@ Podman sandbox lifecycle management, OIDC validation, explicit rollback APIs,
 and runner reconciliation after an unexpected `workerd` exit remain integration
 work.
 
-## Run
+## Development Environment
 
 Prerequisites:
 
-- Docker with Compose for Traefik, PostgreSQL, MinIO, and Prometheus.
+- Docker with Compose for PostgreSQL, MinIO, Traefik, and Prometheus.
 - Go to run `./cmd/nanoflare`, `./cmd/nanoflared`, and `./cmd/nanoflare-runner`.
 - Node.js and npm for the example apps and web console.
 - `workerd` on `PATH`, or pass `-workerd /path/to/workerd` to the control plane or runner.
 
-Create the local environment and start the infrastructure:
+For local development, run the dependencies in Docker and keep `nanoflared`,
+`nanoflare-runner`, and `workerd` on the host:
 
 ```sh
 cp .env.example .env
-docker compose -f docker/compose.yml up -d
+docker compose -f docker/compose.dev.yml up -d
 ```
 
-The checked-in `.env.example` already includes development values for
-`DATABASE_URL`, MinIO, Traefik, the runner token, and
-`NANOFLARE_BASE_HOSTNAME=workers.example.test`.
+Then update `.env` with development credentials that match the Compose defaults:
+
+```dotenv
+DATABASE_URL=postgres://nanoflare:nanoflare-development@127.0.0.1:5432/nanoflare?sslmode=disable
+MINIO_ENDPOINT=127.0.0.1:9000
+MINIO_ACCESS_KEY=nanoflare
+MINIO_SECRET_KEY=nanoflare-development
+MINIO_BUCKET=nanoflare
+MINIO_SECURE=false
+NANOFLARE_TRAEFIK_TOKEN=nanoflare-development
+NANOFLARE_RUNNER_TOKEN=nanoflare-development
+NANOFLARE_BASE_HOSTNAME=workers.example.test
+```
+
+`docker/compose.dev.yml` starts only shared dependencies. Its Traefik instance
+polls `http://host.docker.internal:8080/internal/traefik/config`, so
+`nanoflared` must be running on the host at port `8080`.
+
+Use `docker/compose.yml` only when you want the full stack to run inside
+Compose, including `nanoflared` and `nanoflare-runner`.
+
+Start the control plane on the host:
 
 Run `nanoflared` with PostgreSQL, MinIO, and a base hostname for workers that do
 not provide an explicit hostname:
@@ -84,11 +104,11 @@ Use `-runtime-addr` to change the listener address. Do not expose this endpoint
 publicly; generated `workerd` configuration injects app-scoped credentials when
 calling it.
 
-The Compose Traefik service polls `nanoflared` at
+The development Traefik service polls `nanoflared` at
 `GET /internal/traefik/config` using `NANOFLARE_TRAEFIK_TOKEN`. Application
-traffic still routes directly from Traefik to `workerd`. The default flags
-assume Traefik runs from `docker/compose.yml` while `nanoflared` and `workerd`
-run on the host.
+traffic still routes directly from Traefik to `workerd`. The default local-dev
+flow assumes Traefik runs from `docker/compose.dev.yml` while `nanoflared` and
+`workerd` run on the host.
 
 For a host-run Traefik process configured with its file provider instead, use
 the explicit file fallback and loopback addresses:
@@ -294,10 +314,11 @@ Vite serves the console at `http://127.0.0.1:5173` and proxies `/v1` requests to
 `nanoflared` at `http://127.0.0.1:8080`. When `nanoflared` is not running, the
 console opens with demo workers and local page and storage management state.
 
-The Compose stack also starts Prometheus at `http://127.0.0.1:9090`. Traefik
-publishes request metrics on its internal metrics endpoint, and Prometheus
-scrapes them every 15 seconds. The console's Monitoring view queries Prometheus
-through Vite's `/prometheus` development proxy.
+The development Compose stack also starts Prometheus at
+`http://127.0.0.1:9090`. Traefik publishes request metrics on its internal
+metrics endpoint, and Prometheus scrapes them every 15 seconds. The console's
+Monitoring view queries Prometheus through Vite's `/prometheus` development
+proxy.
 
 Worker drill-down data is served by `nanoflared`:
 

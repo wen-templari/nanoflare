@@ -1,7 +1,7 @@
-import "@xyflow/react/dist/style.css";
+import "@xyflow/react/dist/style.css"
 
-import Dagre from "@dagrejs/dagre";
-import type { Edge, Node, NodeProps } from "@xyflow/react";
+import Dagre from "@dagrejs/dagre"
+import type { Edge, Node, NodeProps } from "@xyflow/react"
 import {
   Background,
   Handle,
@@ -12,78 +12,76 @@ import {
   useNodesInitialized,
   useNodesState,
   useReactFlow,
-} from "@xyflow/react";
-import { DatabaseZap, FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
-import type { KVNamespace, Worker, WorkerDeployment } from "../app/types";
-import { cn } from "../lib/utils";
-import { Badge } from "./ui/badge";
+} from "@xyflow/react"
+import { DatabaseZap, FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react"
+import { createContext, useContext, useEffect, useMemo, useRef } from "react"
+import type { KVNamespace, Worker, WorkerDeployment } from "../app/types"
+import { cn } from "../lib/utils"
 
 type WorkerDefinitionFlowProps = {
-  deployment?: WorkerDeployment;
-  namespaces: KVNamespace[];
-  onOpenBucket: (bucketID: string) => void;
-  onOpenNamespace: (namespaceID: string) => void;
-  worker: Worker;
-};
+  deployment?: WorkerDeployment
+  namespaces: KVNamespace[]
+  onOpenBucket: (bucketID: string) => void
+  onOpenNamespace: (namespaceID: string) => void
+  worker: Worker
+}
 
 type DefinitionNodeData = {
-  content?: string;
-  eyebrow: string;
-  icon: "domain" | "auth" | "worker";
-  title: string;
-  tone?: "graphite" | "orange" | "sage";
-};
+  eyebrow: string
+  icon: "domain" | "auth" | "worker"
+  title: string
+  tone?: "graphite" | "orange" | "sage"
+}
 
 type BindingItem = {
-  binding: string;
-  bucketID?: string;
-  namespaceID?: string;
-  subtitle: string;
-  type: "asset" | "kv" | "object";
-};
+  binding: string
+  bucketID?: string
+  namespaceID?: string
+  subtitle: string
+  type: "asset" | "kv" | "object"
+}
 
 type BindingsNodeData = {
-  items: BindingItem[];
-  title: string;
-};
+  items: BindingItem[]
+  title: string
+}
 
-type FlowNodeData = DefinitionNodeData | BindingsNodeData;
-type FlowNode = Node<FlowNodeData>;
+type FlowNodeData = DefinitionNodeData | BindingsNodeData
+type FlowNode = Node<FlowNodeData>
 
 const nodeTypes = {
   bindings: BindingsNode,
   definition: DefinitionNode,
-};
+}
 
-const NamespaceNavigationContext = createContext<((namespaceID: string) => void) | null>(null);
-const BucketNavigationContext = createContext<((bucketID: string) => void) | null>(null);
+const NamespaceNavigationContext = createContext<((namespaceID: string) => void) | null>(null)
+const BucketNavigationContext = createContext<((bucketID: string) => void) | null>(null)
 
 const getLayoutedElements = (nodes: FlowNode[], edges: Edge[], direction: "LR" | "TB") => {
-  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ nodesep: 56, rankdir: direction, ranksep: 96 });
+  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
+  g.setGraph({ nodesep: 56, rankdir: direction, ranksep: 96 })
 
-  edges.forEach((edge) => g.setEdge(edge.source, edge.target));
+  edges.forEach((edge) => g.setEdge(edge.source, edge.target))
   nodes.forEach((node) =>
     g.setNode(node.id, {
       ...node,
       height: node.measured?.height ?? 0,
       width: node.measured?.width ?? 0,
     }),
-  );
+  )
 
-  Dagre.layout(g);
+  Dagre.layout(g)
 
   return {
     edges,
     nodes: nodes.map((node) => {
-      const position = g.node(node.id);
-      const x = position.x - (node.measured?.width ?? 0) / 2;
-      const y = position.y - (node.measured?.height ?? 0) / 2;
-      return { ...node, position: { x, y } };
+      const position = g.node(node.id)
+      const x = position.x - (node.measured?.width ?? 0) / 2
+      const y = position.y - (node.measured?.height ?? 0) / 2
+      return { ...node, position: { x, y } }
     }),
-  };
-};
+  }
+}
 
 export function WorkerDefinitionFlow(props: WorkerDefinitionFlowProps) {
   return (
@@ -94,14 +92,14 @@ export function WorkerDefinitionFlow(props: WorkerDefinitionFlowProps) {
         </ReactFlowProvider>
       </BucketNavigationContext.Provider>
     </NamespaceNavigationContext.Provider>
-  );
+  )
 }
 
 function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: WorkerDefinitionFlowProps) {
-  const { fitView } = useReactFlow();
-  const nodesInitialized = useNodesInitialized();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const initialGraph = useMemo(() => buildGraph(worker, deployment, namespaces), [deployment, namespaces, worker]);
+  const { fitView } = useReactFlow()
+  const nodesInitialized = useNodesInitialized()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const initialGraph = useMemo(() => buildGraph(worker, deployment, namespaces), [deployment, namespaces, worker])
   const graphKey = useMemo(
     () => JSON.stringify({
       bindings: deployment?.bindings ?? worker.bindings ?? [],
@@ -110,36 +108,36 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
       workerName: worker.name,
     }),
     [deployment?.bindings, worker.auth?.protected_routes, worker.bindings, worker.hostname, worker.name],
-  );
-  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initialGraph.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialGraph.edges);
+  )
+  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initialGraph.nodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialGraph.edges)
 
   useEffect(() => {
-    setNodes(initialGraph.nodes);
-    setEdges(initialGraph.edges);
-  }, [graphKey, initialGraph.edges, initialGraph.nodes, setEdges, setNodes]);
+    setNodes(initialGraph.nodes)
+    setEdges(initialGraph.edges)
+  }, [graphKey, initialGraph.edges, initialGraph.nodes, setEdges, setNodes])
 
   useEffect(() => {
-    if (!nodesInitialized) return;
-    const layouted = getLayoutedElements(nodes, edges, "LR");
-    setNodes([...layouted.nodes]);
-    setEdges([...layouted.edges]);
-    window.requestAnimationFrame(() => void fitView({ duration: 250, padding: 0.16 }));
-  // We only want to relayout when measured nodes become ready or the graph shape changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodesInitialized, graphKey, fitView, setEdges, setNodes]);
+    if (!nodesInitialized) return
+    const layouted = getLayoutedElements(nodes, edges, "LR")
+    setNodes([...layouted.nodes])
+    setEdges([...layouted.edges])
+    window.requestAnimationFrame(() => void fitView({ duration: 250, padding: 0.16 }))
+    // We only want to relayout when measured nodes become ready or the graph shape changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodesInitialized, graphKey, fitView, setEdges, setNodes])
 
   useEffect(() => {
-    if (!nodesInitialized || !containerRef.current) return;
+    if (!nodesInitialized || !containerRef.current) return
     const observer = new ResizeObserver(() => {
-      window.requestAnimationFrame(() => void fitView({ duration: 250, maxZoom: 1, padding: 0.2 }));
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [fitView, nodesInitialized]);
+      window.requestAnimationFrame(() => void fitView({ duration: 250, maxZoom: 1, padding: 0.2 }))
+    })
+    observer.observe(containerRef.current)
+    return () => observer.disconnect()
+  }, [fitView, nodesInitialized])
 
   return (
-    <div ref={containerRef} className="h-[430px] rounded-xl border border-[#e2ddd2] bg-[radial-gradient(circle_at_top_left,_rgba(248,245,238,0.96),_rgba(252,250,246,0.9)_48%,_rgba(240,244,238,0.75))]">
+    <div ref={containerRef} className="h-96 rounded-xl border border-gray-200 bg-white">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -162,23 +160,23 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
         preventScrolling
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="#e9dfd2" gap={20} size={1} />
+        <Background gap={20} size={1} />
       </ReactFlow>
     </div>
-  );
+  )
 }
 
 function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deployment"], namespaces: KVNamespace[]) {
-  const namespaceByID = new Map(namespaces.map((namespace) => [namespace.id, namespace]));
-  const protectedRoutes = worker.auth?.protected_routes ?? [];
-  const bindings = deployment?.bindings ?? worker.bindings ?? [];
+  const namespaceByID = new Map(namespaces.map((namespace) => [namespace.id, namespace]))
+  const protectedRoutes = worker.auth?.protected_routes ?? []
+  const bindings = deployment?.bindings ?? worker.bindings ?? []
   const bindingItems: BindingItem[] = bindings.map((binding) => {
     if (binding.kind === "asset") {
       return {
         binding: binding.binding,
         subtitle: `${binding.asset_count ?? 0} static asset${binding.asset_count === 1 ? "" : "s"}`,
         type: "asset" as const,
-      };
+      }
     }
     if (binding.kind === "object_storage_bucket") {
       return {
@@ -186,20 +184,19 @@ function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deplo
         bucketID: binding.bucket_id,
         subtitle: binding.bucket_name ?? binding.bucket_id ?? "bucket",
         type: "object" as const,
-      };
+      }
     }
     return {
       binding: binding.binding,
       namespaceID: binding.namespace_id,
       subtitle: binding.namespace_name ?? namespaceByID.get(binding.namespace_id ?? "")?.name ?? binding.namespace_id ?? "namespace",
       type: "kv" as const,
-    };
-  });
+    }
+  })
 
   const nodes: FlowNode[] = [
     {
       data: {
-        content: "Public domain for this isolate",
         eyebrow: "Ingress",
         icon: "domain",
         title: worker.hostname,
@@ -211,21 +208,19 @@ function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deplo
     },
     ...(protectedRoutes.length
       ? [{
-          data: {
-            content: protectedRoutes.slice(0, 3).join("  •  "),
-            eyebrow: "Middleware",
-            icon: "auth",
-            title: `Auth verify (${protectedRoutes.length})`,
-            tone: "orange",
-          },
-          id: "auth",
-          position: { x: 0, y: 0 },
-          type: "definition",
-        } satisfies Node<FlowNodeData>]
+        data: {
+          eyebrow: "Middleware",
+          icon: "auth",
+          title: `Auth verify (${protectedRoutes.length})`,
+          tone: "orange",
+        },
+        id: "auth",
+        position: { x: 0, y: 0 },
+        type: "definition",
+      } satisfies Node<FlowNodeData>]
       : []),
     {
       data: {
-        content: deployment?.entrypoint ?? "Awaiting deploy",
         eyebrow: "Runtime",
         icon: "worker",
         title: worker.name,
@@ -244,126 +239,122 @@ function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deplo
       position: { x: 0, y: 0 },
       type: "bindings",
     },
-  ];
+  ]
 
   const edges: Edge[] = [
     {
       animated: true,
       id: "domain-edge",
       source: "domain",
-      style: { stroke: "#d4d0ca", strokeWidth: 1.5 },
       target: protectedRoutes.length ? "auth" : "worker",
       type: "smoothstep",
     },
     ...(protectedRoutes.length
       ? [{
-          animated: true,
-          id: "auth-edge",
-          source: "auth",
-          style: { stroke: "#d75a41", strokeWidth: 1.5 },
-          target: "worker",
-          type: "smoothstep",
-        } satisfies Edge]
+        animated: true,
+        id: "auth-edge",
+        source: "auth",
+        target: "worker",
+        type: "smoothstep",
+      } satisfies Edge]
       : []),
     {
       animated: true,
       id: "worker-bindings-edge",
       source: "worker",
-      style: { stroke: "#8fa197", strokeWidth: 1.5 },
       target: "bindings",
       type: "smoothstep",
     },
-  ];
+  ]
 
-  return { edges, nodes };
+  return { edges, nodes }
 }
 
 function DefinitionNode({ data }: NodeProps<Node<DefinitionNodeData>>) {
-  const Icon = data.icon === "domain" ? Globe2 : data.icon === "auth" ? ShieldCheck : Waypoints;
+  const Icon = data.icon === "domain" ? Globe2 : data.icon === "auth" ? ShieldCheck : Waypoints
 
   return (
     <div
       className={cn(
-        "nodrag nopan min-w-[220px] rounded-2xl border bg-[#fbf9f3]/96 p-4 shadow-[0_18px_45px_rgba(38,51,47,0.07)] backdrop-blur-sm",
-        data.tone === "orange" ? "border-[#ebc6ba]" : data.tone === "sage" ? "border-[#d7dfd9]" : "border-[#ddd6cb]",
+        "nodrag nopan min-w-56 rounded-xl border bg-white p-4",
+        data.tone === "orange" ? "border-orange-200" : data.tone === "sage" ? "border-green-200" : "border-gray-200",
       )}
     >
-      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-[#fbf9f3] !bg-[#d6d2cb]" />
-      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-[#fbf9f3] !bg-[#8fa197]" />
+      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-gray-300" />
+      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-green-500" />
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-mono text-[9px]   text-[#d35c45]">{data.eyebrow}</p>
-          <h3 className="mt-2 text-sm font-extrabold text-[#26332f]">{data.title}</h3>
-          {data.content ? <p className="mt-2 max-w-[220px] font-mono text-[10px] leading-5 text-[#737972]">{data.content}</p> : null}
+          <p className="font-mono text-xs font-medium text-gray-500">{data.eyebrow}</p>
+          <h3 className="mt-2 text-sm font-semibold text-gray-900">{data.title}</h3>
         </div>
-        <div className={cn("flex size-9 items-center justify-center rounded-full border", data.tone === "orange" ? "border-[#f0d4cb] bg-[#fff1ec] text-[#d75a41]" : data.tone === "sage" ? "border-[#dbe6dd] bg-[#eef4ed] text-[#50705a]" : "border-[#e4ddd1] bg-white/75 text-[#55615d]")}>
+        <div className={cn("flex size-9 items-center justify-center rounded-full border", data.tone === "orange" ? "border-orange-200 bg-orange-50 text-orange-600" : data.tone === "sage" ? "border-green-200 bg-green-50 text-green-700" : "border-gray-200 bg-gray-50 text-gray-600")}>
           <Icon className="size-4" />
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 function BindingsNode({ data }: NodeProps<Node<BindingsNodeData>>) {
   return (
-    <div className="nodrag nopan pointer-events-auto w-[380px] overflow-hidden rounded-[24px] border border-[#d5d1cb] bg-[#fbfaf7]/98 shadow-[0_24px_55px_rgba(38,51,47,0.08)]">
-      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-[#fbfaf7] !bg-[#d6d2cb]" />
-      <div className="p-2.5">
-        <div className="flex items-center justify-between rounded-[18px] border border-[#d7d2cb] bg-white/85 px-5 py-4 shadow-[0_8px_20px_rgba(38,51,47,0.08)]">
+    <div className="nodrag nopan pointer-events-auto w-96 overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-gray-300" />
+      <div className="p-2">
+        <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3">
           <div className="flex items-center gap-3">
-            <h3 className="text-[18px] font-semibold  text-[#202623]">{data.title}</h3>
-            <span className="flex min-w-9 items-center justify-center rounded-xl bg-[#7d7c78] px-2 py-1 font-mono text-[13px] font-bold text-white">{data.items.length}</span>
+            <h3 className="text-sm font-semibold text-gray-900">{data.title}</h3>
+            <span className="flex min-w-8 items-center justify-center rounded-md bg-gray-700 px-2 py-1 font-mono text-xs font-bold text-white">{data.items.length}</span>
           </div>
         </div>
       </div>
 
-      <div className="divide-y divide-[#e4dfd8]">
+      <div className="divide-y divide-gray-200">
         {data.items.length ? data.items.map((item) => (
           <BindingRow key={`${item.type}-${item.binding}-${item.namespaceID ?? item.bucketID ?? "asset"}`} item={item} />
         )) : (
-          <div className="px-7 py-8">
-            <p className="text-[18px] text-[#777975]">No bindings attached</p>
-            <p className="mt-2 font-mono text-[11px]   text-[#9ca19a]">Deploy assets, KV namespaces, or object buckets to populate this section.</p>
+          <div className="px-5 py-4 text-sm">
+            <p className="text-gray-600">No bindings attached</p>
+            <p className="mt-2 font-mono text-xs text-gray-500">Deploy assets, KV namespaces, or object buckets to populate this section.</p>
           </div>
         )}
       </div>
     </div>
-  );
+  )
 }
 
 function BindingRow({ item }: { item: BindingItem }) {
-  const openNamespace = useContext(NamespaceNavigationContext);
-  const openBucket = useContext(BucketNavigationContext);
-  const isKV = item.type === "kv";
-  const isObject = item.type === "object";
-  const label = isKV ? "KV" : isObject ? "Object storage" : "Assets";
+  const openNamespace = useContext(NamespaceNavigationContext)
+  const openBucket = useContext(BucketNavigationContext)
+  const isKV = item.type === "kv"
+  const isObject = item.type === "object"
+  const label = isKV ? "KV" : isObject ? "Object storage" : "Assets"
 
   return (
-    <div className="pointer-events-auto px-7 py-5">
+    <div className="pointer-events-auto px-5 py-3">
       <div className="mb-2 flex items-center gap-2">
-        {isKV ? <KeyRound className="size-4 text-[#5d7667]" /> : isObject ? <DatabaseZap className="size-4 text-[#52748e]" /> : <FolderOpen className="size-4 text-[#7f6d4f]" />}
-        <p className="text-[15px] font-semibold text-[#666864]">{label}</p>
+        {isKV ? <KeyRound className="size-4 text-green-700" /> : isObject ? <DatabaseZap className="size-4 text-blue-700" /> : <FolderOpen className="size-4 text-yellow-700" />}
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
       </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[16px] font-semibold  text-[#1f2522]">
-        <span>{item.binding}</span>
-        <span className="text-[#8a9089]">-&gt;</span>
+      <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+        <span className="min-w-0 flex-1 truncate font-mono">{item.binding}</span>
+        <span className="text-gray-400">-&gt;</span>
         {isKV && item.namespaceID ? (
           <button
             type="button"
             onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
+              event.preventDefault()
+              event.stopPropagation()
             }}
             onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
+              event.preventDefault()
+              event.stopPropagation()
             }}
             onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              openNamespace?.(item.namespaceID!);
+              event.preventDefault()
+              event.stopPropagation()
+              openNamespace?.(item.namespaceID!)
             }}
-            className="nodrag nopan pointer-events-auto relative z-10 rounded-sm text-[#3b6550] underline decoration-[#9ec0ad] underline-offset-4 transition hover:text-[#264737]"
+            className="nodrag nopan pointer-events-auto relative z-10 min-w-0 flex-1 truncate rounded text-left text-green-700 underline underline-offset-4 transition hover:text-green-900"
           >
             {item.subtitle}
           </button>
@@ -371,26 +362,26 @@ function BindingRow({ item }: { item: BindingItem }) {
           <button
             type="button"
             onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
+              event.preventDefault()
+              event.stopPropagation()
             }}
             onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
+              event.preventDefault()
+              event.stopPropagation()
             }}
             onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              openBucket?.(item.bucketID!);
+              event.preventDefault()
+              event.stopPropagation()
+              openBucket?.(item.bucketID!)
             }}
-            className="nodrag nopan pointer-events-auto relative z-10 rounded-sm text-[#3b5e7d] underline decoration-[#b2c7da] underline-offset-4 transition hover:text-[#29435b]"
+            className="nodrag nopan pointer-events-auto relative z-10 min-w-0 flex-1 truncate rounded text-left text-blue-700 underline underline-offset-4 transition hover:text-blue-900"
           >
             {item.subtitle}
           </button>
         ) : (
-          <span>{item.subtitle}</span>
+          <span className="min-w-0 flex-1 truncate text-gray-700">{item.subtitle}</span>
         )}
       </div>
     </div>
-  );
+  )
 }

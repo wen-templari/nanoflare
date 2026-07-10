@@ -1,5 +1,6 @@
 import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
-import { Archive, ArrowLeft, BookOpen, Globe2, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2, Waypoints, Workflow } from "lucide-react";
+import { Title } from "@mantine/core";
+import { Archive, BookOpen, Globe2, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { errorText, fetchJSON } from "../app/api";
 import type { KVNamespaceMetrics, WorkerKVKey } from "../app/types";
@@ -282,10 +283,9 @@ function KVNamespaceDetailContent({
 
   return (
     <>
-      <button onClick={onBack} className="animate-rise mb-5 flex items-center gap-2 font-mono text-[10px] font-bold   text-[#77817a] transition hover:text-[#d75a41]"><ArrowLeft className="size-3.5" />All namespaces</button>
-      <div className="animate-rise mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <div className="mb-10 flex flex-col justify-between gap-4 py-2 md:flex-row md:items-start">
         <div>
-          <h1 className="text-4xl text-[#26332f] md:text-5xl">{namespace.name}</h1>
+          <Title className="flex h-12 items-center" order={1}>{namespace.name}</Title>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-[#858b84]"><span className="flex items-center gap-1.5"><KeyRound className="size-3" />{namespace.id}</span></div>
         </div>
         <div className="flex gap-2">
@@ -295,12 +295,12 @@ function KVNamespaceDetailContent({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="paper-panel animate-rise rounded-lg border border-[#dcd6ca] bg-[#fbf9f3]/85 p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px]   text-[#90958e]">{label}</p><Icon className="size-3.5 text-[#d75a41]" /></div><p className="mt-3  text-3xl ">{value}</p><p className="mt-1 font-mono text-[9px]   text-[#999d97]">{note}</p></div>)}
+        {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-        <section className="paper-panel animate-rise overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
-          <header className="border-b border-[#e7e1d6] px-5 py-4">
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <header className="border-b border-gray-200 px-5 py-4">
             <h2 className="text-sm font-extrabold">Edit namespace</h2>
           </header>
           <div className="p-5">
@@ -310,9 +310,9 @@ function KVNamespaceDetailContent({
                 ["Namespace ID", namespace.id],
                 ["Created", new Date(namespace.created_at).toLocaleString()],
               ].map(([label, value]) => (
-                <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
-                  <span className="font-mono text-[10px]   text-[#93978f]">{label}</span>
-                  <span className="font-mono text-[11px] font-bold text-[#4f5a55] break-all">{value}</span>
+                <div key={label} className="grid gap-1 border-b border-gray-200 bg-white px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
+                  <span className="font-mono text-[10px] text-gray-500">{label}</span>
+                  <span className="break-all font-mono text-[11px] font-bold text-gray-700">{value}</span>
                 </div>
               ))}
             </div>
@@ -323,7 +323,7 @@ function KVNamespaceDetailContent({
           {bindings.length ? (
             <div className="space-y-3">
               {bindings.map(({ worker, binding }) => (
-                <div key={`${worker.id}-${binding.binding}`} className="rounded-lg border border-[#e2ddd2] bg-white/45 px-4 py-3">
+                <div key={`${worker.id}-${binding.binding}`} className="rounded-lg border border-gray-200 bg-white px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
@@ -340,8 +340,8 @@ function KVNamespaceDetailContent({
         </Panel>
       </div>
 
-      <section className="paper-panel animate-rise mt-6 overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7e1d6] px-5 py-4">
+      <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
           <div>
             <h2 className="text-sm font-extrabold">Namespace keys</h2>
           </div>
@@ -349,7 +349,7 @@ function KVNamespaceDetailContent({
         {activeWorker ? (
           <div className="p-5">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-[#d6d0c3] bg-white/75 px-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
                 <Search className="size-4 text-[#959a93]" />
                 <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search keys" className="h-10 border-0 bg-transparent p-0 focus:ring-0" />
               </div>
@@ -359,7 +359,7 @@ function KVNamespaceDetailContent({
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-xl border border-[#ddd7cb] bg-white/55">
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[720px] text-left">
                   <thead>

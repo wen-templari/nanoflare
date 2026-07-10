@@ -1,5 +1,6 @@
 import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
-import { Archive, ArrowDownToLine, ArrowLeft, BookOpen, DatabaseZap, FileJson, FileText, Globe2, HardDrive, RefreshCw, Search, Trash2, Upload, Waypoints, Workflow } from "lucide-react";
+import { Title } from "@mantine/core";
+import { Archive, ArrowDownToLine, BookOpen, DatabaseZap, FileJson, FileText, Globe2, HardDrive, RefreshCw, Search, Trash2, Upload, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { errorText, fetchJSON } from "../app/api";
 import type { ObjectStorageBucketMetrics, ObjectStorageObject } from "../app/types";
@@ -252,10 +253,9 @@ function ObjectStorageBucketDetailContent({
 
   return (
     <>
-      <button onClick={onBack} className="animate-rise mb-5 flex items-center gap-2 font-mono text-[10px] font-bold   text-[#77817a] transition hover:text-[#d75a41]"><ArrowLeft className="size-3.5" />All buckets</button>
-      <div className="animate-rise mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <div className="mb-10 flex flex-col justify-between gap-4 py-2 md:flex-row md:items-start">
         <div>
-          <h1 className="text-4xl text-[#26332f] md:text-5xl">{bucket.name}</h1>
+          <Title className="flex h-12 items-center" order={1}>{bucket.name}</Title>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-[#858b84]"><span className="flex items-center gap-1.5"><DatabaseZap className="size-3" />{bucket.id}</span></div>
         </div>
         <div className="flex gap-2">
@@ -265,12 +265,12 @@ function ObjectStorageBucketDetailContent({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="paper-panel animate-rise rounded-lg border border-[#dcd6ca] bg-[#fbf9f3]/85 p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px]   text-[#90958e]">{label}</p><Icon className="size-3.5 text-[#d75a41]" /></div><p className="mt-3  text-3xl ">{value}</p><p className="mt-1 font-mono text-[9px]   text-[#999d97]">{note}</p></div>)}
+        {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-        <section className="paper-panel animate-rise overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
-          <header className="border-b border-[#e7e1d6] px-5 py-4"><h2 className="text-sm font-extrabold">Edit bucket</h2></header>
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <header className="border-b border-gray-200 px-5 py-4"><h2 className="text-sm font-extrabold">Edit bucket</h2></header>
           <div className="p-5">
             <Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="customer-files" /></Field>
           </div>
@@ -280,7 +280,7 @@ function ObjectStorageBucketDetailContent({
           {bindings.length ? (
             <div className="space-y-3">
               {bindings.map(({ worker, binding }) => (
-                <div key={`${worker.id}-${binding.binding}`} className="rounded-lg border border-[#e2ddd2] bg-white/45 px-4 py-3">
+                <div key={`${worker.id}-${binding.binding}`} className="rounded-lg border border-gray-200 bg-white px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
@@ -297,23 +297,23 @@ function ObjectStorageBucketDetailContent({
         </Panel>
       </div>
 
-      <section className="paper-panel animate-rise mt-6 overflow-hidden rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85">
+      <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
         {!accessorWorkerID ? (
           <WorkerDetailEmpty icon={<DatabaseZap />} title="No worker access path" copy="Bind this bucket to a worker to browse objects through the runtime API." />
         ) : (
           <div className="grid min-h-[540px] md:grid-cols-[280px_1fr]">
-            <aside className="border-b border-[#e7e1d6] bg-[#f5f1e9]/75 py-3 md:border-b-0 md:border-r">
+            <aside className="border-b border-gray-200 bg-gray-50 py-3 md:border-b-0 md:border-r">
               <div className="flex items-center justify-between px-4 pb-2">
                 <p className="font-mono text-[9px]   text-[#a0a39c]">Objects</p>
                 <Button type="button" variant="ghost" size="icon" aria-label="Refresh objects" onClick={() => void refreshObjects()} disabled={loadingObjects}><RefreshCw className={loadingObjects ? "size-3.5 animate-spin" : "size-3.5"} /></Button>
               </div>
               <div className="space-y-3 px-4 pb-3">
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-[#d6d0c3] bg-white/55 px-3 py-2 font-mono text-[10px] font-bold text-[#68716c] hover:bg-white/70">
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-gray-300 bg-white px-3 py-2 font-mono text-[10px] font-bold text-gray-700 hover:bg-gray-50">
                   <Upload className="size-3.5 text-[#d75a41]" />
                   {uploading ? "Uploading..." : "Upload file"}
                   <input type="file" className="hidden" onChange={uploadObject} />
                 </label>
-                <div className="flex items-center gap-2 rounded-md border border-[#d6d0c3] bg-white/75 px-3">
+                <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
                   <Search className="size-4 text-[#959a93]" />
                   <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search objects" className="h-10 border-0 bg-transparent p-0 focus:ring-0" />
                 </div>

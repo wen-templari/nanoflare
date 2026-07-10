@@ -33,3 +33,7 @@ support deploy to different envs (dev, staging, prod) with different config file
 
 - should we keep using X-Nanoflare-* for kv namespace and object storagebucket?
 ****
+
+## Access control
+
+add organizations: every resources should be org scoped ( worker/kv/storage ) , add user keep it simple only have id and email, add user / org relation table 

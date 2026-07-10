@@ -1,5 +1,7 @@
+import { Card, Group, SimpleGrid, Stack, Text, ThemeIcon, Title, UnstyledButton } from "@mantine/core";
 import { Archive, ArrowUpRight, CloudUpload, Code2, DatabaseZap, KeyRound, Waypoints } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { useWorkspace } from "../app/workspace-context";
 import { Event, PageHeading, Panel } from "../components/shared/primitives";
 
@@ -17,30 +19,54 @@ export function OverviewPage() {
   return (
     <>
       <PageHeading eyebrow="Sunday, 31 May" title="Good afternoon, Clas." copy="Your private runtime is steady. Here is the shape of your workspace today." />
-      <div className="grid gap-4 md:grid-cols-3">
+      <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
         {stats.map(({ label, value, note, icon: Icon, href }, index) => (
-          <button key={label} onClick={() => navigate(href)} style={{ animationDelay: `${index * 80}ms` }} className="paper-panel animate-rise group rounded-xl border border-[#dcd6ca] bg-[#fbf9f3]/85 p-5 text-left transition hover:-translate-y-0.5 hover:border-[#c7c0b4]">
-            <div className="flex justify-between"><Icon className="size-5 text-[#d75a41]" /><ArrowUpRight className="size-4 text-[#b8b7b0] transition group-hover:text-[#d75a41]" /></div>
-            <p className="mt-8  text-5xl ">{value}</p>
-            <p className="mt-2 text-sm font-extrabold">{label}</p><p className="mt-1 font-mono text-[10px] text-[#91958e]">{note}</p>
-          </button>
+          <UnstyledButton key={label} onClick={() => navigate(href)} style={{ animationDelay: `${index * 80}ms` }}>
+            <Card h="100%" padding="lg" radius="lg" withBorder>
+              <Group justify="space-between">
+                <ThemeIcon variant="light"><Icon size={18} /></ThemeIcon>
+                <ArrowUpRight size={16} />
+              </Group>
+              <Title mt="xl" order={2}>{value}</Title>
+              <Text fw={700} mt="xs">{label}</Text>
+              <Text c="dimmed" size="xs">{note}</Text>
+            </Card>
+          </UnstyledButton>
         ))}
-      </div>
+      </SimpleGrid>
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
         <Panel title="Runtime activity" eyebrow="Last 24 hours">
-          <div className="flex h-52 items-end gap-2 px-1 pt-7">
-            {[35, 44, 37, 58, 65, 52, 76, 68, 88, 72, 82, 96, 77, 64, 73, 56, 61, 49, 66, 72, 60, 52, 44, 59].map((height, index) => <div key={index} className="group relative flex-1 rounded-t bg-[#d7ded8] transition hover:bg-[#e25b3f]" style={{ height: `${height}%` }} />)}
-          </div>
-          <div className="mt-3 flex justify-between font-mono text-[9px] text-[#9ba09a]"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>NOW</span></div>
+          <RuntimeActivityChart />
         </Panel>
         <Panel title="Recent events" eyebrow="Live log">
-          <Event icon={<CloudUpload />} text="worker bundle deployed" time="34m" />
-          <Event icon={<KeyRound />} text="env.KV binding refreshed" time="2h" />
-          <Event icon={<DatabaseZap />} text="object bucket binding refreshed" time="3h" />
-          <Event icon={<Code2 />} text="billing-sync deployed" time="5h" />
-          <Event icon={<Archive />} text="previous generation retired" time="8h" />
+          <Stack gap={0}>
+            <Event icon={<CloudUpload />} text="worker bundle deployed" time="34m" />
+            <Event icon={<KeyRound />} text="env.KV binding refreshed" time="2h" />
+            <Event icon={<DatabaseZap />} text="object bucket binding refreshed" time="3h" />
+            <Event icon={<Code2 />} text="billing-sync deployed" time="5h" />
+            <Event icon={<Archive />} text="previous generation retired" time="8h" />
+          </Stack>
         </Panel>
       </div>
     </>
+  );
+}
+
+const runtimeActivity = [35, 44, 37, 58, 65, 52, 76, 68, 88, 72, 82, 96, 77, 64, 73, 56, 61, 49, 66, 72, 60, 52, 44, 59].map((requests, hour) => ({
+  hour: hour === 23 ? "NOW" : `${hour}:00`,
+  requests,
+}));
+
+function RuntimeActivityChart() {
+  return (
+    <div className="h-64">
+      <ResponsiveContainer height="100%" width="100%">
+        <BarChart data={runtimeActivity}>
+          <XAxis axisLine={false} dataKey="hour" interval={5} tickLine={false} />
+          <Tooltip cursor={{ fill: "var(--mantine-color-blue-0)" }} />
+          <Bar dataKey="requests" fill="var(--mantine-color-blue-6)" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

@@ -1,21 +1,16 @@
-import type { HTMLAttributes } from "react";
-import { cn } from "../../lib/utils";
+import { Badge as MantineBadge, type BadgeProps as MantineBadgeProps } from "@mantine/core";
 
 export function Badge({
-  className,
   tone = "neutral",
+  children,
   ...props
-}: HTMLAttributes<HTMLSpanElement> & { tone?: "neutral" | "green" | "orange" | "blue" }) {
-  const tones = {
-    neutral: "border-[#d8d3c7] bg-[#efede6] text-[#666b65]",
-    green: "border-[#bfd4c4] bg-[#e1eee3] text-[#397046]",
-    orange: "border-[#ecc3b6] bg-[#fae5df] text-[#b14b37]",
-    blue: "border-[#bfcfd2] bg-[#e1ecee] text-[#477179]",
+}: MantineBadgeProps & { tone?: "neutral" | "green" | "orange" | "blue" }) {
+  const colors = {
+    neutral: "gray",
+    green: "green",
+    orange: "orange",
+    blue: "blue",
   };
-  return (
-    <span
-      className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold  ", tones[tone], className)}
-      {...props}
-    />
-  );
+
+  return <MantineBadge color={colors[tone]} variant="light" {...props}>{children}</MantineBadge>;
 }

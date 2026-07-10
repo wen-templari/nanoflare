@@ -118,7 +118,7 @@ export function NamespaceKeyEditor({
 
   return (
     <div className="grid min-h-[510px] gap-0 md:grid-cols-[260px_1fr]">
-      <aside className="border-b border-[#e7e1d6] bg-[#f5f1e9]/75 py-3 md:border-b-0 md:border-r">
+      <aside className="border-b border-gray-200 bg-gray-50 py-3 md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-4 pb-2">
           <p className="font-mono text-[9px]   text-[#a0a39c]">KV keys</p>
           <Button type="button" variant="ghost" size="icon" aria-label="Refresh KV keys" onClick={() => void refreshKeys()} disabled={loading}><RefreshCw className={cn("size-3.5", loading && "animate-spin")} /></Button>
