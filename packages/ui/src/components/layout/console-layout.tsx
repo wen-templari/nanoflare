@@ -40,15 +40,14 @@ export function ConsoleLayout() {
   return (
     <div className="console-grid min-h-screen">
       <aside className="nav-noise fixed inset-y-0 left-0 z-30 hidden w-60 flex-col bg-[#1c2926] text-[#e7e4da] lg:flex">
-        <div className="flex h-20 items-center border-b border-white/10 px-5">
+        <div className="flex h-16 items-center px-5">
           <div className="grid size-9 place-items-center rounded-lg bg-[#e25b3f] text-white shadow-lg shadow-black/15"><Boxes className="size-5" /></div>
           <div className="ml-3">
             <p className=" text-xl leading-none">nanoflare</p>
             <p className="mt-1 font-mono text-[9px]   text-[#9eb0a8]">control plane</p>
           </div>
         </div>
-        <nav className="flex-1 space-y-1 px-3 py-5">
-          <p className="px-3 pb-2 font-mono text-[9px]   text-[#83938e]">Workspace</p>
+        <nav className="flex-1 space-y-1 px-3">
           {navItems.map(({ href, match, label, icon: Icon }) => {
             const active = location.pathname === match || (match !== "/" && location.pathname.startsWith(match))
 
@@ -67,7 +66,7 @@ export function ConsoleLayout() {
             )
           })}
         </nav>
-        <button className="flex items-center gap-3 border-t border-white/10 px-5 py-4 text-xs font-semibold text-[#aebdb7] hover:text-white"><Settings className="size-4" />Settings</button>
+        {/* <button className="flex items-center gap-3 border-t border-white/10 px-5 py-4 text-xs font-semibold text-[#aebdb7] hover:text-white"><Settings className="size-4" />Settings</button> */}
       </aside>
 
       <main className="pb-20 lg:pb-0 lg:pl-60">
@@ -78,12 +77,6 @@ export function ConsoleLayout() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {apiConnected && (
-              <div className="hidden items-center gap-2 rounded-full border border-[#bfd4c4] bg-white/50 px-3 py-1.5 text-[11px] font-bold text-[#397046] sm:flex">
-                <span className="size-1.5 rounded-full bg-[#52a46a]" />
-                WORKER API CONNECTED
-              </div>
-            )}
             <button className="flex items-center gap-2 rounded-full bg-[#26332f] py-1.5 pl-1.5 pr-3 text-xs font-bold text-white">
               <span className="grid size-6 place-items-center rounded-full bg-[#e25b3f] text-[10px]">CL</span> clas <ChevronDown className="size-3" />
             </button>

@@ -1,11 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react"
 import {
   Activity, AlertTriangle, Archive, ArrowLeft, Copy, FileCode2, FileJson, Folder,
   GitBranch, Globe2, Save, SlidersHorizontal, Terminal,
-} from "lucide-react";
-import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { fetchJSON } from "../app/api";
-import { useWorkspace } from "../app/workspace-context";
+} from "lucide-react"
+import { Navigate, useNavigate, useParams } from "react-router-dom"
+import { fetchJSON } from "../app/api"
+import { useWorkspace } from "../app/workspace-context"
 import type {
   ConsoleDeployment, WorkerDeployment, WorkerDetailData, WorkerDetailTab, WorkerFile,
   WorkerOutputLine, WorkerTraffic,
@@ -114,7 +114,6 @@ function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker:
               { id: "settings", label: "Settings", icon: SlidersHorizontal },
             ] as const).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={cn("flex items-center gap-2 rounded-md px-3 py-2 font-mono text-[10px] font-bold   transition", tab === id ? "bg-[#26332f] text-white" : "text-[#80867f] hover:bg-[#efebe2] hover:text-[#35413e]")}><Icon className="size-3.5" />{label}</button>)}
           </div>
-          <p className="font-mono text-[9px]   text-[#a1a49e]">{tab === "overview" ? "topology, metrics, recent history" : tab === "deployments" ? "full deployment history" : tab === "files" ? "bundle explorer" : tab === "output" ? "runtime stream" : "worker configuration"}</p>
         </header>
         {tab === "overview" && <WorkerOverview worker={detail?.app ?? worker} deployment={detail?.deployment} namespaces={namespaces} onOpenNamespace={(namespaceID) => navigate(`/kv/${namespaceID}`)} onOpenBucket={(bucketID) => navigate(`/object-storage/${bucketID}`)} onOpenDeployments={() => setTab("deployments")} recentDeployments={recentDeployments} traffic={traffic} />}
         {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
@@ -156,12 +155,6 @@ function WorkerOverview({
         <div>
           <h2 className="text-sm font-extrabold text-[#26332f]">Overview</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[#707670]">Trace how traffic enters this worker, inspect live request shape, and skim the latest rollout history without leaving the overview tab.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {assetBinding ? <Badge tone="green">asset: {assetBinding}</Badge> : null}
-          <Badge tone={kvBindingCount ? "green" : "orange"}>{kvBindingCount} KV binding{kvBindingCount === 1 ? "" : "s"}</Badge>
-          <Badge tone={objectBindingCount ? "green" : "orange"}>{objectBindingCount} object bucket{objectBindingCount === 1 ? "" : "s"}</Badge>
-          <Badge tone={worker.auth?.protected_routes?.length ? "orange" : "green"}>{worker.auth?.protected_routes?.length ? "auth enabled" : "auth bypassed"}</Badge>
         </div>
       </div>
       <div className="space-y-6">
