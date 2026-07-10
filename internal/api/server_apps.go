@@ -35,7 +35,7 @@ func (s *Server) registerAppRoutes() {
 }
 
 func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {
-	deployments, err := s.service.WorkerDeployments(r.PathValue("appID"))
+	deployments, err := s.service.WorkerDeploymentsForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -44,7 +44,7 @@ func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {
-	detail, err := s.service.WorkerDetail(r.PathValue("appID"))
+	detail, err := s.service.WorkerDetailForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -53,7 +53,7 @@ func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerFiles(w http.ResponseWriter, r *http.Request) {
-	files, err := s.service.WorkerFiles(r.PathValue("appID"))
+	files, err := s.service.WorkerFilesForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -62,7 +62,7 @@ func (s *Server) workerFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
-	output, err := s.service.WorkerOutput(r.PathValue("appID"))
+	output, err := s.service.WorkerOutputForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -71,7 +71,7 @@ func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
-	traffic, err := s.service.WorkerTraffic(r.PathValue("appID"))
+	traffic, err := s.service.WorkerTrafficForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			writeWorkerError(w, err)
@@ -83,8 +83,8 @@ func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, traffic)
 }
 
-func (s *Server) listApps(w http.ResponseWriter, _ *http.Request) {
-	apps, err := s.service.ListApps()
+func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
+	apps, err := s.service.ListAppsForOrg(controlOrgID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -98,6 +98,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	input.OrgID = controlOrgID(r)
 	app, err := s.service.CreateApp(input)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -116,7 +117,7 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	app, err := s.service.UpdateApp(r.PathValue("appID"), input)
+	app, err := s.service.UpdateAppForOrg(controlOrgID(r), r.PathValue("appID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
@@ -132,7 +133,7 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
-	if err := s.service.DeleteApp(r.PathValue("appID")); err != nil {
+	if err := s.service.DeleteAppForOrg(controlOrgID(r), r.PathValue("appID")); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -145,7 +146,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	deployment, err := s.service.Deploy(r.PathValue("appID"), input)
+	deployment, err := s.service.DeployForOrg(controlOrgID(r), r.PathValue("appID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
@@ -158,7 +159,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
-	secrets, err := s.service.ListSecrets(r.PathValue("appID"))
+	secrets, err := s.service.ListSecretsForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -172,7 +173,7 @@ func (s *Server) putSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.PutSecret(r.PathValue("appID"), r.PathValue("name"), input.Value); err != nil {
+	if err := s.service.PutSecretForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("name"), input.Value); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -180,7 +181,7 @@ func (s *Server) putSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
-	if err := s.service.DeleteSecret(r.PathValue("appID"), r.PathValue("name")); err != nil {
+	if err := s.service.DeleteSecretForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("name")); err != nil {
 		writeWorkerError(w, err)
 		return
 	}

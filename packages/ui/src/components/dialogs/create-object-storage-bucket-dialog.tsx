@@ -1,5 +1,5 @@
 import { type Dispatch, type FormEvent, type SetStateAction, useState } from "react";
-import { errorText } from "../../app/api";
+import { apiFetch, errorText } from "../../app/api";
 import type { ObjectStorageBucket } from "../../app/types";
 import { sortObjectStorageBuckets } from "../../app/utils";
 import { Field } from "../shared/primitives";
@@ -30,7 +30,7 @@ export function CreateObjectStorageBucketDialog({
     if (!trimmed) return notify("Bucket name is required");
     let bucket: ObjectStorageBucket = { id: crypto.randomUUID().replace(/-/g, ""), name: trimmed, created_at: new Date().toISOString() };
     if (apiConnected) {
-      const response = await fetch("/v1/object-storage-buckets", {
+      const response = await apiFetch("/v1/object-storage-buckets", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: trimmed }),

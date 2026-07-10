@@ -153,6 +153,73 @@ func TestAuthAPIsReturnNormalizedResponses(t *testing.T) {
 	}
 }
 
+func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+
+	signupBody := bytes.NewBufferString(`{"email":"admin@example.com","password":"secret","organization_name":"Acme"}`)
+	signupRequest := httptest.NewRequest(http.MethodPost, "/v1/setup/signup", signupBody)
+	signupRequest.Header.Set("Content-Type", "application/json")
+	signupRecorder := httptest.NewRecorder()
+	server.ServeHTTP(signupRecorder, signupRequest)
+	if signupRecorder.Code != http.StatusCreated {
+		t.Fatalf("signup status = %d body = %q", signupRecorder.Code, signupRecorder.Body.String())
+	}
+	var session nanoflare.AuthSession
+	if err := json.Unmarshal(signupRecorder.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.Token == "" || session.ActiveOrgID == "" {
+		t.Fatalf("session = %#v", session)
+	}
+
+	createBody := bytes.NewBufferString(`{"name":"Control App","hostname":"control.example.com"}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	createRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("missing org status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+
+	createBody = bytes.NewBufferString(`{"name":"Control App","hostname":"control.example.com"}`)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	createRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	createRecorder = httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+	var app nanoflare.App
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &app); err != nil {
+		t.Fatal(err)
+	}
+	if app.OrgID != session.ActiveOrgID {
+		t.Fatalf("app org = %q, want %q", app.OrgID, session.ActiveOrgID)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	listRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
+	}
+	var apps []nanoflare.App
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &apps); err != nil {
+		t.Fatal(err)
+	}
+	if len(apps) != 1 || apps[0].ID != app.ID {
+		t.Fatalf("apps = %#v", apps)
+	}
+}
+
 type fakeAuthenticator struct {
 	validateResult      AuthResult
 	validateErr         error

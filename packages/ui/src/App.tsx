@@ -1,5 +1,6 @@
 import { MantineProvider, createTheme } from "@mantine/core";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { AuthProvider, useAuth } from "./app/auth-context";
 import { WorkspaceProvider } from "./app/workspace-context";
 import { ConsoleLayout } from "./components/layout/console-layout";
 import { KVNamespaceDetailPage } from "./pages/kv-namespace-detail-page";
@@ -9,6 +10,7 @@ import { ObjectStorageBucketsPage } from "./pages/object-storage-buckets-page";
 import { OverviewPage } from "./pages/overview-page";
 import { WorkerDetailPage } from "./pages/worker-detail-page";
 import { WorkersPage } from "./pages/workers-page";
+import { LoginPage } from "./pages/login-page";
 
 const theme = createTheme({
   primaryColor: "blue",
@@ -20,10 +22,11 @@ const theme = createTheme({
 export function App() {
   return (
     <MantineProvider theme={theme} defaultColorScheme="light">
-      <WorkspaceProvider>
+      <AuthProvider>
         <BrowserRouter>
           <Routes>
-            <Route element={<ConsoleLayout />}>
+            <Route path="/login" element={<LoginPage />} />
+            <Route element={<ProtectedConsole />}>
               <Route index element={<OverviewPage />} />
               <Route path="workers" element={<WorkersPage />} />
               <Route path="workers/:workerId" element={<WorkerDetailPage />} />
@@ -35,7 +38,18 @@ export function App() {
             </Route>
           </Routes>
         </BrowserRouter>
-      </WorkspaceProvider>
+      </AuthProvider>
     </MantineProvider>
+  );
+}
+
+function ProtectedConsole() {
+  const auth = useAuth();
+  if (!auth.ready) return null;
+  if (!auth.signedIn) return <Navigate to="/login" replace />;
+  return (
+    <WorkspaceProvider>
+      <ConsoleLayout />
+    </WorkspaceProvider>
   );
 }

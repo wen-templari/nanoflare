@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ import (
 const (
 	projectFilename = "nanoflare.json"
 	defaultAPIURL   = "http://127.0.0.1:8080"
+	authFilename    = "auth.json"
 )
 
 type HTTPClient interface {
@@ -33,6 +35,7 @@ type Runner struct {
 	Client HTTPClient
 	Stdout io.Writer
 	Stderr io.Writer
+	Stdin  io.Reader
 	Now    func() time.Time
 }
 
@@ -75,11 +78,20 @@ type ProjectAuth struct {
 	ProtectedRoutes []string `json:"protected_routes,omitempty"`
 }
 
+type AuthConfig struct {
+	APIURL      string                   `json:"api_url"`
+	Token       string                   `json:"token"`
+	ActiveOrgID string                   `json:"active_org_id"`
+	User        nanoflare.User           `json:"user"`
+	Orgs        []nanoflare.Organization `json:"organizations"`
+}
+
 func NewRunner(stdout, stderr io.Writer) *Runner {
 	return &Runner{
 		Client: http.DefaultClient,
 		Stdout: stdout,
 		Stderr: stderr,
+		Stdin:  os.Stdin,
 		Now:    time.Now,
 	}
 }
@@ -104,6 +116,8 @@ func (r *Runner) Run(args []string) error {
 		return r.kv(args[1:])
 	case "object-storage":
 		return r.objectStorage(args[1:])
+	case "auth":
+		return r.auth(args[1:])
 	case "secret":
 		return r.secret(args[1:])
 	case "help", "-h", "--help":
@@ -331,6 +345,192 @@ func (r *Runner) deploy(args []string) error {
 	return nil
 }
 
+func (r *Runner) auth(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: nanoflare auth <login|orgs|use-org|whoami|logout>")
+	}
+	switch args[0] {
+	case "login":
+		return r.authLogin(args[1:])
+	case "orgs":
+		return r.authOrgs(args[1:])
+	case "use-org":
+		return r.authUseOrg(args[1:])
+	case "whoami":
+		return r.authWhoami(args[1:])
+	case "logout":
+		return r.authLogout(args[1:])
+	default:
+		return fmt.Errorf("unknown auth command %q", args[0])
+	}
+}
+
+func (r *Runner) authLogin(args []string) error {
+	flags := flag.NewFlagSet("auth login", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	email := flags.String("email", "", "user email")
+	password := flags.String("password", "", "user password")
+	setupOrg := flags.String("setup-org", "", "create first user and organization when setup has not run")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	reader := bufio.NewReader(r.Stdin)
+	if strings.TrimSpace(*email) == "" {
+		fmt.Fprint(r.Stderr, "Email: ")
+		value, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		*email = strings.TrimSpace(value)
+	}
+	if strings.TrimSpace(*password) == "" {
+		fmt.Fprint(r.Stderr, "Password: ")
+		value, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		*password = strings.TrimSpace(value)
+	}
+	baseURL := strings.TrimRight(*apiURL, "/")
+	path := baseURL + "/v1/auth/login"
+	var input any = nanoflare.LoginInput{Email: *email, Password: *password}
+	if strings.TrimSpace(*setupOrg) != "" {
+		path = baseURL + "/v1/setup/signup"
+		input = nanoflare.SignupInput{Email: *email, Password: *password, OrganizationName: *setupOrg}
+	}
+	var session nanoflare.AuthSession
+	if err := r.requestNoAuth(http.MethodPost, path, input, &session); err != nil {
+		return err
+	}
+	auth := AuthConfig{
+		APIURL:      baseURL,
+		Token:       session.Token,
+		ActiveOrgID: session.ActiveOrgID,
+		User:        session.User,
+		Orgs:        session.Organizations,
+	}
+	if auth.ActiveOrgID == "" && len(auth.Orgs) > 0 {
+		auth.ActiveOrgID = auth.Orgs[0].ID
+	}
+	if err := writeAuthConfig(auth); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Logged in as %s\n", auth.User.Email)
+	if auth.ActiveOrgID != "" {
+		fmt.Fprintf(r.Stdout, "Using organization %s\n", auth.ActiveOrgID)
+	}
+	return nil
+}
+
+func (r *Runner) authOrgs(args []string) error {
+	if len(args) != 0 {
+		return errors.New("usage: nanoflare auth orgs")
+	}
+	auth, err := loadAuthConfig()
+	if err != nil {
+		return err
+	}
+	for _, org := range auth.Orgs {
+		prefix := " "
+		if org.ID == auth.ActiveOrgID {
+			prefix = "*"
+		}
+		fmt.Fprintf(r.Stdout, "%s %s\t%s\n", prefix, org.ID, org.Name)
+	}
+	return nil
+}
+
+func (r *Runner) authUseOrg(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: nanoflare auth use-org <org-id>")
+	}
+	auth, err := loadAuthConfig()
+	if err != nil {
+		return err
+	}
+	for _, org := range auth.Orgs {
+		if org.ID == args[0] {
+			auth.ActiveOrgID = org.ID
+			if err := writeAuthConfig(auth); err != nil {
+				return err
+			}
+			fmt.Fprintf(r.Stdout, "Using organization %s\n", org.ID)
+			return nil
+		}
+	}
+	return fmt.Errorf("organization %s is not available to this user", args[0])
+}
+
+func (r *Runner) authWhoami(args []string) error {
+	if len(args) != 0 {
+		return errors.New("usage: nanoflare auth whoami")
+	}
+	auth, err := loadAuthConfig()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "%s\n", auth.User.Email)
+	if auth.ActiveOrgID != "" {
+		fmt.Fprintf(r.Stdout, "org\t%s\n", auth.ActiveOrgID)
+	}
+	return nil
+}
+
+func (r *Runner) authLogout(args []string) error {
+	if len(args) != 0 {
+		return errors.New("usage: nanoflare auth logout")
+	}
+	path, err := authConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	fmt.Fprintln(r.Stdout, "Logged out")
+	return nil
+}
+
+func (r *Runner) requestNoAuth(method, url string, input, output any) error {
+	var body io.Reader
+	if input != nil {
+		payload, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return err
+	}
+	if input != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := r.Client.Do(request)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", method, url, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		var apiError struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&apiError); err != nil || apiError.Error == "" {
+			return fmt.Errorf("%s %s: nanoflared returned %s", method, url, response.Status)
+		}
+		return fmt.Errorf("%s %s: %s", method, url, apiError.Error)
+	}
+	if output == nil || response.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+		return fmt.Errorf("decode nanoflared response: %w", err)
+	}
+	return nil
+}
+
 func (r *Runner) request(method, url string, input, output any) error {
 	var body io.Reader
 	if input != nil {
@@ -346,6 +546,12 @@ func (r *Runner) request(method, url string, input, output any) error {
 	}
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	if auth, err := loadAuthConfig(); err == nil && auth.Token != "" {
+		request.Header.Set("Authorization", "Bearer "+auth.Token)
+		if auth.ActiveOrgID != "" {
+			request.Header.Set("X-Nanoflare-Org-ID", auth.ActiveOrgID)
+		}
 	}
 	response, err := r.Client.Do(request)
 	if err != nil {
@@ -516,6 +722,46 @@ func writeProject(path string, project Project, flag int) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+func authConfigPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "nanoflare", authFilename), nil
+}
+
+func loadAuthConfig() (AuthConfig, error) {
+	path, err := authConfigPath()
+	if err != nil {
+		return AuthConfig{}, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return AuthConfig{}, fmt.Errorf("read auth config: %w", err)
+	}
+	var auth AuthConfig
+	if err := json.Unmarshal(content, &auth); err != nil {
+		return AuthConfig{}, fmt.Errorf("decode auth config: %w", err)
+	}
+	return auth, nil
+}
+
+func writeAuthConfig(auth AuthConfig) error {
+	path, err := authConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(auth, "", "  ")
+	if err != nil {
+		return err
+	}
+	content = append(content, '\n')
+	return os.WriteFile(path, content, 0o600)
 }
 
 func projectAPIURL(project Project, override string) string {

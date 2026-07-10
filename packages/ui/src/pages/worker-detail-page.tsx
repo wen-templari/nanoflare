@@ -6,7 +6,7 @@ import {
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router-dom"
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
-import { fetchJSON } from "../app/api"
+import { apiFetch, fetchJSON } from "../app/api"
 import { useWorkspace } from "../app/workspace-context"
 import type {
   ConsoleDeployment, WorkerDeployment, WorkerDetailData, WorkerDetailTab, WorkerFile,
@@ -234,7 +234,7 @@ function WorkerConfig({ detail, apiConnected, notify }: { detail?: WorkerDetailD
     setSaving(true)
     try {
       const protected_routes = protectedRoutes.split("\n").map((route) => route.trim()).filter(Boolean)
-      const response = await fetch(`/v1/apps/${appID}`, {
+      const response = await apiFetch(`/v1/apps/${appID}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ auth: { protected_routes } }),

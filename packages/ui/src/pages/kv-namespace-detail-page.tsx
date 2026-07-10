@@ -2,7 +2,7 @@ import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { Title } from "@mantine/core";
 import { Archive, BookOpen, Globe2, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { errorText, fetchJSON } from "../app/api";
+import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { KVNamespaceMetrics, WorkerKVKey } from "../app/types";
 import { formatBytes, sortNamespaces } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
@@ -169,7 +169,7 @@ function KVNamespaceDetailContent({
     setValueLoading(true);
     setDialogOpen(true);
     try {
-      const response = await fetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`);
+      const response = await apiFetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`);
       if (response.status === 404) {
         setDialogOpen(false);
         notify("Key not found");
@@ -194,11 +194,11 @@ function KVNamespaceDetailContent({
     setSubmittingKey(true);
     try {
       if (dialogMode === "edit" && originalKey && originalKey !== trimmedKey) {
-        const deleteResponse = await fetch(`${namespaceBase}/${encodeURIComponent(originalKey)}`, { method: "DELETE" });
+        const deleteResponse = await apiFetch(`${namespaceBase}/${encodeURIComponent(originalKey)}`, { method: "DELETE" });
         if (!deleteResponse.ok) throw new Error(`KV rename failed (${deleteResponse.status})`);
       }
 
-      const response = await fetch(`${namespaceBase}/${encodeURIComponent(trimmedKey)}`, {
+      const response = await apiFetch(`${namespaceBase}/${encodeURIComponent(trimmedKey)}`, {
         method: "PUT",
         body: draftValue,
       });
@@ -219,7 +219,7 @@ function KVNamespaceDetailContent({
     if (!window.confirm(`Delete key "${nextKey}" from ${namespace.name}?`)) return;
     setDeletingKey(nextKey);
     try {
-      const response = await fetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`, { method: "DELETE" });
+      const response = await apiFetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`, { method: "DELETE" });
       if (!response.ok) throw new Error(`KV delete failed (${response.status})`);
       await refreshKeys();
       notify(`${nextKey} deleted`);
@@ -237,7 +237,7 @@ function KVNamespaceDetailContent({
     try {
       let nextNamespace = { ...namespace, name: trimmed };
       if (apiConnected) {
-        const response = await fetch(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}`, {
+        const response = await apiFetch(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: trimmed }),
@@ -259,7 +259,7 @@ function KVNamespaceDetailContent({
     setDeleting(true);
     try {
       if (apiConnected) {
-        const response = await fetch(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}`, { method: "DELETE" });
+        const response = await apiFetch(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}`, { method: "DELETE" });
         if (!response.ok) throw new Error(await errorText(response, `Namespace delete failed (${response.status})`));
       }
       setNamespaces((current) => current.filter((item) => item.id !== namespace.id));

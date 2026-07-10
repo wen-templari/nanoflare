@@ -44,11 +44,29 @@ func (p *Postgres) migrate(ctx context.Context) error {
 	_, err := p.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS apps (
 	id text PRIMARY KEY,
+	org_id text NOT NULL DEFAULT '',
 	name text NOT NULL,
 	hostname text NOT NULL UNIQUE,
 	auth jsonb NOT NULL DEFAULT '{}'::jsonb,
 	runtime_token text,
 	created_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+	id text PRIMARY KEY,
+	email text NOT NULL UNIQUE,
+	password_hash bytea NOT NULL,
+	created_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS organizations (
+	id text PRIMARY KEY,
+	name text NOT NULL,
+	created_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_organizations (
+	user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+	created_at timestamptz NOT NULL DEFAULT NOW(),
+	PRIMARY KEY (user_id, organization_id)
 );
 CREATE TABLE IF NOT EXISTS deployments (
 	id text PRIMARY KEY,
@@ -70,11 +88,13 @@ CREATE TABLE IF NOT EXISTS deployments (
 );
 CREATE TABLE IF NOT EXISTS kv_namespaces (
 	id text PRIMARY KEY,
+	org_id text NOT NULL DEFAULT '',
 	name text NOT NULL UNIQUE,
 	created_at timestamptz NOT NULL
 );
 CREATE TABLE IF NOT EXISTS object_storage_buckets (
 	id text PRIMARY KEY,
+	org_id text NOT NULL DEFAULT '',
 	name text NOT NULL UNIQUE,
 	created_at timestamptz NOT NULL
 );
@@ -90,6 +110,7 @@ CREATE TABLE IF NOT EXISTS app_secrets (
 CREATE UNIQUE INDEX IF NOT EXISTS deployments_active_app_idx
 	ON deployments(app_id) WHERE active;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
 UPDATE apps SET name = hostname WHERE name = '';
@@ -103,6 +124,8 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_storage_bucket jsonb NOT
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
+ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
+ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 UPDATE deployments SET format = CASE
 	WHEN jsonb_array_length(files) = 1 THEN 'service-worker'
 	ELSE 'modules'
@@ -154,6 +177,10 @@ END $$;`)
 		return err
 	}
 	_, err = p.db.ExecContext(ctx, `
+ALTER TABLE kv_namespaces DROP CONSTRAINT IF EXISTS kv_namespaces_name_key;
+ALTER TABLE object_storage_buckets DROP CONSTRAINT IF EXISTS object_storage_buckets_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS kv_namespaces_org_name_idx ON kv_namespaces(org_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS object_storage_buckets_org_name_idx ON object_storage_buckets(org_id, name);
 ALTER TABLE apps ALTER COLUMN runtime_token SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS apps_runtime_token_idx ON apps(runtime_token);
 ALTER TABLE deployments DROP COLUMN IF EXISTS bundle_path;
@@ -316,9 +343,86 @@ SELECT EXISTS (
 	return rows.Err()
 }
 
+func (p *Postgres) CreateUser(user nanoflare.User) error {
+	_, err := p.db.Exec(`INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)`,
+		user.ID, user.Email, user.PasswordHash, user.CreatedAt)
+	if isUniqueViolation(err) {
+		return nanoflare.ErrUserExists
+	}
+	return err
+}
+
+func (p *Postgres) UserByEmail(email string) (nanoflare.User, error) {
+	var user nanoflare.User
+	err := p.db.QueryRow(`SELECT id, email, password_hash, created_at FROM users WHERE email = $1`, email).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.User{}, nanoflare.ErrUserNotFound
+	}
+	return user, err
+}
+
+func (p *Postgres) UserCount() (int, error) {
+	var count int
+	err := p.db.QueryRow(`SELECT count(*) FROM users`).Scan(&count)
+	return count, err
+}
+
+func (p *Postgres) CreateOrganization(org nanoflare.Organization) error {
+	_, err := p.db.Exec(`INSERT INTO organizations (id, name, created_at) VALUES ($1, $2, $3)`,
+		org.ID, org.Name, org.CreatedAt)
+	if isUniqueViolation(err) {
+		return nanoflare.ErrOrganizationExists
+	}
+	return err
+}
+
+func (p *Postgres) AddUserToOrganization(userID, orgID string) error {
+	_, err := p.db.Exec(`
+INSERT INTO user_organizations (user_id, organization_id)
+VALUES ($1, $2)
+ON CONFLICT (user_id, organization_id) DO NOTHING`, userID, orgID)
+	if isForeignKeyViolation(err) {
+		return nanoflare.ErrMembershipNotFound
+	}
+	return err
+}
+
+func (p *Postgres) ListOrganizationsForUser(userID string) ([]nanoflare.Organization, error) {
+	rows, err := p.db.Query(`
+SELECT o.id, o.name, o.created_at
+FROM organizations o
+JOIN user_organizations uo ON uo.organization_id = o.id
+WHERE uo.user_id = $1
+ORDER BY o.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	orgs := []nanoflare.Organization{}
+	for rows.Next() {
+		var org nanoflare.Organization
+		if err := rows.Scan(&org.ID, &org.Name, &org.CreatedAt); err != nil {
+			return nil, err
+		}
+		orgs = append(orgs, org)
+	}
+	return orgs, rows.Err()
+}
+
+func (p *Postgres) UserBelongsToOrganization(userID, orgID string) (bool, error) {
+	var exists bool
+	err := p.db.QueryRow(`
+SELECT EXISTS (
+	SELECT 1 FROM user_organizations
+	WHERE user_id = $1 AND organization_id = $2
+)`, userID, orgID).Scan(&exists)
+	return exists, err
+}
+
 func (p *Postgres) CreateApp(app nanoflare.App) error {
-	_, err := p.db.Exec(`INSERT INTO apps (id, name, hostname, auth, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-		app.ID, app.Name, app.Hostname, mustJSON(app.Auth), app.RuntimeToken, app.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO apps (id, org_id, name, hostname, auth, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.RuntimeToken, app.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrAppExists
 	}
@@ -326,8 +430,8 @@ func (p *Postgres) CreateApp(app nanoflare.App) error {
 }
 
 func (p *Postgres) CreateKVNamespace(namespace nanoflare.KVNamespace) error {
-	_, err := p.db.Exec(`INSERT INTO kv_namespaces (id, name, created_at) VALUES ($1, $2, $3)`,
-		namespace.ID, namespace.Name, namespace.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO kv_namespaces (id, org_id, name, created_at) VALUES ($1, $2, $3, $4)`,
+		namespace.ID, namespace.OrgID, namespace.Name, namespace.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrKVNamespaceExists
 	}
@@ -335,7 +439,18 @@ func (p *Postgres) CreateKVNamespace(namespace nanoflare.KVNamespace) error {
 }
 
 func (p *Postgres) ListKVNamespaces() ([]nanoflare.KVNamespace, error) {
-	rows, err := p.db.Query(`SELECT id, name, created_at FROM kv_namespaces ORDER BY name`)
+	return p.ListKVNamespacesByOrg("")
+}
+
+func (p *Postgres) ListKVNamespacesByOrg(orgID string) ([]nanoflare.KVNamespace, error) {
+	query := `SELECT id, org_id, name, created_at FROM kv_namespaces`
+	var rows *sql.Rows
+	var err error
+	if orgID == "" {
+		rows, err = p.db.Query(query + ` ORDER BY name`)
+	} else {
+		rows, err = p.db.Query(query+` WHERE org_id = $1 ORDER BY name`, orgID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +458,7 @@ func (p *Postgres) ListKVNamespaces() ([]nanoflare.KVNamespace, error) {
 	namespaces := make([]nanoflare.KVNamespace, 0)
 	for rows.Next() {
 		var namespace nanoflare.KVNamespace
-		if err := rows.Scan(&namespace.ID, &namespace.Name, &namespace.CreatedAt); err != nil {
+		if err := rows.Scan(&namespace.ID, &namespace.OrgID, &namespace.Name, &namespace.CreatedAt); err != nil {
 			return nil, err
 		}
 		namespaces = append(namespaces, namespace)
@@ -353,8 +468,8 @@ func (p *Postgres) ListKVNamespaces() ([]nanoflare.KVNamespace, error) {
 
 func (p *Postgres) GetKVNamespace(namespaceID string) (nanoflare.KVNamespace, error) {
 	var namespace nanoflare.KVNamespace
-	err := p.db.QueryRow(`SELECT id, name, created_at FROM kv_namespaces WHERE id = $1`, namespaceID).
-		Scan(&namespace.ID, &namespace.Name, &namespace.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, created_at FROM kv_namespaces WHERE id = $1`, namespaceID).
+		Scan(&namespace.ID, &namespace.OrgID, &namespace.Name, &namespace.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.KVNamespace{}, nanoflare.ErrKVNamespaceNotFound
 	}
@@ -380,8 +495,8 @@ func (p *Postgres) UpdateKVNamespace(namespace nanoflare.KVNamespace) error {
 }
 
 func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
-	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, name, created_at) VALUES ($1, $2, $3)`,
-		bucket.ID, bucket.Name, bucket.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, created_at) VALUES ($1, $2, $3, $4)`,
+		bucket.ID, bucket.OrgID, bucket.Name, bucket.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrObjectStorageBucketExists
 	}
@@ -389,7 +504,18 @@ func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucke
 }
 
 func (p *Postgres) ListObjectStorageBuckets() ([]nanoflare.ObjectStorageBucket, error) {
-	rows, err := p.db.Query(`SELECT id, name, created_at FROM object_storage_buckets ORDER BY name`)
+	return p.ListObjectStorageBucketsByOrg("")
+}
+
+func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.ObjectStorageBucket, error) {
+	query := `SELECT id, org_id, name, created_at FROM object_storage_buckets`
+	var rows *sql.Rows
+	var err error
+	if orgID == "" {
+		rows, err = p.db.Query(query + ` ORDER BY name`)
+	} else {
+		rows, err = p.db.Query(query+` WHERE org_id = $1 ORDER BY name`, orgID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +523,7 @@ func (p *Postgres) ListObjectStorageBuckets() ([]nanoflare.ObjectStorageBucket, 
 	buckets := make([]nanoflare.ObjectStorageBucket, 0)
 	for rows.Next() {
 		var bucket nanoflare.ObjectStorageBucket
-		if err := rows.Scan(&bucket.ID, &bucket.Name, &bucket.CreatedAt); err != nil {
+		if err := rows.Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.CreatedAt); err != nil {
 			return nil, err
 		}
 		buckets = append(buckets, bucket)
@@ -407,8 +533,8 @@ func (p *Postgres) ListObjectStorageBuckets() ([]nanoflare.ObjectStorageBucket, 
 
 func (p *Postgres) GetObjectStorageBucket(bucketID string) (nanoflare.ObjectStorageBucket, error) {
 	var bucket nanoflare.ObjectStorageBucket
-	err := p.db.QueryRow(`SELECT id, name, created_at FROM object_storage_buckets WHERE id = $1`, bucketID).
-		Scan(&bucket.ID, &bucket.Name, &bucket.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, created_at FROM object_storage_buckets WHERE id = $1`, bucketID).
+		Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.ObjectStorageBucket{}, nanoflare.ErrObjectStorageBucketNotFound
 	}
@@ -434,7 +560,18 @@ func (p *Postgres) UpdateObjectStorageBucket(bucket nanoflare.ObjectStorageBucke
 }
 
 func (p *Postgres) ListApps() ([]nanoflare.App, error) {
-	rows, err := p.db.Query(`SELECT id, name, hostname, auth, runtime_token, created_at FROM apps ORDER BY id`)
+	return p.ListAppsByOrg("")
+}
+
+func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
+	query := `SELECT id, org_id, name, hostname, auth, runtime_token, created_at FROM apps`
+	var rows *sql.Rows
+	var err error
+	if orgID == "" {
+		rows, err = p.db.Query(query + ` ORDER BY id`)
+	} else {
+		rows, err = p.db.Query(query+` WHERE org_id = $1 ORDER BY id`, orgID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +580,7 @@ func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 	for rows.Next() {
 		var app nanoflare.App
 		var auth []byte
-		if err := rows.Scan(&app.ID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt); err != nil {
+		if err := rows.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &app.Auth); err != nil {
@@ -457,8 +594,8 @@ func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
 	var app nanoflare.App
 	var auth []byte
-	err := p.db.QueryRow(`SELECT id, name, hostname, auth, runtime_token, created_at FROM apps WHERE id = $1`, appID).
-		Scan(&app.ID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, runtime_token, created_at FROM apps WHERE id = $1`, appID).
+		Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.App{}, nanoflare.ErrAppNotFound
 	}
@@ -704,7 +841,7 @@ func (p *Postgres) DeleteDeployment(id string) error {
 
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
-SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
+SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
 	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.vars, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
@@ -719,7 +856,7 @@ ORDER BY a.id`)
 		var item nanoflare.ActiveDeployment
 		var files, assets, vars, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &vars, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
@@ -756,7 +893,7 @@ ORDER BY a.id`)
 
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
-	SELECT a.id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
+	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
 		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.vars, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
@@ -770,7 +907,7 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 		var item nanoflare.DeploymentRecord
 		var assets, vars, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &vars, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,

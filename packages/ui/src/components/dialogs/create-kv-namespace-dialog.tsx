@@ -1,5 +1,5 @@
 import { type Dispatch, type FormEvent, type SetStateAction, useState } from "react";
-import { errorText } from "../../app/api";
+import { apiFetch, errorText } from "../../app/api";
 import type { KVNamespace } from "../../app/types";
 import { sortNamespaces } from "../../app/utils";
 import { Dialog } from "../ui/dialog";
@@ -30,7 +30,7 @@ export function CreateKVNamespaceDialog({
     if (!trimmed) return notify("Namespace name is required");
     let namespace: KVNamespace = { id: crypto.randomUUID().replace(/-/g, ""), name: trimmed, created_at: new Date().toISOString() };
     if (apiConnected) {
-      const response = await fetch("/v1/kv/namespaces", {
+      const response = await apiFetch("/v1/kv/namespaces", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: trimmed }),

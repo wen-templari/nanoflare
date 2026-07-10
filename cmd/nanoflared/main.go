@@ -48,6 +48,7 @@ func main() {
 		runnerURL    = flag.String("runner-url", "", "nanoflare-runner control API URL; empty starts workerd directly")
 		runnerToken  = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
 		traefikToken = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
+		authSecret   = flag.String("control-auth-secret", envOrDefault("NANOFLARE_AUTH_SECRET", "nanoflare-development-control-secret"), "JWT signing secret for control-plane email/password auth")
 		oidcIssuer   = flag.String("oidc-issuer", os.Getenv("NANOFLARE_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
 		oidcAudience = flag.String("oidc-audience", os.Getenv("NANOFLARE_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
 		oidcEmail    = flag.String("oidc-email-claim", envOrDefault("NANOFLARE_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
@@ -186,7 +187,8 @@ func main() {
 		}
 		authenticator = verifier
 	}
-	server := api.NewServerWithAuth(service, traefikStore, *traefikToken, authenticator)
+	controlAuth := nanoflare.NewControlAuthService(store, *authSecret)
+	server := api.NewServerWithControlAuth(service, traefikStore, *traefikToken, authenticator, controlAuth)
 	runtimeMux := newRuntimeMux(service, server)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {

@@ -39,7 +39,7 @@ func (s *Server) registerObjectRoutes() {
 }
 
 func (s *Server) workerObjectList(w http.ResponseWriter, r *http.Request) {
-	objects, err := s.service.WorkerObjectList(r.PathValue("appID"), r.PathValue("bucketID"))
+	objects, err := s.service.WorkerObjectListForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -53,7 +53,7 @@ func (s *Server) workerObjectGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.WorkerObjectGet(r.PathValue("appID"), r.PathValue("bucketID"), key)
+	object, ok, err := s.service.WorkerObjectGetForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"), key)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -79,7 +79,7 @@ func (s *Server) workerObjectPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, err := s.service.WorkerObjectPut(r.PathValue("appID"), r.PathValue("bucketID"), key, r.Header.Get("Content-Type"), body)
+	object, err := s.service.WorkerObjectPutForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"), key, r.Header.Get("Content-Type"), body)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -93,15 +93,15 @@ func (s *Server) workerObjectDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.WorkerObjectDelete(r.PathValue("appID"), r.PathValue("bucketID"), key); err != nil {
+	if err := s.service.WorkerObjectDeleteForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"), key); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listObjectStorageBuckets(w http.ResponseWriter, _ *http.Request) {
-	buckets, err := s.service.ListObjectStorageBuckets()
+func (s *Server) listObjectStorageBuckets(w http.ResponseWriter, r *http.Request) {
+	buckets, err := s.service.ListObjectStorageBucketsForOrg(controlOrgID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -115,6 +115,7 @@ func (s *Server) createObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	input.OrgID = controlOrgID(r)
 	bucket, err := s.service.CreateObjectStorageBucket(input)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -128,7 +129,7 @@ func (s *Server) createObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) getObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
-	bucket, err := s.service.GetObjectStorageBucket(r.PathValue("bucketID"))
+	bucket, err := s.service.GetObjectStorageBucketForOrg(controlOrgID(r), r.PathValue("bucketID"))
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
@@ -146,7 +147,7 @@ func (s *Server) updateObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	bucket, err := s.service.UpdateObjectStorageBucket(r.PathValue("bucketID"), input)
+	bucket, err := s.service.UpdateObjectStorageBucketForOrg(controlOrgID(r), r.PathValue("bucketID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
@@ -162,7 +163,7 @@ func (s *Server) updateObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) deleteObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
-	err := s.service.DeleteObjectStorageBucket(r.PathValue("bucketID"))
+	err := s.service.DeleteObjectStorageBucketForOrg(controlOrgID(r), r.PathValue("bucketID"))
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
@@ -178,7 +179,7 @@ func (s *Server) deleteObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) objectStorageBucketMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics, err := s.service.ObjectStorageBucketMetrics(r.PathValue("bucketID"))
+	metrics, err := s.service.ObjectStorageBucketMetricsForOrg(controlOrgID(r), r.PathValue("bucketID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return

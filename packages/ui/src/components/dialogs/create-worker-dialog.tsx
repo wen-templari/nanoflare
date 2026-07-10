@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from "react";
+import { apiFetch } from "../../app/api";
 import type { Worker } from "../../app/types";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -30,7 +31,7 @@ export function CreateWorkerDialog({
     let worker: Worker = { id: crypto.randomUUID().replace(/-/g, ""), name, hostname, auth, created_at: new Date().toISOString(), status: "draft", requests: "0", deployment: "awaiting deploy" };
     if (apiConnected) {
       const trimmedHostname = hostname.trim();
-      const response = await fetch("/v1/apps", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(trimmedHostname ? { name, hostname: trimmedHostname, auth } : { name, auth }) });
+      const response = await apiFetch("/v1/apps", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(trimmedHostname ? { name, hostname: trimmedHostname, auth } : { name, auth }) });
       if (!response.ok) return notify("Worker registration failed");
       worker = { ...worker, ...await response.json() as Worker };
     }

@@ -80,6 +80,7 @@ func (s *Service) SetSecretCodec(codec *SecretCodec) {
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	input.Name = strings.TrimSpace(input.Name)
+	input.OrgID = strings.TrimSpace(input.OrgID)
 	input.Hostname = strings.TrimSpace(strings.ToLower(input.Hostname))
 	if input.Name == "" {
 		return App{}, errors.New("name is required")
@@ -121,7 +122,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 		if err != nil {
 			return App{}, err
 		}
-		app := App{ID: appID, Name: input.Name, Hostname: hostname, Auth: auth, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
+		app := App{ID: appID, OrgID: input.OrgID, Name: input.Name, Hostname: hostname, Auth: auth, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
 		if err := s.store.CreateApp(app); err != nil {
 			if generated && errors.Is(err, ErrAppExists) {
 				lastErr = err
@@ -138,6 +139,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 }
 
 func (s *Service) CreateKVNamespace(input CreateKVNamespaceInput) (KVNamespace, error) {
+	input.OrgID = strings.TrimSpace(input.OrgID)
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return KVNamespace{}, errors.New("name is required")
@@ -146,7 +148,7 @@ func (s *Service) CreateKVNamespace(input CreateKVNamespaceInput) (KVNamespace, 
 	if err != nil {
 		return KVNamespace{}, err
 	}
-	namespace := KVNamespace{ID: namespaceID, Name: name, CreatedAt: time.Now().UTC()}
+	namespace := KVNamespace{ID: namespaceID, OrgID: input.OrgID, Name: name, CreatedAt: time.Now().UTC()}
 	if err := s.store.CreateKVNamespace(namespace); err != nil {
 		return KVNamespace{}, err
 	}
@@ -157,7 +159,12 @@ func (s *Service) ListKVNamespaces() ([]KVNamespace, error) {
 	return s.store.ListKVNamespaces()
 }
 
+func (s *Service) ListKVNamespacesForOrg(orgID string) ([]KVNamespace, error) {
+	return s.store.ListKVNamespacesByOrg(strings.TrimSpace(orgID))
+}
+
 func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput) (ObjectStorageBucket, error) {
+	input.OrgID = strings.TrimSpace(input.OrgID)
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return ObjectStorageBucket{}, errors.New("name is required")
@@ -166,7 +173,7 @@ func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput
 	if err != nil {
 		return ObjectStorageBucket{}, err
 	}
-	bucket := ObjectStorageBucket{ID: bucketID, Name: name, CreatedAt: time.Now().UTC()}
+	bucket := ObjectStorageBucket{ID: bucketID, OrgID: input.OrgID, Name: name, CreatedAt: time.Now().UTC()}
 	if err := s.store.CreateObjectStorageBucket(bucket); err != nil {
 		return ObjectStorageBucket{}, err
 	}
@@ -175,6 +182,10 @@ func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput
 
 func (s *Service) ListObjectStorageBuckets() ([]ObjectStorageBucket, error) {
 	return s.store.ListObjectStorageBuckets()
+}
+
+func (s *Service) ListObjectStorageBucketsForOrg(orgID string) ([]ObjectStorageBucket, error) {
+	return s.store.ListObjectStorageBucketsByOrg(strings.TrimSpace(orgID))
 }
 
 func (s *Service) GetObjectStorageBucket(bucketID string) (ObjectStorageBucket, error) {
@@ -205,6 +216,17 @@ func (s *Service) UpdateObjectStorageBucket(bucketID string, input UpdateObjectS
 	return bucket, nil
 }
 
+func (s *Service) GetObjectStorageBucketForOrg(orgID, bucketID string) (ObjectStorageBucket, error) {
+	bucket, err := s.GetObjectStorageBucket(bucketID)
+	if err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	if strings.TrimSpace(orgID) != "" && bucket.OrgID != strings.TrimSpace(orgID) {
+		return ObjectStorageBucket{}, ErrObjectStorageBucketNotFound
+	}
+	return bucket, nil
+}
+
 func (s *Service) DeleteObjectStorageBucket(bucketID string) error {
 	bucketID = strings.TrimSpace(bucketID)
 	if bucketID == "" {
@@ -219,6 +241,17 @@ func (s *Service) GetKVNamespace(namespaceID string) (KVNamespace, error) {
 		return KVNamespace{}, ErrKVNamespaceNotFound
 	}
 	return s.store.GetKVNamespace(namespaceID)
+}
+
+func (s *Service) GetKVNamespaceForOrg(orgID, namespaceID string) (KVNamespace, error) {
+	namespace, err := s.GetKVNamespace(namespaceID)
+	if err != nil {
+		return KVNamespace{}, err
+	}
+	if strings.TrimSpace(orgID) != "" && namespace.OrgID != strings.TrimSpace(orgID) {
+		return KVNamespace{}, ErrKVNamespaceNotFound
+	}
+	return namespace, nil
 }
 
 func (s *Service) UpdateKVNamespace(namespaceID string, input UpdateKVNamespaceInput) (KVNamespace, error) {
@@ -247,6 +280,29 @@ func (s *Service) DeleteKVNamespace(namespaceID string) error {
 		return ErrKVNamespaceNotFound
 	}
 	return s.store.DeleteKVNamespace(namespaceID)
+}
+
+func (s *Service) UpdateKVNamespaceForOrg(orgID, namespaceID string, input UpdateKVNamespaceInput) (KVNamespace, error) {
+	namespace, err := s.GetKVNamespaceForOrg(orgID, namespaceID)
+	if err != nil {
+		return KVNamespace{}, err
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return KVNamespace{}, errors.New("name is required")
+	}
+	namespace.Name = name
+	if err := s.store.UpdateKVNamespace(namespace); err != nil {
+		return KVNamespace{}, err
+	}
+	return namespace, nil
+}
+
+func (s *Service) DeleteKVNamespaceForOrg(orgID, namespaceID string) error {
+	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
+		return err
+	}
+	return s.DeleteKVNamespace(namespaceID)
 }
 
 func (s *Service) UpdateApp(appID string, input UpdateAppInput) (App, error) {
@@ -287,6 +343,13 @@ func (s *Service) ListSecrets(appID string) ([]Secret, error) {
 		secrets = append(secrets, record.Secret)
 	}
 	return secrets, nil
+}
+
+func (s *Service) ListSecretsForOrg(orgID, appID string) ([]Secret, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return nil, err
+	}
+	return s.ListSecrets(appID)
 }
 
 func (s *Service) PutSecret(appID, name, value string) error {
@@ -339,6 +402,13 @@ func (s *Service) PutSecret(appID, name, value string) error {
 	return s.rolloutSecretsIfActive(appID)
 }
 
+func (s *Service) PutSecretForOrg(orgID, appID, name, value string) error {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return err
+	}
+	return s.PutSecret(appID, name, value)
+}
+
 func (s *Service) DeleteSecret(appID, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -353,8 +423,74 @@ func (s *Service) DeleteSecret(appID, name string) error {
 	return s.rolloutSecretsIfActive(appID)
 }
 
+func (s *Service) DeleteSecretForOrg(orgID, appID, name string) error {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return err
+	}
+	return s.DeleteSecret(appID, name)
+}
+
 func (s *Service) ListApps() ([]App, error) {
 	return s.store.ListApps()
+}
+
+func (s *Service) ListAppsForOrg(orgID string) ([]App, error) {
+	return s.store.ListAppsByOrg(strings.TrimSpace(orgID))
+}
+
+func (s *Service) UpdateAppForOrg(orgID, appID string, input UpdateAppInput) (App, error) {
+	app, err := s.appForOrg(orgID, appID)
+	if err != nil {
+		return App{}, err
+	}
+	if input.Auth != nil {
+		auth, err := normalizeAuthConfig(*input.Auth)
+		if err != nil {
+			return App{}, err
+		}
+		app.Auth = auth
+	}
+	if err := s.store.UpdateApp(app); err != nil {
+		return App{}, err
+	}
+	active, err := s.activeDeployments()
+	if err != nil {
+		return App{}, err
+	}
+	if err := s.writer.Write(active); err != nil {
+		return App{}, fmt.Errorf("write generated config: %w", err)
+	}
+	return app, nil
+}
+
+func (s *Service) DeleteAppForOrg(orgID, appID string) error {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return err
+	}
+	return s.DeleteApp(appID)
+}
+
+func (s *Service) UpdateObjectStorageBucketForOrg(orgID, bucketID string, input UpdateObjectStorageBucketInput) (ObjectStorageBucket, error) {
+	bucket, err := s.GetObjectStorageBucketForOrg(orgID, bucketID)
+	if err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return ObjectStorageBucket{}, errors.New("name is required")
+	}
+	bucket.Name = name
+	if err := s.store.UpdateObjectStorageBucket(bucket); err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	return bucket, nil
+}
+
+func (s *Service) DeleteObjectStorageBucketForOrg(orgID, bucketID string) error {
+	if _, err := s.GetObjectStorageBucketForOrg(orgID, bucketID); err != nil {
+		return err
+	}
+	return s.DeleteObjectStorageBucket(bucketID)
 }
 
 func (s *Service) DeleteApp(appID string) error {
@@ -432,6 +568,13 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 	return detail, nil
 }
 
+func (s *Service) WorkerDetailForOrg(orgID, appID string) (WorkerDetail, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return WorkerDetail{}, err
+	}
+	return s.WorkerDetail(appID)
+}
+
 func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 	if _, _, err := s.worker(appID); err != nil {
 		return nil, err
@@ -466,6 +609,13 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 	return deployments, nil
 }
 
+func (s *Service) WorkerDeploymentsForOrg(orgID, appID string) ([]ConsoleDeployment, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return nil, err
+	}
+	return s.WorkerDeployments(appID)
+}
+
 func (s *Service) WorkerFiles(appID string) ([]WorkerFile, error) {
 	_, active, err := s.worker(appID)
 	if err != nil {
@@ -477,6 +627,13 @@ func (s *Service) WorkerFiles(appID string) ([]WorkerFile, error) {
 	return append([]WorkerFile(nil), active.Deployment.Files...), nil
 }
 
+func (s *Service) WorkerFilesForOrg(orgID, appID string) ([]WorkerFile, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return nil, err
+	}
+	return s.WorkerFiles(appID)
+}
+
 func (s *Service) WorkerOutput(appID string) ([]WorkerOutputLine, error) {
 	if _, _, err := s.worker(appID); err != nil {
 		return nil, err
@@ -485,6 +642,13 @@ func (s *Service) WorkerOutput(appID string) ([]WorkerOutputLine, error) {
 		return []WorkerOutputLine{}, nil
 	}
 	return s.output.Output(appID), nil
+}
+
+func (s *Service) WorkerOutputForOrg(orgID, appID string) ([]WorkerOutputLine, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return nil, err
+	}
+	return s.WorkerOutput(appID)
 }
 
 func (s *Service) WorkerTraffic(appID string) (WorkerTraffic, error) {
@@ -507,6 +671,13 @@ func (s *Service) WorkerTraffic(appID string) (WorkerTraffic, error) {
 		traffic.BundleSize = active.Deployment.BundleSize
 	}
 	return traffic, nil
+}
+
+func (s *Service) WorkerTrafficForOrg(orgID, appID string) (WorkerTraffic, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return WorkerTraffic{}, err
+	}
+	return s.WorkerTraffic(appID)
 }
 
 func (s *Service) worker(appID string) (App, *ActiveDeployment, error) {
@@ -534,6 +705,19 @@ func (s *Service) worker(appID string) (App, *ActiveDeployment, error) {
 		}
 	}
 	return *app, nil, nil
+}
+
+func (s *Service) appForOrg(orgID, appID string) (App, error) {
+	apps, err := s.store.ListAppsByOrg(strings.TrimSpace(orgID))
+	if err != nil {
+		return App{}, err
+	}
+	for _, app := range apps {
+		if app.ID == appID {
+			return app, nil
+		}
+	}
+	return App{}, ErrAppNotFound
 }
 
 func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
@@ -645,6 +829,23 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		return Deployment{}, fmt.Errorf("write generated config: %w", err)
 	}
 	return deployment, nil
+}
+
+func (s *Service) DeployForOrg(orgID, appID string, input DeployInput) (Deployment, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return Deployment{}, err
+	}
+	for _, binding := range input.KVNamespaces {
+		if _, err := s.GetKVNamespaceForOrg(orgID, strings.TrimSpace(binding.ID)); err != nil {
+			return Deployment{}, err
+		}
+	}
+	for _, binding := range input.ObjectStorageBuckets {
+		if _, err := s.GetObjectStorageBucketForOrg(orgID, strings.TrimSpace(binding.BucketID)); err != nil {
+			return Deployment{}, err
+		}
+	}
+	return s.Deploy(appID, input)
 }
 
 func workerFormat(format string, fileCount int) (string, error) {
@@ -1298,6 +1499,13 @@ func (s *Service) WorkerKVList(appID, namespaceID string) ([]WorkerKVKey, error)
 	return s.store.KVList(app.RuntimeToken, namespaceID)
 }
 
+func (s *Service) WorkerKVListForOrg(orgID, appID, namespaceID string) ([]WorkerKVKey, error) {
+	if err := s.ensureAppAndKVNamespaceInOrg(orgID, appID, namespaceID); err != nil {
+		return nil, err
+	}
+	return s.WorkerKVList(appID, namespaceID)
+}
+
 func (s *Service) WorkerKVGet(appID, namespaceID, key string) ([]byte, bool, error) {
 	app, _, err := s.worker(appID)
 	if err != nil {
@@ -1307,6 +1515,13 @@ func (s *Service) WorkerKVGet(appID, namespaceID, key string) ([]byte, bool, err
 		return nil, false, err
 	}
 	return s.store.KVGet(app.RuntimeToken, namespaceID, key)
+}
+
+func (s *Service) WorkerKVGetForOrg(orgID, appID, namespaceID, key string) ([]byte, bool, error) {
+	if err := s.ensureAppAndKVNamespaceInOrg(orgID, appID, namespaceID); err != nil {
+		return nil, false, err
+	}
+	return s.WorkerKVGet(appID, namespaceID, key)
 }
 
 func (s *Service) WorkerKVPut(appID, namespaceID, key string, value []byte) error {
@@ -1320,6 +1535,13 @@ func (s *Service) WorkerKVPut(appID, namespaceID, key string, value []byte) erro
 	return s.store.KVPut(app.RuntimeToken, namespaceID, key, value)
 }
 
+func (s *Service) WorkerKVPutForOrg(orgID, appID, namespaceID, key string, value []byte) error {
+	if err := s.ensureAppAndKVNamespaceInOrg(orgID, appID, namespaceID); err != nil {
+		return err
+	}
+	return s.WorkerKVPut(appID, namespaceID, key, value)
+}
+
 func (s *Service) WorkerKVDelete(appID, namespaceID, key string) error {
 	app, _, err := s.worker(appID)
 	if err != nil {
@@ -1329,6 +1551,13 @@ func (s *Service) WorkerKVDelete(appID, namespaceID, key string) error {
 		return err
 	}
 	return s.store.KVDelete(app.RuntimeToken, namespaceID, key)
+}
+
+func (s *Service) WorkerKVDeleteForOrg(orgID, appID, namespaceID, key string) error {
+	if err := s.ensureAppAndKVNamespaceInOrg(orgID, appID, namespaceID); err != nil {
+		return err
+	}
+	return s.WorkerKVDelete(appID, namespaceID, key)
 }
 
 func (s *Service) WorkerObjectList(appID, bucketID string) ([]ObjectInfo, error) {
@@ -1342,6 +1571,13 @@ func (s *Service) WorkerObjectList(appID, bucketID string) ([]ObjectInfo, error)
 	return s.ObjectList(app.RuntimeToken, bucketID)
 }
 
+func (s *Service) WorkerObjectListForOrg(orgID, appID, bucketID string) ([]ObjectInfo, error) {
+	if err := s.ensureAppAndObjectBucketInOrg(orgID, appID, bucketID); err != nil {
+		return nil, err
+	}
+	return s.WorkerObjectList(appID, bucketID)
+}
+
 func (s *Service) WorkerObjectGet(appID, bucketID, key string) (ObjectBody, bool, error) {
 	app, _, err := s.worker(appID)
 	if err != nil {
@@ -1351,6 +1587,13 @@ func (s *Service) WorkerObjectGet(appID, bucketID, key string) (ObjectBody, bool
 		return ObjectBody{}, false, err
 	}
 	return s.ObjectGet(app.RuntimeToken, bucketID, key)
+}
+
+func (s *Service) WorkerObjectGetForOrg(orgID, appID, bucketID, key string) (ObjectBody, bool, error) {
+	if err := s.ensureAppAndObjectBucketInOrg(orgID, appID, bucketID); err != nil {
+		return ObjectBody{}, false, err
+	}
+	return s.WorkerObjectGet(appID, bucketID, key)
 }
 
 func (s *Service) WorkerObjectPut(appID, bucketID, key, contentType string, data []byte) (ObjectInfo, error) {
@@ -1364,6 +1607,13 @@ func (s *Service) WorkerObjectPut(appID, bucketID, key, contentType string, data
 	return s.ObjectPut(app.RuntimeToken, bucketID, key, contentType, data)
 }
 
+func (s *Service) WorkerObjectPutForOrg(orgID, appID, bucketID, key, contentType string, data []byte) (ObjectInfo, error) {
+	if err := s.ensureAppAndObjectBucketInOrg(orgID, appID, bucketID); err != nil {
+		return ObjectInfo{}, err
+	}
+	return s.WorkerObjectPut(appID, bucketID, key, contentType, data)
+}
+
 func (s *Service) WorkerObjectDelete(appID, bucketID, key string) error {
 	app, _, err := s.worker(appID)
 	if err != nil {
@@ -1375,8 +1625,22 @@ func (s *Service) WorkerObjectDelete(appID, bucketID, key string) error {
 	return s.DeleteObject(app.RuntimeToken, bucketID, key)
 }
 
+func (s *Service) WorkerObjectDeleteForOrg(orgID, appID, bucketID, key string) error {
+	if err := s.ensureAppAndObjectBucketInOrg(orgID, appID, bucketID); err != nil {
+		return err
+	}
+	return s.WorkerObjectDelete(appID, bucketID, key)
+}
+
 func (s *Service) KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error) {
 	return s.store.KVNamespaceMetrics(namespaceID)
+}
+
+func (s *Service) KVNamespaceMetricsForOrg(orgID, namespaceID string) (KVNamespaceMetrics, error) {
+	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
+		return KVNamespaceMetrics{}, err
+	}
+	return s.KVNamespaceMetrics(namespaceID)
 }
 
 func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
@@ -1394,6 +1658,13 @@ func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBuck
 	_ = s.store.AdjustObjectStorageBucketSize(bucketID, size-metrics.Size)
 	metrics.Size = size
 	return metrics, nil
+}
+
+func (s *Service) ObjectStorageBucketMetricsForOrg(orgID, bucketID string) (ObjectStorageBucketMetrics, error) {
+	if _, err := s.GetObjectStorageBucketForOrg(orgID, bucketID); err != nil {
+		return ObjectStorageBucketMetrics{}, err
+	}
+	return s.ObjectStorageBucketMetrics(bucketID)
 }
 
 func (s *Service) RecordRuntimeKVRead(namespaceID string) error {
@@ -1450,6 +1721,42 @@ func (s *Service) ensureActiveDeploymentBindsNamespace(appID, namespaceID string
 		}
 	}
 	return ErrKVNamespaceNotBound
+}
+
+func (s *Service) ensureAppAndKVNamespaceInOrg(orgID, appID, namespaceID string) error {
+	if strings.TrimSpace(orgID) == "" {
+		return nil
+	}
+	app, err := s.appForOrg(orgID, appID)
+	if err != nil {
+		return err
+	}
+	namespace, err := s.GetKVNamespaceForOrg(orgID, namespaceID)
+	if err != nil {
+		return err
+	}
+	if app.OrgID != namespace.OrgID {
+		return ErrKVNamespaceNotFound
+	}
+	return nil
+}
+
+func (s *Service) ensureAppAndObjectBucketInOrg(orgID, appID, bucketID string) error {
+	if strings.TrimSpace(orgID) == "" {
+		return nil
+	}
+	app, err := s.appForOrg(orgID, appID)
+	if err != nil {
+		return err
+	}
+	bucket, err := s.GetObjectStorageBucketForOrg(orgID, bucketID)
+	if err != nil {
+		return err
+	}
+	if app.OrgID != bucket.OrgID {
+		return ErrObjectStorageBucketNotFound
+	}
+	return nil
 }
 
 func (s *Service) ensureActiveDeploymentBindsObjectStorageBucket(appID, bucketID string) error {

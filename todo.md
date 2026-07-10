@@ -36,4 +36,4 @@ support deploy to different envs (dev, staging, prod) with different config file
 
 ## Access control
 
-add organizations: every resources should be org scoped ( worker/kv/storage ) , add user keep it simple only have id and email, add user / org relation table 
+add organizations: every resources should be org scoped ( worker/kv/storage ) , add user keep it simple only have id and email, add user / org relation table . add a simple auth flow , frontend guard user to login for control plane, and ask for email and password, then generate a jwt token for user to access control plane apis. 

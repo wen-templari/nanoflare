@@ -1,7 +1,7 @@
-import { Anchor, AppShell, Box, Breadcrumbs, Burger, Group, NavLink as MantineNavLink, Notification, Stack, Text, Title } from "@mantine/core"
+import { ActionIcon, Anchor, AppShell, Box, Breadcrumbs, Burger, Group, NavLink as MantineNavLink, Notification, Select, Stack, Text, Title, Tooltip } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
-import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, Waypoints } from "lucide-react"
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
+import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Waypoints } from "lucide-react"
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { useWorkspace } from "../../app/workspace-context"
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
 import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog"
@@ -16,6 +16,7 @@ const navItems = [
 
 export function ConsoleLayout() {
   const location = useLocation()
+  const navigate = useNavigate()
   const [opened, { toggle, close }] = useDisclosure()
   const {
     workers,
@@ -25,6 +26,10 @@ export function ConsoleLayout() {
     objectStorageBuckets,
     setObjectStorageBuckets,
     apiConnected,
+    activeOrgID,
+    organizations,
+    setActiveOrgID,
+    logout,
     workerDialogOpen,
     namespaceDialogOpen,
     objectStorageBucketDialogOpen,
@@ -58,7 +63,29 @@ export function ConsoleLayout() {
               ))}
             </Breadcrumbs>
           </Group>
-          <Text fw={700} size="sm">clas</Text>
+          <Group gap="sm">
+            <Select
+              allowDeselect={false}
+              data={organizations.map((org) => ({ value: org.id, label: org.name }))}
+              maw={220}
+              onChange={(value) => value && setActiveOrgID(value)}
+              size="xs"
+              value={activeOrgID}
+            />
+            <Tooltip label="Sign out">
+              <ActionIcon
+                aria-label="Sign out"
+                color="gray"
+                onClick={() => {
+                  logout()
+                  navigate("/login", { replace: true })
+                }}
+                variant="subtle"
+              >
+                <LogOut size={16} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
         </Group>
       </AppShell.Header>
 

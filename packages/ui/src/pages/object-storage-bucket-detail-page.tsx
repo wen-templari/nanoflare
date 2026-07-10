@@ -2,7 +2,7 @@ import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
 import { Title } from "@mantine/core";
 import { Archive, ArrowDownToLine, BookOpen, DatabaseZap, FileJson, FileText, Globe2, HardDrive, RefreshCw, Search, Trash2, Upload, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { errorText, fetchJSON } from "../app/api";
+import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { ObjectStorageBucketMetrics, ObjectStorageObject } from "../app/types";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
@@ -119,7 +119,7 @@ function ObjectStorageBucketDetailContent({
     setPreview("");
     setPreviewLoading(true);
     try {
-      const response = await fetch(`${basePath}/${encodeURIComponent(key)}`);
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(key)}`);
       if (response.status === 404) {
         setSelectedObject(undefined);
         setStatus("Object not found");
@@ -152,7 +152,7 @@ function ObjectStorageBucketDetailContent({
     if (!file || !basePath) return;
     setUploading(true);
     try {
-      const response = await fetch(`${basePath}/${encodeURIComponent(file.name)}`, {
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(file.name)}`, {
         method: "PUT",
         headers: file.type ? { "content-type": file.type } : undefined,
         body: file,
@@ -170,7 +170,7 @@ function ObjectStorageBucketDetailContent({
   async function downloadSelectedObject() {
     if (!basePath || !selectedKey) return;
     try {
-      const response = await fetch(`${basePath}/${encodeURIComponent(selectedKey)}`);
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(selectedKey)}`);
       if (!response.ok) throw new Error(`Object download failed (${response.status})`);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -188,7 +188,7 @@ function ObjectStorageBucketDetailContent({
     if (!basePath || !selectedKey) return;
     if (!window.confirm(`Delete object "${selectedKey}" from ${bucket.name}?`)) return;
     try {
-      const response = await fetch(`${basePath}/${encodeURIComponent(selectedKey)}`, { method: "DELETE" });
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(selectedKey)}`, { method: "DELETE" });
       if (!response.ok) throw new Error(`Object delete failed (${response.status})`);
       await refreshObjects();
       setSelectedKey("");
@@ -207,7 +207,7 @@ function ObjectStorageBucketDetailContent({
     try {
       let nextBucket = { ...bucket, name: trimmed };
       if (apiConnected) {
-        const response = await fetch(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`, {
+        const response = await apiFetch(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: trimmed }),
@@ -229,7 +229,7 @@ function ObjectStorageBucketDetailContent({
     setDeleting(true);
     try {
       if (apiConnected) {
-        const response = await fetch(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`, { method: "DELETE" });
+        const response = await apiFetch(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`, { method: "DELETE" });
         if (!response.ok) throw new Error(await errorText(response, `Bucket delete failed (${response.status})`));
       }
       setObjectStorageBuckets((current) => current.filter((item) => item.id !== bucket.id));

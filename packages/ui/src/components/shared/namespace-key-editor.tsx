@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react";
-import { fetchJSON } from "../../app/api";
+import { apiFetch, fetchJSON } from "../../app/api";
 import type { KVNamespaceOption, WorkerKVKey } from "../../app/types";
 import { formatBytes } from "../../app/utils";
 import { Input } from "../ui/input";
@@ -61,7 +61,7 @@ export function NamespaceKeyEditor({
     setStatus("");
     try {
       setKey(nextKey);
-      const response = await fetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`);
+      const response = await apiFetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`);
       if (response.status === 404) {
         setValue("");
         setStatus("Key not found");
@@ -86,7 +86,7 @@ export function NamespaceKeyEditor({
     setLoading(true);
     setStatus("");
     try {
-      const response = await fetch(path, { method: "PUT", body: value });
+      const response = await apiFetch(path, { method: "PUT", body: value });
       if (!response.ok) throw new Error(`KV write failed (${response.status})`);
       setStatus("Value saved");
       setKeys(await fetchJSON<WorkerKVKey[]>(namespaceBase));
@@ -103,7 +103,7 @@ export function NamespaceKeyEditor({
     setLoading(true);
     setStatus("");
     try {
-      const response = await fetch(path, { method: "DELETE" });
+      const response = await apiFetch(path, { method: "DELETE" });
       if (!response.ok) throw new Error(`KV delete failed (${response.status})`);
       setValue("");
       setStatus("Key deleted");

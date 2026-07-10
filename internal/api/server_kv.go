@@ -22,7 +22,7 @@ func (s *Server) registerKVRoutes() {
 }
 
 func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {
-	keys, err := s.service.WorkerKVList(r.PathValue("appID"), r.PathValue("namespaceID"))
+	keys, err := s.service.WorkerKVListForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -40,7 +40,7 @@ func (s *Server) workerKVGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	value, ok, err := s.service.WorkerKVGet(r.PathValue("appID"), r.PathValue("namespaceID"), key)
+	value, ok, err := s.service.WorkerKVGetForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"), key)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -70,7 +70,7 @@ func (s *Server) workerKVPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, errors.New("KV value exceeds 25 MiB limit"))
 		return
 	}
-	if err := s.service.WorkerKVPut(r.PathValue("appID"), r.PathValue("namespaceID"), key, value); err != nil {
+	if err := s.service.WorkerKVPutForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"), key, value); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -83,15 +83,15 @@ func (s *Server) workerKVDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.WorkerKVDelete(r.PathValue("appID"), r.PathValue("namespaceID"), key); err != nil {
+	if err := s.service.WorkerKVDeleteForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"), key); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listKVNamespaces(w http.ResponseWriter, _ *http.Request) {
-	namespaces, err := s.service.ListKVNamespaces()
+func (s *Server) listKVNamespaces(w http.ResponseWriter, r *http.Request) {
+	namespaces, err := s.service.ListKVNamespacesForOrg(controlOrgID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -105,6 +105,7 @@ func (s *Server) createKVNamespace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	input.OrgID = controlOrgID(r)
 	namespace, err := s.service.CreateKVNamespace(input)
 	if err != nil {
 		writeWorkerError(w, err)
@@ -114,7 +115,7 @@ func (s *Server) createKVNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getKVNamespace(w http.ResponseWriter, r *http.Request) {
-	namespace, err := s.service.GetKVNamespace(r.PathValue("namespaceID"))
+	namespace, err := s.service.GetKVNamespaceForOrg(controlOrgID(r), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -128,7 +129,7 @@ func (s *Server) updateKVNamespace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	namespace, err := s.service.UpdateKVNamespace(r.PathValue("namespaceID"), input)
+	namespace, err := s.service.UpdateKVNamespaceForOrg(controlOrgID(r), r.PathValue("namespaceID"), input)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -137,7 +138,7 @@ func (s *Server) updateKVNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteKVNamespace(w http.ResponseWriter, r *http.Request) {
-	if err := s.service.DeleteKVNamespace(r.PathValue("namespaceID")); err != nil {
+	if err := s.service.DeleteKVNamespaceForOrg(controlOrgID(r), r.PathValue("namespaceID")); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -145,7 +146,7 @@ func (s *Server) deleteKVNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) kvNamespaceMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics, err := s.service.KVNamespaceMetrics(r.PathValue("namespaceID"))
+	metrics, err := s.service.KVNamespaceMetricsForOrg(controlOrgID(r), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return

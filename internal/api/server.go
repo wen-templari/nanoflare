@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -14,6 +15,7 @@ type Server struct {
 	traefik      TraefikConfigReader
 	traefikToken string
 	auth         Authenticator
+	controlAuth  *nanoflare.ControlAuthService
 	mux          *http.ServeMux
 }
 
@@ -57,7 +59,20 @@ func NewServerWithAuth(service *nanoflare.Service, traefik TraefikConfigReader, 
 	return server
 }
 
+func NewServerWithControlAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService) *Server {
+	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, controlAuth: controlAuth, mux: http.NewServeMux()}
+	server.routes()
+	return server
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.controlAuth != nil && strings.HasPrefix(r.URL.Path, "/v1/") && !isPublicControlPath(r.URL.Path) {
+		next, ok := s.authenticateControlRequest(w, r)
+		if !ok {
+			return
+		}
+		r = next
+	}
 	s.mux.ServeHTTP(w, r)
 }
 
@@ -70,5 +85,8 @@ func (s *Server) routes() {
 	s.registerKVRoutes()
 	s.registerObjectRoutes()
 	s.registerAuthRoutes()
+	if s.controlAuth != nil {
+		s.registerControlAuthRoutes()
+	}
 	s.registerInternalRoutes()
 }

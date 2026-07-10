@@ -92,6 +92,14 @@ export type KVNamespaceMetrics = { available: boolean; reads: number; writes: nu
 export type ObjectStorageBucketMetrics = { available: boolean; reads: number; writes: number; size: number };
 
 export type KVNamespace = { id: string; name: string; created_at: string };
+export type Organization = { id: string; name: string; created_at: string };
+export type ControlUser = { id: string; email: string; created_at: string };
+export type AuthSession = {
+  token: string;
+  user: ControlUser;
+  organizations: Organization[];
+  active_org_id?: string;
+};
 export type KVNamespaceOption = { id: string; label: string };
 export type ObjectStorageBucketOption = { id: string; label: string };
 
@@ -103,6 +111,10 @@ export type WorkspaceContextValue = {
   objectStorageBuckets: ObjectStorageBucket[];
   setObjectStorageBuckets: Dispatch<SetStateAction<ObjectStorageBucket[]>>;
   apiConnected: boolean;
+  activeOrgID: string;
+  organizations: Organization[];
+  setActiveOrgID: (orgID: string) => void;
+  logout: () => void;
   workerDialogOpen: boolean;
   namespaceDialogOpen: boolean;
   objectStorageBucketDialogOpen: boolean;

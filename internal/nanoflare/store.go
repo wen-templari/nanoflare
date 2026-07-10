@@ -20,20 +20,35 @@ var (
 	ErrObjectStorageBucketInUse    = errors.New("object storage bucket is still referenced by a deployment")
 	ErrObjectStorageBucketNotBound = errors.New("object storage bucket is not bound by the app's active deployment")
 	ErrSecretNotFound              = errors.New("secret not found")
+	ErrUserExists                  = errors.New("user already exists")
+	ErrUserNotFound                = errors.New("user not found")
+	ErrOrganizationExists          = errors.New("organization already exists")
+	ErrOrganizationNotFound        = errors.New("organization not found")
+	ErrMembershipNotFound          = errors.New("user is not a member of the organization")
 )
 
 type Repository interface {
+	CreateUser(User) error
+	UserByEmail(string) (User, error)
+	UserCount() (int, error)
+	CreateOrganization(Organization) error
+	AddUserToOrganization(userID, orgID string) error
+	ListOrganizationsForUser(userID string) ([]Organization, error)
+	UserBelongsToOrganization(userID, orgID string) (bool, error)
 	CreateApp(App) error
 	ListApps() ([]App, error)
+	ListAppsByOrg(string) ([]App, error)
 	UpdateApp(App) error
 	DeleteApp(string) error
 	CreateKVNamespace(KVNamespace) error
 	ListKVNamespaces() ([]KVNamespace, error)
+	ListKVNamespacesByOrg(string) ([]KVNamespace, error)
 	GetKVNamespace(string) (KVNamespace, error)
 	UpdateKVNamespace(KVNamespace) error
 	DeleteKVNamespace(string) error
 	CreateObjectStorageBucket(ObjectStorageBucket) error
 	ListObjectStorageBuckets() ([]ObjectStorageBucket, error)
+	ListObjectStorageBucketsByOrg(string) ([]ObjectStorageBucket, error)
 	GetObjectStorageBucket(string) (ObjectStorageBucket, error)
 	UpdateObjectStorageBucket(ObjectStorageBucket) error
 	DeleteObjectStorageBucket(string) error
@@ -62,6 +77,10 @@ type Repository interface {
 
 type Store struct {
 	mu              sync.RWMutex
+	users           map[string]User
+	usersByEmail    map[string]string
+	organizations   map[string]Organization
+	memberships     map[string]map[string]bool
 	apps            map[string]App
 	kvNamespaces    map[string]KVNamespace
 	objectBuckets   map[string]ObjectStorageBucket
@@ -76,6 +95,10 @@ type Store struct {
 
 func NewStore() *Store {
 	return &Store{
+		users:           make(map[string]User),
+		usersByEmail:    make(map[string]string),
+		organizations:   make(map[string]Organization),
+		memberships:     make(map[string]map[string]bool),
 		apps:            make(map[string]App),
 		kvNamespaces:    make(map[string]KVNamespace),
 		objectBuckets:   make(map[string]ObjectStorageBucket),
@@ -87,6 +110,85 @@ func NewStore() *Store {
 		kvMetrics:       make(map[string]KVNamespaceMetrics),
 		objectMetrics:   make(map[string]ObjectStorageBucketMetrics),
 	}
+}
+
+func (s *Store) CreateUser(user User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[user.ID]; exists {
+		return ErrUserExists
+	}
+	if _, exists := s.usersByEmail[user.Email]; exists {
+		return ErrUserExists
+	}
+	s.users[user.ID] = user
+	s.usersByEmail[user.Email] = user.ID
+	return nil
+}
+
+func (s *Store) UserByEmail(email string) (User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, exists := s.usersByEmail[email]
+	if !exists {
+		return User{}, ErrUserNotFound
+	}
+	return s.users[id], nil
+}
+
+func (s *Store) UserCount() (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.users), nil
+}
+
+func (s *Store) CreateOrganization(org Organization) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.organizations[org.ID]; exists {
+		return ErrOrganizationExists
+	}
+	s.organizations[org.ID] = org
+	return nil
+}
+
+func (s *Store) AddUserToOrganization(userID, orgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[userID]; !exists {
+		return ErrUserNotFound
+	}
+	if _, exists := s.organizations[orgID]; !exists {
+		return ErrOrganizationNotFound
+	}
+	if s.memberships[userID] == nil {
+		s.memberships[userID] = make(map[string]bool)
+	}
+	s.memberships[userID][orgID] = true
+	return nil
+}
+
+func (s *Store) ListOrganizationsForUser(userID string) ([]Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, exists := s.users[userID]; !exists {
+		return nil, ErrUserNotFound
+	}
+	orgs := make([]Organization, 0, len(s.memberships[userID]))
+	for orgID := range s.memberships[userID] {
+		orgs = append(orgs, s.organizations[orgID])
+	}
+	sort.Slice(orgs, func(i, j int) bool { return orgs[i].Name < orgs[j].Name })
+	return orgs, nil
+}
+
+func (s *Store) UserBelongsToOrganization(userID, orgID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, exists := s.users[userID]; !exists {
+		return false, ErrUserNotFound
+	}
+	return s.memberships[userID][orgID], nil
 }
 
 func (s *Store) CreateApp(app App) error {
@@ -106,10 +208,17 @@ func (s *Store) CreateApp(app App) error {
 }
 
 func (s *Store) ListApps() ([]App, error) {
+	return s.ListAppsByOrg("")
+}
+
+func (s *Store) ListAppsByOrg(orgID string) ([]App, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	apps := make([]App, 0, len(s.apps))
 	for _, app := range s.apps {
+		if orgID != "" && app.OrgID != orgID {
+			continue
+		}
 		apps = append(apps, app)
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
@@ -156,7 +265,7 @@ func (s *Store) CreateKVNamespace(namespace KVNamespace) error {
 		return ErrKVNamespaceExists
 	}
 	for _, existing := range s.kvNamespaces {
-		if existing.Name == namespace.Name {
+		if existing.Name == namespace.Name && existing.OrgID == namespace.OrgID {
 			return ErrKVNamespaceExists
 		}
 	}
@@ -165,10 +274,17 @@ func (s *Store) CreateKVNamespace(namespace KVNamespace) error {
 }
 
 func (s *Store) ListKVNamespaces() ([]KVNamespace, error) {
+	return s.ListKVNamespacesByOrg("")
+}
+
+func (s *Store) ListKVNamespacesByOrg(orgID string) ([]KVNamespace, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	namespaces := make([]KVNamespace, 0, len(s.kvNamespaces))
 	for _, namespace := range s.kvNamespaces {
+		if orgID != "" && namespace.OrgID != orgID {
+			continue
+		}
 		namespaces = append(namespaces, namespace)
 	}
 	sort.Slice(namespaces, func(i, j int) bool { return namespaces[i].Name < namespaces[j].Name })
@@ -193,10 +309,11 @@ func (s *Store) UpdateKVNamespace(namespace KVNamespace) error {
 		return ErrKVNamespaceNotFound
 	}
 	for _, candidate := range s.kvNamespaces {
-		if candidate.ID != namespace.ID && candidate.Name == namespace.Name {
+		if candidate.ID != namespace.ID && candidate.Name == namespace.Name && candidate.OrgID == namespace.OrgID {
 			return ErrKVNamespaceExists
 		}
 	}
+	namespace.OrgID = existing.OrgID
 	namespace.CreatedAt = existing.CreatedAt
 	s.kvNamespaces[namespace.ID] = namespace
 	return nil
@@ -230,7 +347,7 @@ func (s *Store) CreateObjectStorageBucket(bucket ObjectStorageBucket) error {
 		return ErrObjectStorageBucketExists
 	}
 	for _, existing := range s.objectBuckets {
-		if existing.Name == bucket.Name {
+		if existing.Name == bucket.Name && existing.OrgID == bucket.OrgID {
 			return ErrObjectStorageBucketExists
 		}
 	}
@@ -239,10 +356,17 @@ func (s *Store) CreateObjectStorageBucket(bucket ObjectStorageBucket) error {
 }
 
 func (s *Store) ListObjectStorageBuckets() ([]ObjectStorageBucket, error) {
+	return s.ListObjectStorageBucketsByOrg("")
+}
+
+func (s *Store) ListObjectStorageBucketsByOrg(orgID string) ([]ObjectStorageBucket, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	buckets := make([]ObjectStorageBucket, 0, len(s.objectBuckets))
 	for _, bucket := range s.objectBuckets {
+		if orgID != "" && bucket.OrgID != orgID {
+			continue
+		}
 		buckets = append(buckets, bucket)
 	}
 	sort.Slice(buckets, func(i, j int) bool { return buckets[i].Name < buckets[j].Name })
@@ -267,10 +391,11 @@ func (s *Store) UpdateObjectStorageBucket(bucket ObjectStorageBucket) error {
 		return ErrObjectStorageBucketNotFound
 	}
 	for _, candidate := range s.objectBuckets {
-		if candidate.ID != bucket.ID && candidate.Name == bucket.Name {
+		if candidate.ID != bucket.ID && candidate.Name == bucket.Name && candidate.OrgID == bucket.OrgID {
 			return ErrObjectStorageBucketExists
 		}
 	}
+	bucket.OrgID = existing.OrgID
 	bucket.CreatedAt = existing.CreatedAt
 	s.objectBuckets[bucket.ID] = bucket
 	return nil

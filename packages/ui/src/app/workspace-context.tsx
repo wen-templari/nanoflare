@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { useAuth } from "./auth-context";
 import { fetchJSON } from "./api";
 import type { KVNamespace, ObjectStorageBucket, Worker, WorkerDetailData, WorkerTraffic, WorkspaceContextValue } from "./types";
 import { sortNamespaces, sortObjectStorageBuckets } from "./utils";
@@ -6,6 +7,7 @@ import { sortNamespaces, sortObjectStorageBuckets } from "./utils";
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
+  const auth = useAuth();
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [namespaces, setNamespaces] = useState<KVNamespace[]>([]);
   const [objectStorageBuckets, setObjectStorageBuckets] = useState<ObjectStorageBucket[]>([]);
@@ -20,6 +22,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     async function refreshWorkspace() {
       try {
+        if (!auth.activeOrgID) return;
         const [apps, kvNamespaces, buckets] = await Promise.all([
           fetchJSON<Worker[] | null>("/v1/apps"),
           fetchJSON<KVNamespace[] | null>("/v1/kv/namespaces"),
@@ -62,7 +65,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, []);
+  }, [auth.activeOrgID]);
 
   function notify(message: string) {
     setToast(message);
@@ -79,6 +82,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         objectStorageBuckets,
         setObjectStorageBuckets,
         apiConnected,
+        activeOrgID: auth.activeOrgID,
+        organizations: auth.organizations,
+        setActiveOrgID: auth.setActiveOrgID,
+        logout: auth.logout,
         workerDialogOpen,
         namespaceDialogOpen,
         objectStorageBucketDialogOpen,

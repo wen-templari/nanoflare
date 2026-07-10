@@ -9,6 +9,7 @@ import (
 
 type App struct {
 	ID           string            `json:"id"`
+	OrgID        string            `json:"org_id,omitempty"`
 	Name         string            `json:"name"`
 	Hostname     string            `json:"hostname"`
 	Auth         AuthConfig        `json:"auth,omitempty"`
@@ -51,13 +52,15 @@ type DeploymentRecord struct {
 }
 
 type CreateAppInput struct {
+	OrgID    string     `json:"-"`
 	Name     string     `json:"name"`
 	Hostname string     `json:"hostname"`
 	Auth     AuthConfig `json:"auth,omitempty"`
 }
 
 type CreateKVNamespaceInput struct {
-	Name string `json:"name"`
+	OrgID string `json:"-"`
+	Name  string `json:"name"`
 }
 
 type UpdateKVNamespaceInput struct {
@@ -65,7 +68,8 @@ type UpdateKVNamespaceInput struct {
 }
 
 type CreateObjectStorageBucketInput struct {
-	Name string `json:"name"`
+	OrgID string `json:"-"`
+	Name  string `json:"name"`
 }
 
 type UpdateObjectStorageBucketInput struct {
@@ -202,11 +206,26 @@ func (d *DeployInput) UnmarshalJSON(data []byte) error {
 
 type KVNamespace struct {
 	ID        string    `json:"id"`
+	OrgID     string    `json:"org_id,omitempty"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 type ObjectStorageBucket struct {
+	ID        string    `json:"id"`
+	OrgID     string    `json:"org_id,omitempty"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type User struct {
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash []byte    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type Organization struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
