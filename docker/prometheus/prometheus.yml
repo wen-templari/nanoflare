@@ -6,3 +6,7 @@ scrape_configs:
     static_configs:
       - targets:
           - traefik:8080
+  - job_name: nanoflared
+    static_configs:
+      - targets:
+          - nanoflared:8080

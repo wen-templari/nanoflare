@@ -27,10 +27,60 @@ services:
     volumes:
       - minio-data:/data
 
+  nanoflared:
+    image: ghcr.io/wen-templari/nanoflared:${NANOFLARE_IMAGE_TAG:-latest}
+    command:
+      - -addr=:8080
+      - -runtime-addr=:8081
+      - -config-dir=/var/lib/nanoflare/generated
+      - -auth-url=http://nanoflared:8080/internal/auth/verify
+      - -worker-host=nanoflare-runner
+      - -prometheus-url=http://prometheus:9090
+      - -runner-url=http://nanoflare-runner:8090
+    environment:
+      DATABASE_URL: postgres://nanoflare:nanoflare-development@postgres:5432/nanoflare?sslmode=disable
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: nanoflare
+      MINIO_SECRET_KEY: nanoflare-development
+      MINIO_BUCKET: ${MINIO_BUCKET:-nanoflare}
+      MINIO_SECURE: "false"
+      NANOFLARE_BASE_HOSTNAME: ${NANOFLARE_BASE_HOSTNAME:-workers.example.test}
+      NANOFLARE_TRAEFIK_TOKEN: ${NANOFLARE_TRAEFIK_TOKEN:-nanoflare-development}
+      NANOFLARE_RUNNER_TOKEN: ${NANOFLARE_RUNNER_TOKEN:-nanoflare-development}
+      NANOFLARE_SECRET_KEY: ${NANOFLARE_SECRET_KEY:-}
+      NANOFLARE_OIDC_ISSUER: ${NANOFLARE_OIDC_ISSUER:-}
+      NANOFLARE_OIDC_AUDIENCE: ${NANOFLARE_OIDC_AUDIENCE:-}
+      NANOFLARE_OIDC_CLIENT_ID: ${NANOFLARE_OIDC_CLIENT_ID:-}
+      NANOFLARE_OIDC_CLIENT_SECRET: ${NANOFLARE_OIDC_CLIENT_SECRET:-}
+      NANOFLARE_OIDC_PUBLIC_URL: ${NANOFLARE_OIDC_PUBLIC_URL:-}
+      NANOFLARE_OIDC_COOKIE_DOMAIN: ${NANOFLARE_OIDC_COOKIE_DOMAIN:-}
+      NANOFLARE_OIDC_EMAIL_CLAIM: ${NANOFLARE_OIDC_EMAIL_CLAIM:-email}
+    ports:
+      - "8080:8080"
+    volumes:
+      - nanoflared-data:/var/lib/nanoflare/generated
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      nanoflare-runner:
+        condition: service_started
+
+  nanoflare-runner:
+    image: ghcr.io/wen-templari/nanoflare-runner:${NANOFLARE_IMAGE_TAG:-latest}
+    command:
+      - -addr=:8090
+      - -config-dir=/var/lib/nanoflare/runner
+      - -runtime-port-host=nanoflare-runner
+      - -nanoflare-runtime-addr=nanoflared:8081
+    environment:
+      NANOFLARE_RUNNER_TOKEN: ${NANOFLARE_RUNNER_TOKEN:-nanoflare-development}
+    volumes:
+      - nanoflare-runner-data:/var/lib/nanoflare/runner
+
   traefik:
     image: traefik:v3.4
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command:
       - --api.insecure=true
       - --entrypoints.web.address=:80
@@ -38,13 +88,16 @@ services:
       - --metrics.prometheus=true
       - --metrics.prometheus.addrouterslabels=true
       - --metrics.prometheus.addserviceslabels=true
-      - --providers.http.endpoint=http://host.docker.internal:8080/internal/traefik/config
+      - --providers.http.endpoint=http://nanoflared:8080/internal/traefik/config
       - --providers.http.pollInterval=1s
       - --providers.http.headers.Authorization=Bearer ${NANOFLARE_TRAEFIK_TOKEN:-nanoflare-development}
     ports:
       - "8088:80"
       - "8443:443"
       - "8089:8080"
+    depends_on:
+      nanoflared:
+        condition: service_started
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -62,4 +115,6 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  nanoflared-data:
+  nanoflare-runner-data:
   prometheus-data:

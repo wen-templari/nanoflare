@@ -14,6 +14,7 @@ func (s *Server) registerKVRoutes() {
 	s.mux.HandleFunc("GET /v1/kv/namespaces/{namespaceID}", s.getKVNamespace)
 	s.mux.HandleFunc("PATCH /v1/kv/namespaces/{namespaceID}", s.updateKVNamespace)
 	s.mux.HandleFunc("DELETE /v1/kv/namespaces/{namespaceID}", s.deleteKVNamespace)
+	s.mux.HandleFunc("GET /v1/kv/namespaces/{namespaceID}/metrics", s.kvNamespaceMetrics)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/namespaces/{namespaceID}", s.workerKVList)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVGet)
 	s.mux.HandleFunc("PUT /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVPut)
@@ -141,6 +142,15 @@ func (s *Server) deleteKVNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) kvNamespaceMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics, err := s.service.KVNamespaceMetrics(r.PathValue("namespaceID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
 }
 
 func consoleKVKey(r *http.Request) (string, error) {

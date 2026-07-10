@@ -1,8 +1,8 @@
 import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
-import { Archive, ArrowDownToLine, ArrowLeft, DatabaseZap, FileJson, FileText, Globe2, RefreshCw, Search, Trash2, Upload, Waypoints } from "lucide-react";
+import { Archive, ArrowDownToLine, ArrowLeft, BookOpen, DatabaseZap, FileJson, FileText, Globe2, HardDrive, RefreshCw, Search, Trash2, Upload, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { errorText, fetchJSON } from "../app/api";
-import type { ObjectStorageObject } from "../app/types";
+import type { ObjectStorageBucketMetrics, ObjectStorageObject } from "../app/types";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
@@ -42,6 +42,7 @@ function ObjectStorageBucketDetailContent({
   const [preview, setPreview] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [metrics, setMetrics] = useState<ObjectStorageBucketMetrics>({ available: false, reads: 0, writes: 0, size: 0 });
   const bindings = workers.flatMap((worker) =>
     (worker.bindings ?? [])
       .filter((binding) => binding.kind === "object_storage_bucket" && binding.bucket_id === bucket.id)
@@ -57,6 +58,24 @@ function ObjectStorageBucketDetailContent({
   useEffect(() => {
     setAccessorWorkerID((current) => current && accessorWorkers.some((worker) => worker.id === current) ? current : (accessorWorkers[0]?.id ?? ""));
   }, [accessorWorkers]);
+
+  useEffect(() => {
+    if (!apiConnected) {
+      setMetrics({ available: false, reads: 0, writes: 0, size: 0 });
+      return;
+    }
+    let cancelled = false;
+    async function loadMetrics() {
+      const nextMetrics = await fetchJSON<ObjectStorageBucketMetrics>(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}/metrics`).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }));
+      if (!cancelled) setMetrics(nextMetrics);
+    }
+    void loadMetrics();
+    const interval = window.setInterval(() => void loadMetrics(), 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [apiConnected, bucket.id]);
 
   const basePath = accessorWorkerID ? `/v1/apps/${accessorWorkerID}/object-storage-buckets/${encodeURIComponent(bucket.id)}` : "";
   const filteredObjects = objects.filter((item) => item.key.toLowerCase().includes(deferredSearch.trim().toLowerCase()));
@@ -223,6 +242,9 @@ function ObjectStorageBucketDetailContent({
   }
 
   const cards = [
+    { label: "Reads", value: compactNumber(metrics.reads), note: metrics.available ? "runtime object reads" : "metrics unavailable", icon: BookOpen },
+    { label: "Writes", value: compactNumber(metrics.writes), note: metrics.available ? "runtime object writes" : "metrics unavailable", icon: Workflow },
+    { label: "Size", value: formatBytes(metrics.size), note: metrics.available ? "stored object bytes" : "metrics unavailable", icon: HardDrive },
     { label: "Bindings", value: String(bindings.length), note: "active bucket references", icon: Waypoints },
     { label: "Workers", value: String(accessorWorkers.length), note: "workers with live access", icon: Globe2 },
     { label: "Objects", value: String(objects.length), note: "objects currently listed", icon: DatabaseZap },
@@ -242,7 +264,7 @@ function ObjectStorageBucketDetailContent({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="paper-panel animate-rise rounded-lg border border-[#dcd6ca] bg-[#fbf9f3]/85 p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px]   text-[#90958e]">{label}</p><Icon className="size-3.5 text-[#d75a41]" /></div><p className="mt-3  text-3xl ">{value}</p><p className="mt-1 font-mono text-[9px]   text-[#999d97]">{note}</p></div>)}
       </div>
 
@@ -350,4 +372,8 @@ function ObjectStorageBucketDetailContent({
       </section>
     </>
   );
+}
+
+function compactNumber(value: number) {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
 }

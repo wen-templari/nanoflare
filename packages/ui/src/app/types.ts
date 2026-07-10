@@ -81,9 +81,15 @@ export type WorkerTraffic = {
   requests_per_second: number;
   p95_latency: number;
   error_rate: number;
+  invocations: number;
+  errors: number;
+  bundle_size: number;
   traffic: number[];
   status_codes: { code: string; value: number }[];
 };
+
+export type KVNamespaceMetrics = { available: boolean; reads: number; writes: number };
+export type ObjectStorageBucketMetrics = { available: boolean; reads: number; writes: number; size: number };
 
 export type KVNamespace = { id: string; name: string; created_at: string };
 export type KVNamespaceOption = { id: string; label: string };

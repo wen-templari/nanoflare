@@ -39,8 +39,11 @@ func TestTrafficQueriesRouterMetrics(t *testing.T) {
 	if len(traffic.Traffic) != 2 || traffic.Traffic[1] != 3.5 || len(traffic.StatusCodes) != 2 {
 		t.Fatalf("unexpected traffic series: %#v", traffic)
 	}
-	if len(queries) != 5 {
-		t.Fatalf("got %d queries, want 5", len(queries))
+	if traffic.Invocations != 4 || traffic.Errors != 0.25 {
+		t.Fatalf("unexpected traffic totals: %#v", traffic)
+	}
+	if len(queries) != 7 {
+		t.Fatalf("got %d queries, want 7", len(queries))
 	}
 	for _, query := range queries {
 		if !strings.Contains(query, `router=~"integration@(http|file)"`) {

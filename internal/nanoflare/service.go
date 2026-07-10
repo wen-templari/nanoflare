@@ -488,13 +488,25 @@ func (s *Service) WorkerOutput(appID string) ([]WorkerOutputLine, error) {
 }
 
 func (s *Service) WorkerTraffic(appID string) (WorkerTraffic, error) {
-	if _, _, err := s.worker(appID); err != nil {
+	_, active, err := s.worker(appID)
+	if err != nil {
 		return WorkerTraffic{}, err
 	}
 	if s.traffic == nil {
-		return WorkerTraffic{}, nil
+		traffic := WorkerTraffic{}
+		if active != nil {
+			traffic.BundleSize = active.Deployment.BundleSize
+		}
+		return traffic, nil
 	}
-	return s.traffic.Traffic(appID)
+	traffic, err := s.traffic.Traffic(appID)
+	if err != nil {
+		return WorkerTraffic{}, err
+	}
+	if active != nil {
+		traffic.BundleSize = active.Deployment.BundleSize
+	}
+	return traffic, nil
 }
 
 func (s *Service) worker(appID string) (App, *ActiveDeployment, error) {
@@ -1167,7 +1179,18 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return err
 	}
-	return s.objects.Delete(appID, objectStorageBucketPath(bucketID, objectPath))
+	storedPath := objectStorageBucketPath(bucketID, objectPath)
+	existing, err := s.objects.Head(appID, storedPath)
+	if err != nil && !errors.Is(err, ErrObjectNotFound) {
+		return err
+	}
+	if err := s.objects.Delete(appID, storedPath); err != nil {
+		return err
+	}
+	if !errors.Is(err, ErrObjectNotFound) {
+		_ = s.store.AdjustObjectStorageBucketSize(bucketID, -existing.Size)
+	}
+	return nil
 }
 
 func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
@@ -1178,10 +1201,18 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return ObjectInfo{}, err
 	}
-	object, err := s.objects.Put(appID, objectStorageBucketPath(bucketID, objectPath), contentType, data)
+	storedPath := objectStorageBucketPath(bucketID, objectPath)
+	var previousSize int64
+	if existing, err := s.objects.Head(appID, storedPath); err == nil {
+		previousSize = existing.Size
+	} else if !errors.Is(err, ErrObjectNotFound) {
+		return ObjectInfo{}, err
+	}
+	object, err := s.objects.Put(appID, storedPath, contentType, data)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	_ = s.store.AdjustObjectStorageBucketSize(bucketID, object.Size-previousSize)
 	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, nil
 }
@@ -1342,6 +1373,67 @@ func (s *Service) WorkerObjectDelete(appID, bucketID, key string) error {
 		return err
 	}
 	return s.DeleteObject(app.RuntimeToken, bucketID, key)
+}
+
+func (s *Service) KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error) {
+	return s.store.KVNamespaceMetrics(namespaceID)
+}
+
+func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
+	metrics, err := s.store.ObjectStorageBucketMetrics(bucketID)
+	if err != nil {
+		return ObjectStorageBucketMetrics{}, err
+	}
+	if metrics.Size != 0 || s.objects == nil {
+		return metrics, nil
+	}
+	size, ok, err := s.reconcileObjectStorageBucketSize(bucketID)
+	if err != nil || !ok {
+		return metrics, err
+	}
+	_ = s.store.AdjustObjectStorageBucketSize(bucketID, size-metrics.Size)
+	metrics.Size = size
+	return metrics, nil
+}
+
+func (s *Service) RecordRuntimeKVRead(namespaceID string) error {
+	return s.store.IncrementKVNamespaceReads(namespaceID)
+}
+
+func (s *Service) RecordRuntimeKVWrite(namespaceID string) error {
+	return s.store.IncrementKVNamespaceWrites(namespaceID)
+}
+
+func (s *Service) RecordRuntimeObjectRead(bucketID string) error {
+	return s.store.IncrementObjectStorageBucketReads(bucketID)
+}
+
+func (s *Service) RecordRuntimeObjectWrite(bucketID string) error {
+	return s.store.IncrementObjectStorageBucketWrites(bucketID)
+}
+
+func (s *Service) reconcileObjectStorageBucketSize(bucketID string) (int64, bool, error) {
+	active, err := s.activeDeployments()
+	if err != nil {
+		return 0, false, err
+	}
+	for _, item := range active {
+		for _, binding := range item.Deployment.ObjectStorageBuckets {
+			if binding.BucketID != bucketID {
+				continue
+			}
+			objects, err := s.ObjectList(item.App.RuntimeToken, bucketID)
+			if err != nil {
+				return 0, false, err
+			}
+			var size int64
+			for _, object := range objects {
+				size += object.Size
+			}
+			return size, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 func (s *Service) ensureActiveDeploymentBindsNamespace(appID, namespaceID string) error {

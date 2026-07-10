@@ -24,6 +24,7 @@ func (s *Server) registerObjectRoutes() {
 	s.mux.HandleFunc("GET /v1/object-storage-buckets/{bucketID}", s.getObjectStorageBucket)
 	s.mux.HandleFunc("PATCH /v1/object-storage-buckets/{bucketID}", s.updateObjectStorageBucket)
 	s.mux.HandleFunc("DELETE /v1/object-storage-buckets/{bucketID}", s.deleteObjectStorageBucket)
+	s.mux.HandleFunc("GET /v1/object-storage-buckets/{bucketID}/metrics", s.objectStorageBucketMetrics)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/object-storage-buckets/{bucketID}", s.workerObjectList)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectGet)
 	s.mux.HandleFunc("PUT /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectPut)
@@ -176,6 +177,15 @@ func (s *Server) deleteObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) objectStorageBucketMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics, err := s.service.ObjectStorageBucketMetrics(r.PathValue("bucketID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 func runtimeObjectKey(r *http.Request) (string, error) {
 	key, err := url.PathUnescape(r.PathValue("key"))
 	if err != nil {
@@ -243,6 +253,7 @@ func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	_ = s.service.RecordRuntimeObjectRead(bucketID)
 	writeRuntimeObjectHeaders(w.Header(), object.ObjectInfo)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(object.Body)
@@ -268,6 +279,7 @@ func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	_ = s.service.RecordRuntimeObjectRead(bucketID)
 	writeRuntimeObjectHeaders(w.Header(), object)
 	w.WriteHeader(http.StatusOK)
 }
@@ -294,6 +306,7 @@ func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
 		writeRuntimeError(w, err)
 		return
 	}
+	_ = s.service.RecordRuntimeObjectWrite(bucketID)
 	writeJSON(w, http.StatusOK, object)
 }
 
@@ -312,6 +325,7 @@ func (s *Server) runtimeObjectDelete(w http.ResponseWriter, r *http.Request) {
 		writeRuntimeError(w, err)
 		return
 	}
+	_ = s.service.RecordRuntimeObjectWrite(bucketID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -363,5 +377,6 @@ func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request) {
 		writeRuntimeError(w, err)
 		return
 	}
+	_ = s.service.RecordRuntimeObjectWrite(input.BucketID)
 	w.WriteHeader(http.StatusNoContent)
 }

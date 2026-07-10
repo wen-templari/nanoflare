@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
-  Archive, ArrowLeft, Copy, FileCode2, FileJson, Folder,
+  Activity, AlertTriangle, Archive, ArrowLeft, Copy, FileCode2, FileJson, Folder,
   GitBranch, Globe2, Save, SlidersHorizontal, Terminal,
 } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
@@ -40,7 +40,7 @@ function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker:
   const [deployments, setDeployments] = useState<ConsoleDeployment[]>([])
   const [selectedFile, setSelectedFile] = useState<WorkerFile>()
   const [output, setOutput] = useState<WorkerOutputLine[]>([])
-  const [traffic, setTraffic] = useState<WorkerTraffic>({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] })
+  const [traffic, setTraffic] = useState<WorkerTraffic>({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, invocations: 0, errors: 0, bundle_size: 0, traffic: [], status_codes: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
@@ -53,7 +53,7 @@ function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker:
         setFiles([])
         setDeployments([])
         setOutput([])
-        setTraffic({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] })
+        setTraffic({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, invocations: 0, errors: 0, bundle_size: 0, traffic: [], status_codes: [] })
         setError("Worker detail API unavailable")
         setLoading(false)
         return
@@ -64,7 +64,7 @@ function WorkerDetailContent({ worker, onBack, notify, apiConnected }: { worker:
         fetchJSON<WorkerFile[]>(`/v1/apps/${worker.id}/files`).catch(() => []),
         fetchJSON<ConsoleDeployment[]>(`/v1/apps/${worker.id}/deployments`).catch(() => []),
         fetchJSON<WorkerOutputLine[]>(`/v1/apps/${worker.id}/output`).catch(() => []),
-        fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`).catch(() => ({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, traffic: [], status_codes: [] })),
+        fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`).catch(() => ({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, invocations: 0, errors: 0, bundle_size: 0, traffic: [], status_codes: [] })),
       ])
       if (cancelled) return
       setDetail(nextDetail)
@@ -172,6 +172,22 @@ function WorkerOverview({
         </section>
 
         <section className="grid gap-6 xl:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3 xl:col-span-2">
+            {[
+              { label: "Invocations", value: compactNumber(traffic.invocations), note: "routed worker requests", icon: Activity },
+              { label: "Errors", value: compactNumber(traffic.errors), note: "5xx responses", icon: AlertTriangle },
+              { label: "Bundle", value: formatBytes(traffic.bundle_size || deployment?.bundle_size || 0), note: "active deployment size", icon: FileCode2 },
+            ].map(({ label, value, note, icon: Icon }) => (
+              <div key={label} className="rounded-lg border border-[#e2ddd2] bg-white/45 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="font-mono text-[9px]   text-[#90958e]">{label}</p>
+                  <Icon className="size-3.5 text-[#d75a41]" />
+                </div>
+                <p className="mt-3 text-2xl font-extrabold text-[#26332f]">{value}</p>
+                <p className="mt-1 font-mono text-[9px]   text-[#999d97]">{note}</p>
+              </div>
+            ))}
+          </div>
           <Panel title="Worker traffic" eyebrow={traffic.available ? "Last 60 minutes" : "Prometheus unavailable"}>
             <MiniTrafficChart values={traffic.traffic} />
           </Panel>
@@ -261,6 +277,10 @@ function MiniTrafficChart({ values }: { values: number[] }) {
   const max = Math.max(...values, 0.01)
   if (!values.length) return <EmptyMetrics />
   return <><div className="flex h-32 items-end gap-1">{values.map((value, index) => <div key={index} title={`${value.toFixed(2)} requests/s`} className="flex-1 rounded-t-sm bg-[#bfd0c6] transition hover:bg-[#e25b3f]" style={{ height: `${Math.max((value / max) * 100, 2)}%` }} />)}</div><div className="mt-3 flex justify-between font-mono text-[9px] text-[#9ba09a]"><span>60 MIN AGO</span><span>NOW</span></div></>
+}
+
+function compactNumber(value: number) {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value || 0)
 }
 
 function WorkerDeploymentsTable({ deployments }: { deployments: ConsoleDeployment[] }) {

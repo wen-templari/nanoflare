@@ -65,6 +65,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	s.mux.HandleFunc("GET /metrics", s.prometheusMetrics)
 	s.registerAppRoutes()
 	s.registerKVRoutes()
 	s.registerObjectRoutes()

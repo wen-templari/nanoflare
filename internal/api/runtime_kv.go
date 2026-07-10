@@ -65,6 +65,7 @@ func (s *RuntimeKVServer) get(w http.ResponseWriter, r *http.Request, key string
 		http.NotFound(w, r)
 		return
 	}
+	_ = s.service.RecordRuntimeKVRead(namespaceID)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(value)
@@ -90,6 +91,7 @@ func (s *RuntimeKVServer) put(w http.ResponseWriter, r *http.Request, key string
 		writeRuntimeError(w, err)
 		return
 	}
+	_ = s.service.RecordRuntimeKVWrite(namespaceID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -103,6 +105,7 @@ func (s *RuntimeKVServer) delete(w http.ResponseWriter, r *http.Request, key str
 		writeRuntimeError(w, err)
 		return
 	}
+	_ = s.service.RecordRuntimeKVWrite(namespaceID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

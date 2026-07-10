@@ -3,13 +3,16 @@
 - Generate type from worker config file (https://developers.cloudflare.com/workers/languages/typescript/)
 - worker init
 
-## Metrics
-Worker
-- bundle size
-- cpu time
-- requests per second
-- request sub paths
+i want to add metrics data , similar to cloudflare worker, kv, store
 
+## Worker
+- invocations
+- errors
+- cpu time
+- bundle size
+- request sub paths
+- request status code
+- 
 KV
 - read/write
 

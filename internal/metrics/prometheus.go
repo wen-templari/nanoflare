@@ -53,6 +53,14 @@ func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
 	}
+	invocations, err := c.query(`sum(traefik_router_requests_total{` + selector + `})`)
+	if err != nil {
+		return nanoflare.WorkerTraffic{}, err
+	}
+	errorTotal, err := c.query(`sum(traefik_router_requests_total{` + selector + `,code=~"5.."})`)
+	if err != nil {
+		return nanoflare.WorkerTraffic{}, err
+	}
 	traffic, err := c.queryRange(`sum(rate(traefik_router_requests_total{` + selector + `}[5m]))`)
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
@@ -67,6 +75,8 @@ func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
 		RequestsPerSecond: requestRate,
 		P95Latency:        resultNumber(latency),
 		Traffic:           resultValues(traffic),
+		Invocations:       resultNumber(invocations),
+		Errors:            resultNumber(errorTotal),
 		StatusCodes:       make([]nanoflare.WorkerStatusCode, 0, len(statusCodes)),
 	}
 	if requestRate > 0 {

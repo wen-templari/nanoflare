@@ -1,8 +1,15 @@
 import type { KVNamespace, ObjectStorageBucket } from "./types";
 
 export function formatBytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  return `${(value / 1024).toFixed(1)} KB`;
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let nextValue = Math.max(value, 0);
+  let unitIndex = 0;
+  while (nextValue >= 1024 && unitIndex < units.length - 1) {
+    nextValue /= 1024;
+    unitIndex++;
+  }
+  if (unitIndex === 0) return `${nextValue} B`;
+  return `${nextValue.toFixed(1)} ${units[unitIndex]}`;
 }
 
 export function formatDuration(seconds: number) {

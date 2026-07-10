@@ -51,6 +51,13 @@ type Repository interface {
 	KVGet(capability, namespaceID, key string) ([]byte, bool, error)
 	KVPut(capability, namespaceID, key string, value []byte) error
 	KVDelete(capability, namespaceID, key string) error
+	KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error)
+	IncrementKVNamespaceReads(namespaceID string) error
+	IncrementKVNamespaceWrites(namespaceID string) error
+	ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error)
+	IncrementObjectStorageBucketReads(bucketID string) error
+	IncrementObjectStorageBucketWrites(bucketID string) error
+	AdjustObjectStorageBucketSize(bucketID string, delta int64) error
 }
 
 type Store struct {
@@ -63,6 +70,8 @@ type Store struct {
 	active          map[string]string
 	capabilityToApp map[string]string
 	kv              map[string]map[string][]byte
+	kvMetrics       map[string]KVNamespaceMetrics
+	objectMetrics   map[string]ObjectStorageBucketMetrics
 }
 
 func NewStore() *Store {
@@ -75,6 +84,8 @@ func NewStore() *Store {
 		active:          make(map[string]string),
 		capabilityToApp: make(map[string]string),
 		kv:              make(map[string]map[string][]byte),
+		kvMetrics:       make(map[string]KVNamespaceMetrics),
+		objectMetrics:   make(map[string]ObjectStorageBucketMetrics),
 	}
 }
 
@@ -208,6 +219,7 @@ func (s *Store) DeleteKVNamespace(namespaceID string) error {
 	}
 	delete(s.kvNamespaces, namespaceID)
 	delete(s.kv, namespaceID)
+	delete(s.kvMetrics, namespaceID)
 	return nil
 }
 
@@ -280,6 +292,7 @@ func (s *Store) DeleteObjectStorageBucket(bucketID string) error {
 		}
 	}
 	delete(s.objectBuckets, bucketID)
+	delete(s.objectMetrics, bucketID)
 	return nil
 }
 
@@ -492,5 +505,90 @@ func (s *Store) KVDelete(capability, namespaceID, key string) error {
 		return ErrKVNamespaceNotFound
 	}
 	delete(s.kv[namespaceID], key)
+	return nil
+}
+
+func (s *Store) KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return KVNamespaceMetrics{}, ErrKVNamespaceNotFound
+	}
+	metrics := s.kvMetrics[namespaceID]
+	metrics.Available = true
+	return metrics, nil
+}
+
+func (s *Store) IncrementKVNamespaceReads(namespaceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return ErrKVNamespaceNotFound
+	}
+	metrics := s.kvMetrics[namespaceID]
+	metrics.Reads++
+	s.kvMetrics[namespaceID] = metrics
+	return nil
+}
+
+func (s *Store) IncrementKVNamespaceWrites(namespaceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return ErrKVNamespaceNotFound
+	}
+	metrics := s.kvMetrics[namespaceID]
+	metrics.Writes++
+	s.kvMetrics[namespaceID] = metrics
+	return nil
+}
+
+func (s *Store) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.objectBuckets[bucketID]; !ok {
+		return ObjectStorageBucketMetrics{}, ErrObjectStorageBucketNotFound
+	}
+	metrics := s.objectMetrics[bucketID]
+	metrics.Available = true
+	return metrics, nil
+}
+
+func (s *Store) IncrementObjectStorageBucketReads(bucketID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.objectBuckets[bucketID]; !ok {
+		return ErrObjectStorageBucketNotFound
+	}
+	metrics := s.objectMetrics[bucketID]
+	metrics.Reads++
+	s.objectMetrics[bucketID] = metrics
+	return nil
+}
+
+func (s *Store) IncrementObjectStorageBucketWrites(bucketID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.objectBuckets[bucketID]; !ok {
+		return ErrObjectStorageBucketNotFound
+	}
+	metrics := s.objectMetrics[bucketID]
+	metrics.Writes++
+	s.objectMetrics[bucketID] = metrics
+	return nil
+}
+
+func (s *Store) AdjustObjectStorageBucketSize(bucketID string, delta int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.objectBuckets[bucketID]; !ok {
+		return ErrObjectStorageBucketNotFound
+	}
+	metrics := s.objectMetrics[bucketID]
+	metrics.Size += delta
+	if metrics.Size < 0 {
+		metrics.Size = 0
+	}
+	s.objectMetrics[bucketID] = metrics
 	return nil
 }

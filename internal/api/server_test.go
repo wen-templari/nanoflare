@@ -41,6 +41,13 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 		t.Fatalf("got %q, want app-one value", got)
 	}
 	runtimeKVRequest(t, kv, http.MethodGet, "/color?urlencoded=true", tokens[appTwo.ID], namespaceTwo.ID, nil, http.StatusNotFound)
+	metrics, err := service.KVNamespaceMetrics(namespaceOne.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !metrics.Available || metrics.Reads != 1 || metrics.Writes != 1 {
+		t.Fatalf("unexpected runtime KV metrics: %#v", metrics)
+	}
 }
 
 func TestWorkerConsoleAPIs(t *testing.T) {
@@ -151,6 +158,11 @@ func TestWorkerConsoleKV(t *testing.T) {
 	workerKVRequest(t, server, http.MethodDelete, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNoContent)
 	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNotFound)
 	workerKVRequest(t, server, http.MethodPut, "/v1/apps/missing/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNotFound)
+	var metrics nanoflare.KVNamespaceMetrics
+	requestJSON(t, server, http.MethodGet, "/v1/kv/namespaces/"+namespaceOne.ID+"/metrics", http.StatusOK, &metrics)
+	if !metrics.Available || metrics.Reads != 0 || metrics.Writes != 0 {
+		t.Fatalf("console KV routes should not count runtime metrics: %#v", metrics)
+	}
 }
 
 func TestKVNamespaceAPIs(t *testing.T) {
@@ -193,6 +205,48 @@ func TestKVNamespaceAPIs(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("delete status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestPrometheusMetricsExportsRuntimeAggregates(t *testing.T) {
+	service := nanoflare.NewService(nanoflare.NewStore(), discardWriter{})
+	server := NewServer(service)
+	namespace := createKVNamespace(t, server, "metrics-cache")
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "metrics-objects"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordRuntimeKVRead(namespace.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordRuntimeKVWrite(namespace.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordRuntimeObjectRead(bucket.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordRuntimeObjectWrite(bucket.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordRuntimeObjectWrite(bucket.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`nanoflare_kv_reads_total{namespace_id="` + namespace.ID + `",namespace_name="metrics-cache"} 1`,
+		`nanoflare_kv_writes_total{namespace_id="` + namespace.ID + `",namespace_name="metrics-cache"} 1`,
+		`nanoflare_object_storage_reads_total{bucket_id="` + bucket.ID + `",bucket_name="metrics-objects"} 1`,
+		`nanoflare_object_storage_writes_total{bucket_id="` + bucket.ID + `",bucket_name="metrics-objects"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics body missing %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -470,6 +524,11 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if object.Key != "folder/hello.txt" || object.Size != 5 || object.HTTPMetadata.ContentType != "text/plain" {
 		t.Fatalf("unexpected object info: %#v", object)
 	}
+	var metrics nanoflare.ObjectStorageBucketMetrics
+	requestJSON(t, server, http.MethodGet, "/v1/object-storage-buckets/"+bucket.ID+"/metrics", http.StatusOK, &metrics)
+	if !metrics.Available || metrics.Reads != 0 || metrics.Writes != 1 || metrics.Size != 5 {
+		t.Fatalf("unexpected object metrics after put: %#v", metrics)
+	}
 
 	request = httptest.NewRequest(http.MethodHead, "/internal/runtime/objects/folder%2Fhello.txt", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
@@ -500,6 +559,10 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
+	requestJSON(t, server, http.MethodGet, "/v1/object-storage-buckets/"+bucket.ID+"/metrics", http.StatusOK, &metrics)
+	if !metrics.Available || metrics.Reads != 2 || metrics.Writes != 2 || metrics.Size != 0 {
+		t.Fatalf("unexpected object metrics after runtime operations: %#v", metrics)
+	}
 
 	request = httptest.NewRequest(http.MethodGet, "/internal/runtime/objects/folder%2Fhello.txt", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
@@ -508,6 +571,42 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("missing get status = %d", recorder.Code)
+	}
+}
+
+func TestObjectStorageMetricsReconcileExistingObjects(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Existing Objects", "existing-objects.example.com")
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "existing-objects"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:                []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { async fetch() { return new Response("ok"); } };`}},
+		Entrypoint:           "worker.js",
+		Format:               "modules",
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := objects.Put(app.ID, "buckets/"+bucket.ID+"/legacy.txt", "text/plain", []byte("legacy")); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics nanoflare.ObjectStorageBucketMetrics
+	requestJSON(t, server, http.MethodGet, "/v1/object-storage-buckets/"+bucket.ID+"/metrics", http.StatusOK, &metrics)
+	if !metrics.Available || metrics.Size != 6 {
+		t.Fatalf("unexpected reconciled object metrics: %#v", metrics)
 	}
 }
 

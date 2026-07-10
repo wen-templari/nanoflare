@@ -117,6 +117,17 @@ CREATE TABLE IF NOT EXISTS runtime_kv (
 	value bytea NOT NULL,
 	PRIMARY KEY (kv_namespace_id, key)
 );
+CREATE TABLE IF NOT EXISTS kv_namespace_metrics (
+	kv_namespace_id text PRIMARY KEY REFERENCES kv_namespaces(id) ON DELETE CASCADE,
+	reads bigint NOT NULL DEFAULT 0,
+	writes bigint NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
+	bucket_id text PRIMARY KEY REFERENCES object_storage_buckets(id) ON DELETE CASCADE,
+	reads bigint NOT NULL DEFAULT 0,
+	writes bigint NOT NULL DEFAULT 0,
+	size bigint NOT NULL DEFAULT 0
+);
 DO $$
 BEGIN
 	IF EXISTS (
@@ -867,6 +878,90 @@ func (p *Postgres) KVDelete(capability, namespaceID, key string) error {
 		return err
 	}
 	_, err := p.db.Exec(`DELETE FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key)
+	return err
+}
+
+func (p *Postgres) KVNamespaceMetrics(namespaceID string) (nanoflare.KVNamespaceMetrics, error) {
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return nanoflare.KVNamespaceMetrics{}, err
+	}
+	var metrics nanoflare.KVNamespaceMetrics
+	err := p.db.QueryRow(`
+SELECT reads, writes
+FROM kv_namespace_metrics
+WHERE kv_namespace_id = $1`, namespaceID).Scan(&metrics.Reads, &metrics.Writes)
+	if errors.Is(err, sql.ErrNoRows) {
+		metrics.Available = true
+		return metrics, nil
+	}
+	metrics.Available = err == nil
+	return metrics, err
+}
+
+func (p *Postgres) IncrementKVNamespaceReads(namespaceID string) error {
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes) VALUES ($1, 1, 0)
+ON CONFLICT (kv_namespace_id) DO UPDATE SET reads = kv_namespace_metrics.reads + 1`, namespaceID)
+	return err
+}
+
+func (p *Postgres) IncrementKVNamespaceWrites(namespaceID string) error {
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes) VALUES ($1, 0, 1)
+ON CONFLICT (kv_namespace_id) DO UPDATE SET writes = kv_namespace_metrics.writes + 1`, namespaceID)
+	return err
+}
+
+func (p *Postgres) ObjectStorageBucketMetrics(bucketID string) (nanoflare.ObjectStorageBucketMetrics, error) {
+	if _, err := p.GetObjectStorageBucket(bucketID); err != nil {
+		return nanoflare.ObjectStorageBucketMetrics{}, err
+	}
+	var metrics nanoflare.ObjectStorageBucketMetrics
+	err := p.db.QueryRow(`
+SELECT reads, writes, size
+FROM object_storage_bucket_metrics
+WHERE bucket_id = $1`, bucketID).Scan(&metrics.Reads, &metrics.Writes, &metrics.Size)
+	if errors.Is(err, sql.ErrNoRows) {
+		metrics.Available = true
+		return metrics, nil
+	}
+	metrics.Available = err == nil
+	return metrics, err
+}
+
+func (p *Postgres) IncrementObjectStorageBucketReads(bucketID string) error {
+	if _, err := p.GetObjectStorageBucket(bucketID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO object_storage_bucket_metrics (bucket_id, reads, writes, size) VALUES ($1, 1, 0, 0)
+ON CONFLICT (bucket_id) DO UPDATE SET reads = object_storage_bucket_metrics.reads + 1`, bucketID)
+	return err
+}
+
+func (p *Postgres) IncrementObjectStorageBucketWrites(bucketID string) error {
+	if _, err := p.GetObjectStorageBucket(bucketID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO object_storage_bucket_metrics (bucket_id, reads, writes, size) VALUES ($1, 0, 1, 0)
+ON CONFLICT (bucket_id) DO UPDATE SET writes = object_storage_bucket_metrics.writes + 1`, bucketID)
+	return err
+}
+
+func (p *Postgres) AdjustObjectStorageBucketSize(bucketID string, delta int64) error {
+	if _, err := p.GetObjectStorageBucket(bucketID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO object_storage_bucket_metrics (bucket_id, reads, writes, size) VALUES ($1, 0, 0, GREATEST($2, 0))
+ON CONFLICT (bucket_id) DO UPDATE SET size = GREATEST(object_storage_bucket_metrics.size + $2, 0)`, bucketID, delta)
 	return err
 }
 

@@ -271,8 +271,24 @@ type WorkerTraffic struct {
 	RequestsPerSecond float64            `json:"requests_per_second"`
 	P95Latency        float64            `json:"p95_latency"`
 	ErrorRate         float64            `json:"error_rate"`
+	Invocations       float64            `json:"invocations"`
+	Errors            float64            `json:"errors"`
+	BundleSize        int64              `json:"bundle_size"`
 	Traffic           []float64          `json:"traffic"`
 	StatusCodes       []WorkerStatusCode `json:"status_codes"`
+}
+
+type KVNamespaceMetrics struct {
+	Available bool  `json:"available"`
+	Reads     int64 `json:"reads"`
+	Writes    int64 `json:"writes"`
+}
+
+type ObjectStorageBucketMetrics struct {
+	Available bool  `json:"available"`
+	Reads     int64 `json:"reads"`
+	Writes    int64 `json:"writes"`
+	Size      int64 `json:"size"`
 }
 
 type WorkerKVKey struct {

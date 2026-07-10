@@ -33,10 +33,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             fetchJSON<WorkerTraffic>(`/v1/apps/${app.id}/traffic`).catch(() => undefined),
           ]);
 
+          const requestRate = traffic?.requests_per_second ?? 0;
           return {
             ...app,
             status: detail?.deployment ? "live" as const : "draft" as const,
-            requests: traffic?.available ? `${traffic.requests_per_second.toFixed(2)}/s` : "unavailable",
+            requests: traffic?.available ? (requestRate > 0 ? `${requestRate.toFixed(2)}/s` : "") : "unavailable",
             deployment: detail?.deployment?.id ?? "awaiting deploy",
             bindings: detail?.deployment?.bindings ?? [],
           };
