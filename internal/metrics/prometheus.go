@@ -102,9 +102,9 @@ func (c *Client) queryRange(query string) ([]prometheusResult, error) {
 	end := time.Now().Unix()
 	return c.get("/api/v1/query_range", url.Values{
 		"query": []string{query},
-		"start": []string{strconv.FormatInt(end-60*60, 10)},
+		"start": []string{strconv.FormatInt(end-24*60*60, 10)},
 		"end":   []string{strconv.FormatInt(end, 10)},
-		"step":  []string{"120"},
+		"step":  []string{"300"},
 	})
 }
 

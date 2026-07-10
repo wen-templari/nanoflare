@@ -179,7 +179,7 @@ function WorkerOverview({
             </Card>
           ))}
         </SimpleGrid>
-        <Panel title="Worker traffic" eyebrow={traffic.available ? "Last 60 minutes" : "Prometheus unavailable"}>
+        <Panel title="Worker traffic" eyebrow={traffic.available ? "Last 24 hours" : "Prometheus unavailable"}>
           <MiniTrafficChart values={traffic.traffic} />
         </Panel>
         <Panel title="Response codes" eyebrow="5 minute rate">
