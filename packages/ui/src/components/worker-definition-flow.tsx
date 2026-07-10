@@ -284,8 +284,8 @@ function DefinitionNode({ data }: NodeProps<Node<DefinitionNodeData>>) {
       <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-green-500" />
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-mono text-xs font-medium text-gray-500">{data.eyebrow}</p>
-          <h3 className="mt-2 text-sm font-semibold text-gray-900">{data.title}</h3>
+          <p className="font-mono text-sm font-medium text-gray-500">{data.eyebrow}</p>
+          <h3 className="mt-2 font-semibold text-gray-900">{data.title}</h3>
         </div>
         <div className={cn("flex size-9 items-center justify-center rounded-full border", data.tone === "orange" ? "border-orange-200 bg-orange-50 text-orange-600" : data.tone === "sage" ? "border-green-200 bg-green-50 text-green-700" : "border-gray-200 bg-gray-50 text-gray-600")}>
           <Icon className="size-4" />
@@ -335,7 +335,7 @@ function BindingRow({ item }: { item: BindingItem }) {
         {isKV ? <KeyRound className="size-4 text-green-700" /> : isObject ? <DatabaseZap className="size-4 text-blue-700" /> : <FolderOpen className="size-4 text-yellow-700" />}
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
       </div>
-      <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+      <div className="flex items-center gap-2 font-semibold text-gray-900">
         <span className="min-w-0 flex-1 truncate font-mono">{item.binding}</span>
         <span className="text-gray-400">-&gt;</span>
         {isKV && item.namespaceID ? (
