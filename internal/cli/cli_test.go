@@ -92,6 +92,7 @@ func TestCreateAndDeployWorker(t *testing.T) {
 		APIURL:            server.URL,
 		Entrypoint:        "worker.js",
 		CompatibilityDate: "2025-12-10",
+		Triggers:          nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}},
 		Vars: map[string]json.RawMessage{
 			"API_HOST": json.RawMessage(`"example.com"`),
 		},
@@ -141,6 +142,9 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if deployed.Entrypoint != "worker.js" || deployed.CompatibilityDate != "2025-12-10" {
 		t.Fatalf("deploy payload = %#v", deployed)
+	}
+	if len(deployed.Triggers.Crons) != 1 || deployed.Triggers.Crons[0] != "*/5 * * * *" {
+		t.Fatalf("deploy triggers = %#v", deployed.Triggers)
 	}
 	if got := string(deployed.Vars["API_HOST"]); got != `"example.com"` {
 		t.Fatalf("deploy vars = %#v", deployed.Vars)

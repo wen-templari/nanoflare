@@ -131,6 +131,56 @@ func TestWorkerdGeneratesSingleFileModuleWorker(t *testing.T) {
 	}
 }
 
+func TestWorkerdModuleWrapperHandlesScheduledRoute(t *testing.T) {
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: nanoflare.Deployment{
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { scheduled() {} };`}},
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Triggers:          nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}},
+			Port:              9001,
+		},
+	}})
+	for _, expected := range []string{
+		`/cdn-cgi/handler/scheduled`,
+		`userWorker.scheduled(scheduledController(request), wrapEnv(env), ctx)`,
+		`new Response(null, { status: 204 })`,
+		`url.searchParams.get(\"cron\")`,
+		`url.searchParams.get(\"time\")`,
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, config)
+		}
+	}
+}
+
+func TestWorkerdServiceWorkerWrapperHandlesScheduledListeners(t *testing.T) {
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: nanoflare.Deployment{
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("scheduled", event => event.waitUntil(Promise.resolve()));`}},
+			Entrypoint:        "worker.js",
+			Format:            "service-worker",
+			CompatibilityDate: "2025-12-10",
+			Triggers:          nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}},
+			Port:              9001,
+		},
+	}})
+	for _, expected := range []string{
+		`const __nanoflareScheduledListeners = [];`,
+		`type === \"scheduled\"`,
+		`__nanoflareRunScheduledListeners(event.request)`,
+		`/cdn-cgi/handler/scheduled`,
+		`new Response(null, { status: 204 })`,
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, config)
+		}
+	}
+}
+
 func TestWorkerdGeneratesMultiFileModuleConfigWithEntrypointFirst(t *testing.T) {
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", Hostname: "hello.example.com"},

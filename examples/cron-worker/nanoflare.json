@@ -1,0 +1,18 @@
+{
+  "name": "cron-worker",
+  "app_id": "9403f9d23ea10bb2ae7a7764b9e938858639f6c70ddc088f",
+  "api_url": "http://127.0.0.1:8080",
+  "entrypoint": "dist/worker.js",
+  "format": "modules",
+  "compatibility_date": "2025-12-10",
+  "triggers": {
+    "crons": [
+      "*/1 * * * *"
+    ]
+  },
+  "files": [
+    "dist/worker.js"
+  ],
+  "assets": {},
+  "auth": {}
+}

@@ -373,11 +373,40 @@ function wrapEnv(env) {
   return wrapped;
 }
 
+function scheduledController(request) {
+  const url = new URL(request.url);
+  const cron = url.searchParams.get("cron") || "* * * * *";
+  const rawTime = Number(url.searchParams.get("time") || "");
+  const scheduledTime = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1000000000000 ? rawTime * 1000 : rawTime) : Date.now();
+  return { scheduledTime, cron, noRetry() {} };
+}
+
+async function runScheduled(request, env, ctx) {
+  if (typeof userWorker.scheduled !== "function") {
+    return new Response("scheduled handler not found", { status: 404 });
+  }
+  const startedAt = Date.now();
+  try {
+    await userWorker.scheduled(scheduledController(request), wrapEnv(env), ctx);
+    recordRuntimeDuration(env, ctx, startedAt, "ok");
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    recordRuntimeDuration(env, ctx, startedAt, "exception");
+    throw error;
+  }
+}
+
 export default {
   ...userWorker,
   async fetch(request, env, ctx) {
+    if (new URL(request.url).pathname === "/cdn-cgi/handler/scheduled") {
+      return runScheduled(request, env, ctx);
+    }
     const startedAt = Date.now();
     try {
+      if (typeof userWorker.fetch !== "function") {
+        return new Response("fetch handler not found", { status: 404 });
+      }
       const response = await userWorker.fetch(request, wrapEnv(env), ctx);
       recordRuntimeDuration(env, ctx, startedAt, "ok");
       return response;
@@ -406,11 +435,56 @@ func serviceWorkerWrapper(script string, objectBindings []nanoflare.ObjectStorag
 }
 
 const __nanoflareAddEventListener = globalThis.addEventListener.bind(globalThis);
+const __nanoflareScheduledListeners = [];
+let __nanoflareFetchListenerCount = 0;
+
+function __nanoflareScheduledEvent(request) {
+  const url = new URL(request.url);
+  const cron = url.searchParams.get("cron") || "* * * * *";
+  const rawTime = Number(url.searchParams.get("time") || "");
+  const scheduledTime = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1000000000000 ? rawTime * 1000 : rawTime) : Date.now();
+  const pending = [];
+  return {
+    scheduledTime,
+    cron,
+    noRetry() {},
+    waitUntil(promise) {
+      pending.push(Promise.resolve(promise));
+    },
+    async __nanoflareRunWaitUntil() {
+      await Promise.all(pending);
+    },
+  };
+}
+
+async function __nanoflareRunScheduledListeners(request) {
+  const event = __nanoflareScheduledEvent(request);
+  for (const listener of __nanoflareScheduledListeners) {
+    const result = listener(event);
+    if (result && typeof result.then === "function") {
+      event.waitUntil(result);
+    }
+  }
+  await event.__nanoflareRunWaitUntil();
+}
+
 globalThis.addEventListener = function(type, listener, options) {
+  if (type === "scheduled" && typeof listener === "function") {
+    __nanoflareScheduledListeners.push(listener);
+    return;
+  }
   if (type !== "fetch" || typeof listener !== "function") {
     return __nanoflareAddEventListener(type, listener, options);
   }
+  __nanoflareFetchListenerCount++;
   return __nanoflareAddEventListener(type, (event) => {
+    if (new URL(event.request.url).pathname === "/cdn-cgi/handler/scheduled") {
+      event.respondWith(__nanoflareRunScheduledListeners(event.request).then(
+        () => new Response(null, { status: 204 }),
+        (error) => new Response(error && error.message ? error.message : "scheduled handler failed", { status: 500 }),
+      ));
+      return;
+    }
     const startedAt = Date.now();
     const originalRespondWith = event.respondWith.bind(event);
     event.respondWith = (response) => originalRespondWith(Promise.resolve(response).then(
@@ -582,7 +656,18 @@ function __nanoflareWrapObjectsBinding(bindingName, binding) {
 for (const __nanoflareName of __nanoflareObjectBindingNames) {
   globalThis[__nanoflareName] = __nanoflareWrapObjectsBinding(__nanoflareName, globalThis[__nanoflareName]);
 }
-` + "\n" + script
+` + "\n" + script + `
+
+__nanoflareAddEventListener("fetch", (event) => {
+  if (__nanoflareFetchListenerCount > 0 || new URL(event.request.url).pathname !== "/cdn-cgi/handler/scheduled") {
+    return;
+  }
+  event.respondWith(__nanoflareRunScheduledListeners(event.request).then(
+    () => new Response(null, { status: 204 }),
+    (error) => new Response(error && error.message ? error.message : "scheduled handler failed", { status: 500 }),
+  ));
+});
+`
 }
 
 func deploymentFormat(deployment nanoflare.Deployment) string {

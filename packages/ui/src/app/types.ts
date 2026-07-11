@@ -10,6 +10,7 @@ export type WorkerAssetConfig = {
   not_found_handling?: string;
   run_worker_first?: true | string[];
 };
+export type WorkerTriggerConfig = { crons?: string[] };
 export type WorkerBinding = {
   kind: "kv" | "asset" | "object_storage_bucket";
   binding: string;
@@ -41,6 +42,7 @@ export type WorkerDeployment = {
   asset_count?: number;
   asset_config?: WorkerAssetConfig;
   compatibility_date: string;
+  triggers?: WorkerTriggerConfig;
   vars?: Record<string, unknown>;
   created_at: string;
   kv_namespaces?: WorkerKVNamespaceBinding[];
@@ -59,6 +61,7 @@ export type ConsoleDeployment = {
   entrypoint: string;
   bundle_size: number;
   compatibility_date: string;
+  triggers?: WorkerTriggerConfig;
   state: "active" | "inactive";
   created_at: string;
 };

@@ -557,6 +557,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		BundleSize:           active.Deployment.BundleSize,
 		AssetCount:           len(active.Deployment.Assets),
 		CompatibilityDate:    active.Deployment.CompatibilityDate,
+		Triggers:             active.Deployment.Triggers,
 		Vars:                 cloneVars(active.Deployment.Vars),
 		KVNamespaces:         append([]KVBinding(nil), active.Deployment.KVNamespaces...),
 		ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), active.Deployment.ObjectStorageBuckets...),
@@ -602,6 +603,7 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			BundleSize:        record.Deployment.BundleSize,
 			AssetCount:        len(record.Deployment.Assets),
 			CompatibilityDate: record.Deployment.CompatibilityDate,
+			Triggers:          record.Deployment.Triggers,
 			State:             state,
 			CreatedAt:         record.Deployment.CreatedAt,
 		})
@@ -745,6 +747,10 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
+	triggers, err := NormalizeTriggers(input.Triggers)
+	if err != nil {
+		return Deployment{}, err
+	}
 	secrets, err := s.resolvedSecretValues(appID)
 	if err != nil && !errors.Is(err, ErrAppNotFound) {
 		return Deployment{}, err
@@ -775,6 +781,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Entrypoint:           entrypoint,
 		Format:               format,
 		CompatibilityDate:    input.CompatibilityDate,
+		Triggers:             triggers,
 		Vars:                 vars,
 		KVNamespaces:         kvNamespaces,
 		ObjectStorageBuckets: objectStorageBuckets,

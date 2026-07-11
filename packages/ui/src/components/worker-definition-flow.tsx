@@ -13,7 +13,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react"
-import { DatabaseZap, FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react"
+import { Clock3, DatabaseZap, FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react"
 import { createContext, useContext, useEffect, useMemo, useRef } from "react"
 import type { KVNamespace, Worker, WorkerDeployment } from "../app/types"
 import { cn } from "../lib/utils"
@@ -28,9 +28,9 @@ type WorkerDefinitionFlowProps = {
 
 type DefinitionNodeData = {
   eyebrow: string
-  icon: "domain" | "auth" | "worker"
+  icon: "domain" | "auth" | "trigger" | "worker"
   title: string
-  tone?: "graphite" | "orange" | "sage"
+  tone?: "blue" | "graphite" | "orange" | "sage"
 }
 
 type BindingItem = {
@@ -105,9 +105,10 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
       bindings: deployment?.bindings ?? worker.bindings ?? [],
       hostname: worker.hostname,
       protectedRoutes: worker.auth?.protected_routes ?? [],
+      triggers: deployment?.triggers?.crons ?? [],
       workerName: worker.name,
     }),
-    [deployment?.bindings, worker.auth?.protected_routes, worker.bindings, worker.hostname, worker.name],
+    [deployment?.bindings, deployment?.triggers?.crons, worker.auth?.protected_routes, worker.bindings, worker.hostname, worker.name],
   )
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initialGraph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialGraph.edges)
@@ -169,6 +170,7 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
 function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deployment"], namespaces: KVNamespace[]) {
   const namespaceByID = new Map(namespaces.map((namespace) => [namespace.id, namespace]))
   const protectedRoutes = worker.auth?.protected_routes ?? []
+  const crons = deployment?.triggers?.crons ?? []
   const bindings = deployment?.bindings ?? worker.bindings ?? []
   const bindingItems: BindingItem[] = bindings.map((binding) => {
     if (binding.kind === "asset") {
@@ -219,6 +221,19 @@ function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deplo
         type: "definition",
       } satisfies Node<FlowNodeData>]
       : []),
+    ...(crons.length
+      ? [{
+        data: {
+          eyebrow: "Trigger",
+          icon: "trigger",
+          title: crons.length === 1 ? crons[0] : `${crons.length} cron triggers`,
+          tone: "blue",
+        },
+        id: "triggers",
+        position: { x: 0, y: 0 },
+        type: "definition",
+      } satisfies Node<FlowNodeData>]
+      : []),
     {
       data: {
         eyebrow: "Runtime",
@@ -258,6 +273,15 @@ function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deplo
         type: "smoothstep",
       } satisfies Edge]
       : []),
+    ...(crons.length
+      ? [{
+        animated: true,
+        id: "triggers-edge",
+        source: "triggers",
+        target: "worker",
+        type: "smoothstep",
+      } satisfies Edge]
+      : []),
     {
       animated: true,
       id: "worker-bindings-edge",
@@ -271,13 +295,13 @@ function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deplo
 }
 
 function DefinitionNode({ data }: NodeProps<Node<DefinitionNodeData>>) {
-  const Icon = data.icon === "domain" ? Globe2 : data.icon === "auth" ? ShieldCheck : Waypoints
+  const Icon = data.icon === "domain" ? Globe2 : data.icon === "auth" ? ShieldCheck : data.icon === "trigger" ? Clock3 : Waypoints
 
   return (
     <div
       className={cn(
         "nodrag nopan min-w-56 rounded-xl border bg-white p-4",
-        data.tone === "orange" ? "border-orange-200" : data.tone === "sage" ? "border-green-200" : "border-gray-200",
+        data.tone === "orange" ? "border-orange-200" : data.tone === "sage" ? "border-green-200" : data.tone === "blue" ? "border-blue-200" : "border-gray-200",
       )}
     >
       <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-gray-300" />
@@ -287,7 +311,7 @@ function DefinitionNode({ data }: NodeProps<Node<DefinitionNodeData>>) {
           <p className="font-mono text-sm font-medium text-gray-500">{data.eyebrow}</p>
           <h3 className="mt-2 font-semibold text-gray-900">{data.title}</h3>
         </div>
-        <div className={cn("flex size-9 items-center justify-center rounded-full border", data.tone === "orange" ? "border-orange-200 bg-orange-50 text-orange-600" : data.tone === "sage" ? "border-green-200 bg-green-50 text-green-700" : "border-gray-200 bg-gray-50 text-gray-600")}>
+        <div className={cn("flex size-9 items-center justify-center rounded-full border", data.tone === "orange" ? "border-orange-200 bg-orange-50 text-orange-600" : data.tone === "sage" ? "border-green-200 bg-green-50 text-green-700" : data.tone === "blue" ? "border-blue-200 bg-blue-50 text-blue-700" : "border-gray-200 bg-gray-50 text-gray-600")}>
           <Icon className="size-4" />
         </div>
       </div>

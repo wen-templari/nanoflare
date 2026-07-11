@@ -49,6 +49,32 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 	}
 }
 
+func TestDeployValidatesCronTriggers(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2025-12-10",
+		Triggers:          TriggerConfig{Crons: []string{" */5 * * * * "}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployment.Triggers.Crons) != 1 || deployment.Triggers.Crons[0] != "*/5 * * * *" {
+		t.Fatalf("deployment triggers = %#v", deployment.Triggers)
+	}
+	if _, err := service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2025-12-10",
+		Triggers:          TriggerConfig{Crons: []string{"0 0 LW * *"}},
+	}); err == nil {
+		t.Fatal("Deploy() error = nil, want invalid cron error")
+	}
+}
+
 func TestObjectStorageBucketObjectsSurviveWorkerRecreate(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()

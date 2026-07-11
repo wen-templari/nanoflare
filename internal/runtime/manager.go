@@ -35,6 +35,7 @@ type Manager struct {
 	mu              sync.Mutex
 	writer          ConfigWriter
 	launcher        Launcher
+	output          *OutputBuffer
 	configDir       string
 	canonicalConfig string
 	portHost        string
@@ -55,12 +56,21 @@ type pool struct {
 	configPath string
 	process    Process
 	active     []nanoflare.ActiveDeployment
+	scheduler  *cronRunner
 }
 
 func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConfig, portHost string, portStart int, healthTimeout, stopTimeout time.Duration) *Manager {
+	var output *OutputBuffer
+	switch value := launcher.(type) {
+	case CommandLauncher:
+		output = value.Output
+	case *CommandLauncher:
+		output = value.Output
+	}
 	return &Manager{
 		writer:          writer,
 		launcher:        launcher,
+		output:          output,
 		configDir:       configDir,
 		canonicalConfig: canonicalConfig,
 		portHost:        portHost,
@@ -217,6 +227,7 @@ func (m *Manager) publish(next *pool, desired []nanoflare.ActiveDeployment) {
 	previous := m.active
 	m.active = next
 	if next != nil {
+		next.scheduler = startCronRunner(m.portHost, next.active, m.output)
 		go m.watch(next, append([]nanoflare.ActiveDeployment(nil), desired...))
 	}
 	if previous == nil {
@@ -229,6 +240,9 @@ func (m *Manager) publish(next *pool, desired []nanoflare.ActiveDeployment) {
 }
 
 func (m *Manager) stop(pool *pool) error {
+	if pool.scheduler != nil {
+		pool.scheduler.Stop()
+	}
 	if pool.process == nil {
 		return nil
 	}
@@ -297,6 +311,9 @@ func (m *Manager) watch(pool *pool, desired []nanoflare.ActiveDeployment) {
 	m.active = nil
 	autoRestart := m.autoRestart
 	m.mu.Unlock()
+	if pool.scheduler != nil {
+		pool.scheduler.Stop()
+	}
 	log.Printf("active workerd generation exited unexpectedly: %v", err)
 	if !autoRestart {
 		return

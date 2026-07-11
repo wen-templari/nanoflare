@@ -30,6 +30,7 @@ type Deployment struct {
 	Entrypoint           string                       `json:"entrypoint"`
 	Format               string                       `json:"format"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
@@ -86,6 +87,7 @@ type DeployInput struct {
 	Entrypoint           string                       `json:"entrypoint,omitempty"`
 	Format               string                       `json:"format,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
@@ -99,6 +101,7 @@ type WorkerDeployment struct {
 	BundleSize           int64                        `json:"bundle_size"`
 	AssetCount           int                          `json:"asset_count,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
@@ -115,17 +118,18 @@ type WorkerDetail struct {
 }
 
 type ConsoleDeployment struct {
-	ID                string    `json:"id"`
-	AppID             string    `json:"app_id"`
-	AppName           string    `json:"app_name"`
-	Hostname          string    `json:"hostname"`
-	Entrypoint        string    `json:"entrypoint"`
-	Format            string    `json:"format"`
-	BundleSize        int64     `json:"bundle_size"`
-	AssetCount        int       `json:"asset_count,omitempty"`
-	CompatibilityDate string    `json:"compatibility_date"`
-	State             string    `json:"state"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string        `json:"id"`
+	AppID             string        `json:"app_id"`
+	AppName           string        `json:"app_name"`
+	Hostname          string        `json:"hostname"`
+	Entrypoint        string        `json:"entrypoint"`
+	Format            string        `json:"format"`
+	BundleSize        int64         `json:"bundle_size"`
+	AssetCount        int           `json:"asset_count,omitempty"`
+	CompatibilityDate string        `json:"compatibility_date"`
+	Triggers          TriggerConfig `json:"triggers,omitempty"`
+	State             string        `json:"state"`
+	CreatedAt         time.Time     `json:"created_at"`
 }
 
 type Binding struct {
@@ -174,6 +178,10 @@ type AssetConfig struct {
 	HTMLHandling     string         `json:"html_handling,omitempty"`
 	NotFoundHandling string         `json:"not_found_handling,omitempty"`
 	RunWorkerFirst   RunWorkerFirst `json:"run_worker_first,omitempty"`
+}
+
+type TriggerConfig struct {
+	Crons []string `json:"crons,omitempty"`
 }
 
 type KVBinding struct {

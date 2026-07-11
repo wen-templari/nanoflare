@@ -297,6 +297,39 @@ func TestLazyManagerReplacesChangedDeployment(t *testing.T) {
 	}
 }
 
+func TestLazyManagerCronSchedulerEnsuresWorker(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, time.Minute)
+	defer manager.Close()
+
+	active := deployments(0)
+	active[0].Deployment.Triggers = nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}}
+	if err := manager.Write(active); err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	runner := manager.scheduler
+	manager.mu.Unlock()
+	if runner == nil {
+		t.Fatal("scheduler = nil, want cron scheduler")
+	}
+	runner.Stop()
+	client := &recordingCronClient{}
+	runner.client = client
+
+	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
+	if launcher.count() != 1 {
+		t.Fatalf("launches = %d, want lazy worker launch", launcher.count())
+	}
+	if len(client.urls) != 1 {
+		t.Fatalf("urls = %#v, want one invocation", client.urls)
+	}
+	if client.urls[0] == "http://127.0.0.1:0/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1783771800" {
+		t.Fatalf("url = %q, want allocated runtime port", client.urls[0])
+	}
+}
+
 func deployments(port int) []nanoflare.ActiveDeployment {
 	return []nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello", Hostname: "hello.example.com"},

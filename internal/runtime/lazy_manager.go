@@ -30,6 +30,8 @@ type LazyManager struct {
 	healthTimeout time.Duration
 	stopTimeout   time.Duration
 	idleTimeout   time.Duration
+	output        *OutputBuffer
+	scheduler     *cronRunner
 	generation    int
 	workers       map[string]*lazyWorker
 	closed        bool
@@ -49,6 +51,13 @@ type lazyWorker struct {
 }
 
 func NewLazyManager(writer ConfigWriter, launcher Launcher, configDir, portHost string, portStart int, healthTimeout, stopTimeout, idleTimeout time.Duration) *LazyManager {
+	var output *OutputBuffer
+	switch value := launcher.(type) {
+	case CommandLauncher:
+		output = value.Output
+	case *CommandLauncher:
+		output = value.Output
+	}
 	return &LazyManager{
 		writer:        writer,
 		launcher:      launcher,
@@ -59,6 +68,7 @@ func NewLazyManager(writer ConfigWriter, launcher Launcher, configDir, portHost 
 		healthTimeout: healthTimeout,
 		stopTimeout:   stopTimeout,
 		idleTimeout:   idleTimeout,
+		output:        output,
 		workers:       make(map[string]*lazyWorker),
 	}
 }
@@ -70,11 +80,35 @@ func (m *LazyManager) Write(active []nanoflare.ActiveDeployment) error {
 		return errors.New("runtime manager is closed")
 	}
 	stale := m.staleWorkersLocked(active)
+	previousScheduler := m.scheduler
+	m.scheduler = nil
 	m.mu.Unlock()
+	if previousScheduler != nil {
+		previousScheduler.Stop()
+	}
 	for _, worker := range stale {
 		m.stopWorker(worker)
 	}
-	return m.writer.WriteTraefik(active)
+	if err := m.writer.WriteTraefik(active); err != nil {
+		return err
+	}
+	nextScheduler := startCronRunnerWithEnsure(m.portHost, active, m.output, m.Ensure)
+	if nextScheduler == nil {
+		return nil
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		nextScheduler.Stop()
+		return nil
+	}
+	previousScheduler = m.scheduler
+	m.scheduler = nextScheduler
+	m.mu.Unlock()
+	if previousScheduler != nil {
+		previousScheduler.Stop()
+	}
+	return nil
 }
 
 func (m *LazyManager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (EnsuredWorker, error) {
@@ -119,12 +153,17 @@ func (m *LazyManager) Ensure(ctx context.Context, active nanoflare.ActiveDeploym
 func (m *LazyManager) Close() error {
 	m.mu.Lock()
 	m.closed = true
+	scheduler := m.scheduler
+	m.scheduler = nil
 	workers := make([]*lazyWorker, 0, len(m.workers))
 	for _, worker := range m.workers {
 		workers = append(workers, worker)
 	}
 	m.workers = make(map[string]*lazyWorker)
 	m.mu.Unlock()
+	if scheduler != nil {
+		scheduler.Stop()
+	}
 	var firstErr error
 	for _, worker := range workers {
 		if err := m.stopWorker(worker); err != nil && firstErr == nil {
