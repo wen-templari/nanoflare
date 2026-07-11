@@ -20,7 +20,6 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/objects"
 	"github.com/clas/nanoflare/internal/oidc"
-	"github.com/clas/nanoflare/internal/runner"
 	"github.com/clas/nanoflare/internal/runtime"
 )
 
@@ -44,6 +43,7 @@ func main() {
 		workerd      = flag.String("workerd", "workerd", "path to the workerd executable")
 		portHost     = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart    = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
+		idleTimeout  = flag.Duration("runtime-idle-timeout", 30*time.Second, "idle duration before a lazy worker runtime is stopped")
 		prometheus   = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
 		runnerURL    = flag.String("runner-url", "", "nanoflare-runner control API URL; empty starts workerd directly")
 		runnerToken  = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
@@ -104,6 +104,7 @@ func main() {
 	output := runtime.NewOutputBuffer()
 	durationTelemetry := runtime.NewDurationTelemetry()
 	var publisher runtimePublisher
+	var runtimeEnsurer api.RuntimeEnsurer
 	var closeRuntime func()
 	traefikStore := config.NewTraefikStore(*authURL, *workerHost)
 	if *oidcPublic != "" {
@@ -124,29 +125,26 @@ func main() {
 		}
 	}
 	if *runnerURL != "" {
-		if *runnerToken == "" {
-			log.Fatal("runner token is required when runner URL is configured")
-		}
-		publisher = runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
-		log.Printf("using nanoflare-runner at %s", *runnerURL)
-	} else {
-		writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
-		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
-		manager := runtime.NewManager(
-			writer,
-			runtime.CommandLauncher{Executable: *workerd, Output: output},
-			*configDir,
-			filepath.Join(*configDir, "workerd.capnp"),
-			*portHost,
-			*portStart,
-			10*time.Second,
-			5*time.Second,
-		)
-		publisher = manager
-		closeRuntime = func() {
-			if err := manager.Close(); err != nil {
-				log.Printf("close runtime manager: %v", err)
-			}
+		_ = *runnerToken
+		log.Fatal("lazy runtime startup is not implemented for nanoflare-runner; run without -runner-url for lazy local workers")
+	}
+	writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
+	writer.SetNanoflareRuntimeAddr(*runtimeAddr)
+	manager := runtime.NewLazyManager(
+		writer,
+		runtime.CommandLauncher{Executable: *workerd, Output: output},
+		*configDir,
+		*portHost,
+		*portStart,
+		10*time.Second,
+		5*time.Second,
+		*idleTimeout,
+	)
+	publisher = manager
+	runtimeEnsurer = manager
+	closeRuntime = func() {
+		if err := manager.Close(); err != nil {
+			log.Printf("close runtime manager: %v", err)
 		}
 	}
 	if closeRuntime != nil {
@@ -189,7 +187,7 @@ func main() {
 		authenticator = verifier
 	}
 	controlAuth := nanoflare.NewControlAuthService(store, *authSecret)
-	server := api.NewServerWithControlAuth(service, traefikStore, *traefikToken, authenticator, controlAuth)
+	server := api.NewServerWithRuntime(service, traefikStore, *traefikToken, authenticator, controlAuth, runtimeEnsurer)
 	runtimeMux := newRuntimeMux(service, server, durationTelemetry)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {

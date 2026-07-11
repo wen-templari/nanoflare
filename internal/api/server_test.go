@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 func TestCreateDeployAndScopedKV(t *testing.T) {
@@ -605,6 +607,9 @@ func TestObjectStorageMetricsReconcileExistingObjects(t *testing.T) {
 	if _, err := objects.Put("object-storage-buckets", "buckets/"+bucket.ID+"/legacy.txt", "text/plain", []byte("legacy")); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.AdjustObjectStorageBucketSize(bucket.ID, 123); err != nil {
+		t.Fatal(err)
+	}
 
 	var metrics nanoflare.ObjectStorageBucketMetrics
 	requestJSON(t, server, http.MethodGet, "/v1/object-storage-buckets/"+bucket.ID+"/metrics", http.StatusOK, &metrics)
@@ -686,6 +691,64 @@ func TestGatewayRunWorkerFirstTrueProxiesBeforeAssets(t *testing.T) {
 	}
 }
 
+func TestGatewayAssetHitDoesNotEnsureLazyRuntime(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	lazy := &recordingRuntime{}
+	server := NewServerWithRuntime(service, nil, "", nil, nil, lazy)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployWithAssets(t, server, app.ID,
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Site</h1>" {
+		t.Fatalf("gateway asset status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	if lazy.ensureCount != 0 {
+		t.Fatalf("runtime ensures = %d, want 0 for direct asset hit", lazy.ensureCount)
+	}
+}
+
+func TestGatewayAssetMissEnsuresLazyRuntime(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	lazy := &recordingRuntime{port: startTestWorker(t, "worker")}
+	server := NewServerWithRuntime(service, nil, "", nil, nil, lazy)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	deployWithAssets(t, server, app.ID,
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/missing", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
+		t.Fatalf("gateway worker status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	if lazy.ensureCount != 1 || lazy.releaseCount != 1 {
+		t.Fatalf("runtime ensure/release = %d/%d, want 1/1", lazy.ensureCount, lazy.releaseCount)
+	}
+}
+
 func TestGatewayRunWorkerFirstRoutesOnlyMatchingPaths(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
@@ -760,6 +823,22 @@ type staticTraefikConfig string
 
 func (config staticTraefikConfig) TraefikConfig() []byte {
 	return []byte(config)
+}
+
+type recordingRuntime struct {
+	port         int
+	ensureCount  int
+	releaseCount int
+}
+
+func (r *recordingRuntime) Ensure(context.Context, nanoflare.ActiveDeployment) (runtime.EnsuredWorker, error) {
+	r.ensureCount++
+	return runtime.EnsuredWorker{
+		Port: r.port,
+		Release: func() {
+			r.releaseCount++
+		},
+	}, nil
 }
 
 func createApp(t *testing.T, server http.Handler, name, hostname string) nanoflare.App {

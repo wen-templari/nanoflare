@@ -11,12 +11,6 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
-type proxiedResponse struct {
-	statusCode int
-	header     http.Header
-	body       []byte
-}
-
 func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("GET /v1/apps", s.listApps)
 	s.mux.HandleFunc("POST /v1/apps", s.createApp)
@@ -194,15 +188,12 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	port, runWorkerFirst, err := s.service.WorkerPort(appID, requestPath)
+	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeployment(appID, requestPath)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
 	}
-	if runtimePort != 0 {
-		port = runtimePort
-	}
-	if port == 0 {
+	if !ok {
 		writeWorkerError(w, nanoflare.ErrAppNotFound)
 		return
 	}
@@ -216,24 +207,38 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 			writeAssetResponse(w, r, response)
 			return
 		}
-		proxied, err := s.proxyWorker(r, port, requestPath)
+		port, release, err := s.ensureWorker(r, active, runtimePort)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
-		if handled && proxied.statusCode == http.StatusNotFound {
+		defer release()
+		workerResponse, err := s.workerResponse(r, port, requestPath)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		defer workerResponse.Body.Close()
+		if handled && workerResponse.StatusCode == http.StatusNotFound {
 			writeAssetResponse(w, r, response)
 			return
 		}
-		writeProxiedResponse(w, proxied)
+		writeWorkerResponse(w, workerResponse)
 		return
 	}
-	proxied, err := s.proxyWorker(r, port, requestPath)
+	port, release, err := s.ensureWorker(r, active, runtimePort)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	writeProxiedResponse(w, proxied)
+	defer release()
+	workerResponse, err := s.workerResponse(r, port, requestPath)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	defer workerResponse.Body.Close()
+	writeWorkerResponse(w, workerResponse)
 }
 
 func appGatewayPath(requestPath string) (string, int, string, bool) {
@@ -270,7 +275,24 @@ func writeAssetResponse(w http.ResponseWriter, r *http.Request, response nanofla
 	_, _ = w.Write(response.Body)
 }
 
-func (s *Server) proxyWorker(r *http.Request, port int, requestPath string) (proxiedResponse, error) {
+func (s *Server) ensureWorker(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (int, func(), error) {
+	if runtimePort != 0 {
+		return runtimePort, func() {}, nil
+	}
+	if s.runtime == nil {
+		if active.Deployment.Port == 0 {
+			return 0, nil, nanoflare.ErrAppNotFound
+		}
+		return active.Deployment.Port, func() {}, nil
+	}
+	ensured, err := s.runtime.Ensure(r.Context(), active)
+	if err != nil {
+		return 0, nil, err
+	}
+	return ensured.Port, ensured.Release, nil
+}
+
+func (s *Server) workerResponse(r *http.Request, port int, requestPath string) (*http.Response, error) {
 	target := &url.URL{
 		Scheme:   "http",
 		Host:     "127.0.0.1:" + strconv.Itoa(port),
@@ -279,28 +301,19 @@ func (s *Server) proxyWorker(r *http.Request, port int, requestPath string) (pro
 	}
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
 	if err != nil {
-		return proxiedResponse{}, err
+		return nil, err
 	}
 	request.Header = r.Header.Clone()
 	request.Host = r.Host
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return proxiedResponse{}, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return proxiedResponse{}, err
-	}
-	return proxiedResponse{statusCode: response.StatusCode, header: response.Header.Clone(), body: body}, nil
+	return http.DefaultClient.Do(request)
 }
 
-func writeProxiedResponse(w http.ResponseWriter, response proxiedResponse) {
-	for key, values := range response.header {
+func writeWorkerResponse(w http.ResponseWriter, response *http.Response) {
+	for key, values := range response.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
-	w.WriteHeader(response.statusCode)
-	_, _ = w.Write(response.body)
+	w.WriteHeader(response.StatusCode)
+	_, _ = io.Copy(w, response.Body)
 }

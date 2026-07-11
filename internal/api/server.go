@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 type Server struct {
@@ -16,7 +17,12 @@ type Server struct {
 	traefikToken string
 	auth         Authenticator
 	controlAuth  *nanoflare.ControlAuthService
+	runtime      RuntimeEnsurer
 	mux          *http.ServeMux
+}
+
+type RuntimeEnsurer interface {
+	Ensure(context.Context, nanoflare.ActiveDeployment) (runtime.EnsuredWorker, error)
 }
 
 type Authenticator interface {
@@ -61,6 +67,12 @@ func NewServerWithAuth(service *nanoflare.Service, traefik TraefikConfigReader, 
 
 func NewServerWithControlAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService) *Server {
 	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, controlAuth: controlAuth, mux: http.NewServeMux()}
+	server.routes()
+	return server
+}
+
+func NewServerWithRuntime(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer) *Server {
+	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, controlAuth: controlAuth, runtime: runtime, mux: http.NewServeMux()}
 	server.routes()
 	return server
 }

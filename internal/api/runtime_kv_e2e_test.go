@@ -19,6 +19,7 @@ import (
 	"github.com/clas/nanoflare/internal/api"
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
@@ -103,6 +104,57 @@ func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
 		}
 	}
 	t.Fatal("workerd did not become ready")
+}
+
+func TestLazyRuntimeGatewayEndToEnd(t *testing.T) {
+	workerd, err := exec.LookPath("workerd")
+	if err != nil {
+		t.Skip("workerd is not installed")
+	}
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, discardWriter{})
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Lazy", Hostname: "lazy.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("lazy"); } };`}},
+		Entrypoint:        "worker.js",
+		Format:            "modules",
+		CompatibilityDate: "2025-12-10",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/runtime/durations" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer runtimeServer.Close()
+	dir := t.TempDir()
+	writer := config.NewRuntimeWriter(filepath.Join(dir, "workerd.capnp"), discardTraefik{})
+	writer.SetNanoflareRuntimeAddr(strings.TrimPrefix(runtimeServer.URL, "http://"))
+	manager := runtime.NewLazyManager(
+		writer,
+		runtime.CommandLauncher{Executable: workerd},
+		dir,
+		"127.0.0.1",
+		availablePort(t),
+		5*time.Second,
+		5*time.Second,
+		50*time.Millisecond,
+	)
+	defer manager.Close()
+	server := api.NewServerWithRuntime(service, nil, "", nil, nil, manager)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "lazy" {
+		t.Fatalf("lazy gateway status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestWorkerdAssetsBindingEndToEnd(t *testing.T) {
@@ -407,6 +459,12 @@ func availablePort(t *testing.T) int {
 type discardWriter struct{}
 
 func (discardWriter) Write([]nanoflare.ActiveDeployment) error {
+	return nil
+}
+
+type discardTraefik struct{}
+
+func (discardTraefik) WriteTraefik([]nanoflare.ActiveDeployment) error {
 	return nil
 }
 

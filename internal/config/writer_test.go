@@ -164,7 +164,7 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 		`- web`,
 		`- websecure`,
 		`- hello_app-prefix`,
-		`prefix: "/internal/http/apps/hello-app/9001"`,
+		`prefix: "/internal/http/apps/hello-app"`,
 		`url: "http://nanoflared:8080"`,
 	} {
 		if !strings.Contains(config, expected) {

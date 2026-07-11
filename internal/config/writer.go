@@ -646,7 +646,7 @@ func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost 
 	for _, item := range active {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s-prefix:\n      addPrefix:\n        prefix: %s\n",
-			name, yamlQuote(fmt.Sprintf("/internal/http/apps/%s/%d", item.App.ID, item.Deployment.Port)))
+			name, yamlQuote(fmt.Sprintf("/internal/http/apps/%s", item.App.ID)))
 	}
 	out.WriteString("  routers:\n")
 	if authHost != "" {

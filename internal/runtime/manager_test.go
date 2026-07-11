@@ -171,6 +171,132 @@ func TestManagerSkipsPortBusyOnWildcardBind(t *testing.T) {
 	}
 }
 
+func TestLazyManagerEnsuresWorkerOnDemand(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 25*time.Millisecond)
+	defer manager.Close()
+
+	ensured, err := manager.Ensure(context.Background(), deployments(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ensured.Port == 0 {
+		t.Fatal("Ensure() port = 0, want allocated runtime port")
+	}
+	if launcher.count() != 1 {
+		t.Fatalf("launches = %d, want 1", launcher.count())
+	}
+	ensured.Release()
+}
+
+func TestLazyManagerCoalescesConcurrentEnsures(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 25*time.Millisecond)
+	defer manager.Close()
+
+	var wg sync.WaitGroup
+	results := make(chan EnsuredWorker, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ensured, err := manager.Ensure(context.Background(), deployments(0)[0])
+			if err != nil {
+				t.Errorf("Ensure() error = %v", err)
+				return
+			}
+			results <- ensured
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var port int
+	for ensured := range results {
+		if port == 0 {
+			port = ensured.Port
+		} else if ensured.Port != port {
+			t.Fatalf("Ensure() returned mixed ports %d and %d", port, ensured.Port)
+		}
+		ensured.Release()
+	}
+	if launcher.count() != 1 {
+		t.Fatalf("launches = %d, want 1", launcher.count())
+	}
+}
+
+func TestLazyManagerStopsAfterIdleOnlyAfterAllReleases(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 20*time.Millisecond)
+	defer manager.Close()
+
+	first, err := manager.Ensure(context.Background(), deployments(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Ensure(context.Background(), deployments(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+	time.Sleep(40 * time.Millisecond)
+	if launcher.process(0).isStopped() {
+		t.Fatal("worker stopped while second request was still in flight")
+	}
+	second.Release()
+	waitFor(t, time.Second, launcher.process(0).isStopped, "idle worker stop")
+}
+
+func TestLazyManagerCancelsIdleStopOnNewEnsure(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 80*time.Millisecond)
+	defer manager.Close()
+
+	first, err := manager.Ensure(context.Background(), deployments(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+	time.Sleep(20 * time.Millisecond)
+	second, err := manager.Ensure(context.Background(), deployments(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if launcher.process(0).isStopped() {
+		t.Fatal("worker stopped after idle timer was canceled by new request")
+	}
+	second.Release()
+	waitFor(t, time.Second, launcher.process(0).isStopped, "idle worker stop")
+}
+
+func TestLazyManagerReplacesChangedDeployment(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, time.Minute)
+	defer manager.Close()
+
+	first, err := manager.Ensure(context.Background(), deployments(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+	next := deployments(0)[0]
+	next.Deployment.ID = "replacement"
+	second, err := manager.Ensure(context.Background(), next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Release()
+	waitFor(t, time.Second, launcher.process(0).isStopped, "old deployment stop")
+	if launcher.count() != 2 {
+		t.Fatalf("launches = %d, want replacement launch", launcher.count())
+	}
+}
+
 func deployments(port int) []nanoflare.ActiveDeployment {
 	return []nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello", Hostname: "hello.example.com"},
@@ -336,4 +462,16 @@ func index(values []string, target string) int {
 
 func stringPort(port int) string {
 	return fmt.Sprint(port)
+}
+
+func waitFor(t *testing.T, timeout time.Duration, condition func() bool, description string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
 }

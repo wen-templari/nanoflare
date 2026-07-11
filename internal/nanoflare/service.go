@@ -1382,18 +1382,7 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return err
 	}
-	storedPath := objectStorageBucketPath(bucketID, objectPath)
-	existing, err := s.objects.Head(objectStorageBucketScope, storedPath)
-	if err != nil && !errors.Is(err, ErrObjectNotFound) {
-		return err
-	}
-	if err := s.objects.Delete(objectStorageBucketScope, storedPath); err != nil {
-		return err
-	}
-	if !errors.Is(err, ErrObjectNotFound) {
-		_ = s.store.AdjustObjectStorageBucketSize(bucketID, -existing.Size)
-	}
-	return nil
+	return s.objects.Delete(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
 }
 
 func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
@@ -1404,18 +1393,10 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return ObjectInfo{}, err
 	}
-	storedPath := objectStorageBucketPath(bucketID, objectPath)
-	var previousSize int64
-	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
-		previousSize = existing.Size
-	} else if !errors.Is(err, ErrObjectNotFound) {
-		return ObjectInfo{}, err
-	}
-	object, err := s.objects.Put(objectStorageBucketScope, storedPath, contentType, data)
+	object, err := s.objects.Put(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath), contentType, data)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	_ = s.store.AdjustObjectStorageBucketSize(bucketID, object.Size-previousSize)
 	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, nil
 }
@@ -1650,7 +1631,7 @@ func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBuck
 	if err != nil {
 		return ObjectStorageBucketMetrics{}, err
 	}
-	if metrics.Size != 0 || s.objects == nil {
+	if s.objects == nil {
 		return metrics, nil
 	}
 	size, ok, err := s.reconcileObjectStorageBucketSize(bucketID)
@@ -1823,6 +1804,17 @@ func (s *Service) WorkerPort(appID, requestPath string) (int, bool, error) {
 		return 0, false, nil
 	}
 	return active.Deployment.Port, shouldRunWorkerFirst(active.Deployment.AssetConfig.RunWorkerFirst, requestPath), nil
+}
+
+func (s *Service) WorkerRuntimeDeployment(appID, requestPath string) (ActiveDeployment, bool, bool, error) {
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return ActiveDeployment{}, false, false, err
+	}
+	if active == nil {
+		return ActiveDeployment{}, false, false, nil
+	}
+	return *active, shouldRunWorkerFirst(active.Deployment.AssetConfig.RunWorkerFirst, requestPath), true, nil
 }
 
 func shouldRunWorkerFirst(runWorkerFirst RunWorkerFirst, requestPath string) bool {

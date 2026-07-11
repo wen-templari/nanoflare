@@ -1,6 +1,6 @@
 {
   "name": "gallery-app",
-  "app_id": "0f1b3602fdcc076bb25dce6c798225bc54155f5d00a304b4",
+  "app_id": "be262797b9287cb3570617d4d05f241a856c39bda2d10d48",
   "api_url": "http://127.0.0.1:8080",
   "entrypoint": "dist/worker.js",
   "format": "modules",
