@@ -285,6 +285,13 @@ type WorkerStatusCode struct {
 	Value float64 `json:"value"`
 }
 
+type WorkerTrafficDuration struct {
+	DurationMsAvg       float64   `json:"duration_ms_avg"`
+	DurationMsP95       float64   `json:"duration_ms_p95"`
+	DurationMsPerSecond float64   `json:"duration_ms_per_second"`
+	DurationSeries      []float64 `json:"duration_series"`
+}
+
 type WorkerTraffic struct {
 	Available         bool               `json:"available"`
 	RequestsPerSecond float64            `json:"requests_per_second"`
@@ -295,6 +302,7 @@ type WorkerTraffic struct {
 	BundleSize        int64              `json:"bundle_size"`
 	Traffic           []float64          `json:"traffic"`
 	StatusCodes       []WorkerStatusCode `json:"status_codes"`
+	WorkerTrafficDuration
 }
 
 type KVNamespaceMetrics struct {

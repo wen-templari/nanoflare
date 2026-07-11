@@ -109,7 +109,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 		hostname := input.Hostname
 		if generated {
 			var err error
-			hostname, err = s.generatedHostname(input.Name)
+			hostname, err = s.generatedHostname(input.Name, input.OrgID, attempt)
 			if err != nil {
 				return App{}, err
 			}
@@ -1929,16 +1929,39 @@ func htmlIndexPath(requestPath string) string {
 	return strings.TrimSuffix(requestPath, "/") + "/index.html"
 }
 
-func (s *Service) generatedHostname(name string) (string, error) {
-	suffix, err := s.randomHostnameSuffix()
-	if err != nil {
-		return "", err
-	}
+func (s *Service) generatedHostname(name, orgID string, attempt int) (string, error) {
 	prefix := slug(name)
 	if prefix == "" {
 		prefix = "worker"
 	}
-	return prefix + "-" + suffix + "." + s.baseHostname, nil
+	org, err := s.organizationHostnameLabel(orgID)
+	if err != nil {
+		return "", err
+	}
+	labels := []string{prefix}
+	if attempt > 0 {
+		suffix, err := s.randomHostnameSuffix()
+		if err != nil {
+			return "", err
+		}
+		labels = append(labels, suffix)
+	}
+	if org != "" {
+		labels = append(labels, org)
+	}
+	return strings.Join(labels, "-") + "." + s.baseHostname, nil
+}
+
+func (s *Service) organizationHostnameLabel(orgID string) (string, error) {
+	orgID = strings.TrimSpace(orgID)
+	if orgID == "" {
+		return "", nil
+	}
+	org, err := s.store.GetOrganization(orgID)
+	if err != nil {
+		return "", err
+	}
+	return slug(org.Name), nil
 }
 
 func normalizeHostname(hostname string) (string, error) {
@@ -1965,7 +1988,7 @@ func slug(value string) string {
 }
 
 func randomHostnameSuffix() (string, error) {
-	value := make([]byte, 4)
+	value := make([]byte, 5)
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}

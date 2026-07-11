@@ -9,13 +9,14 @@ import (
 	"github.com/clas/nanoflare/internal/api"
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 func TestRuntimeMuxRoutesObjectRequestsToObjectHandler(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewServiceWithObjects(store, config.NewWriter("", "", "", ""), nil)
 	server := api.NewServer(service)
-	runtimeMux := newRuntimeMux(service, server)
+	runtimeMux := newRuntimeMux(service, server, runtime.NewDurationTelemetry())
 
 	request := httptest.NewRequest(http.MethodGet, "/internal/runtime/objects/demo.txt", nil)
 	recorder := httptest.NewRecorder()

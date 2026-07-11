@@ -21,12 +21,19 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	}})
 	for _, expected := range []string{
 		`(name = "hello-app", worker = .workerHelloApp)`,
+		`(name = "nanoflare-duration-collector", external = (address = "127.0.0.1:8081"))`,
 		`address = "*:9001"`,
 		`(name = "kv-hello-app-0", external = (address = "127.0.0.1:8081"`,
 		`(name = "X-Nanoflare-KV-Namespace-ID", value = "kvns-1")`,
 		`(name = "KV", kvNamespace = "kv-hello-app-0")`,
 		`(name = "ASSETS", service = "assets-hello-app")`,
 		`(name = "X-Nanoflare-Binding", value = "assets")`,
+		`__nanoflareRecordRuntimeDuration(startedAt, \"ok\")`,
+		`scriptName: globalThis.__NANOFLARE_APP_ID`,
+		`durationMs`,
+		`(name = "__NANOFLARE_APP_ID", text = "hello-app")`,
+		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
+		`globalThis.__NANOFLARE_DURATION_COLLECTOR.fetch(\"http://nanoflare.internal/internal/runtime/durations\"`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
 	} {

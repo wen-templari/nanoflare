@@ -32,6 +32,7 @@ type Repository interface {
 	UserByEmail(string) (User, error)
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
+	GetOrganization(string) (Organization, error)
 	AddUserToOrganization(userID, orgID string) error
 	ListOrganizationsForUser(userID string) ([]Organization, error)
 	UserBelongsToOrganization(userID, orgID string) (bool, error)
@@ -150,6 +151,16 @@ func (s *Store) CreateOrganization(org Organization) error {
 	}
 	s.organizations[org.ID] = org
 	return nil
+}
+
+func (s *Store) GetOrganization(orgID string) (Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	org, exists := s.organizations[orgID]
+	if !exists {
+		return Organization{}, ErrOrganizationNotFound
+	}
+	return org, nil
 }
 
 func (s *Store) AddUserToOrganization(userID, orgID string) error {

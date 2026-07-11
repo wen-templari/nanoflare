@@ -89,6 +89,9 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	if !traffic.Available || traffic.RequestsPerSecond != 4.25 || len(traffic.Traffic) != 2 {
 		t.Fatalf("unexpected worker traffic: %#v", traffic)
 	}
+	if traffic.DurationMsAvg != 12.5 || traffic.DurationMsP95 != 20 || traffic.DurationMsPerSecond != 1.5 || len(traffic.DurationSeries) != 2 {
+		t.Fatalf("unexpected worker duration traffic: %#v", traffic)
+	}
 
 	var apps []nanoflare.App
 	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &apps)
@@ -273,7 +276,7 @@ func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&app); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(app.Hostname, "hello-worker-") || !strings.HasSuffix(app.Hostname, ".workers.example.com") {
+	if app.Hostname != "hello-worker.workers.example.com" {
 		t.Fatalf("generated hostname = %q", app.Hostname)
 	}
 }
@@ -950,7 +953,17 @@ func (fakeOutput) Output(string) []nanoflare.WorkerOutputLine {
 type fakeTraffic struct{}
 
 func (fakeTraffic) Traffic(string) (nanoflare.WorkerTraffic, error) {
-	return nanoflare.WorkerTraffic{Available: true, RequestsPerSecond: 4.25, Traffic: []float64{3, 4}}, nil
+	return nanoflare.WorkerTraffic{
+		Available:         true,
+		RequestsPerSecond: 4.25,
+		Traffic:           []float64{3, 4},
+		WorkerTrafficDuration: nanoflare.WorkerTrafficDuration{
+			DurationMsAvg:       12.5,
+			DurationMsP95:       20,
+			DurationMsPerSecond: 1.5,
+			DurationSeries:      []float64{1.25, 1.75},
+		},
+	}, nil
 }
 
 type apiObjectStore struct {

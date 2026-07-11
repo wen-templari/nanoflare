@@ -41,7 +41,7 @@ type Runner struct {
 
 type Project struct {
 	Name                 string                                 `json:"name"`
-	Hostname             string                                 `json:"hostname"`
+	Hostname             string                                 `json:"hostname,omitempty"`
 	AppID                string                                 `json:"app_id,omitempty"`
 	APIURL               string                                 `json:"api_url"`
 	Entrypoint           string                                 `json:"entrypoint"`
@@ -214,7 +214,6 @@ func (r *Runner) create(args []string) error {
 		return err
 	}
 	project.AppID = app.ID
-	project.Hostname = app.Hostname
 	project.APIURL = baseURL
 	if err := writeProject(path, project, os.O_TRUNC); err != nil {
 		return err

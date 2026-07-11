@@ -377,6 +377,15 @@ func (p *Postgres) CreateOrganization(org nanoflare.Organization) error {
 	return err
 }
 
+func (p *Postgres) GetOrganization(orgID string) (nanoflare.Organization, error) {
+	var org nanoflare.Organization
+	err := p.db.QueryRow(`SELECT id, name, created_at FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.Organization{}, nanoflare.ErrOrganizationNotFound
+	}
+	return org, err
+}
+
 func (p *Postgres) AddUserToOrganization(userID, orgID string) error {
 	_, err := p.db.Exec(`
 INSERT INTO user_organizations (user_id, organization_id)

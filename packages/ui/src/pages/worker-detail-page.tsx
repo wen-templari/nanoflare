@@ -2,7 +2,7 @@ import { Alert, Anchor, Card, Group, SegmentedControl, SimpleGrid, Text, ThemeIc
 import { lazy, Suspense, useEffect, useState } from "react"
 import {
   Activity, AlertTriangle, Archive, FileCode2, FileJson, Folder,
-  GitBranch, Globe2, Save, SlidersHorizontal, Terminal,
+  Gauge, GitBranch, Globe2, Save, SlidersHorizontal, Terminal, TimerReset,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router-dom"
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
@@ -17,6 +17,32 @@ import { EmptyMetrics, Panel, StatusCodeMix, WorkerDetailEmpty } from "../compon
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
 import { cn } from "../lib/utils"
+
+const emptyTraffic: WorkerTraffic = {
+  available: false,
+  requests_per_second: 0,
+  p95_latency: 0,
+  error_rate: 0,
+  invocations: 0,
+  errors: 0,
+  bundle_size: 0,
+  traffic: [],
+  duration_ms_avg: 0,
+  duration_ms_p95: 0,
+  duration_ms_per_second: 0,
+  duration_series: [],
+  status_codes: [],
+}
+
+function normalizeTraffic(input?: Partial<WorkerTraffic> | null): WorkerTraffic {
+  return {
+    ...emptyTraffic,
+    ...input,
+    traffic: Array.isArray(input?.traffic) ? input!.traffic : [],
+    duration_series: Array.isArray(input?.duration_series) ? input!.duration_series : [],
+    status_codes: Array.isArray(input?.status_codes) ? input!.status_codes : [],
+  }
+}
 
 const WorkerDefinitionFlow = lazy(() =>
   import("../components/worker-definition-flow").then((module) => ({ default: module.WorkerDefinitionFlow })),
@@ -41,7 +67,7 @@ function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: s
   const [deployments, setDeployments] = useState<ConsoleDeployment[]>([])
   const [selectedFile, setSelectedFile] = useState<WorkerFile>()
   const [output, setOutput] = useState<WorkerOutputLine[]>([])
-  const [traffic, setTraffic] = useState<WorkerTraffic>({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, invocations: 0, errors: 0, bundle_size: 0, traffic: [], status_codes: [] })
+  const [traffic, setTraffic] = useState<WorkerTraffic>(emptyTraffic)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
@@ -54,7 +80,7 @@ function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: s
         setFiles([])
         setDeployments([])
         setOutput([])
-        setTraffic({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, invocations: 0, errors: 0, bundle_size: 0, traffic: [], status_codes: [] })
+        setTraffic(emptyTraffic)
         setError("Worker detail API unavailable")
         setLoading(false)
         return
@@ -65,14 +91,14 @@ function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: s
         fetchJSON<WorkerFile[]>(`/v1/apps/${worker.id}/files`).catch(() => []),
         fetchJSON<ConsoleDeployment[]>(`/v1/apps/${worker.id}/deployments`).catch(() => []),
         fetchJSON<WorkerOutputLine[]>(`/v1/apps/${worker.id}/output`).catch(() => []),
-        fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`).catch(() => ({ available: false, requests_per_second: 0, p95_latency: 0, error_rate: 0, invocations: 0, errors: 0, bundle_size: 0, traffic: [], status_codes: [] })),
+        fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`).catch(() => emptyTraffic),
       ])
       if (cancelled) return
       setDetail(nextDetail)
       setFiles(nextFiles)
       setDeployments(nextDeployments)
       setOutput(nextOutput)
-      setTraffic(nextTraffic)
+      setTraffic(normalizeTraffic(nextTraffic))
       setError(nextDetail ? "" : "Worker detail API unavailable")
       setSelectedFile((current) => nextFiles.find((file) => file.path === current?.path) ?? nextFiles[0])
       setLoading(false)
@@ -168,6 +194,9 @@ function WorkerOverview({
             { label: "Invocations", value: compactNumber(traffic.invocations), note: "routed worker requests", icon: Activity },
             { label: "Errors", value: compactNumber(traffic.errors), note: "5xx responses", icon: AlertTriangle },
             { label: "Bundle", value: formatBytes(traffic.bundle_size || deployment?.bundle_size || 0), note: "active deployment size", icon: FileCode2 },
+            { label: "Handler avg", value: formatMilliseconds(traffic.duration_ms_avg), note: "average handler duration / request", icon: Gauge },
+            { label: "Handler p95", value: formatMilliseconds(traffic.duration_ms_p95), note: "p95 handler duration / request", icon: TimerReset },
+            { label: "Duration rate", value: `${traffic.duration_ms_per_second.toFixed(2)} ms/s`, note: "recent handler time rate", icon: Activity },
           ].map(({ label, value, note, icon: Icon }) => (
             <Card key={label} padding="md" radius="md" withBorder>
               <Group justify="space-between">
@@ -181,6 +210,9 @@ function WorkerOverview({
         </SimpleGrid>
         <Panel title="Worker traffic" eyebrow={traffic.available ? "Last 24 hours" : "Prometheus unavailable"}>
           <MiniTrafficChart values={traffic.traffic} />
+        </Panel>
+        <Panel title="Handler duration" eyebrow={traffic.duration_series.length ? "Last 24 hours" : "Waiting for runtime timings"}>
+          <MiniTrafficChart values={traffic.duration_series} />
         </Panel>
         <Panel title="Response codes" eyebrow="5 minute rate">
           <StatusCodeMix values={traffic.status_codes} />
@@ -282,6 +314,10 @@ function MiniTrafficChart({ values }: { values: number[] }) {
 
 function compactNumber(value: number) {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value || 0)
+}
+
+function formatMilliseconds(value: number) {
+  return `${value.toFixed(2)} ms`
 }
 
 function hostnameHref(hostname: string) {

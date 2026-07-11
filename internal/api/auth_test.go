@@ -156,6 +156,9 @@ func TestAuthAPIsReturnNormalizedResponses(t *testing.T) {
 func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})
+	if err := service.SetBaseHostname("workers.example.test"); err != nil {
+		t.Fatal(err)
+	}
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
 	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
 
@@ -203,6 +206,24 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 		t.Fatalf("app org = %q, want %q", app.OrgID, session.ActiveOrgID)
 	}
 
+	createBody = bytes.NewBufferString(`{"name":"Generated App"}`)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	createRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	createRecorder = httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("generated create status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+	var generatedApp nanoflare.App
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &generatedApp); err != nil {
+		t.Fatal(err)
+	}
+	if generatedApp.Hostname != "generated-app-acme.workers.example.test" {
+		t.Fatalf("generated hostname = %q", generatedApp.Hostname)
+	}
+
 	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+session.Token)
 	listRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
@@ -215,9 +236,18 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	if err := json.Unmarshal(listRecorder.Body.Bytes(), &apps); err != nil {
 		t.Fatal(err)
 	}
-	if len(apps) != 1 || apps[0].ID != app.ID {
+	if len(apps) != 2 || !containsAppID(apps, app.ID) || !containsAppID(apps, generatedApp.ID) {
 		t.Fatalf("apps = %#v", apps)
 	}
+}
+
+func containsAppID(apps []nanoflare.App, appID string) bool {
+	for _, app := range apps {
+		if app.ID == appID {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeAuthenticator struct {

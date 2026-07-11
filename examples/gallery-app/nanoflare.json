@@ -1,7 +1,6 @@
 {
   "name": "gallery-app",
-  "hostname": "gallery.local.nbtca.space",
-  "app_id": "e408533abd5117cd89776ea0c71dee88cb6cfd2def647b87",
+  "app_id": "0f1b3602fdcc076bb25dce6c798225bc54155f5d00a304b4",
   "api_url": "http://127.0.0.1:8080",
   "entrypoint": "dist/worker.js",
   "format": "modules",

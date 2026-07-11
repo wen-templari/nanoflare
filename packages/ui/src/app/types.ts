@@ -85,6 +85,10 @@ export type WorkerTraffic = {
   errors: number;
   bundle_size: number;
   traffic: number[];
+  duration_ms_avg: number;
+  duration_ms_p95: number;
+  duration_ms_per_second: number;
+  duration_series: number[];
   status_codes: { code: string; value: number }[];
 };
 

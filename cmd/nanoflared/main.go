@@ -102,6 +102,7 @@ func main() {
 	}
 
 	output := runtime.NewOutputBuffer()
+	durationTelemetry := runtime.NewDurationTelemetry()
 	var publisher runtimePublisher
 	var closeRuntime func()
 	traefikStore := config.NewTraefikStore(*authURL, *workerHost)
@@ -152,7 +153,7 @@ func main() {
 		defer closeRuntime()
 	}
 
-	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewClient(*prometheus))
+	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
 	if *baseHostname != "" {
 		if err := service.SetBaseHostname(*baseHostname); err != nil {
 			log.Fatal(err)
@@ -189,7 +190,7 @@ func main() {
 	}
 	controlAuth := nanoflare.NewControlAuthService(store, *authSecret)
 	server := api.NewServerWithControlAuth(service, traefikStore, *traefikToken, authenticator, controlAuth)
-	runtimeMux := newRuntimeMux(service, server)
+	runtimeMux := newRuntimeMux(service, server, durationTelemetry)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {
 		log.Printf("nanoflared runtime API listening on %s", *runtimeAddr)
@@ -222,11 +223,13 @@ func envOrDefault(name, fallback string) string {
 	return fallback
 }
 
-func newRuntimeMux(service *nanoflare.Service, server *api.Server) *http.ServeMux {
+func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry) *http.ServeMux {
 	runtimeMux := http.NewServeMux()
 	runtimeKV := api.NewRuntimeKVServer(service)
 	runtimeAssets := api.NewRuntimeAssetServer(service)
+	runtimeDurations := api.NewRuntimeDurationServer(durationTelemetry)
 	runtimeMux.Handle("/internal/runtime/objects/", server)
+	runtimeMux.Handle("/internal/runtime/durations", runtimeDurations)
 	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Nanoflare-Binding") == "assets" {
 			runtimeAssets.ServeHTTP(w, r)

@@ -96,8 +96,10 @@ uses its intentionally ephemeral in-memory repository.
 
 When a worker is registered without a hostname, `nanoflared` uses
 `-base-hostname` or `NANOFLARE_BASE_HOSTNAME` to generate one in the form
-`worker-name-a1b2c3d4.workers.example.test`. Requests without a hostname are
-rejected when no base hostname is configured.
+`worker-name-org.workers.example.test`. If that hostname is already taken,
+`nanoflared` retries with a random suffix, for example
+`worker-name-a1b2c3d4e5-org.workers.example.test`. Requests without a hostname
+are rejected when no base hostname is configured.
 
 `nanoflared` also listens on `127.0.0.1:8081` for the private Worker KV adapter.
 Use `-runtime-addr` to change the listener address. Do not expose this endpoint

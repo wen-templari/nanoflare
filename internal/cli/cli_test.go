@@ -234,7 +234,7 @@ func TestSecretPutUsesValueArgument(t *testing.T) {
 	}
 }
 
-func TestCreatePersistsGeneratedHostname(t *testing.T) {
+func TestCreateDoesNotPersistGeneratedHostname(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	var created nanoflare.CreateAppInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -262,8 +262,15 @@ func TestCreatePersistsGeneratedHostname(t *testing.T) {
 	if created.Name != "Hello" || created.Hostname != "" {
 		t.Fatalf("create payload = %#v", created)
 	}
-	if project.AppID != "app-123" || project.Hostname != "hello-a1b2c3d4.example.com" {
+	if project.AppID != "app-123" || project.Hostname != "" {
 		t.Fatalf("project = %#v", project)
+	}
+	content, err := os.ReadFile(projectFilename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(content, []byte(`"hostname"`)) {
+		t.Fatalf("project file unexpectedly contains hostname:\n%s", content)
 	}
 }
 

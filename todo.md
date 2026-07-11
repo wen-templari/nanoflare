@@ -3,37 +3,19 @@
 - Generate type from worker config file (https://developers.cloudflare.com/workers/languages/typescript/)
 - worker init
 
-i want to add metrics data , similar to cloudflare worker, kv, store
-
-## Worker
-- invocations
-- errors
-- cpu time
-- bundle size
-- request sub paths
-- request status code
-- 
-KV
-- read/write
-
-Object storage
-- read/write
-- size
-
 ## Worker triggers 
 
 https://developers.cloudflare.com/workers/configuration/cron-triggers/
 
-## Env based deployments
+## Deployments
 
-support deploy to different envs (dev, staging, prod) with different config files.
-
-
-## Design review
-
-- should we keep using X-Nanoflare-* for kv namespace and object storagebucket?
-****
+- support deploy to different envs (dev, staging, prod) with different config files.
+- host name: 
+  - ${worker_name}-${org}.${base}
+  - ${worker_name}-${hash}-${org}.${base}
+  - ${worker_name}-${env}-${org}.${base}
+  - ${custom_host_name}
 
 ## Access control
 
-add organizations: every resources should be org scoped ( worker/kv/storage ) , add user keep it simple only have id and email, add user / org relation table . add a simple auth flow , frontend guard user to login for control plane, and ask for email and password, then generate a jwt token for user to access control plane apis. 
+sso for control panel

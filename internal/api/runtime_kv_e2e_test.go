@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -278,6 +280,120 @@ func TestWorkerdObjectsBindingEndToEnd(t *testing.T) {
 	t.Fatal("workerd did not become ready")
 }
 
+func TestWorkerdDurationTelemetryEndToEnd(t *testing.T) {
+	workerd, err := exec.LookPath("workerd")
+	if err != nil {
+		t.Skip("workerd is not installed")
+	}
+
+	var mu sync.Mutex
+	var payloads []string
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		payloads = append(payloads, string(body))
+		mu.Unlock()
+		t.Logf("runtime duration request: method=%s path=%s body=%s", r.Method, r.URL.Path, body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer runtimeServer.Close()
+
+	port := availablePort(t)
+	app := nanoflare.App{ID: "native-duration", Name: "Native Duration", Hostname: "duration.example.com", RuntimeToken: "runtime-secret", CreatedAt: time.Now().UTC()}
+	active := []nanoflare.ActiveDeployment{{
+		App: app,
+		Deployment: nanoflare.Deployment{
+			ID:                "deployment",
+			AppID:             app.ID,
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeDurationWorker}},
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Port:              port,
+			CreatedAt:         time.Now().UTC(),
+		},
+	}}
+	generatedConfig := config.WorkerdWithRuntimeAddr(active, strings.TrimPrefix(runtimeServer.URL, "http://"))
+	t.Logf("generated workerd config:\n%s", generatedConfig)
+	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
+	if err := os.WriteFile(configPath, []byte(generatedConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := exec.CommandContext(ctx, workerd, "serve", configPath)
+	output, err := command.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		_ = command.Wait()
+	}()
+	errorOutput := make(chan string, 1)
+	go func() {
+		value, _ := io.ReadAll(output)
+		errorOutput <- string(value)
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err := http.Get(url)
+		if err == nil {
+			body, readErr := io.ReadAll(response.Body)
+			response.Body.Close()
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("worker status = %d, body = %s", response.StatusCode, body)
+			}
+			if got, want := string(body), "done"; got != want {
+				t.Fatalf("worker body = %s, want %s", got, want)
+			}
+			break
+		}
+		select {
+		case value := <-errorOutput:
+			t.Fatalf("workerd exited before becoming ready: %s", value)
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		current := append([]string(nil), payloads...)
+		mu.Unlock()
+		if len(current) > 0 {
+			var events []struct {
+				ScriptName string  `json:"scriptName"`
+				DurationMs float64 `json:"durationMs"`
+			}
+			if err := json.Unmarshal([]byte(current[0]), &events); err != nil {
+				t.Fatalf("duration payload is not json: %s: %v", current[0], err)
+			}
+			if len(events) != 1 || events[0].ScriptName != app.ID || events[0].DurationMs <= 0 {
+				t.Fatalf("duration payload = %s, want one positive sample for %s", current[0], app.ID)
+			}
+			return
+		}
+		select {
+		case value := <-errorOutput:
+			t.Fatalf("workerd exited before posting duration telemetry: %s", value)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	cancel()
+	stderr := <-errorOutput
+	t.Fatalf("no duration telemetry posted; workerd stderr:\n%s", stderr)
+}
+
 func availablePort(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -411,5 +527,15 @@ const nativeObjectsWorker = `export default {
       body: body ? await body.json() : null,
       missing: missing === null,
     });
+	  },
+	};`
+
+const nativeDurationWorker = `export default {
+  fetch() {
+    let value = 0;
+    for (let index = 0; index < 5000000; index++) {
+      value += Math.sqrt(index);
+    }
+    return new Response("done");
   },
 };`

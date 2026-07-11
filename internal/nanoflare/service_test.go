@@ -196,17 +196,20 @@ func TestCreateAppNormalizesExplicitHostname(t *testing.T) {
 }
 
 func TestCreateAppGeneratesHostnameFromBase(t *testing.T) {
-	service := NewService(NewStore(), &recordingWriter{})
+	store := NewStore()
+	if err := store.CreateOrganization(Organization{ID: "8b07d103bf36c2528d4d23359b6e220d3141eeaa48fe8baf", Name: "Acme Org"}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(store, &recordingWriter{})
 	if err := service.SetBaseHostname(" Workers.EXAMPLE.com. "); err != nil {
 		t.Fatal(err)
 	}
-	service.randomHostnameSuffix = func() (string, error) { return "a1b2c3d4", nil }
 
-	app, err := service.CreateApp(CreateAppInput{Name: "Hello Worker"})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello Worker", OrgID: "8b07d103bf36c2528d4d23359b6e220d3141eeaa48fe8baf"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Hostname != "hello-worker-a1b2c3d4.workers.example.com" {
+	if app.Hostname != "hello-worker-acme-org.workers.example.com" {
 		t.Fatalf("hostname = %q", app.Hostname)
 	}
 }
@@ -230,7 +233,7 @@ func TestCreateAppUsesWorkerSlugFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Hostname != "worker-a1b2c3d4.example.com" {
+	if app.Hostname != "worker.example.com" {
 		t.Fatalf("hostname = %q", app.Hostname)
 	}
 }
@@ -256,25 +259,29 @@ func TestCreateAppDoesNotRetryExplicitHostnameConflict(t *testing.T) {
 }
 
 func TestCreateAppRetriesGeneratedHostnameConflict(t *testing.T) {
-	service := NewService(NewStore(), &recordingWriter{})
+	store := NewStore()
+	if err := store.CreateOrganization(Organization{ID: "org-123", Name: "Acme"}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(store, &recordingWriter{})
 	if err := service.SetBaseHostname("example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello-a1b2c3d4.example.com"}); err != nil {
+	if _, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello-acme.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	suffixes := []string{"a1b2c3d4", "d4c3b2a1"}
+	suffixes := []string{"a1b2c3d4e5", "d4c3b2a1f0"}
 	service.randomHostnameSuffix = func() (string, error) {
 		next := suffixes[0]
 		suffixes = suffixes[1:]
 		return next, nil
 	}
 
-	app, err := service.CreateApp(CreateAppInput{Name: "Hello"})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", OrgID: "org-123"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Hostname != "hello-d4c3b2a1.example.com" {
+	if app.Hostname != "hello-a1b2c3d4e5-acme.example.com" {
 		t.Fatalf("hostname = %q", app.Hostname)
 	}
 }

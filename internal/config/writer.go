@@ -83,6 +83,7 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 	var out strings.Builder
 	out.WriteString("using Workerd = import \"/workerd/workerd.capnp\";\n\n")
 	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
+	out.WriteString(durationTelemetryServices(runtimeAddr))
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(item.App.ID), workerName(item.App.ID))
 	}
@@ -115,8 +116,16 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 	return out.String()
 }
 
+func durationTelemetryServices(runtimeAddr string) string {
+	return fmt.Sprintf("    (name = \"nanoflare-duration-collector\", external = (address = %s)),\n", quote(runtimeAddr))
+}
+
 func workerBindings(item nanoflare.ActiveDeployment) []string {
-	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.ObjectStorageBuckets)+1)
+	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.ObjectStorageBuckets)+3)
+	bindings = append(bindings,
+		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", quote(item.App.ID)),
+		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
+	)
 	varNames := make([]string, 0, len(item.Deployment.Vars))
 	for name := range item.Deployment.Vars {
 		varNames = append(varNames, name)
@@ -170,6 +179,21 @@ func entrypointWrapper(entrypoint, binding string, objectBindings []nanoflare.Ob
 
 const assetBindingName = %s;
 const objectBindingNames = %s;
+
+function recordRuntimeDuration(env, ctx, startedAt, outcome) {
+  const durationMs = Math.max(1, Date.now() - startedAt);
+  const payload = [{
+    scriptName: env.__NANOFLARE_APP_ID,
+    eventTimestamp: Date.now(),
+    durationMs,
+    outcome,
+  }];
+  ctx?.waitUntil?.(env.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  }));
+}
 
 function wrapAssetBinding(binding) {
   if (!binding) return binding;
@@ -351,14 +375,63 @@ function wrapEnv(env) {
 
 export default {
   ...userWorker,
-  fetch(request, env, ctx) {
-    return userWorker.fetch(request, wrapEnv(env), ctx);
+  async fetch(request, env, ctx) {
+    const startedAt = Date.now();
+    try {
+      const response = await userWorker.fetch(request, wrapEnv(env), ctx);
+      recordRuntimeDuration(env, ctx, startedAt, "ok");
+      return response;
+    } catch (error) {
+      recordRuntimeDuration(env, ctx, startedAt, "exception");
+      throw error;
+    }
   },
 };`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), objectBindingNamesJSON(objectBindings))
 }
 
 func serviceWorkerWrapper(script string, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return `function __nanoflareBuildObjectBody(response, object) {
+	return `function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
+  const durationMs = Math.max(1, Date.now() - startedAt);
+  const payload = [{
+    scriptName: globalThis.__NANOFLARE_APP_ID,
+    eventTimestamp: Date.now(),
+    durationMs,
+    outcome,
+  }];
+  globalThis.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+const __nanoflareAddEventListener = globalThis.addEventListener.bind(globalThis);
+globalThis.addEventListener = function(type, listener, options) {
+  if (type !== "fetch" || typeof listener !== "function") {
+    return __nanoflareAddEventListener(type, listener, options);
+  }
+  return __nanoflareAddEventListener(type, (event) => {
+    const startedAt = Date.now();
+    const originalRespondWith = event.respondWith.bind(event);
+    event.respondWith = (response) => originalRespondWith(Promise.resolve(response).then(
+      (value) => {
+        __nanoflareRecordRuntimeDuration(startedAt, "ok");
+        return value;
+      },
+      (error) => {
+        __nanoflareRecordRuntimeDuration(startedAt, "exception");
+        throw error;
+      },
+    ));
+    const result = listener(event);
+    if (result && typeof result.then === "function") {
+      event.waitUntil(result.catch(() => {}));
+    }
+    return result;
+  }, options);
+};
+
+function __nanoflareBuildObjectBody(response, object) {
   if (!response) return null;
   return {
     key: object.key,
