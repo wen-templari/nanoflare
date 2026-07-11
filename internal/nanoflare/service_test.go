@@ -49,6 +49,61 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 	}
 }
 
+func TestObjectStorageBucketObjectsSurviveWorkerRecreate(t *testing.T) {
+	store := newObjectBackedRepo()
+	objects := newMemoryObjectStore()
+	service := NewServiceWithObjects(store, &recordingWriter{}, objects)
+
+	bucket, err := service.CreateObjectStorageBucket(CreateObjectStorageBucketInput{Name: "gallery-images"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.CreateApp(CreateAppInput{Name: "Gallery", Hostname: "gallery.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(first.ID, DeployInput{
+		Files:                []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ObjectPut(first.RuntimeToken, bucket.ID, "photos/sunrise.jpg", "image/jpeg", []byte("image bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteApp(first.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := service.CreateApp(CreateAppInput{Name: "Gallery", Hostname: "gallery.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(second.ID, DeployInput{
+		Files:                []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	object, ok, err := service.ObjectGet(second.RuntimeToken, bucket.ID, "photos/sunrise.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || string(object.Body) != "image bytes" {
+		t.Fatalf("object after worker recreate = ok:%v body:%q", ok, object.Body)
+	}
+	items, err := service.ObjectList(second.RuntimeToken, bucket.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Key != "photos/sunrise.jpg" {
+		t.Fatalf("object list after worker recreate = %#v", items)
+	}
+}
+
 func TestDeployRestoresPreviousActivationWhenRuntimePublicationFails(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()
@@ -565,10 +620,8 @@ func (s *memoryObjectStore) Head(appID, path string) (ObjectInfo, error) {
 func (s *memoryObjectStore) List(appID, prefix string) ([]ObjectInfo, error) {
 	items := make([]ObjectInfo, 0)
 	for key, data := range s.objects {
-		if !strings.HasPrefix(key, appID+"/") {
-			continue
-		}
-		if !strings.HasPrefix(key, appID+"/"+prefix+"/") {
+		storedPrefix := appID + ":" + prefix + "/"
+		if !strings.HasPrefix(key, storedPrefix) {
 			continue
 		}
 		object := data.ObjectInfo

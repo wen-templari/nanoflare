@@ -1346,6 +1346,8 @@ func deploymentAssetObjectPath(deploymentID, assetPath string) string {
 	return path.Join("deployments", deploymentID, "assets", assetPath)
 }
 
+const objectStorageBucketScope = "object-storage-buckets"
+
 func objectStorageBucketPath(bucketID, objectPath string) string {
 	return path.Join("buckets", bucketID, strings.TrimPrefix(objectPath, "/"))
 }
@@ -1358,7 +1360,7 @@ func (s *Service) PresignUpload(capability, bucketID, objectPath string) (string
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return "", err
 	}
-	return s.objects.PresignUpload(appID, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
+	return s.objects.PresignUpload(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
 }
 
 func (s *Service) PresignDownload(capability, bucketID, objectPath string) (string, error) {
@@ -1369,7 +1371,7 @@ func (s *Service) PresignDownload(capability, bucketID, objectPath string) (stri
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return "", err
 	}
-	return s.objects.PresignDownload(appID, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
+	return s.objects.PresignDownload(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
 }
 
 func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
@@ -1381,11 +1383,11 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 		return err
 	}
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
-	existing, err := s.objects.Head(appID, storedPath)
+	existing, err := s.objects.Head(objectStorageBucketScope, storedPath)
 	if err != nil && !errors.Is(err, ErrObjectNotFound) {
 		return err
 	}
-	if err := s.objects.Delete(appID, storedPath); err != nil {
+	if err := s.objects.Delete(objectStorageBucketScope, storedPath); err != nil {
 		return err
 	}
 	if !errors.Is(err, ErrObjectNotFound) {
@@ -1404,12 +1406,12 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 	}
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
 	var previousSize int64
-	if existing, err := s.objects.Head(appID, storedPath); err == nil {
+	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
 		previousSize = existing.Size
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return ObjectInfo{}, err
 	}
-	object, err := s.objects.Put(appID, storedPath, contentType, data)
+	object, err := s.objects.Put(objectStorageBucketScope, storedPath, contentType, data)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -1426,7 +1428,7 @@ func (s *Service) ObjectGet(capability, bucketID, objectPath string) (ObjectBody
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return ObjectBody{}, false, err
 	}
-	object, err := s.objects.Get(appID, objectStorageBucketPath(bucketID, objectPath))
+	object, err := s.objects.Get(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
 	if errors.Is(err, ErrObjectNotFound) {
 		return ObjectBody{}, false, nil
 	}
@@ -1442,7 +1444,7 @@ func (s *Service) ObjectHead(capability, bucketID, objectPath string) (ObjectInf
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return ObjectInfo{}, false, err
 	}
-	object, err := s.objects.Head(appID, objectStorageBucketPath(bucketID, objectPath))
+	object, err := s.objects.Head(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
 	if errors.Is(err, ErrObjectNotFound) {
 		return ObjectInfo{}, false, nil
 	}
@@ -1458,7 +1460,7 @@ func (s *Service) ObjectList(capability, bucketID string) ([]ObjectInfo, error) 
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return nil, err
 	}
-	objects, err := s.objects.List(appID, objectStorageBucketPath(bucketID, ""))
+	objects, err := s.objects.List(objectStorageBucketScope, objectStorageBucketPath(bucketID, ""))
 	if err != nil {
 		return nil, err
 	}

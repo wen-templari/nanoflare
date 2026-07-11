@@ -602,7 +602,7 @@ func TestObjectStorageMetricsReconcileExistingObjects(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := objects.Put(app.ID, "buckets/"+bucket.ID+"/legacy.txt", "text/plain", []byte("legacy")); err != nil {
+	if _, err := objects.Put("object-storage-buckets", "buckets/"+bucket.ID+"/legacy.txt", "text/plain", []byte("legacy")); err != nil {
 		t.Fatal(err)
 	}
 
