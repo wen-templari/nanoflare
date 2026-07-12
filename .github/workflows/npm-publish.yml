@@ -27,7 +27,6 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          package-manager-cache: false
 
       - name: Use npm with trusted publishing support
         run: |
@@ -49,7 +48,7 @@ jobs:
               echo "${name}@${version} is already published; skipping"
               return
             fi
-            npm publish "$package_dir" --access public
+            npm publish "$package_dir" --access public --provenance
           }
 
           for package_dir in packages/cli/npm/*; do
@@ -64,7 +63,7 @@ jobs:
           if npm view "${name}@${version}" version >/dev/null 2>&1; then
             echo "${name}@${version} is already published; skipping"
           else
-            npm publish packages/cli --access public
+            npm publish packages/cli --access public --provenance
           fi
 
       - name: Install workers-types dependencies
@@ -83,5 +82,5 @@ jobs:
           if npm view "${name}@${version}" version >/dev/null 2>&1; then
             echo "${name}@${version} is already published; skipping"
           else
-            npm publish packages/workers-types --access public
+            npm publish packages/workers-types --access public --provenance
           fi
