@@ -4,12 +4,12 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const supportedPackages = {
-  "darwin arm64": "@nanoflare/cli-darwin-arm64",
-  "darwin x64": "@nanoflare/cli-darwin-x64",
-  "linux arm64": "@nanoflare/cli-linux-arm64",
-  "linux x64": "@nanoflare/cli-linux-x64",
-  "win32 arm64": "@nanoflare/cli-win32-arm64",
-  "win32 x64": "@nanoflare/cli-win32-x64"
+  "darwin arm64": "nanoflare-cli-darwin-arm64",
+  "darwin x64": "nanoflare-cli-darwin-x64",
+  "linux arm64": "nanoflare-cli-linux-arm64",
+  "linux x64": "nanoflare-cli-linux-x64",
+  "win32 arm64": "nanoflare-cli-win32-arm64",
+  "win32 x64": "nanoflare-cli-win32-x64"
 };
 
 const packageName = supportedPackages[`${process.platform} ${process.arch}`];
@@ -24,7 +24,7 @@ try {
   const packageJSON = require.resolve(`${packageName}/package.json`);
   binary = path.join(path.dirname(packageJSON), "bin", process.platform === "win32" ? "nanoflare.exe" : "nanoflare");
 } catch (error) {
-  console.error(`nanoflare: failed to find ${packageName}. Try reinstalling @nanoflare/cli.`);
+  console.error(`nanoflare: failed to find ${packageName}. Try reinstalling nanoflare-cli.`);
   process.exit(1);
 }
 

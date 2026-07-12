@@ -1,6 +1,6 @@
 {
-  "name": "@nanoflare/cli-darwin-arm64",
-  "version": "0.0.1",
+  "name": "nanoflare-cli-darwin-arm64",
+  "version": "0.0.2",
   "description": "Nanoflare CLI binary for macOS arm64.",
   "license": "MIT",
   "os": [

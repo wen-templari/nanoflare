@@ -1,6 +1,6 @@
 {
-  "name": "@nanoflare/cli",
-  "version": "0.0.1",
+  "name": "nanoflare-cli",
+  "version": "0.0.2",
   "description": "Command-line client for Nanoflare.",
   "license": "MIT",
   "bin": {
@@ -21,11 +21,11 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@nanoflare/cli-darwin-arm64": "0.0.1",
-    "@nanoflare/cli-darwin-x64": "0.0.1",
-    "@nanoflare/cli-linux-arm64": "0.0.1",
-    "@nanoflare/cli-linux-x64": "0.0.1",
-    "@nanoflare/cli-win32-arm64": "0.0.1",
-    "@nanoflare/cli-win32-x64": "0.0.1"
+    "nanoflare-cli-darwin-arm64": "0.0.2",
+    "nanoflare-cli-darwin-x64": "0.0.2",
+    "nanoflare-cli-linux-arm64": "0.0.2",
+    "nanoflare-cli-linux-x64": "0.0.2",
+    "nanoflare-cli-win32-arm64": "0.0.2",
+    "nanoflare-cli-win32-x64": "0.0.2"
   }
 }
