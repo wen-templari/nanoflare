@@ -25,27 +25,20 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
-      - name: Configure npm authentication
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Use npm with trusted publishing support
         run: |
-          set -eu
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN repository secret is required to publish npm packages."
-            exit 1
-          fi
-          printf "//registry.npmjs.org/:_authToken=%s\n" "$NODE_AUTH_TOKEN" > ~/.npmrc
-          npm whoami
+          npm install -g npm@^11.15.0
+          node --version
+          npm --version
 
       - name: Build CLI platform binaries
         run: ./scripts/build-npm-cli-binaries.sh
 
       - name: Publish CLI platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -eu
           publish_package() {
@@ -56,7 +49,7 @@ jobs:
               echo "${name}@${version} is already published; skipping"
               return
             fi
-            npm publish "$package_dir" --access public --provenance
+            npm publish "$package_dir" --access public
           }
 
           for package_dir in packages/cli/npm/*; do
@@ -64,8 +57,6 @@ jobs:
           done
 
       - name: Publish CLI package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -eu
           name=$(node -p "require('./packages/cli/package.json').name")
@@ -73,7 +64,7 @@ jobs:
           if npm view "${name}@${version}" version >/dev/null 2>&1; then
             echo "${name}@${version} is already published; skipping"
           else
-            npm publish packages/cli --access public --provenance
+            npm publish packages/cli --access public
           fi
 
       - name: Install workers-types dependencies
@@ -85,8 +76,6 @@ jobs:
         run: npm test
 
       - name: Publish workers-types package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -eu
           name=$(node -p "require('./packages/workers-types/package.json').name")
@@ -94,5 +83,5 @@ jobs:
           if npm view "${name}@${version}" version >/dev/null 2>&1; then
             echo "${name}@${version} is already published; skipping"
           else
-            npm publish packages/workers-types --access public --provenance
+            npm publish packages/workers-types --access public
           fi
