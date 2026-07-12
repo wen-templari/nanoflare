@@ -1,0 +1,23 @@
+{
+  "name": "@nanoflare/cli-win32-x64",
+  "version": "0.0.1",
+  "description": "Nanoflare CLI binary for Windows x64.",
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/nanoflare.exe"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git",
+    "directory": "packages/cli/npm/win32-x64"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

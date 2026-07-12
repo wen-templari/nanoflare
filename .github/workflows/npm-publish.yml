@@ -1,0 +1,88 @@
+name: npm Publish
+
+on:
+  release:
+    types:
+      - published
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Build CLI platform binaries
+        run: ./scripts/build-npm-cli-binaries.sh
+
+      - name: Publish CLI platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -eu
+          publish_package() {
+            package_dir=$1
+            name=$(node -p "require('./${package_dir}/package.json').name")
+            version=$(node -p "require('./${package_dir}/package.json').version")
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} is already published; skipping"
+              return
+            fi
+            npm publish "$package_dir" --access public --provenance
+          }
+
+          for package_dir in packages/cli/npm/*; do
+            publish_package "$package_dir"
+          done
+
+      - name: Publish CLI package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -eu
+          name=$(node -p "require('./packages/cli/package.json').name")
+          version=$(node -p "require('./packages/cli/package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} is already published; skipping"
+          else
+            npm publish packages/cli --access public --provenance
+          fi
+
+      - name: Install workers-types dependencies
+        working-directory: packages/workers-types
+        run: npm ci
+
+      - name: Validate workers-types
+        working-directory: packages/workers-types
+        run: npm test
+
+      - name: Publish workers-types package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -eu
+          name=$(node -p "require('./packages/workers-types/package.json').name")
+          version=$(node -p "require('./packages/workers-types/package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} is already published; skipping"
+          else
+            npm publish packages/workers-types --access public --provenance
+          fi

@@ -69,4 +69,11 @@ export interface AssetFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
+export interface NanoflareEnv {
+  KV: KVNamespace;
+  ASSETS: AssetFetcher;
+  OBJECTS: ObjectStorageBucket;
+  IDENTITY: IdentityBinding;
+}
+
 export {};

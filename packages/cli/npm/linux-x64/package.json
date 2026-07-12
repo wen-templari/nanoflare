@@ -1,0 +1,23 @@
+{
+  "name": "@nanoflare/cli-linux-x64",
+  "version": "0.0.1",
+  "description": "Nanoflare CLI binary for Linux x64.",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/nanoflare"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git",
+    "directory": "packages/cli/npm/linux-x64"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

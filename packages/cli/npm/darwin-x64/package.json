@@ -1,0 +1,23 @@
+{
+  "name": "@nanoflare/cli-darwin-x64",
+  "version": "0.0.1",
+  "description": "Nanoflare CLI binary for macOS x64.",
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/nanoflare"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git",
+    "directory": "packages/cli/npm/darwin-x64"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

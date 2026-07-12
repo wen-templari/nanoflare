@@ -1,6 +1,29 @@
 {
   "name": "@nanoflare/workers-types",
   "version": "0.0.1",
-  "private": true,
-  "types": "./index.d.ts"
+  "description": "TypeScript definitions for Nanoflare Worker bindings.",
+  "license": "MIT",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts"
+    }
+  },
+  "files": [
+    "index.d.ts"
+  ],
+  "scripts": {
+    "test": "tsc -p test/tsconfig.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git",
+    "directory": "packages/workers-types"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3"
+  }
 }

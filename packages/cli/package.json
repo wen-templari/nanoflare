@@ -1,0 +1,31 @@
+{
+  "name": "@nanoflare/cli",
+  "version": "0.0.1",
+  "description": "Command-line client for Nanoflare.",
+  "license": "MIT",
+  "bin": {
+    "nanoflare": "./bin/nanoflare.js"
+  },
+  "files": [
+    "bin/nanoflare.js"
+  ],
+  "scripts": {
+    "test": "node ./bin/nanoflare.js help"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "optionalDependencies": {
+    "@nanoflare/cli-darwin-arm64": "0.0.1",
+    "@nanoflare/cli-darwin-x64": "0.0.1",
+    "@nanoflare/cli-linux-arm64": "0.0.1",
+    "@nanoflare/cli-linux-x64": "0.0.1",
+    "@nanoflare/cli-win32-arm64": "0.0.1",
+    "@nanoflare/cli-win32-x64": "0.0.1"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@nanoflare/cli-linux-arm64",
+  "version": "0.0.1",
+  "description": "Nanoflare CLI binary for Linux arm64.",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/nanoflare"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git",
+    "directory": "packages/cli/npm/linux-arm64"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
