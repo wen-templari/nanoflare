@@ -1,0 +1,81 @@
+name: Go Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload assets to
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build release archives
+        run: |
+          set -eu
+
+          mkdir -p dist
+
+          build_platform() {
+            goos=$1
+            goarch=$2
+            commands=$3
+            archive="nanoflare-${RELEASE_TAG:-dev}-${goos}-${goarch}.tar.gz"
+            package_dir="dist/nanoflare-${goos}-${goarch}"
+
+            rm -rf "$package_dir"
+            mkdir -p "$package_dir"
+
+            ext=""
+            if [ "$goos" = "windows" ]; then
+              ext=".exe"
+            fi
+
+            for command in $commands; do
+              GOOS=$goos GOARCH=$goarch CGO_ENABLED=0 go build -trimpath -o "$package_dir/${command}${ext}" "./cmd/${command}"
+            done
+
+            tar -C dist -czf "dist/$archive" "nanoflare-${goos}-${goarch}"
+            rm -rf "$package_dir"
+          }
+
+          build_platform darwin amd64 "nanoflare nanoflared nanoflare-runner"
+          build_platform darwin arm64 "nanoflare nanoflared nanoflare-runner"
+          build_platform linux amd64 "nanoflare nanoflared nanoflare-runner"
+          build_platform linux arm64 "nanoflare nanoflared nanoflare-runner"
+          build_platform windows amd64 "nanoflare"
+          build_platform windows arm64 "nanoflare"
+
+          (cd dist && shasum -a 256 *.tar.gz > checksums.txt)
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-release-assets
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+
+      - name: Upload assets to GitHub release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/checksums.txt --clobber
