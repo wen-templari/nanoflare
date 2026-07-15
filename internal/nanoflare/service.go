@@ -66,7 +66,7 @@ func NewServiceWithConsole(store Repository, writer ConfigWriter, objects Object
 }
 
 func (s *Service) SetBaseHostname(hostname string) error {
-	normalized, err := normalizeHostname(hostname)
+	normalized, err := normalizeBaseHostname(hostname)
 	if err != nil {
 		return err
 	}
@@ -1950,7 +1950,11 @@ func (s *Service) generatedHostname(name, orgID string, attempt int) (string, er
 	if org != "" {
 		labels = append(labels, org)
 	}
-	return strings.Join(labels, "-") + "." + s.baseHostname, nil
+	generated := strings.Join(labels, "-")
+	if strings.Contains(s.baseHostname, "*") {
+		return strings.Replace(s.baseHostname, "*", generated, 1), nil
+	}
+	return generated + "." + s.baseHostname, nil
 }
 
 func (s *Service) organizationHostnameLabel(orgID string) (string, error) {
@@ -1967,8 +1971,31 @@ func (s *Service) organizationHostnameLabel(orgID string) (string, error) {
 
 func normalizeHostname(hostname string) (string, error) {
 	hostname = strings.TrimSuffix(strings.TrimSpace(strings.ToLower(hostname)), ".")
+	if hostname == "" || strings.Contains(hostname, ":") || net.ParseIP(hostname) != nil || strings.Contains(hostname, "*") {
+		return "", errors.New("hostname must be a DNS name without a port")
+	}
+	return hostname, nil
+}
+
+func normalizeBaseHostname(hostname string) (string, error) {
+	hostname = strings.TrimSuffix(strings.TrimSpace(strings.ToLower(hostname)), ".")
 	if hostname == "" || strings.Contains(hostname, ":") || net.ParseIP(hostname) != nil {
 		return "", errors.New("hostname must be a DNS name without a port")
+	}
+	if !strings.Contains(hostname, "*") {
+		return hostname, nil
+	}
+	if strings.Count(hostname, "*") != 1 {
+		return "", errors.New("base hostname may contain at most one wildcard placeholder")
+	}
+	labels := strings.Split(hostname, ".")
+	if len(labels) == 0 || !strings.Contains(labels[0], "*") {
+		return "", errors.New("base hostname wildcard must be in the first DNS label")
+	}
+	for _, label := range labels[1:] {
+		if strings.Contains(label, "*") {
+			return "", errors.New("base hostname wildcard must be in the first DNS label")
+		}
 	}
 	return hostname, nil
 }

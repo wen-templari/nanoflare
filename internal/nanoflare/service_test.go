@@ -295,6 +295,43 @@ func TestCreateAppGeneratesHostnameFromBase(t *testing.T) {
 	}
 }
 
+func TestCreateAppGeneratesHostnameFromWildcardBase(t *testing.T) {
+	store := NewStore()
+	if err := store.CreateOrganization(Organization{ID: "org-1", Name: "Acme Org"}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(store, &recordingWriter{})
+	if err := service.SetBaseHostname("*-nanoflare.pess.app.bosch.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	app, err := service.CreateApp(CreateAppInput{
+		Name:  "Hello Worker",
+		OrgID: "org-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Hostname != "hello-worker-acme-org-nanoflare.pess.app.bosch.com" {
+		t.Fatalf("hostname = %q", app.Hostname)
+	}
+}
+
+func TestSetBaseHostnameRejectsWildcardOutsideFirstLabel(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	if err := service.SetBaseHostname("workers.*.example.com"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCreateAppRejectsExplicitWildcardHostname(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	_, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "*-nanoflare.example.com"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestCreateAppRequiresBaseHostnameWhenHostnameOmitted(t *testing.T) {
 	service := NewService(NewStore(), &recordingWriter{})
 	_, err := service.CreateApp(CreateAppInput{Name: "Hello Worker"})
