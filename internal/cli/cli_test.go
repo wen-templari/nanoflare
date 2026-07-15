@@ -305,6 +305,42 @@ func TestProjectAssetsRunWorkerFirstJSONShapes(t *testing.T) {
 	}
 }
 
+func TestHelpIncludesCommandUsage(t *testing.T) {
+	var stderr bytes.Buffer
+	runner := NewRunner(io.Discard, &stderr)
+
+	if err := runner.Run([]string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+
+	usage := stderr.String()
+	for _, want := range []string{
+		"nanoflare init [flags] [directory]",
+		"nanoflare create [worker] [flags]",
+		"nanoflare list [worker] [flags]",
+		"nanoflare delete [worker] [app-id] [flags]",
+		"nanoflare deploy [worker] [flags]",
+		"nanoflare auth login [flags]",
+		"nanoflare auth orgs",
+		"nanoflare auth use-org <org-id>",
+		"nanoflare auth whoami",
+		"nanoflare auth logout",
+		"nanoflare secret put [flags] <name> <value>",
+		"nanoflare secret list [flags]",
+		"nanoflare secret delete [flags] <name>",
+		"nanoflare kv namespace create [flags] <name>",
+		"nanoflare kv namespace list [flags]",
+		"nanoflare kv namespace delete [flags] <namespace-id>",
+		"nanoflare object-storage bucket create [flags] <name>",
+		"nanoflare object-storage bucket list [flags]",
+		"nanoflare object-storage bucket delete [flags] <bucket-id>",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("help output missing %q:\n%s", want, usage)
+		}
+	}
+}
+
 func TestAuthConfigPathDefaultsToUserConfigNanoflareAuthJSON(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configDir)

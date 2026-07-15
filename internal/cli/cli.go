@@ -1104,6 +1104,14 @@ func (r *Runner) usage() {
   nanoflare list [worker] [flags]
   nanoflare delete [worker] [app-id] [flags]
   nanoflare deploy [worker] [flags]
+  nanoflare auth login [flags]
+  nanoflare auth orgs
+  nanoflare auth use-org <org-id>
+  nanoflare auth whoami
+  nanoflare auth logout
+  nanoflare secret put [flags] <name> <value>
+  nanoflare secret list [flags]
+  nanoflare secret delete [flags] <name>
   nanoflare kv namespace create [flags] <name>
   nanoflare kv namespace list [flags]
   nanoflare kv namespace delete [flags] <namespace-id>
