@@ -12,7 +12,7 @@ export function ObjectStorageBucketsPage() {
 
   return (
     <>
-      <PageHeading eyebrow="Storage" title="Object storage" copy="Manage bucket inventory for your workers, then drill into a bucket to inspect shared objects and bindings." actions={<Button onClick={openObjectStorageBucketDialog}><Plus className="size-4" />New bucket</Button>} />
+      <PageHeading eyebrow="Storage" title="Object storage" copy="Manage bucket inventory for your workers." actions={<Button onClick={openObjectStorageBucketDialog}><Plus className="size-4" />New bucket</Button>} />
       <Panel flush>
         <ScrollArea>
           <Table highlightOnHover miw={760} verticalSpacing="sm" className="table-fixed">

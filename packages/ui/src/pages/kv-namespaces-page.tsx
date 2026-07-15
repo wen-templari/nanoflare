@@ -12,7 +12,7 @@ export function KVNamespacesPage() {
 
   return (
     <>
-      <PageHeading eyebrow="Storage" title="KV" copy="Manage namespace inventory for your workers, then drill into a namespace to rename it or inspect its shared data." actions={<Button onClick={openNamespaceDialog}><Plus className="size-4" />New namespace</Button>} />
+      <PageHeading eyebrow="Storage" title="KV" copy="Manage KV namespace inventory for your workers." actions={<Button onClick={openNamespaceDialog}><Plus className="size-4" />New namespace</Button>} />
       <Panel flush>
         <ScrollArea>
           <Table highlightOnHover miw={760} verticalSpacing="sm" className="table-fixed">
