@@ -188,7 +188,9 @@ generate one from the worker name and configured base hostname. `nanoflare
 create` registers the worker and saves its generated app ID and final hostname
 locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 `--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
-`http://127.0.0.1:8080`.
+`http://127.0.0.1:8080`. CLI authentication is stored at
+`~/.config/nanoflare/auth.json` by default; set `NANOFLARE_AUTH_STORE` to an
+alternate file path when you need a different auth store location.
 
 The starter project is plain JavaScript and can be deployed immediately. The
 example apps under `examples/` use npm-based build steps first because they

@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	projectFilename = "nanoflare.json"
-	defaultAPIURL   = "http://127.0.0.1:8080"
-	authFilename    = "auth.json"
+	projectFilename  = "nanoflare.json"
+	defaultAPIURL    = "http://127.0.0.1:8080"
+	authFilename     = "auth.json"
+	authStorePathEnv = "NANOFLARE_AUTH_STORE"
 )
 
 type HTTPClient interface {
@@ -726,6 +727,9 @@ func writeProject(path string, project Project, flag int) error {
 }
 
 func authConfigPath() (string, error) {
+	if path := strings.TrimSpace(os.Getenv(authStorePathEnv)); path != "" {
+		return path, nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
