@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -301,6 +302,72 @@ func TestProjectAssetsRunWorkerFirstJSONShapes(t *testing.T) {
 				t.Fatalf("routes = %#v, want %d routes", project.Assets.RunWorkerFirst.Routes(), test.routeCount)
 			}
 		})
+	}
+}
+
+func TestAuthConfigPathDefaultsToUserConfigNanoflareAuthJSON(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configDir)
+	t.Setenv(authStorePathEnv, "")
+
+	path, err := authConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(configDir, "nanoflare", authFilename)
+	if path != want {
+		t.Fatalf("auth config path = %q, want %q", path, want)
+	}
+}
+
+func TestAuthCommandsUseAuthStoreOverride(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "custom-auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
+			writeJSON(t, w, http.StatusOK, nanoflare.AuthSession{
+				Token:       "session-token",
+				ActiveOrgID: "org-123",
+				User:        nanoflare.User{ID: "user-123", Email: "user@example.com"},
+				Organizations: []nanoflare.Organization{
+					{ID: "org-123", Name: "Example Org"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL, "--email", "user@example.com", "--password", "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(authPath); err != nil {
+		t.Fatalf("stat override auth config: %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Logged in as user@example.com") {
+		t.Fatalf("stdout = %q", got)
+	}
+
+	stdout.Reset()
+	if err := runner.Run([]string{"auth", "whoami"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "user@example.com\norg\torg-123\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+
+	stdout.Reset()
+	if err := runner.Run([]string{"auth", "logout"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(authPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("override auth config exists after logout: %v", err)
 	}
 }
 
