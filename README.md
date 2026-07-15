@@ -8,7 +8,6 @@ infrastructure directly:
 - `workerd` for a shared pool of Worker isolates.
 - PostgreSQL for nanoflare metadata and app-scoped KV.
 - MinIO for static assets and application objects.
-- Rootless Podman for the shared pool sandbox boundary.
 
 The current repository is the first runnable integration slice of `nanoflared`. It provides:
 
