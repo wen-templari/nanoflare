@@ -1,7 +1,10 @@
 package runtime
 
 import (
+	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -9,7 +12,7 @@ import (
 
 const (
 	defaultDurationTelemetryWindow       = 24 * time.Hour
-	defaultDurationTelemetryRecentWindow = 5 * time.Minute
+	defaultDurationTelemetryRecentWindow = 24 * time.Hour
 	defaultDurationTelemetryBucketSize   = 5 * time.Minute
 )
 
@@ -21,9 +24,9 @@ type DurationTraceEvent struct {
 }
 
 type durationSample struct {
-	timestamp  time.Time
-	durationMs float64
-	outcome    string
+	Timestamp  time.Time `json:"timestamp"`
+	DurationMs float64   `json:"duration_ms"`
+	Outcome    string    `json:"outcome,omitempty"`
 }
 
 type DurationStats struct {
@@ -41,6 +44,7 @@ type DurationTelemetry struct {
 	recentWindow time.Duration
 	bucketSize   time.Duration
 	now          func() time.Time
+	persistPath  string
 }
 
 func NewDurationTelemetry() *DurationTelemetry {
@@ -51,6 +55,15 @@ func NewDurationTelemetry() *DurationTelemetry {
 		bucketSize:   defaultDurationTelemetryBucketSize,
 		now:          time.Now,
 	}
+}
+
+func NewPersistentDurationTelemetry(path string) (*DurationTelemetry, error) {
+	telemetry := NewDurationTelemetry()
+	telemetry.persistPath = path
+	if err := telemetry.load(); err != nil {
+		return nil, err
+	}
+	return telemetry, nil
 }
 
 func (t *DurationTelemetry) RecordBatch(events []DurationTraceEvent) {
@@ -67,12 +80,16 @@ func (t *DurationTelemetry) RecordBatch(events []DurationTraceEvent) {
 			timestamp = time.UnixMilli(int64(event.EventTimestamp)).UTC()
 		}
 		t.samples[event.ScriptName] = append(t.samples[event.ScriptName], durationSample{
-			timestamp:  timestamp,
-			durationMs: event.DurationMs,
-			outcome:    event.Outcome,
+			Timestamp:  timestamp,
+			DurationMs: event.DurationMs,
+			Outcome:    event.Outcome,
 		})
 	}
 	t.pruneLocked(now)
+	if err := t.persistLocked(); err != nil {
+		// Telemetry should never break worker requests; keep the in-memory view fresh.
+		return
+	}
 }
 
 func (t *DurationTelemetry) Stats(appID string) DurationStats {
@@ -98,19 +115,19 @@ func (t *DurationTelemetry) statsLocked(samples []durationSample, now time.Time)
 	windowCutoff := now.Add(-t.window)
 
 	for _, sample := range samples {
-		if !sample.timestamp.Before(recentCutoff) {
-			recent = append(recent, sample.durationMs)
-			recentTotal += sample.durationMs
+		if !sample.Timestamp.Before(recentCutoff) {
+			recent = append(recent, sample.DurationMs)
+			recentTotal += sample.DurationMs
 		}
-		if sample.timestamp.Before(windowCutoff) || sample.timestamp.After(now) {
+		if sample.Timestamp.Before(windowCutoff) || sample.Timestamp.After(now) {
 			continue
 		}
-		age := now.Sub(sample.timestamp)
+		age := now.Sub(sample.Timestamp)
 		index := seriesBuckets - 1 - int(age/t.bucketSize)
 		if index < 0 || index >= seriesBuckets {
 			continue
 		}
-		series[index] += sample.durationMs / t.bucketSize.Seconds()
+		series[index] += sample.DurationMs / t.bucketSize.Seconds()
 	}
 
 	stats := DurationStats{
@@ -137,7 +154,7 @@ func (t *DurationTelemetry) pruneLocked(now time.Time) {
 	cutoff := now.Add(-t.window)
 	for appID, samples := range t.samples {
 		index := 0
-		for index < len(samples) && samples[index].timestamp.Before(cutoff) {
+		for index < len(samples) && samples[index].Timestamp.Before(cutoff) {
 			index++
 		}
 		if index == len(samples) {
@@ -148,6 +165,43 @@ func (t *DurationTelemetry) pruneLocked(now time.Time) {
 			t.samples[appID] = append([]durationSample(nil), samples[index:]...)
 		}
 	}
+}
+
+func (t *DurationTelemetry) load() error {
+	if t.persistPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(t.persistPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var samples map[string][]durationSample
+	if err := json.Unmarshal(data, &samples); err != nil {
+		return err
+	}
+	t.samples = samples
+	return nil
+}
+
+func (t *DurationTelemetry) persistLocked() error {
+	if t.persistPath == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(t.persistPath), 0o700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(t.samples)
+	if err != nil {
+		return err
+	}
+	tmpPath := t.persistPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, t.persistPath)
 }
 
 func trimLeadingZeros(values []float64) []float64 {

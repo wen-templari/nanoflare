@@ -34,7 +34,6 @@ export function App() {
   const [status, setStatus] = useState("Loading gallery...")
   const [isUploading, setIsUploading] = useState(false)
   const [selectedItem, setSelectedItem] = useState<GalleryItem | null>(null)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewingId, setPreviewingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -67,12 +66,13 @@ export function App() {
     }
   }, [])
 
-  async function uploadSelectedFile() {
-    const file = selectedFile
-    if (!file) {
-      fileInputRef.current?.click()
-      return
-    }
+  async function uploadFile(file: File) {
+    console.log("[gallery ui] selected file", {
+      name: file.name,
+      browserType: file.type,
+      size: file.size,
+      lastModified: file.lastModified,
+    })
 
     setIsUploading(true)
     setStatus(`Uploading ${file.name}...`)
@@ -91,9 +91,10 @@ export function App() {
         throw new Error(message || "Upload failed")
       }
 
+      console.log("[gallery ui] upload response", payload.item)
+
       setItems((current) => [payload.item, ...current].slice(0, 24))
       setStatus(`Uploaded ${payload.item.filename}.`)
-      setSelectedFile(null)
       if (fileInputRef.current) {
         fileInputRef.current.value = ""
       }
@@ -106,9 +107,8 @@ export function App() {
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null
-    setSelectedFile(file)
     if (file) {
-      setStatus(`Selected ${file.name}.`)
+      void uploadFile(file)
     }
   }
 
@@ -191,7 +191,7 @@ export function App() {
             <button
               type="button"
               disabled={isUploading}
-              onClick={() => void uploadSelectedFile()}
+              onClick={() => fileInputRef.current?.click()}
               className="shrink-0 rounded-lg bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70"
             >
               {isUploading ? "Uploading..." : "Upload image"}
@@ -199,9 +199,7 @@ export function App() {
           </div>
 
           <div className="mt-4 min-h-6 text-sm text-slate-500" aria-live="polite">
-            {selectedFile
-              ? `${selectedFile.name} • ${formatBytes(selectedFile.size)}`
-              : status}
+            {status}
           </div>
         </section>
 

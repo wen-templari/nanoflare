@@ -62,8 +62,26 @@ async function uploadImage(request: Request, env: GalleryEnv): Promise<Response>
   const key = `gallery/${timestamp}-${id}.${extension}`;
   const bytes = await uploaded.arrayBuffer();
 
+  console.log("[gallery upload] received file", {
+    name: uploaded.name,
+    browserType: uploaded.type,
+    inferredContentType: contentType,
+    extension,
+    key,
+    size: bytes.byteLength,
+  });
+
   await env.OBJECTS.put(key, bytes, {
     httpMetadata: { contentType },
+  });
+
+  const stored = await env.OBJECTS.head(key);
+  console.log("[gallery upload] stored object metadata", {
+    key,
+    requestedContentType: contentType,
+    storedContentType: stored?.httpMetadata.contentType ?? "",
+    size: stored?.size ?? 0,
+    etag: stored?.etag ?? "",
   });
 
   const item: GalleryItem = {
@@ -99,6 +117,15 @@ async function serveImage(pathname: string, env: GalleryEnv): Promise<Response> 
   if (!object) {
     return Response.json({ ok: false, error: "Stored object missing" }, { status: 404 });
   }
+
+  console.log("[gallery serve] object metadata", {
+    id: item.id,
+    key: item.key,
+    indexContentType: item.contentType,
+    objectContentType: object.httpMetadata.contentType,
+    responseContentType: object.httpMetadata.contentType || item.contentType,
+    size: object.size,
+  });
 
   return new Response(object.body, {
     headers: {

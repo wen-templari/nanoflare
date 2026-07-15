@@ -42,12 +42,30 @@ func TestTrafficQueriesRouterMetrics(t *testing.T) {
 	if traffic.Invocations != 4 || traffic.Errors != 0.25 {
 		t.Fatalf("unexpected traffic totals: %#v", traffic)
 	}
-	if len(queries) != 7 {
-		t.Fatalf("got %d queries, want 7", len(queries))
+	if len(queries) != 6 {
+		t.Fatalf("got %d queries, want 6", len(queries))
 	}
 	for _, query := range queries {
 		if !strings.Contains(query, `router=~"integration@(http|file)"`) {
 			t.Fatalf("query is not router-provider scoped: %s", query)
 		}
 	}
+	if !queryWasSent(queries, `sum(increase(traefik_router_requests_total{router=~"integration@(http|file)"}[24h]))`) {
+		t.Fatalf("missing 24h invocation query: %#v", queries)
+	}
+	if !queryWasSent(queries, `sum(increase(traefik_router_requests_total{router=~"integration@(http|file)",code=~"5.."}[24h]))`) {
+		t.Fatalf("missing 24h error query: %#v", queries)
+	}
+	if !queryWasSent(queries, `sum(increase(traefik_router_requests_total{router=~"integration@(http|file)"}[5m]))`) {
+		t.Fatalf("missing bucketed traffic query: %#v", queries)
+	}
+}
+
+func queryWasSent(queries []string, expected string) bool {
+	for _, query := range queries {
+		if query == expected {
+			return true
+		}
+	}
+	return false
 }

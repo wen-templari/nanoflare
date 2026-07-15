@@ -11,6 +11,11 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 
+type ObjectPreview =
+  | { kind: "empty" }
+  | { kind: "text"; content: string }
+  | { kind: "image"; url: string; contentType: string };
+
 export function ObjectStorageBucketDetailPage() {
   const navigate = useNavigate();
   const { bucketId } = useParams();
@@ -40,7 +45,7 @@ function ObjectStorageBucketDetailContent({
   const deferredSearch = useDeferredValue(search);
   const [selectedKey, setSelectedKey] = useState("");
   const [selectedObject, setSelectedObject] = useState<ObjectStorageObject>();
-  const [preview, setPreview] = useState("");
+  const [preview, setPreview] = useState<ObjectPreview>({ kind: "empty" });
   const [previewLoading, setPreviewLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [metrics, setMetrics] = useState<ObjectStorageBucketMetrics>({ available: false, reads: 0, writes: 0, size: 0 });
@@ -85,9 +90,14 @@ function ObjectStorageBucketDetailContent({
     setObjects([]);
     setSelectedKey("");
     setSelectedObject(undefined);
-    setPreview("");
+    setPreview({ kind: "empty" });
     setStatus("");
   }, [bucket.id, accessorWorkerID]);
+
+  useEffect(() => {
+    if (preview.kind !== "image") return;
+    return () => URL.revokeObjectURL(preview.url);
+  }, [preview]);
 
   async function refreshObjects() {
     if (!basePath) {
@@ -116,7 +126,6 @@ function ObjectStorageBucketDetailContent({
   async function loadObject(key: string) {
     if (!basePath) return;
     setSelectedKey(key);
-    setPreview("");
     setPreviewLoading(true);
     try {
       const response = await apiFetch(`${basePath}/${encodeURIComponent(key)}`);
@@ -126,18 +135,23 @@ function ObjectStorageBucketDetailContent({
         return;
       }
       if (!response.ok) throw new Error(`Object read failed (${response.status})`);
-      const metadata = objects.find((item) => item.key === key) ?? {
+      const contentType = response.headers.get("content-type") ?? "";
+      const listedMetadata = objects.find((item) => item.key === key);
+      const metadata: ObjectStorageObject = {
+        ...(listedMetadata ?? { key, uploaded: new Date().toISOString() }),
         key,
-        size: Number(response.headers.get("content-length") ?? "0"),
-        etag: response.headers.get("x-nanoflare-object-etag") ?? "",
-        httpEtag: response.headers.get("etag") ?? "",
-        uploaded: response.headers.get("x-nanoflare-object-uploaded") ?? new Date().toISOString(),
-        httpMetadata: { contentType: response.headers.get("content-type") ?? "" },
+        size: Number(response.headers.get("content-length") ?? listedMetadata?.size ?? "0"),
+        etag: response.headers.get("x-nanoflare-object-etag") ?? listedMetadata?.etag ?? "",
+        httpEtag: response.headers.get("etag") ?? listedMetadata?.httpEtag ?? "",
+        uploaded: response.headers.get("x-nanoflare-object-uploaded") ?? listedMetadata?.uploaded ?? new Date().toISOString(),
+        httpMetadata: { ...listedMetadata?.httpMetadata, contentType },
       };
       setSelectedObject(metadata);
-      const contentType = response.headers.get("content-type") ?? "";
-      if (contentType.includes("json") || contentType.startsWith("text/") || !contentType) {
-        setPreview(await response.text());
+      if (contentType.startsWith("image/")) {
+        const blob = await response.blob();
+        setPreview({ kind: "image", url: URL.createObjectURL(blob), contentType });
+      } else if (contentType.includes("json") || contentType.startsWith("text/") || !contentType) {
+        setPreview({ kind: "text", content: await response.text() });
       }
     } catch (error) {
       notify(error instanceof Error ? error.message : "Object read failed");
@@ -193,7 +207,7 @@ function ObjectStorageBucketDetailContent({
       await refreshObjects();
       setSelectedKey("");
       setSelectedObject(undefined);
-      setPreview("");
+      setPreview({ kind: "empty" });
       notify(`${selectedKey} deleted`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Object delete failed");
@@ -297,13 +311,13 @@ function ObjectStorageBucketDetailContent({
         </Panel>
       </div>
 
-      <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-7rem)] md:min-h-[540px]">
         {!accessorWorkerID ? (
           <WorkerDetailEmpty icon={<DatabaseZap />} title="No worker access path" copy="Bind this bucket to a worker to browse objects through the runtime API." />
         ) : (
-          <div className="grid min-h-[540px] md:grid-cols-[280px_1fr]">
-            <aside className="border-b border-gray-200 bg-gray-50 py-3 md:border-b-0 md:border-r">
-              <div className="flex items-center justify-between px-4 pb-2">
+          <div className="grid min-h-[540px] md:h-full md:min-h-0 md:grid-cols-[280px_minmax(0,1fr)]">
+            <aside className="flex min-h-0 flex-col border-b border-gray-200 bg-gray-50 md:h-full md:border-b-0 md:border-r">
+              <div className="flex items-center justify-between px-4 pb-2 pt-3">
                 <p className="font-mono text-[9px]   text-[#a0a39c]">Objects</p>
                 <Button type="button" variant="ghost" size="icon" aria-label="Refresh objects" onClick={() => void refreshObjects()} disabled={loadingObjects}><RefreshCw className={loadingObjects ? "size-3.5 animate-spin" : "size-3.5"} /></Button>
               </div>
@@ -318,17 +332,19 @@ function ObjectStorageBucketDetailContent({
                   <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search objects" variant="unstyled" className="min-w-0 flex-1" inputClassName="h-10 bg-transparent p-0" />
                 </div>
               </div>
-              {filteredObjects.map((item) => (
-                <button key={item.key} onClick={() => void loadObject(item.key)} className={selectedKey === item.key ? "flex w-full items-center gap-2 bg-[#e5e0d6] px-4 py-2 text-left font-mono text-[10px] font-bold text-[#35413e]" : "flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] text-[#848a83] transition hover:bg-white/60 hover:text-[#4c5853]"}>
-                  {item.httpMetadata?.contentType?.includes("json") ? <FileJson className="size-3.5 text-[#bd7e35]" /> : <FileText className="size-3.5 text-[#668e7a]" />}
-                  <span className="min-w-0 flex-1 truncate">{item.key}</span>
-                  <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
-                </button>
-              ))}
-              {!filteredObjects.length && <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">{status || "No objects yet"}</p>}
+              <div className="min-h-0 flex-1 overflow-y-auto pb-3">
+                {filteredObjects.map((item) => (
+                  <button key={item.key} onClick={() => void loadObject(item.key)} className={selectedKey === item.key ? "flex w-full items-center gap-2 bg-[#e5e0d6] px-4 py-2 text-left font-mono text-[10px] font-bold text-[#35413e]" : "flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] text-[#848a83] transition hover:bg-white/60 hover:text-[#4c5853]"}>
+                    {item.httpMetadata?.contentType?.includes("json") ? <FileJson className="size-3.5 text-[#bd7e35]" /> : <FileText className="size-3.5 text-[#668e7a]" />}
+                    <span className="min-w-0 flex-1 truncate">{item.key}</span>
+                    <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
+                  </button>
+                ))}
+                {!filteredObjects.length && <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">{status || "No objects yet"}</p>}
+              </div>
             </aside>
 
-            <div className="p-5">
+            <div className="min-h-0 overflow-y-auto p-5">
               {!selectedKey ? (
                 <WorkerDetailEmpty icon={<DatabaseZap />} title="Select an object" copy="Choose an object to inspect its metadata, preview text content, or download it." />
               ) : (
@@ -360,9 +376,22 @@ function ObjectStorageBucketDetailContent({
                   <div className="overflow-hidden rounded-lg border border-[#d9d3c7] bg-[#202b29]">
                     <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
                       <p className="font-mono text-[10px] text-[#b5c1bb]">Preview</p>
-                      <span className="font-mono text-[9px]   text-[#778781]">{previewLoading ? "loading" : (preview ? `${preview.length} chars` : "binary-safe mode")}</span>
+                      <span className="font-mono text-[9px]   text-[#778781]">{previewLoading ? "loading" : previewLabel(preview)}</span>
                     </div>
-                    <pre className="min-h-80 overflow-x-auto p-4 font-mono text-[11px] leading-6 text-[#d8dfd8]">{preview || "No inline preview available for this object type."}</pre>
+                    <div className="relative min-h-80 bg-[#111917]">
+                      {preview.kind === "image" ? (
+                        <div className="flex min-h-80 items-center justify-center p-4">
+                          <img src={preview.url} alt={selectedKey} className="max-h-[560px] max-w-full object-contain" />
+                        </div>
+                      ) : (
+                        <pre className="min-h-80 overflow-x-auto p-4 font-mono text-[11px] leading-6 text-[#d8dfd8]">{preview.kind === "text" ? preview.content : "No inline preview available for this object type."}</pre>
+                      )}
+                      {previewLoading ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-[#111917]/75 font-mono text-[10px] text-[#b5c1bb]">
+                          Loading preview
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </>
               )}
@@ -376,4 +405,10 @@ function ObjectStorageBucketDetailContent({
 
 function compactNumber(value: number) {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
+}
+
+function previewLabel(preview: ObjectPreview) {
+  if (preview.kind === "text") return `${preview.content.length} chars`;
+  if (preview.kind === "image") return preview.contentType;
+  return "binary-safe mode";
 }

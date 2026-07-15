@@ -17,7 +17,7 @@ export function WorkersPage() {
       <Panel flush>
         <ScrollArea>
           <Table highlightOnHover miw={720} verticalSpacing="sm">
-            <Table.Thead><Table.Tr><Table.Th>Worker</Table.Th><Table.Th>State</Table.Th><Table.Th>Requests</Table.Th><Table.Th>Deployment</Table.Th><Table.Th>Created</Table.Th></Table.Tr></Table.Thead>
+            <Table.Thead><Table.Tr><Table.Th>Worker</Table.Th><Table.Th>State</Table.Th><Table.Th>Requests (24h)</Table.Th><Table.Th>Deployment</Table.Th><Table.Th>Created</Table.Th></Table.Tr></Table.Thead>
             <Table.Tbody>{workers.map((worker) => <WorkerRow key={worker.id} worker={worker} onSelect={() => navigate(`/workers/${worker.id}`)} />)}</Table.Tbody>
           </Table>
         </ScrollArea>

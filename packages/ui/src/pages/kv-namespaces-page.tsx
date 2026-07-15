@@ -15,17 +15,17 @@ export function KVNamespacesPage() {
       <PageHeading eyebrow="Storage" title="KV" copy="Manage namespace inventory for your workers, then drill into a namespace to rename it or inspect its shared data." actions={<Button onClick={openNamespaceDialog}><Plus className="size-4" />New namespace</Button>} />
       <Panel flush>
         <ScrollArea>
-          <Table highlightOnHover miw={760} verticalSpacing="sm">
-            <Table.Thead><Table.Tr><Table.Th>Namespace</Table.Th><Table.Th>ID</Table.Th><Table.Th>Bindings</Table.Th><Table.Th>Created</Table.Th></Table.Tr></Table.Thead>
+          <Table highlightOnHover miw={760} verticalSpacing="sm" className="table-fixed">
+            <Table.Thead><Table.Tr><Table.Th className="w-[30%]">Namespace</Table.Th><Table.Th className="w-[44%]">ID</Table.Th><Table.Th className="w-[14%]">Bindings</Table.Th><Table.Th className="w-[12%]">Created</Table.Th></Table.Tr></Table.Thead>
             <Table.Tbody>
               {namespaces.map((namespace) => {
                 const boundCount = workers.filter((worker) => worker.bindings?.some((binding) => binding.kind === "kv" && binding.namespace_id === namespace.id)).length
                 return (
                   <Table.Tr key={namespace.id} className="cursor-pointer" onClick={() => navigate(`/kv/${namespace.id}`)}>
-                    <Table.Td><Text fw={700}>{namespace.name}</Text></Table.Td>
-                    <Table.Td><Text c="dimmed" ff="monospace" size="xs">{namespace.id}</Text></Table.Td>
-                    <Table.Td><Badge tone={boundCount ? "green" : "orange"}>{boundCount} worker{boundCount === 1 ? "" : "s"}</Badge></Table.Td>
-                    <Table.Td><Text c="dimmed" size="sm">{new Date(namespace.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
+                    <Table.Td className="w-[30%]"><Text fw={700} truncate>{namespace.name}</Text></Table.Td>
+                    <Table.Td className="w-[44%]"><Text c="dimmed" ff="monospace" size="xs" truncate>{namespace.id}</Text></Table.Td>
+                    <Table.Td className="w-[14%]"><Badge tone={boundCount ? "green" : "orange"}>{boundCount} worker{boundCount === 1 ? "" : "s"}</Badge></Table.Td>
+                    <Table.Td className="w-[12%]"><Text c="dimmed" size="sm" truncate>{new Date(namespace.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
                   </Table.Tr>
                 )
               })}

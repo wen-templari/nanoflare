@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestDurationTelemetryComputesRollingStats(t *testing.T) {
 	if stats.DurationMsP95 != 30 {
 		t.Fatalf("p95 = %v, want 30", stats.DurationMsP95)
 	}
-	if got, want := stats.DurationMsPerSecond, 60.0/300.0; got != want {
+	if got, want := stats.DurationMsPerSecond, 60.0/(24.0*60.0*60.0); got != want {
 		t.Fatalf("duration/sec = %v, want %v", got, want)
 	}
 	if len(stats.DurationSeries) != 1 || stats.DurationSeries[0] != 60.0/300.0 {
@@ -70,5 +71,29 @@ func TestDurationTelemetryIsolatesWorkers(t *testing.T) {
 	}
 	if got := telemetry.Stats("missing"); !reflect.DeepEqual(got, DurationStats{}) {
 		t.Fatalf("missing stats = %#v, want zero value", got)
+	}
+}
+
+func TestPersistentDurationTelemetrySurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duration-telemetry.json")
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+
+	telemetry, err := NewPersistentDurationTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	telemetry.now = func() time.Time { return now }
+	telemetry.RecordBatch([]DurationTraceEvent{
+		{ScriptName: "alpha", EventTimestamp: float64(now.Add(-30 * time.Minute).UnixMilli()), DurationMs: 15},
+	})
+
+	restarted, err := NewPersistentDurationTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return now }
+	stats := restarted.Stats("alpha")
+	if !stats.Available || stats.DurationMsAvg != 15 || stats.DurationMsP95 != 15 {
+		t.Fatalf("persisted stats = %#v", stats)
 	}
 }

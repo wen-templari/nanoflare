@@ -3,10 +3,6 @@
 - Generate type from worker config file (https://developers.cloudflare.com/workers/languages/typescript/)
 - worker init
 
-## Worker triggers 
-
-https://developers.cloudflare.com/workers/configuration/cron-triggers/
-
 ## Deployments
 
 - support deploy to different envs (dev, staging, prod) with different config files.

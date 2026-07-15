@@ -158,7 +158,7 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
         zoomOnPinch={false}
         zoomOnScroll={false}
         panOnDrag={false}
-        preventScrolling
+        preventScrolling={false}
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={20} size={1} />

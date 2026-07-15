@@ -102,7 +102,10 @@ func main() {
 	}
 
 	output := runtime.NewOutputBuffer()
-	durationTelemetry := runtime.NewDurationTelemetry()
+	durationTelemetry, err := runtime.NewPersistentDurationTelemetry(filepath.Join(*configDir, "duration-telemetry.json"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	var publisher runtimePublisher
 	var runtimeEnsurer api.RuntimeEnsurer
 	var closeRuntime func()

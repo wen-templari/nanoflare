@@ -15,17 +15,17 @@ export function ObjectStorageBucketsPage() {
       <PageHeading eyebrow="Storage" title="Object storage" copy="Manage bucket inventory for your workers, then drill into a bucket to inspect shared objects and bindings." actions={<Button onClick={openObjectStorageBucketDialog}><Plus className="size-4" />New bucket</Button>} />
       <Panel flush>
         <ScrollArea>
-          <Table highlightOnHover miw={760} verticalSpacing="sm">
-            <Table.Thead><Table.Tr><Table.Th>Bucket</Table.Th><Table.Th>ID</Table.Th><Table.Th>Bindings</Table.Th><Table.Th>Created</Table.Th></Table.Tr></Table.Thead>
+          <Table highlightOnHover miw={760} verticalSpacing="sm" className="table-fixed">
+            <Table.Thead><Table.Tr><Table.Th className="w-[30%]">Bucket</Table.Th><Table.Th className="w-[44%]">ID</Table.Th><Table.Th className="w-[14%]">Bindings</Table.Th><Table.Th className="w-[12%]">Created</Table.Th></Table.Tr></Table.Thead>
             <Table.Tbody>
               {objectStorageBuckets.map((bucket) => {
                 const boundCount = workers.filter((worker) => worker.bindings?.some((binding) => binding.kind === "object_storage_bucket" && binding.bucket_id === bucket.id)).length;
                 return (
                   <Table.Tr key={bucket.id} className="cursor-pointer" onClick={() => navigate(`/object-storage/${bucket.id}`)}>
-                    <Table.Td><Text fw={700}>{bucket.name}</Text></Table.Td>
-                    <Table.Td><Text c="dimmed" ff="monospace" size="xs">{bucket.id}</Text></Table.Td>
-                    <Table.Td><Badge tone={boundCount ? "green" : "orange"}>{boundCount} worker{boundCount === 1 ? "" : "s"}</Badge></Table.Td>
-                    <Table.Td><Text c="dimmed" size="sm">{new Date(bucket.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
+                    <Table.Td className="w-[30%]"><Text fw={700} truncate>{bucket.name}</Text></Table.Td>
+                    <Table.Td className="w-[44%]"><Text c="dimmed" ff="monospace" size="xs" truncate>{bucket.id}</Text></Table.Td>
+                    <Table.Td className="w-[14%]"><Badge tone={boundCount ? "green" : "orange"}>{boundCount} worker{boundCount === 1 ? "" : "s"}</Badge></Table.Td>
+                    <Table.Td className="w-[12%]"><Text c="dimmed" size="sm" truncate>{new Date(bucket.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
                   </Table.Tr>
                 );
               })}

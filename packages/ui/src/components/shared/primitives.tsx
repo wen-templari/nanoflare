@@ -67,7 +67,7 @@ export function StatusCodeMix({ values }: { values: { code: string; value: numbe
         <Box key={code}>
           <Group justify="space-between" mb={4}>
             <Text fw={700} size="xs">HTTP {code}</Text>
-            <Text c="dimmed" ff="monospace" size="xs">{value.toFixed(2)}/s</Text>
+            <Text c="dimmed" ff="monospace" size="xs">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}</Text>
           </Group>
           <Progress color={code.startsWith("5") ? "red" : code.startsWith("4") ? "orange" : "green"} value={total ? Math.max((value / total) * 100, 2) : 0} />
         </Box>

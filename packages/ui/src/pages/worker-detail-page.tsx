@@ -305,7 +305,7 @@ function MiniTrafficChart({ values }: { values: number[] }) {
         <AreaChart data={data}>
           <XAxis axisLine={false} dataKey="minute" interval="preserveStartEnd" tickLine={false} />
           <YAxis hide />
-          <Tooltip cursor={{ stroke: "var(--mantine-color-blue-4)" }} formatter={(value) => [`${Number(value).toFixed(2)} requests/s`, "Traffic"]} />
+          <Tooltip cursor={{ stroke: "var(--mantine-color-blue-4)" }} formatter={(value) => [`${Number(value).toFixed(1)} requests`, "Traffic"]} />
           <Area dataKey="value" fill="var(--mantine-color-blue-1)" stroke="var(--mantine-color-blue-6)" strokeWidth={2} type="monotone" />
         </AreaChart>
       </ResponsiveContainer>

@@ -45,27 +45,23 @@ func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
 	}
-	latency, err := c.query(`histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{` + selector + `}[5m])))`)
+	latency, err := c.query(`histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{` + selector + `}[24h])))`)
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
 	}
-	errors, err := c.query(`sum(rate(traefik_router_requests_total{` + selector + `,code=~"5.."}[5m]))`)
+	invocations, err := c.query(`sum(increase(traefik_router_requests_total{` + selector + `}[24h]))`)
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
 	}
-	invocations, err := c.query(`sum(traefik_router_requests_total{` + selector + `})`)
+	errorTotal, err := c.query(`sum(increase(traefik_router_requests_total{` + selector + `,code=~"5.."}[24h]))`)
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
 	}
-	errorTotal, err := c.query(`sum(traefik_router_requests_total{` + selector + `,code=~"5.."})`)
+	traffic, err := c.queryRange(`sum(increase(traefik_router_requests_total{` + selector + `}[5m]))`)
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
 	}
-	traffic, err := c.queryRange(`sum(rate(traefik_router_requests_total{` + selector + `}[5m]))`)
-	if err != nil {
-		return nanoflare.WorkerTraffic{}, err
-	}
-	statusCodes, err := c.query(`sum by (code) (rate(traefik_router_requests_total{` + selector + `}[5m]))`)
+	statusCodes, err := c.query(`sum by (code) (increase(traefik_router_requests_total{` + selector + `}[24h]))`)
 	if err != nil {
 		return nanoflare.WorkerTraffic{}, err
 	}
@@ -79,8 +75,8 @@ func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
 		Errors:            resultNumber(errorTotal),
 		StatusCodes:       make([]nanoflare.WorkerStatusCode, 0, len(statusCodes)),
 	}
-	if requestRate > 0 {
-		result.ErrorRate = resultNumber(errors) / requestRate
+	if result.Invocations > 0 {
+		result.ErrorRate = result.Errors / result.Invocations
 	}
 	for _, item := range statusCodes {
 		result.StatusCodes = append(result.StatusCodes, nanoflare.WorkerStatusCode{
