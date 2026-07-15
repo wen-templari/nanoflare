@@ -144,7 +144,7 @@ export function NamespaceKeyEditor({
         <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void readKey(); }}>
           <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-[#d6d0c3] bg-white/75 px-3">
             <Search className="size-4 text-[#959a93]" />
-            <Input required value={key} onChange={(event) => setKey(event.target.value)} placeholder="visits" className="h-10 border-0 bg-transparent p-0 focus:ring-0" />
+            <Input required value={key} onChange={(event) => setKey(event.target.value)} placeholder="visits" variant="unstyled" className="min-w-0 flex-1" inputClassName="h-10 bg-transparent p-0" />
           </div>
           <Button type="submit" variant="outline" disabled={loading}><Search className="size-3.5" />Read</Button>
         </form>

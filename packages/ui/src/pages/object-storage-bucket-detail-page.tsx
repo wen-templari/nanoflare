@@ -315,7 +315,7 @@ function ObjectStorageBucketDetailContent({
                 </label>
                 <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
                   <Search className="size-4 text-[#959a93]" />
-                  <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search objects" className="h-10 border-0 bg-transparent p-0 focus:ring-0" />
+                  <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search objects" variant="unstyled" className="min-w-0 flex-1" inputClassName="h-10 bg-transparent p-0" />
                 </div>
               </div>
               {filteredObjects.map((item) => (

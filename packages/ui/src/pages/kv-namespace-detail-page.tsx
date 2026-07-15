@@ -351,7 +351,7 @@ function KVNamespaceDetailContent({
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
                 <Search className="size-4 text-[#959a93]" />
-                <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search keys" className="h-10 border-0 bg-transparent p-0 focus:ring-0" />
+                <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search keys" variant="unstyled" className="min-w-0 flex-1" inputClassName="h-10 bg-transparent p-0" />
               </div>
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={() => void refreshKeys()} disabled={keysLoading}><RefreshCw className={cn("size-3.5", keysLoading && "animate-spin")} />Refresh</Button>
