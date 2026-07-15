@@ -6,8 +6,8 @@
 
 - `auth.protected_routes` in `nanoflare.json`
 - a public route and a protected route in the same Worker
-- reading auth information through `env.IDENTITY`
-- returning the forwarded auth headers for inspection
+- reading auth information from the forwarded auth headers
+- returning those auth headers for inspection
 
 ## Setup
 
@@ -26,4 +26,5 @@ an accepted bearer token through Traefik ForwardAuth.
 ## Routes To Try
 
 - `/` returns a public JSON response
-- `/api/auth/me` is protected and returns the resolved identity plus forwarded auth headers
+- `/api/auth/me` is protected and returns `X-Nanoflare-User-JWT` and
+  `X-Nanoflare-User-Email` from the request headers

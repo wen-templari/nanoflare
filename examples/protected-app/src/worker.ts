@@ -1,12 +1,10 @@
-import type { IdentityBinding } from "@nanoflare/workers-types"
-
-interface Env {
-  IDENTITY: IdentityBinding
-}
-
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
+    const authHeaders = {
+      jwt: request.headers.get("X-Nanoflare-User-JWT"),
+      email: request.headers.get("X-Nanoflare-User-Email"),
+    }
 
     if (url.pathname === "/") {
       return Response.json({
@@ -20,9 +18,8 @@ export default {
       return Response.json({
         ok: true,
         path: url.pathname,
-        authed: Boolean(env.IDENTITY.get(request)),
-        identity: env.IDENTITY.get(request),
-        headers: env.IDENTITY.headers(request),
+        authed: Boolean(authHeaders.jwt),
+        headers: authHeaders,
       })
     }
 
