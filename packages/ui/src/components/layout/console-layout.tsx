@@ -1,6 +1,6 @@
 import { ActionIcon, Anchor, AppShell, Badge, Box, Breadcrumbs, Burger, Button, Group, Modal, NavLink as MantineNavLink, Notification, Paper, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
-import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
+import { Boxes, Check, ChevronDown, CircleGauge, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
 import { useState } from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { normalizeUsageLevel, usageLevelPaid } from "../../app/org-limits"
@@ -18,6 +18,7 @@ const navItems = [
 ]
 
 const defaultOwnedOrganizationLimit = 1
+const createOrganizationSelectValue = "__create_organization__"
 
 export function ConsoleLayout() {
   const location = useLocation()
@@ -58,6 +59,16 @@ export function ConsoleLayout() {
   const activeUsageLevel = normalizeUsageLevel(activeOrg?.usage_level)
   const ownedOrganizations = organizations.filter((org) => org.role === "owner")
   const ownedOrganizationLimitReached = activeUsageLevel !== usageLevelPaid && ownedOrganizations.length >= defaultOwnedOrganizationLimit
+  const organizationSelectData = [
+    ...organizations.map((org) => ({
+      value: org.id,
+      label: org.name,
+      usageLevel: normalizeUsageLevel(org.usage_level),
+    })),
+    ...(!ownedOrganizationLimitReached
+      ? [{ value: createOrganizationSelectValue, label: "Create organization", usageLevel: "" }]
+      : []),
+  ]
 
   async function submitOrganization(event: React.FormEvent) {
     event.preventDefault()
@@ -119,28 +130,55 @@ export function ConsoleLayout() {
           <Group gap="sm">
             <Select
               allowDeselect={false}
-              data={organizations.map((org) => ({ value: org.id, label: org.name }))}
+              data={organizationSelectData}
               disabled={!organizations.length}
               maw={220}
-              onChange={(value) => value && setActiveOrgID(value)}
+              onChange={(value) => {
+                if (!value) return
+                if (value === createOrganizationSelectValue) {
+                  setOrgModalOpen(true)
+                  return
+                }
+                setActiveOrgID(value)
+              }}
               placeholder="No organization"
+              renderOption={({ option }) => {
+                if (option.value === createOrganizationSelectValue) {
+                  return (
+                    <Group gap="xs" wrap="nowrap">
+                      <Plus size={14} />
+                      <Text size="sm">{option.label}</Text>
+                    </Group>
+                  )
+                }
+
+                const usageLevel = "usageLevel" in option ? option.usageLevel : ""
+
+                return (
+                  <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
+                    <Text size="sm" truncate>{option.label}</Text>
+                    <Badge color={usageLevel === usageLevelPaid ? "green" : "gray"} radius="sm" size="xs" variant="light">
+                      {usageLevel === usageLevelPaid ? "Paid" : "Default"}
+                    </Badge>
+                  </Group>
+                )
+              }}
+              rightSection={activeOrg ? (
+                <Group gap={6} mr={4} wrap="nowrap">
+                  <Badge color={activeUsageLevel === usageLevelPaid ? "green" : "gray"} radius="sm" size="xs" variant="light">
+                    {activeUsageLevel === usageLevelPaid ? "Paid" : "Default"}
+                  </Badge>
+                  <ChevronDown size={14} />
+                </Group>
+              ) : undefined}
+              rightSectionPointerEvents="none"
+              rightSectionWidth={86}
               size="xs"
+              styles={{
+                input: { paddingRight: activeOrg ? 90 : undefined },
+              }}
               value={activeOrgID}
             />
-            {activeOrg && (
-              <Badge color={activeUsageLevel === usageLevelPaid ? "green" : "gray"} radius="sm" variant="light">
-                {activeUsageLevel === usageLevelPaid ? "Paid" : "Default"}
-              </Badge>
-            )}
-            {ownedOrganizationLimitReached ? (
-              <Text c="dimmed" size="sm">Default plan limit reached: {defaultOwnedOrganizationLimit} owned organization.</Text>
-            ) : (
-              <Tooltip label="Create organization">
-                <ActionIcon aria-label="Create organization" onClick={() => setOrgModalOpen(true)} variant="subtle">
-                  <Plus size={16} />
-                </ActionIcon>
-              </Tooltip>
-            )}
             <Tooltip label="Sign out">
               <ActionIcon
                 aria-label="Sign out"
