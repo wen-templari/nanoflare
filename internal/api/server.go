@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -12,14 +15,17 @@ import (
 )
 
 type Server struct {
-	service      *nanoflare.Service
-	traefik      TraefikConfigReader
-	traefikToken string
-	auth         Authenticator
-	controlAuth  *nanoflare.ControlAuthService
-	oauth        *nanoflare.OAuthService
-	runtime      RuntimeEnsurer
-	mux          *http.ServeMux
+	service          *nanoflare.Service
+	traefik          TraefikConfigReader
+	traefikToken     string
+	auth             Authenticator
+	controlAuth      *nanoflare.ControlAuthService
+	controlOIDC      ControlOIDCAuthenticator
+	controlOIDCMu    sync.Mutex
+	controlOIDCCodes map[string]controlOIDCCode
+	oauth            *nanoflare.OAuthService
+	runtime          RuntimeEnsurer
+	mux              *http.ServeMux
 }
 
 type RuntimeEnsurer interface {
@@ -38,12 +44,24 @@ type BrowserAuthenticator interface {
 	HandleCallback(http.ResponseWriter, *http.Request) error
 }
 
+type ControlOIDCAuthenticator interface {
+	BrowserFlowEnabled() bool
+	BeginConsoleAuth(http.ResponseWriter, *http.Request, string) error
+	HandleConsoleCallback(*http.Request) (AuthResult, string, error)
+	Issuer() string
+}
+
 type AuthResult struct {
 	Valid     bool           `json:"valid"`
 	Subject   string         `json:"subject,omitempty"`
 	Email     string         `json:"email,omitempty"`
 	ExpiresAt *time.Time     `json:"expires_at,omitempty"`
 	Claims    map[string]any `json:"claims,omitempty"`
+}
+
+type controlOIDCCode struct {
+	Result    AuthResult
+	ExpiresAt time.Time
 }
 
 var errAuthDisabled = errors.New("oidc authentication is not configured")
@@ -84,6 +102,10 @@ func NewServerWithRuntimeAndOAuth(service *nanoflare.Service, traefik TraefikCon
 	return server
 }
 
+func (s *Server) SetControlOIDC(auth ControlOIDCAuthenticator) {
+	s.controlOIDC = auth
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.controlAuth != nil && strings.HasPrefix(r.URL.Path, "/v1/") && !isPublicControlPath(r.URL.Path) {
 		next, ok := s.authenticateControlRequest(w, r)
@@ -93,6 +115,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = next
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+func randomControlCode() (string, error) {
+	value := make([]byte, 24)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
 }
 
 func (s *Server) routes() {

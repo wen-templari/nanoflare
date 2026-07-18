@@ -1,19 +1,66 @@
-import { Alert, Box, Button, Group, Paper, PasswordInput, Stack, Text, TextInput, ThemeIcon, Title } from "@mantine/core";
+import { Alert, Box, Button, Divider, Group, Paper, PasswordInput, Stack, Text, TextInput, ThemeIcon, Title } from "@mantine/core";
 import { Boxes, LogIn } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../app/auth-context";
 
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const next = searchParams.get("next") || "/";
+  const oidcCode = searchParams.get("oidc_code") || "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [signupMode, setSignupMode] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [oidcEnabled, setOIDCEnabled] = useState(false);
+  const [oidcLoading, setOIDCLoading] = useState(false);
+  const handledOIDCCode = useRef("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOIDCConfig() {
+      const response = await fetch("/v1/auth/oidc/config").catch(() => null);
+      if (!response?.ok) return;
+      const config = await response.json().catch(() => ({ enabled: false })) as { enabled?: boolean };
+      if (!cancelled) setOIDCEnabled(Boolean(config.enabled));
+    }
+    void loadOIDCConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!oidcCode) return;
+    if (handledOIDCCode.current === oidcCode) return;
+    handledOIDCCode.current = oidcCode;
+    let cancelled = false;
+    async function completeOIDCLogin() {
+      setOIDCLoading(true);
+      setError("");
+      try {
+        await auth.loginWithOIDCCode(oidcCode);
+        if (!cancelled) navigate(next, { replace: true });
+      } catch (err) {
+        if (!cancelled) {
+          handledOIDCCode.current = "";
+          setError(err instanceof Error ? err.message : "OIDC login failed");
+          const params = new URLSearchParams(searchParams);
+          params.delete("oidc_code");
+          setSearchParams(params, { replace: true });
+        }
+      } finally {
+        if (!cancelled) setOIDCLoading(false);
+      }
+    }
+    void completeOIDCLogin();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, navigate, next, oidcCode, searchParams, setSearchParams]);
 
   if (auth.signedIn) return <Navigate to={next} replace />;
 
@@ -30,6 +77,12 @@ export function LoginPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function startOIDCLogin() {
+    const params = new URLSearchParams();
+    params.set("next", next);
+    window.location.assign(`/v1/auth/oidc/start?${params.toString()}`);
   }
 
   return (
@@ -73,6 +126,14 @@ export function LoginPage() {
                   <Button leftSection={<LogIn size={16} />} loading={submitting} type="submit">
                     {signupMode ? "Create account" : "Sign in"}
                   </Button>
+                  {oidcEnabled && !signupMode && (
+                    <>
+                      <Divider label="or" labelPosition="center" />
+                      <Button leftSection={<LogIn size={16} />} loading={oidcLoading} onClick={startOIDCLogin} type="button" variant="light">
+                        Sign in with OIDC
+                      </Button>
+                    </>
+                  )}
                   <Button color="gray" onClick={() => setSignupMode((value) => !value)} variant="subtle">
                     {signupMode ? "Use existing account" : "Create a new account"}
                   </Button>

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
@@ -21,7 +23,7 @@ const (
 
 func isPublicControlPath(path string) bool {
 	switch path {
-	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
+	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
 		return true
 	default:
 		if strings.HasPrefix(path, "/v1/invites/") {
@@ -126,6 +128,10 @@ func (s *Server) registerControlAuthRoutes() {
 	s.mux.HandleFunc("POST /v1/setup/signup", s.controlSignup)
 	s.mux.HandleFunc("POST /v1/auth/signup", s.controlSignup)
 	s.mux.HandleFunc("POST /v1/auth/login", s.controlLogin)
+	s.mux.HandleFunc("GET /v1/auth/oidc/config", s.controlOIDCConfig)
+	s.mux.HandleFunc("GET /v1/auth/oidc/start", s.controlOIDCStart)
+	s.mux.HandleFunc("GET /v1/auth/oidc/callback", s.controlOIDCCallback)
+	s.mux.HandleFunc("POST /v1/auth/oidc/session", s.controlOIDCSession)
 	s.mux.HandleFunc("GET /v1/auth/me", s.controlMe)
 	s.mux.HandleFunc("POST /v1/orgs", s.createOrganization)
 	s.mux.HandleFunc("GET /v1/orgs/{orgID}/members", s.organizationMembers)
@@ -136,6 +142,96 @@ func (s *Server) registerControlAuthRoutes() {
 	s.mux.HandleFunc("DELETE /v1/orgs/{orgID}/invites/{inviteID}", s.revokeOrganizationInvite)
 	s.mux.HandleFunc("GET /v1/invites/{token}", s.inviteInfo)
 	s.mux.HandleFunc("POST /v1/invites/{token}/accept", s.acceptInvite)
+}
+
+func (s *Server) controlOIDCConfig(w http.ResponseWriter, r *http.Request) {
+	enabled := s.controlAuth != nil && s.controlOIDC != nil && s.controlOIDC.BrowserFlowEnabled()
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+}
+
+func (s *Server) controlOIDCStart(w http.ResponseWriter, r *http.Request) {
+	if s.controlOIDC == nil || !s.controlOIDC.BrowserFlowEnabled() {
+		writeAuthError(w, errAuthDisabled)
+		return
+	}
+	if err := s.controlOIDC.BeginConsoleAuth(w, r, r.URL.Query().Get("next")); err != nil {
+		writeAuthError(w, err)
+	}
+}
+
+func (s *Server) controlOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	if s.controlOIDC == nil || !s.controlOIDC.BrowserFlowEnabled() {
+		writeAuthError(w, errAuthDisabled)
+		return
+	}
+	result, next, err := s.controlOIDC.HandleConsoleCallback(r)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	code, err := randomControlCode()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.controlOIDCMu.Lock()
+	if s.controlOIDCCodes == nil {
+		s.controlOIDCCodes = make(map[string]controlOIDCCode)
+	}
+	s.controlOIDCCodes[code] = controlOIDCCode{Result: result, ExpiresAt: time.Now().UTC().Add(5 * time.Minute)}
+	s.controlOIDCMu.Unlock()
+
+	values := url.Values{}
+	values.Set("oidc_code", code)
+	values.Set("next", safeControlNext(next))
+	http.Redirect(w, r, "/login?"+values.Encode(), http.StatusFound)
+}
+
+func (s *Server) controlOIDCSession(w http.ResponseWriter, r *http.Request) {
+	if s.controlOIDC == nil || !s.controlOIDC.BrowserFlowEnabled() {
+		writeAuthError(w, errAuthDisabled)
+		return
+	}
+	var input struct {
+		Code string `json:"code"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	code := strings.TrimSpace(input.Code)
+	if code == "" {
+		writeError(w, http.StatusBadRequest, errors.New("code is required"))
+		return
+	}
+	s.controlOIDCMu.Lock()
+	pending, ok := s.controlOIDCCodes[code]
+	if ok {
+		delete(s.controlOIDCCodes, code)
+	}
+	s.controlOIDCMu.Unlock()
+	if !ok || !pending.ExpiresAt.After(time.Now().UTC()) {
+		writeError(w, http.StatusUnauthorized, errors.New("oidc login code is invalid or expired"))
+		return
+	}
+	session, err := s.controlAuth.LoginOIDC(nanoflare.OIDCLoginInput{
+		Issuer:  s.controlOIDC.Issuer(),
+		Subject: pending.Result.Subject,
+		Email:   pending.Result.Email,
+	})
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
+func safeControlNext(next string) string {
+	next = strings.TrimSpace(next)
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "/"
+	}
+	return next
 }
 
 func (s *Server) controlSignup(w http.ResponseWriter, r *http.Request) {

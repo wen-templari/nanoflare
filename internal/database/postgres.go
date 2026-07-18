@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS users (
 	password_hash bytea NOT NULL,
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS user_oidc_identities (
+	issuer text NOT NULL,
+	subject text NOT NULL,
+	user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at timestamptz NOT NULL,
+	PRIMARY KEY (issuer, subject)
+);
 CREATE TABLE IF NOT EXISTS organizations (
 	id text PRIMARY KEY,
 	name text NOT NULL,
@@ -440,6 +447,34 @@ func (p *Postgres) UserByEmail(email string) (nanoflare.User, error) {
 		return nanoflare.User{}, nanoflare.ErrUserNotFound
 	}
 	return user, err
+}
+
+func (p *Postgres) UserByOIDCIdentity(issuer, subject string) (nanoflare.User, error) {
+	var user nanoflare.User
+	err := p.db.QueryRow(`
+SELECT u.id, u.email, u.password_hash, u.created_at
+FROM user_oidc_identities i
+JOIN users u ON u.id = i.user_id
+WHERE i.issuer = $1 AND i.subject = $2`, issuer, subject).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.User{}, nanoflare.ErrOIDCIdentityNotFound
+	}
+	return user, err
+}
+
+func (p *Postgres) CreateOIDCIdentity(identity nanoflare.UserOIDCIdentity) error {
+	_, err := p.db.Exec(`
+INSERT INTO user_oidc_identities (issuer, subject, user_id, created_at)
+VALUES ($1, $2, $3, $4)`,
+		identity.Issuer, identity.Subject, identity.UserID, identity.CreatedAt)
+	if isUniqueViolation(err) {
+		return nanoflare.ErrOIDCIdentityExists
+	}
+	if isForeignKeyViolation(err) {
+		return nanoflare.ErrUserNotFound
+	}
+	return err
 }
 
 func (p *Postgres) UserCount() (int, error) {

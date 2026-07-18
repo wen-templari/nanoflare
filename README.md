@@ -191,6 +191,23 @@ locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 `~/.config/nanoflare/auth.json` by default; set `NANOFLARE_AUTH_STORE` to an
 alternate file path when you need a different auth store location.
 
+The browser console can also use an external OIDC provider for login. Configure
+the console-specific settings on `nanoflared`:
+
+```sh
+NANOFLARE_CONTROL_OIDC_ISSUER=https://auth.example.com/oidc
+NANOFLARE_CONTROL_OIDC_CLIENT_ID=nanoflare-console
+NANOFLARE_CONTROL_OIDC_CLIENT_SECRET=change-me
+NANOFLARE_CONTROL_OIDC_PUBLIC_URL=https://console.example.com
+NANOFLARE_CONTROL_OIDC_EMAIL_CLAIM=email
+```
+
+Register `https://console.example.com/v1/auth/oidc/callback` as the OIDC client
+redirect URI. These settings may point at the same identity provider as
+protected worker-route OIDC, but they are intentionally separate so enabling
+worker auth does not automatically enable console registration and login. CLI
+login continues to use email and password.
+
 External platforms can integrate through Nanoflare's OAuth control-plane flow.
 First create an OAuth client while signed in as a Nanoflare control-plane user.
 The client is owned by the organization in `X-Nanoflare-Org-ID`; any member of

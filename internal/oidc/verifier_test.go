@@ -316,6 +316,54 @@ func TestVerifierBrowserFlowCreatesSessionWithoutIDToken(t *testing.T) {
 	}
 }
 
+func TestConsoleCallbackRejectsMissingStateAndCode(t *testing.T) {
+	verifier := NewConsoleVerifier("https://issuer.example.com", "email", "client-id", "secret", "https://console.example.com", nil)
+	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/callback", nil)
+	_, _, err := verifier.HandleConsoleCallback(request)
+	if err == nil || !strings.Contains(err.Error(), "requires state and code") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestConsoleCallbackRejectsFailedTokenExchange(t *testing.T) {
+	var issuer string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"authorization_endpoint": issuer + "/authorize",
+				"token_endpoint":         issuer + "/token",
+				"jwks_uri":               issuer + "/jwks",
+				"userinfo_endpoint":      issuer + "/userinfo",
+			})
+		case "/token":
+			http.Error(w, "nope", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	issuer = server.URL
+
+	verifier := NewConsoleVerifier(issuer, "email", "client-id", "secret", "https://console.example.com", server.Client())
+	startRequest := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/start?next=/settings", nil)
+	startRecorder := httptest.NewRecorder()
+	if err := verifier.BeginConsoleAuth(startRecorder, startRequest, "/settings"); err != nil {
+		t.Fatal(err)
+	}
+	location := startRecorder.Header().Get("Location")
+	parsed, err := url.Parse(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := parsed.Query().Get("state")
+	callbackRequest := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/callback?state="+url.QueryEscape(state)+"&code=bad-code", nil)
+	_, _, err = verifier.HandleConsoleCallback(callbackRequest)
+	if err == nil || !strings.Contains(err.Error(), "token exchange failed") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestVerifierRejectsInvalidCookieDomain(t *testing.T) {
 	verifier := NewBrowserVerifier("https://auth.example.com/oidc", "nanoflare", "email", "client-id", "", "https://nanoflare.local.nbtca.space:8443", ".other.example.com", nil)
 	if err := verifier.ValidateBrowserConfig(); err == nil || !strings.Contains(err.Error(), "cookie domain") {

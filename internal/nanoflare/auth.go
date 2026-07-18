@@ -34,6 +34,12 @@ type LoginInput struct {
 	Password string `json:"password"`
 }
 
+type OIDCLoginInput struct {
+	Issuer  string
+	Subject string
+	Email   string
+}
+
 type AuthSession struct {
 	Token         string         `json:"token"`
 	User          User           `json:"user"`
@@ -127,6 +133,65 @@ func (s *ControlAuthService) Login(input LoginInput) (AuthSession, error) {
 	}
 	if err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password)); err != nil {
 		return AuthSession{}, ErrInvalidCredentials
+	}
+	return s.sessionForUser(user)
+}
+
+func (s *ControlAuthService) LoginOIDC(input OIDCLoginInput) (AuthSession, error) {
+	issuer := strings.TrimRight(strings.TrimSpace(input.Issuer), "/")
+	subject := strings.TrimSpace(input.Subject)
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	if issuer == "" {
+		return AuthSession{}, errors.New("oidc issuer is required")
+	}
+	if subject == "" {
+		return AuthSession{}, errors.New("oidc subject is required")
+	}
+	if email == "" || !strings.Contains(email, "@") {
+		return AuthSession{}, errors.New("oidc email must be valid")
+	}
+	user, err := s.store.UserByOIDCIdentity(issuer, subject)
+	if err == nil {
+		return s.sessionForUser(user)
+	}
+	if err != nil && !errors.Is(err, ErrOIDCIdentityNotFound) {
+		return AuthSession{}, err
+	}
+	user, err = s.store.UserByEmail(email)
+	if err != nil {
+		if !errors.Is(err, ErrUserNotFound) {
+			return AuthSession{}, err
+		}
+		userID, err := s.randomID()
+		if err != nil {
+			return AuthSession{}, err
+		}
+		user = User{ID: userID, Email: email, PasswordHash: []byte{}, CreatedAt: s.now().UTC()}
+		if err := s.store.CreateUser(user); err != nil {
+			if !errors.Is(err, ErrUserExists) {
+				return AuthSession{}, err
+			}
+			user, err = s.store.UserByEmail(email)
+			if err != nil {
+				return AuthSession{}, err
+			}
+		}
+	}
+	identity := UserOIDCIdentity{
+		UserID:    user.ID,
+		Issuer:    issuer,
+		Subject:   subject,
+		CreatedAt: s.now().UTC(),
+	}
+	if err := s.store.CreateOIDCIdentity(identity); err != nil {
+		if errors.Is(err, ErrOIDCIdentityExists) {
+			user, err := s.store.UserByOIDCIdentity(issuer, subject)
+			if err != nil {
+				return AuthSession{}, err
+			}
+			return s.sessionForUser(user)
+		}
+		return AuthSession{}, err
 	}
 	return s.sessionForUser(user)
 }

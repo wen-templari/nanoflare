@@ -9,6 +9,7 @@ type AuthContextValue = {
   organizations: Organization[];
   activeOrgID: string;
   login: (email: string, password: string) => Promise<void>;
+  loginWithOIDCCode: (code: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   refresh: () => Promise<AuthSession>;
@@ -91,6 +92,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await authenticate("/v1/auth/login", email, password);
   }
 
+  async function loginWithOIDCCode(code: string) {
+    const response = await fetch("/v1/auth/oidc/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({ error: "OIDC login failed" }));
+      throw new Error(body.error || "OIDC login failed");
+    }
+    const session = await response.json() as AuthSession;
+    const orgID = session.active_org_id || session.organizations[0]?.id || "";
+    saveAuth(session.token, orgID);
+    setUserEmail(session.user.email);
+    setOrganizations(session.organizations);
+    setActiveOrgIDState(orgID);
+  }
+
   async function signup(email: string, password: string) {
     await authenticate("/v1/auth/signup", email, password);
   }
@@ -132,6 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         organizations,
         activeOrgID: activeOrgIDState,
         login,
+        loginWithOIDCCode,
         signup,
         createOrganization,
         refresh,

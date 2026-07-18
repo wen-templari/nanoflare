@@ -111,8 +111,34 @@ func NewBrowserVerifier(issuer, audience, emailClaim, clientID, clientSecret, pu
 	}
 }
 
+func NewConsoleVerifier(issuer, emailClaim, clientID, clientSecret, publicURL string, client *http.Client) *Verifier {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	if emailClaim == "" {
+		emailClaim = "email"
+	}
+	publicURL = strings.TrimRight(strings.TrimSpace(publicURL), "/")
+	return &Verifier{
+		issuer:       strings.TrimRight(strings.TrimSpace(issuer), "/"),
+		audience:     strings.TrimSpace(clientID),
+		emailClaim:   strings.TrimSpace(emailClaim),
+		clientID:     strings.TrimSpace(clientID),
+		clientSecret: strings.TrimSpace(clientSecret),
+		publicURL:    publicURL,
+		redirectURL:  publicURL + "/v1/auth/oidc/callback",
+		client:       client,
+		states:       make(map[string]browserState),
+		sessions:     make(map[string]browserSession),
+	}
+}
+
 func (v *Verifier) BrowserFlowEnabled() bool {
 	return v.clientID != "" && v.publicURL != ""
+}
+
+func (v *Verifier) Issuer() string {
+	return v.issuer
 }
 
 func (v *Verifier) Session(r *http.Request) (api.AuthResult, string, bool) {
@@ -166,6 +192,33 @@ func (v *Verifier) BeginAuth(w http.ResponseWriter, r *http.Request) error {
 	}
 	v.mu.Unlock()
 
+	http.Redirect(w, r, authorizationURL(discovery, v.clientID, v.redirectURL, state, verifier), http.StatusFound)
+	return nil
+}
+
+func (v *Verifier) BeginConsoleAuth(w http.ResponseWriter, r *http.Request, next string) error {
+	if !v.BrowserFlowEnabled() {
+		return errors.New("oidc browser flow is not configured")
+	}
+	discovery, err := v.discoveryForContext(r.Context())
+	if err != nil {
+		return err
+	}
+	state, err := randomToken()
+	if err != nil {
+		return err
+	}
+	verifier, err := randomVerifier()
+	if err != nil {
+		return err
+	}
+	v.mu.Lock()
+	v.states[state] = browserState{
+		ReturnURL:    safeConsoleNext(next),
+		CodeVerifier: verifier,
+		ExpiresAt:    time.Now().UTC().Add(defaultStateTTL),
+	}
+	v.mu.Unlock()
 	http.Redirect(w, r, authorizationURL(discovery, v.clientID, v.redirectURL, state, verifier), http.StatusFound)
 	return nil
 }
@@ -245,6 +298,45 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 	})
 	http.Redirect(w, r, state.ReturnURL, http.StatusFound)
 	return nil
+}
+
+func (v *Verifier) HandleConsoleCallback(r *http.Request) (api.AuthResult, string, error) {
+	if !v.BrowserFlowEnabled() {
+		return api.AuthResult{}, "", errors.New("oidc browser flow is not configured")
+	}
+	stateValue := strings.TrimSpace(r.URL.Query().Get("state"))
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if stateValue == "" || code == "" {
+		return api.AuthResult{}, "", errors.New("oidc callback requires state and code")
+	}
+	v.mu.Lock()
+	state, ok := v.states[stateValue]
+	if ok {
+		delete(v.states, stateValue)
+	}
+	v.mu.Unlock()
+	if !ok || !state.ExpiresAt.After(time.Now().UTC()) {
+		return api.AuthResult{}, "", errors.New("oidc callback state is invalid or expired")
+	}
+	discovery, err := v.discoveryForContext(r.Context())
+	if err != nil {
+		return api.AuthResult{}, "", err
+	}
+	token, err := v.exchangeCode(r.Context(), discovery, code, state.CodeVerifier)
+	if err != nil {
+		return api.AuthResult{}, "", err
+	}
+	if strings.TrimSpace(token.AccessToken) == "" {
+		return api.AuthResult{}, "", errors.New("oidc token exchange returned an empty access token")
+	}
+	result, _, err := v.callbackIdentity(r.Context(), token)
+	if err != nil {
+		return api.AuthResult{}, "", err
+	}
+	if strings.TrimSpace(result.Subject) == "" {
+		return api.AuthResult{}, "", errors.New("oidc subject is required")
+	}
+	return result, safeConsoleNext(state.ReturnURL), nil
 }
 
 func (v *Verifier) RedirectURL() string {
@@ -370,6 +462,14 @@ func forwardedURL(r *http.Request) string {
 		uri = "/"
 	}
 	return proto + "://" + host + uri
+}
+
+func safeConsoleNext(next string) string {
+	next = strings.TrimSpace(next)
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "/"
+	}
+	return next
 }
 
 type tokenResponse struct {

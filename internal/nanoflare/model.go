@@ -245,6 +245,13 @@ type User struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type UserOIDCIdentity struct {
+	UserID    string    `json:"user_id"`
+	Issuer    string    `json:"issuer"`
+	Subject   string    `json:"subject"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Organization struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`

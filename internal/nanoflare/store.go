@@ -23,6 +23,8 @@ var (
 	ErrSecretNotFound              = errors.New("secret not found")
 	ErrUserExists                  = errors.New("user already exists")
 	ErrUserNotFound                = errors.New("user not found")
+	ErrOIDCIdentityExists          = errors.New("oidc identity already exists")
+	ErrOIDCIdentityNotFound        = errors.New("oidc identity not found")
 	ErrOrganizationExists          = errors.New("organization already exists")
 	ErrOrganizationNotFound        = errors.New("organization not found")
 	ErrMembershipNotFound          = errors.New("user is not a member of the organization")
@@ -31,6 +33,8 @@ var (
 type Repository interface {
 	CreateUser(User) error
 	UserByEmail(string) (User, error)
+	UserByOIDCIdentity(issuer, subject string) (User, error)
+	CreateOIDCIdentity(UserOIDCIdentity) error
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
 	GetOrganization(string) (Organization, error)
@@ -113,6 +117,7 @@ type Store struct {
 	mu              sync.RWMutex
 	users           map[string]User
 	usersByEmail    map[string]string
+	oidcIdentities  map[string]UserOIDCIdentity
 	organizations   map[string]Organization
 	memberships     map[string]map[string]OrganizationMembership
 	invites         map[string]OrganizationInvite
@@ -136,6 +141,7 @@ func NewStore() *Store {
 	return &Store{
 		users:           make(map[string]User),
 		usersByEmail:    make(map[string]string),
+		oidcIdentities:  make(map[string]UserOIDCIdentity),
 		organizations:   make(map[string]Organization),
 		memberships:     make(map[string]map[string]OrganizationMembership),
 		invites:         make(map[string]OrganizationInvite),
@@ -180,10 +186,42 @@ func (s *Store) UserByEmail(email string) (User, error) {
 	return s.users[id], nil
 }
 
+func (s *Store) UserByOIDCIdentity(issuer, subject string) (User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	identity, exists := s.oidcIdentities[oidcIdentityKey(issuer, subject)]
+	if !exists {
+		return User{}, ErrOIDCIdentityNotFound
+	}
+	user, exists := s.users[identity.UserID]
+	if !exists {
+		return User{}, ErrUserNotFound
+	}
+	return user, nil
+}
+
+func (s *Store) CreateOIDCIdentity(identity UserOIDCIdentity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[identity.UserID]; !exists {
+		return ErrUserNotFound
+	}
+	key := oidcIdentityKey(identity.Issuer, identity.Subject)
+	if _, exists := s.oidcIdentities[key]; exists {
+		return ErrOIDCIdentityExists
+	}
+	s.oidcIdentities[key] = identity
+	return nil
+}
+
 func (s *Store) UserCount() (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.users), nil
+}
+
+func oidcIdentityKey(issuer, subject string) string {
+	return issuer + "\x00" + subject
 }
 
 func (s *Store) CreateOrganization(org Organization) error {

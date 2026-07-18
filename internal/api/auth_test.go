@@ -156,6 +156,92 @@ func TestAuthAPIsReturnNormalizedResponses(t *testing.T) {
 	}
 }
 
+func TestControlOIDCConfigReportsDisabled(t *testing.T) {
+	store := nanoflare.NewStore()
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/config", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Enabled {
+		t.Fatal("oidc config reported enabled")
+	}
+}
+
+func TestControlOIDCSessionRejectsReusedAndExpiredCodes(t *testing.T) {
+	store := nanoflare.NewStore()
+	controlAuth := nanoflare.NewControlAuthService(store, "test-secret")
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
+	server.SetControlOIDC(fakeControlOIDC{
+		enabled: true,
+		issuer:  "https://issuer.example.com",
+		result:  AuthResult{Valid: true, Subject: "subject-123", Email: "person@example.com"},
+		next:    "/settings",
+	})
+
+	callbackRequest := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/callback?state=abc&code=xyz", nil)
+	callbackRecorder := httptest.NewRecorder()
+	server.ServeHTTP(callbackRecorder, callbackRequest)
+	if callbackRecorder.Code != http.StatusFound {
+		t.Fatalf("callback status = %d body = %q", callbackRecorder.Code, callbackRecorder.Body.String())
+	}
+	location, err := url.Parse(callbackRecorder.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := location.Query().Get("oidc_code")
+	if code == "" || location.Query().Get("next") != "/settings" {
+		t.Fatalf("callback location = %q", callbackRecorder.Header().Get("Location"))
+	}
+
+	sessionBody := bytes.NewBufferString(`{"code":"` + code + `"}`)
+	sessionRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/session", sessionBody)
+	sessionRequest.Header.Set("Content-Type", "application/json")
+	sessionRecorder := httptest.NewRecorder()
+	server.ServeHTTP(sessionRecorder, sessionRequest)
+	if sessionRecorder.Code != http.StatusOK {
+		t.Fatalf("session status = %d body = %q", sessionRecorder.Code, sessionRecorder.Body.String())
+	}
+	var session nanoflare.AuthSession
+	if err := json.Unmarshal(sessionRecorder.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.Token == "" || session.User.Email != "person@example.com" {
+		t.Fatalf("session = %#v", session)
+	}
+
+	reuseRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/session", bytes.NewBufferString(`{"code":"`+code+`"}`))
+	reuseRequest.Header.Set("Content-Type", "application/json")
+	reuseRecorder := httptest.NewRecorder()
+	server.ServeHTTP(reuseRecorder, reuseRequest)
+	if reuseRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("reuse status = %d body = %q", reuseRecorder.Code, reuseRecorder.Body.String())
+	}
+
+	expiredCode := "expired-code"
+	server.controlOIDCMu.Lock()
+	server.controlOIDCCodes = map[string]controlOIDCCode{
+		expiredCode: {Result: AuthResult{Valid: true, Subject: "subject-456", Email: "other@example.com"}, ExpiresAt: time.Now().UTC().Add(-time.Minute)},
+	}
+	server.controlOIDCMu.Unlock()
+	expiredRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/session", bytes.NewBufferString(`{"code":"`+expiredCode+`"}`))
+	expiredRequest.Header.Set("Content-Type", "application/json")
+	expiredRecorder := httptest.NewRecorder()
+	server.ServeHTTP(expiredRecorder, expiredRequest)
+	if expiredRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expired status = %d body = %q", expiredRecorder.Code, expiredRecorder.Body.String())
+	}
+}
+
 func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})
@@ -953,6 +1039,42 @@ func (f fakeAuthenticator) HandleCallback(w http.ResponseWriter, r *http.Request
 	}
 	http.Redirect(w, r, f.callbackRedirectURL, http.StatusFound)
 	return nil
+}
+
+type fakeControlOIDC struct {
+	enabled      bool
+	issuer       string
+	result       AuthResult
+	next         string
+	beginAuthURL string
+	beginAuthErr error
+	callbackErr  error
+}
+
+func (f fakeControlOIDC) BrowserFlowEnabled() bool {
+	return f.enabled
+}
+
+func (f fakeControlOIDC) BeginConsoleAuth(w http.ResponseWriter, r *http.Request, next string) error {
+	if f.beginAuthErr != nil {
+		return f.beginAuthErr
+	}
+	if f.beginAuthURL == "" {
+		f.beginAuthURL = "https://issuer.example.com/authorize"
+	}
+	http.Redirect(w, r, f.beginAuthURL, http.StatusFound)
+	return nil
+}
+
+func (f fakeControlOIDC) HandleConsoleCallback(*http.Request) (AuthResult, string, error) {
+	if f.callbackErr != nil {
+		return AuthResult{}, "", f.callbackErr
+	}
+	return f.result, f.next, nil
+}
+
+func (f fakeControlOIDC) Issuer() string {
+	return f.issuer
 }
 
 type noopWriter struct{}
