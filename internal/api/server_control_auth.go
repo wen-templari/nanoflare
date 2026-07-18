@@ -156,7 +156,11 @@ func (s *Server) controlSignup(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/setup/signup" && strings.TrimSpace(input.OrganizationName) != "" {
 		org, err := s.controlAuth.CreateOrganization(session.User.ID, nanoflare.CreateOrganizationInput{Name: input.OrganizationName})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
+			status := http.StatusBadRequest
+			if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
+				status = http.StatusPaymentRequired
+			}
+			writeError(w, status, err)
 			return
 		}
 		session.Organizations = []nanoflare.Organization{org}
@@ -210,7 +214,11 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	}
 	org, err := s.controlAuth.CreateOrganization(user.ID, input)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
+			status = http.StatusPaymentRequired
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, org)

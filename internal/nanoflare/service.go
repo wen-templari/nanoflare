@@ -91,6 +91,9 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	if err != nil {
 		return App{}, err
 	}
+	if err := s.enforceOrgLimit(input.OrgID, "worker"); err != nil {
+		return App{}, err
+	}
 	generated := input.Hostname == ""
 	if !generated {
 		hostname, err := normalizeHostname(input.Hostname)
@@ -148,6 +151,9 @@ func (s *Service) CreateKVNamespace(input CreateKVNamespaceInput) (KVNamespace, 
 	if name == "" {
 		return KVNamespace{}, errors.New("name is required")
 	}
+	if err := s.enforceOrgLimit(input.OrgID, "kv namespace"); err != nil {
+		return KVNamespace{}, err
+	}
 	namespaceID, err := randomToken()
 	if err != nil {
 		return KVNamespace{}, err
@@ -175,6 +181,9 @@ func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput
 	if name == "" {
 		return ObjectStorageBucket{}, errors.New("name is required")
 	}
+	if err := s.enforceOrgLimit(input.OrgID, "object storage bucket"); err != nil {
+		return ObjectStorageBucket{}, err
+	}
 	bucketID, err := randomToken()
 	if err != nil {
 		return ObjectStorageBucket{}, err
@@ -192,6 +201,40 @@ func (s *Service) ListObjectStorageBuckets() ([]ObjectStorageBucket, error) {
 
 func (s *Service) ListObjectStorageBucketsForOrg(orgID string) ([]ObjectStorageBucket, error) {
 	return s.store.ListObjectStorageBucketsByOrg(strings.TrimSpace(orgID))
+}
+
+func (s *Service) enforceOrgLimit(orgID, resource string) error {
+	orgID = strings.TrimSpace(orgID)
+	if orgID == "" {
+		return nil
+	}
+	org, err := s.store.GetOrganization(orgID)
+	if err != nil {
+		return err
+	}
+	limits := OrgLimitsForLevel(org.UsageLevel)
+	var limit *int
+	var count int
+	switch resource {
+	case "worker":
+		limit = limits.Workers
+		count, err = s.store.CountAppsByOrg(orgID)
+	case "kv namespace":
+		limit = limits.KVNamespaces
+		count, err = s.store.CountKVNamespacesByOrg(orgID)
+	case "object storage bucket":
+		limit = limits.ObjectStorageBuckets
+		count, err = s.store.CountObjectStorageBucketsByOrg(orgID)
+	default:
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if limit != nil && count >= *limit {
+		return usageLimitError(org.UsageLevel, resource, *limit)
+	}
+	return nil
 }
 
 func (s *Service) GetObjectStorageBucket(bucketID string) (ObjectStorageBucket, error) {
@@ -1373,6 +1416,13 @@ func (s *Service) PresignUpload(capability, bucketID, objectPath string) (string
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return "", err
 	}
+	bucket, err := s.GetObjectStorageBucket(bucketID)
+	if err != nil {
+		return "", err
+	}
+	if err := s.enforcePresignedObjectUploadAllowed(bucket.OrgID); err != nil {
+		return "", err
+	}
 	return s.objects.PresignUpload(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
 }
 
@@ -1395,7 +1445,20 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return err
 	}
-	return s.objects.Delete(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
+	storedPath := objectStorageBucketPath(bucketID, objectPath)
+	var oldSize int64
+	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
+		oldSize = existing.Size
+	} else if !errors.Is(err, ErrObjectNotFound) {
+		return err
+	}
+	if err := s.objects.Delete(objectStorageBucketScope, storedPath); err != nil {
+		return err
+	}
+	if oldSize > 0 {
+		_ = s.store.AdjustObjectStorageBucketSize(bucketID, -oldSize)
+	}
+	return nil
 }
 
 func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
@@ -1406,10 +1469,21 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return ObjectInfo{}, err
 	}
-	object, err := s.objects.Put(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath), contentType, data)
+	storedPath := objectStorageBucketPath(bucketID, objectPath)
+	var oldSize int64
+	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
+		oldSize = existing.Size
+	} else if !errors.Is(err, ErrObjectNotFound) {
+		return ObjectInfo{}, err
+	}
+	if err := s.enforceObjectStorageBytesLimit(bucketID, int64(len(data))-oldSize); err != nil {
+		return ObjectInfo{}, err
+	}
+	object, err := s.objects.Put(objectStorageBucketScope, storedPath, contentType, data)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	_ = s.store.AdjustObjectStorageBucketSize(bucketID, object.Size-oldSize)
 	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, nil
 }
@@ -1477,11 +1551,35 @@ func (s *Service) KVGet(capability, namespaceID, key string) ([]byte, bool, erro
 }
 
 func (s *Service) KVPut(capability, namespaceID, key string, value []byte) error {
-	return s.store.KVPut(capability, namespaceID, key, value)
+	oldValue, ok, err := s.store.KVGet(capability, namespaceID, key)
+	if err != nil {
+		return err
+	}
+	var oldSize int64
+	if ok {
+		oldSize = int64(len(oldValue))
+	}
+	if err := s.enforceKVStorageBytesLimit(namespaceID, int64(len(value))-oldSize); err != nil {
+		return err
+	}
+	if err := s.store.KVPut(capability, namespaceID, key, value); err != nil {
+		return err
+	}
+	return s.store.AdjustKVNamespaceSize(namespaceID, int64(len(value))-oldSize)
 }
 
 func (s *Service) KVDelete(capability, namespaceID, key string) error {
-	return s.store.KVDelete(capability, namespaceID, key)
+	oldValue, ok, err := s.store.KVGet(capability, namespaceID, key)
+	if err != nil {
+		return err
+	}
+	if err := s.store.KVDelete(capability, namespaceID, key); err != nil {
+		return err
+	}
+	if ok {
+		return s.store.AdjustKVNamespaceSize(namespaceID, -int64(len(oldValue)))
+	}
+	return nil
 }
 
 func (s *Service) WorkerKVList(appID, namespaceID string) ([]WorkerKVKey, error) {
@@ -1528,7 +1626,7 @@ func (s *Service) WorkerKVPut(appID, namespaceID, key string, value []byte) erro
 	if err := s.ensureActiveDeploymentBindsNamespace(appID, namespaceID); err != nil {
 		return err
 	}
-	return s.store.KVPut(app.RuntimeToken, namespaceID, key, value)
+	return s.KVPut(app.RuntimeToken, namespaceID, key, value)
 }
 
 func (s *Service) WorkerKVPutForOrg(orgID, appID, namespaceID, key string, value []byte) error {
@@ -1546,7 +1644,7 @@ func (s *Service) WorkerKVDelete(appID, namespaceID, key string) error {
 	if err := s.ensureActiveDeploymentBindsNamespace(appID, namespaceID); err != nil {
 		return err
 	}
-	return s.store.KVDelete(app.RuntimeToken, namespaceID, key)
+	return s.KVDelete(app.RuntimeToken, namespaceID, key)
 }
 
 func (s *Service) WorkerKVDeleteForOrg(orgID, appID, namespaceID, key string) error {
@@ -1661,6 +1759,81 @@ func (s *Service) ObjectStorageBucketMetricsForOrg(orgID, bucketID string) (Obje
 		return ObjectStorageBucketMetrics{}, err
 	}
 	return s.ObjectStorageBucketMetrics(bucketID)
+}
+
+func (s *Service) enforcePresignedObjectUploadAllowed(orgID string) error {
+	orgID = strings.TrimSpace(orgID)
+	if orgID == "" {
+		return nil
+	}
+	org, err := s.store.GetOrganization(orgID)
+	if err != nil {
+		return err
+	}
+	if OrgLimitsForLevel(org.UsageLevel).ObjectStorageBytes != nil {
+		return UsageLimitError{Message: NormalizeUsageLevel(org.UsageLevel) + " orgs cannot use presigned object uploads"}
+	}
+	return nil
+}
+
+func (s *Service) enforceObjectStorageBytesLimit(bucketID string, delta int64) error {
+	if delta <= 0 {
+		return nil
+	}
+	bucket, err := s.GetObjectStorageBucket(bucketID)
+	if err != nil {
+		return err
+	}
+	orgID := strings.TrimSpace(bucket.OrgID)
+	if orgID == "" {
+		return nil
+	}
+	org, err := s.store.GetOrganization(orgID)
+	if err != nil {
+		return err
+	}
+	limit := OrgLimitsForLevel(org.UsageLevel).ObjectStorageBytes
+	if limit == nil {
+		return nil
+	}
+	current, err := s.store.ObjectStorageBytesByOrg(orgID)
+	if err != nil {
+		return err
+	}
+	if current+delta > *limit {
+		return usageByteLimitError(org.UsageLevel, "object storage", *limit)
+	}
+	return nil
+}
+
+func (s *Service) enforceKVStorageBytesLimit(namespaceID string, delta int64) error {
+	if delta <= 0 {
+		return nil
+	}
+	namespace, err := s.GetKVNamespace(namespaceID)
+	if err != nil {
+		return err
+	}
+	orgID := strings.TrimSpace(namespace.OrgID)
+	if orgID == "" {
+		return nil
+	}
+	org, err := s.store.GetOrganization(orgID)
+	if err != nil {
+		return err
+	}
+	limit := OrgLimitsForLevel(org.UsageLevel).KVStorageBytes
+	if limit == nil {
+		return nil
+	}
+	current, err := s.store.KVStorageBytesByOrg(orgID)
+	if err != nil {
+		return err
+	}
+	if current+delta > *limit {
+		return usageByteLimitError(org.UsageLevel, "KV storage", *limit)
+	}
+	return nil
 }
 
 func (s *Service) RecordRuntimeKVRead(namespaceID string) error {

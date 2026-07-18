@@ -1,6 +1,7 @@
 import { Center, ScrollArea, Stack, Table, Text } from "@mantine/core";
 import { DatabaseZap, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits";
 import { useWorkspace } from "../app/workspace-context";
 import { PageHeading, Panel } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
@@ -8,11 +9,22 @@ import { Button } from "../components/ui/button";
 
 export function ObjectStorageBucketsPage() {
   const navigate = useNavigate();
-  const { objectStorageBuckets, workers, openObjectStorageBucketDialog } = useWorkspace();
+  const { activeOrgID, organizations, objectStorageBuckets, workers, openObjectStorageBucketDialog } = useWorkspace();
+  const activeOrg = organizations.find((org) => org.id === activeOrgID);
+  const usageLevel = normalizeUsageLevel(activeOrg?.usage_level);
+  const bucketLimit = orgLimitsForLevel(usageLevel).objectStorageBuckets;
+  const bucketLimitReached = bucketLimit !== null && objectStorageBuckets.length >= bucketLimit;
 
   return (
     <>
-      <PageHeading eyebrow="Storage" title="Object storage" copy="Manage bucket inventory for your workers." actions={<Button onClick={openObjectStorageBucketDialog}><Plus className="size-4" />New bucket</Button>} />
+      <PageHeading
+        eyebrow="Storage"
+        title="Object storage"
+        copy="Manage bucket inventory for your workers."
+        actions={bucketLimitReached
+          ? <Text c="dimmed" size="sm">{limitReachedText("object buckets", bucketLimit, usageLevel)}</Text>
+          : <Button onClick={openObjectStorageBucketDialog}><Plus className="size-4" />New bucket</Button>}
+      />
       <Panel flush>
         <ScrollArea>
           <Table highlightOnHover miw={760} verticalSpacing="sm" className="table-fixed">
@@ -36,4 +48,8 @@ export function ObjectStorageBucketsPage() {
       </Panel>
     </>
   );
+}
+
+function limitReachedText(resource: string, limit: number, usageLevel: string) {
+  return usageLevel === usageLevelPaid ? `Limit reached: ${limit} ${resource}.` : `Default plan limit reached: ${limit} ${resource}.`;
 }

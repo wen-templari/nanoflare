@@ -1,6 +1,6 @@
 import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { Title } from "@mantine/core";
-import { Archive, BookOpen, Globe2, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2, Waypoints, Workflow } from "lucide-react";
+import { Archive, BookOpen, Globe2, HardDrive, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { KVNamespaceMetrics, WorkerKVKey } from "../app/types";
@@ -38,7 +38,7 @@ function KVNamespaceDetailContent({
   const [keys, setKeys] = useState<WorkerKVKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
   const [keysStatus, setKeysStatus] = useState("");
-  const [metrics, setMetrics] = useState<KVNamespaceMetrics>({ available: false, reads: 0, writes: 0 });
+  const [metrics, setMetrics] = useState<KVNamespaceMetrics>({ available: false, reads: 0, writes: 0, size: 0 });
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -67,12 +67,12 @@ function KVNamespaceDetailContent({
 
   useEffect(() => {
     if (!apiConnected) {
-      setMetrics({ available: false, reads: 0, writes: 0 });
+      setMetrics({ available: false, reads: 0, writes: 0, size: 0 });
       return;
     }
     let cancelled = false;
     async function loadMetrics() {
-      const nextMetrics = await fetchJSON<KVNamespaceMetrics>(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}/metrics`).catch(() => ({ available: false, reads: 0, writes: 0 }));
+      const nextMetrics = await fetchJSON<KVNamespaceMetrics>(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}/metrics`).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }));
       if (!cancelled) setMetrics(nextMetrics);
     }
     void loadMetrics();
@@ -276,6 +276,7 @@ function KVNamespaceDetailContent({
   const cards = [
     { label: "Reads", value: compactNumber(metrics.reads), note: metrics.available ? "runtime KV reads" : "metrics unavailable", icon: BookOpen },
     { label: "Writes", value: compactNumber(metrics.writes), note: metrics.available ? "runtime KV writes" : "metrics unavailable", icon: Workflow },
+    { label: "Size", value: formatBytes(metrics.size), note: metrics.available ? "stored value bytes" : "metrics unavailable", icon: HardDrive },
     { label: "Bindings", value: String(bindingCount), note: "active namespace references", icon: Waypoints },
     { label: "Workers", value: String(accessorWorkers.length), note: "workers with live access", icon: Globe2 },
     { label: "Created", value: new Date(namespace.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }), note: "namespace birthday", icon: Archive },
@@ -294,7 +295,7 @@ function KVNamespaceDetailContent({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
       </div>
 

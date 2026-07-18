@@ -143,6 +143,9 @@ func (s *Server) createObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 		if errors.Is(err, nanoflare.ErrObjectStorageBucketExists) {
 			status = http.StatusConflict
 		}
+		if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
+			status = http.StatusPaymentRequired
+		}
 		writeError(w, status, err)
 		return
 	}

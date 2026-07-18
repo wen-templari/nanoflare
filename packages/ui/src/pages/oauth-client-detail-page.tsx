@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { ActionIcon, Alert, Box, Center, Code, Group, Modal, MultiSelect, ScrollArea, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip } from "@mantine/core";
-import { Ban, Check, Copy, PlugZap, Settings, SquarePen } from "lucide-react";
-import { useParams } from "react-router-dom";
+import { Check, Copy, PlugZap, Settings, SquarePen, Trash2 } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { OAuthClient, OAuthClientConnection } from "../app/types";
 import { useWorkspace } from "../app/workspace-context";
@@ -15,6 +15,7 @@ const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] };
 
 export function OAuthClientDetailPage() {
   const { clientId = "" } = useParams();
+  const navigate = useNavigate();
   const { activeOrgID, notify } = useWorkspace();
   const [client, setClient] = useState<OAuthClient | null>(null);
   const [connections, setConnections] = useState<OAuthClientConnection[]>([]);
@@ -36,6 +37,12 @@ export function OAuthClientDetailPage() {
         fetchJSON<OAuthClient>(`/v1/oauth/clients/${clientId}`),
         fetchJSON<OAuthClientConnection[] | null>(`/v1/oauth/clients/${clientId}/connections`),
       ]);
+      if (nextClient.disabled) {
+        setClient(null);
+        setConnections([]);
+        setError("");
+        return;
+      }
       setClient(nextClient);
       setConnections(nextConnections ?? []);
       setError("");
@@ -85,15 +92,15 @@ export function OAuthClientDetailPage() {
     }
   }
 
-  async function disableClient() {
+  async function deleteClient() {
     if (!client) return;
     const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, { method: "DELETE" });
     if (!response.ok) {
-      setError(await errorText(response, "Could not disable OAuth client"));
+      setError(await errorText(response, "Could not delete OAuth client"));
       return;
     }
-    notify("OAuth client disabled");
-    await refresh();
+    notify("OAuth client deleted");
+    navigate("/settings");
   }
 
   return (
@@ -104,8 +111,8 @@ export function OAuthClientDetailPage() {
         copy="Review this client registration, allowed scopes, and active user connections."
         actions={client && (
           <Group gap="xs">
-            <Button variant="outline" onClick={openEdit} disabled={client.disabled}><SquarePen className="size-4" />Edit</Button>
-            <Button variant="danger" onClick={disableClient} disabled={client.disabled}><Ban className="size-4" />Disable</Button>
+            <Button variant="outline" onClick={openEdit}><SquarePen className="size-4" />Edit</Button>
+            <Button variant="danger" onClick={deleteClient}><Trash2 className="size-4" />Delete</Button>
           </Group>
         )}
       />
@@ -122,7 +129,7 @@ export function OAuthClientDetailPage() {
               </Group>
             </Panel>
             <Panel title="Status" eyebrow="Lifecycle">
-              <Badge tone={client.disabled ? "orange" : "green"}>{client.disabled ? "Disabled" : "Active"}</Badge>
+              <Badge tone="green">Active</Badge>
               <Text c="dimmed" mt="xs" size="xs">Updated {new Date(client.updated_at).toLocaleString()}</Text>
             </Panel>
             <Panel title="Scopes" eyebrow={`${client.scopes.length} allowed`}>

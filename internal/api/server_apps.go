@@ -123,6 +123,9 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, nanoflare.ErrAppExists) {
 			status = http.StatusConflict
 		}
+		if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
+			status = http.StatusPaymentRequired
+		}
 		writeError(w, status, err)
 		return
 	}

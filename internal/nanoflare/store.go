@@ -34,6 +34,7 @@ type Repository interface {
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
 	GetOrganization(string) (Organization, error)
+	CountOwnedOrganizationsByUser(userID string) (int, error)
 	UpsertOrganizationMembership(OrganizationMembership) error
 	OrganizationMembership(userID, orgID string) (OrganizationMembership, error)
 	ListOrganizationMembers(orgID string) ([]OrganizationMembership, error)
@@ -47,6 +48,7 @@ type Repository interface {
 	OrganizationInvitesByOrg(orgID string) ([]OrganizationInvite, error)
 	UpdateOrganizationInvite(OrganizationInvite) error
 	CreateOAuthClient(OAuthClient) error
+	CountOAuthClientsByOwnerOrg(string) (int, error)
 	OAuthClient(string) (OAuthClient, error)
 	OAuthClientsByOwnerOrg(string) ([]OAuthClient, error)
 	OAuthClientConnections(clientID string) ([]OAuthClientConnection, error)
@@ -62,17 +64,20 @@ type Repository interface {
 	RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error
 	RevokeAllOAuthClientTokens(clientID string, revokedAt time.Time) error
 	CreateApp(App) error
+	CountAppsByOrg(string) (int, error)
 	ListApps() ([]App, error)
 	ListAppsByOrg(string) ([]App, error)
 	UpdateApp(App) error
 	DeleteApp(string) error
 	CreateKVNamespace(KVNamespace) error
+	CountKVNamespacesByOrg(string) (int, error)
 	ListKVNamespaces() ([]KVNamespace, error)
 	ListKVNamespacesByOrg(string) ([]KVNamespace, error)
 	GetKVNamespace(string) (KVNamespace, error)
 	UpdateKVNamespace(KVNamespace) error
 	DeleteKVNamespace(string) error
 	CreateObjectStorageBucket(ObjectStorageBucket) error
+	CountObjectStorageBucketsByOrg(string) (int, error)
 	ListObjectStorageBuckets() ([]ObjectStorageBucket, error)
 	ListObjectStorageBucketsByOrg(string) ([]ObjectStorageBucket, error)
 	GetObjectStorageBucket(string) (ObjectStorageBucket, error)
@@ -93,9 +98,12 @@ type Repository interface {
 	KVPut(capability, namespaceID, key string, value []byte) error
 	KVDelete(capability, namespaceID, key string) error
 	KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error)
+	KVStorageBytesByOrg(orgID string) (int64, error)
 	IncrementKVNamespaceReads(namespaceID string) error
 	IncrementKVNamespaceWrites(namespaceID string) error
+	AdjustKVNamespaceSize(namespaceID string, delta int64) error
 	ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error)
+	ObjectStorageBytesByOrg(orgID string) (int64, error)
 	IncrementObjectStorageBucketReads(bucketID string) error
 	IncrementObjectStorageBucketWrites(bucketID string) error
 	AdjustObjectStorageBucketSize(bucketID string, delta int64) error
@@ -184,6 +192,7 @@ func (s *Store) CreateOrganization(org Organization) error {
 	if _, exists := s.organizations[org.ID]; exists {
 		return ErrOrganizationExists
 	}
+	org.UsageLevel = NormalizeUsageLevel(org.UsageLevel)
 	s.organizations[org.ID] = org
 	return nil
 }
@@ -195,7 +204,23 @@ func (s *Store) GetOrganization(orgID string) (Organization, error) {
 	if !exists {
 		return Organization{}, ErrOrganizationNotFound
 	}
+	org.UsageLevel = NormalizeUsageLevel(org.UsageLevel)
 	return org, nil
+}
+
+func (s *Store) CountOwnedOrganizationsByUser(userID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, exists := s.users[userID]; !exists {
+		return 0, ErrUserNotFound
+	}
+	count := 0
+	for _, membership := range s.memberships[userID] {
+		if membership.Role == RoleOwner {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *Store) UpsertOrganizationMembership(membership OrganizationMembership) error {
@@ -293,6 +318,7 @@ func (s *Store) ListOrganizationsForUser(userID string) ([]Organization, error) 
 	orgs := make([]Organization, 0, len(s.memberships[userID]))
 	for orgID, membership := range s.memberships[userID] {
 		org := s.organizations[orgID]
+		org.UsageLevel = NormalizeUsageLevel(org.UsageLevel)
 		org.Role = membership.Role
 		org.Scopes = append([]string{}, membership.Scopes...)
 		orgs = append(orgs, org)
@@ -391,6 +417,18 @@ func (s *Store) CreateOAuthClient(client OAuthClient) error {
 	}
 	s.oauthClients[client.ID] = cloneOAuthClient(client)
 	return nil
+}
+
+func (s *Store) CountOAuthClientsByOwnerOrg(ownerOrgID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, client := range s.oauthClients {
+		if client.OwnerOrgID == ownerOrgID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *Store) OAuthClient(clientID string) (OAuthClient, error) {
@@ -612,6 +650,18 @@ func (s *Store) CreateApp(app App) error {
 	return nil
 }
 
+func (s *Store) CountAppsByOrg(orgID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, app := range s.apps {
+		if app.OrgID == orgID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (s *Store) ListApps() ([]App, error) {
 	return s.ListAppsByOrg("")
 }
@@ -676,6 +726,18 @@ func (s *Store) CreateKVNamespace(namespace KVNamespace) error {
 	}
 	s.kvNamespaces[namespace.ID] = namespace
 	return nil
+}
+
+func (s *Store) CountKVNamespacesByOrg(orgID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, namespace := range s.kvNamespaces {
+		if namespace.OrgID == orgID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *Store) ListKVNamespaces() ([]KVNamespace, error) {
@@ -758,6 +820,18 @@ func (s *Store) CreateObjectStorageBucket(bucket ObjectStorageBucket) error {
 	}
 	s.objectBuckets[bucket.ID] = bucket
 	return nil
+}
+
+func (s *Store) CountObjectStorageBucketsByOrg(orgID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, bucket := range s.objectBuckets {
+		if bucket.OrgID == orgID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *Store) ListObjectStorageBuckets() ([]ObjectStorageBucket, error) {
@@ -1073,6 +1147,34 @@ func (s *Store) IncrementKVNamespaceWrites(namespaceID string) error {
 	return nil
 }
 
+func (s *Store) AdjustKVNamespaceSize(namespaceID string, delta int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return ErrKVNamespaceNotFound
+	}
+	metrics := s.kvMetrics[namespaceID]
+	metrics.Size += delta
+	if metrics.Size < 0 {
+		metrics.Size = 0
+	}
+	s.kvMetrics[namespaceID] = metrics
+	return nil
+}
+
+func (s *Store) KVStorageBytesByOrg(orgID string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var total int64
+	for namespaceID, namespace := range s.kvNamespaces {
+		if namespace.OrgID != orgID {
+			continue
+		}
+		total += s.kvMetrics[namespaceID].Size
+	}
+	return total, nil
+}
+
 func (s *Store) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1082,6 +1184,19 @@ func (s *Store) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucket
 	metrics := s.objectMetrics[bucketID]
 	metrics.Available = true
 	return metrics, nil
+}
+
+func (s *Store) ObjectStorageBytesByOrg(orgID string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var total int64
+	for bucketID, bucket := range s.objectBuckets {
+		if bucket.OrgID != orgID {
+			continue
+		}
+		total += s.objectMetrics[bucketID].Size
+	}
+	return total, nil
 }
 
 func (s *Store) IncrementObjectStorageBucketReads(bucketID string) error {

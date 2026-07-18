@@ -1,8 +1,9 @@
-import { ActionIcon, Anchor, AppShell, Box, Breadcrumbs, Burger, Button, Group, Modal, NavLink as MantineNavLink, Notification, Paper, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
+import { ActionIcon, Anchor, AppShell, Badge, Box, Breadcrumbs, Burger, Button, Group, Modal, NavLink as MantineNavLink, Notification, Paper, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
 import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
 import { useState } from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
+import { normalizeUsageLevel, usageLevelPaid } from "../../app/org-limits"
 import { useWorkspace } from "../../app/workspace-context"
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
 import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog"
@@ -15,6 +16,8 @@ const navItems = [
   { href: "/object-storage", match: "/object-storage", label: "Object storage", icon: DatabaseZap },
   { href: "/settings", match: "/settings", label: "Settings", icon: Settings },
 ]
+
+const defaultOwnedOrganizationLimit = 1
 
 export function ConsoleLayout() {
   const location = useLocation()
@@ -51,9 +54,17 @@ export function ConsoleLayout() {
 
   const breadcrumbs = getBreadcrumbs(location.pathname, { workers, namespaces, objectStorageBuckets })
   const hasOrg = Boolean(activeOrgID)
+  const activeOrg = organizations.find((org) => org.id === activeOrgID)
+  const activeUsageLevel = normalizeUsageLevel(activeOrg?.usage_level)
+  const ownedOrganizations = organizations.filter((org) => org.role === "owner")
+  const ownedOrganizationLimitReached = activeUsageLevel !== usageLevelPaid && ownedOrganizations.length >= defaultOwnedOrganizationLimit
 
   async function submitOrganization(event: React.FormEvent) {
     event.preventDefault()
+    if (ownedOrganizationLimitReached) {
+      setOrgError(`Default users are limited to ${defaultOwnedOrganizationLimit} owned organization.`)
+      return
+    }
     setOrgSaving(true)
     setOrgError("")
     try {
@@ -116,11 +127,20 @@ export function ConsoleLayout() {
               size="xs"
               value={activeOrgID}
             />
-            <Tooltip label="Create organization">
-              <ActionIcon aria-label="Create organization" onClick={() => setOrgModalOpen(true)} variant="subtle">
-                <Plus size={16} />
-              </ActionIcon>
-            </Tooltip>
+            {activeOrg && (
+              <Badge color={activeUsageLevel === usageLevelPaid ? "green" : "gray"} radius="sm" variant="light">
+                {activeUsageLevel === usageLevelPaid ? "Paid" : "Default"}
+              </Badge>
+            )}
+            {ownedOrganizationLimitReached ? (
+              <Text c="dimmed" size="sm">Default plan limit reached: {defaultOwnedOrganizationLimit} owned organization.</Text>
+            ) : (
+              <Tooltip label="Create organization">
+                <ActionIcon aria-label="Create organization" onClick={() => setOrgModalOpen(true)} variant="subtle">
+                  <Plus size={16} />
+                </ActionIcon>
+              </Tooltip>
+            )}
             <Tooltip label="Sign out">
               <ActionIcon
                 aria-label="Sign out"
@@ -186,10 +206,13 @@ export function ConsoleLayout() {
       <Modal opened={orgModalOpen} onClose={() => setOrgModalOpen(false)} title="Create organization">
         <form onSubmit={submitOrganization}>
           <Stack>
+            {ownedOrganizationLimitReached && (
+              <Text c="dimmed" size="sm">Default users are limited to {defaultOwnedOrganizationLimit} owned organization.</Text>
+            )}
             {orgError && <Text c="red" size="sm">{orgError}</Text>}
             <TextInput label="Name" onChange={(event) => setOrgName(event.currentTarget.value)} required value={orgName} />
             <Group justify="end">
-              <ActionIcon aria-label="Create organization" loading={orgSaving} type="submit" variant="filled">
+              <ActionIcon aria-label="Create organization" disabled={ownedOrganizationLimitReached} loading={orgSaving} type="submit" variant="filled">
                 <Check size={16} />
               </ActionIcon>
             </Group>

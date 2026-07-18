@@ -295,6 +295,188 @@ func TestCreateAppGeneratesHostnameFromBase(t *testing.T) {
 	}
 }
 
+func TestDefaultOrgResourceLimits(t *testing.T) {
+	store := NewStore()
+	if err := store.CreateOrganization(Organization{ID: "org-default", Name: "Default Org"}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(store, &recordingWriter{})
+
+	for _, name := range []string{"first", "second", "third"} {
+		if _, err := service.CreateApp(CreateAppInput{Name: name, OrgID: "org-default", Hostname: name + ".example.com"}); err != nil {
+			t.Fatalf("create default app %q: %v", name, err)
+		}
+	}
+	if _, err := service.CreateApp(CreateAppInput{Name: "fourth", OrgID: "org-default", Hostname: "fourth.example.com"}); !errors.Is(err, ErrUsageLimitExceeded) {
+		t.Fatalf("fourth app error = %v, want ErrUsageLimitExceeded", err)
+	}
+
+	for _, name := range []string{"first", "second", "third"} {
+		if _, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: name, OrgID: "org-default"}); err != nil {
+			t.Fatalf("create default KV namespace %q: %v", name, err)
+		}
+	}
+	if _, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: "fourth", OrgID: "org-default"}); !errors.Is(err, ErrUsageLimitExceeded) {
+		t.Fatalf("fourth KV namespace error = %v, want ErrUsageLimitExceeded", err)
+	}
+
+	for _, name := range []string{"first", "second", "third"} {
+		if _, err := service.CreateObjectStorageBucket(CreateObjectStorageBucketInput{Name: name, OrgID: "org-default"}); err != nil {
+			t.Fatalf("create default object bucket %q: %v", name, err)
+		}
+	}
+	if _, err := service.CreateObjectStorageBucket(CreateObjectStorageBucketInput{Name: "fourth", OrgID: "org-default"}); !errors.Is(err, ErrUsageLimitExceeded) {
+		t.Fatalf("fourth object bucket error = %v, want ErrUsageLimitExceeded", err)
+	}
+}
+
+func TestPaidOrgResourceLimitsAreUnlimited(t *testing.T) {
+	store := NewStore()
+	if err := store.CreateOrganization(Organization{ID: "org-paid", Name: "Paid Org", UsageLevel: UsageLevelPaid}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(store, &recordingWriter{})
+
+	for _, name := range []string{"first", "second"} {
+		if _, err := service.CreateApp(CreateAppInput{Name: name, OrgID: "org-paid", Hostname: name + ".example.com"}); err != nil {
+			t.Fatalf("create paid app %q: %v", name, err)
+		}
+		if _, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: name, OrgID: "org-paid"}); err != nil {
+			t.Fatalf("create paid KV namespace %q: %v", name, err)
+		}
+		if _, err := service.CreateObjectStorageBucket(CreateObjectStorageBucketInput{Name: name, OrgID: "org-paid"}); err != nil {
+			t.Fatalf("create paid object bucket %q: %v", name, err)
+		}
+	}
+}
+
+func TestDefaultOrgObjectStorageByteLimit(t *testing.T) {
+	store := newObjectBackedRepo()
+	objects := newMemoryObjectStore()
+	service := NewServiceWithObjects(store, &recordingWriter{}, objects)
+	if err := store.CreateOrganization(Organization{ID: "org-default-bytes", Name: "Default Bytes"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(CreateAppInput{Name: "App", OrgID: "org-default-bytes", Hostname: "bytes.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket, err := service.CreateObjectStorageBucket(CreateObjectStorageBucketInput{Name: "objects", OrgID: "org-default-bytes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, DeployInput{
+		Files:                []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.ObjectPut(app.RuntimeToken, bucket.ID, "image.jpg", "image/jpeg", []byte("12345")); err != nil {
+		t.Fatal(err)
+	}
+	limit := *OrgLimitsForLevel(UsageLevelDefault).ObjectStorageBytes
+	if err := store.AdjustObjectStorageBucketSize(bucket.ID, limit-5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ObjectPut(app.RuntimeToken, bucket.ID, "image.jpg", "image/jpeg", []byte("123456")); !errors.Is(err, ErrUsageLimitExceeded) {
+		t.Fatalf("object overwrite over limit error = %v, want ErrUsageLimitExceeded", err)
+	}
+	if _, err := service.ObjectPut(app.RuntimeToken, bucket.ID, "image.jpg", "image/jpeg", []byte("1234")); err != nil {
+		t.Fatalf("smaller object overwrite: %v", err)
+	}
+	if err := service.DeleteObject(app.RuntimeToken, bucket.ID, "image.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ObjectPut(app.RuntimeToken, bucket.ID, "image.jpg", "image/jpeg", []byte("12345")); err != nil {
+		t.Fatalf("object put after delete: %v", err)
+	}
+}
+
+func TestDefaultOrgKVStorageByteLimit(t *testing.T) {
+	store := NewStore()
+	service := NewService(store, &recordingWriter{})
+	if err := store.CreateOrganization(Organization{ID: "org-default-kv-bytes", Name: "Default KV Bytes"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(CreateAppInput{Name: "App", OrgID: "org-default-kv-bytes", Hostname: "kv-bytes.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: "kv", OrgID: "org-default-kv-bytes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.KVPut(app.RuntimeToken, namespace.ID, "key", []byte("12345")); err != nil {
+		t.Fatal(err)
+	}
+	limit := *OrgLimitsForLevel(UsageLevelDefault).KVStorageBytes
+	if err := store.AdjustKVNamespaceSize(namespace.ID, limit-5); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.KVPut(app.RuntimeToken, namespace.ID, "key", []byte("123456")); !errors.Is(err, ErrUsageLimitExceeded) {
+		t.Fatalf("KV overwrite over limit error = %v, want ErrUsageLimitExceeded", err)
+	}
+	if err := service.KVPut(app.RuntimeToken, namespace.ID, "key", []byte("1234")); err != nil {
+		t.Fatalf("smaller KV overwrite: %v", err)
+	}
+	metrics, err := service.KVNamespaceMetrics(namespace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.Size != limit-1 {
+		t.Fatalf("KV size after smaller overwrite = %d, want %d", metrics.Size, limit-1)
+	}
+	if err := service.KVDelete(app.RuntimeToken, namespace.ID, "key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.KVPut(app.RuntimeToken, namespace.ID, "key", []byte("12345")); err != nil {
+		t.Fatalf("KV put after delete: %v", err)
+	}
+}
+
+func TestPaidOrgStorageByteLimitsAreUnlimited(t *testing.T) {
+	store := newObjectBackedRepo()
+	objects := newMemoryObjectStore()
+	service := NewServiceWithObjects(store, &recordingWriter{}, objects)
+	if err := store.CreateOrganization(Organization{ID: "org-paid-bytes", Name: "Paid Bytes", UsageLevel: UsageLevelPaid}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(CreateAppInput{Name: "App", OrgID: "org-paid-bytes", Hostname: "paid-bytes.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: "kv", OrgID: "org-paid-bytes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket, err := service.CreateObjectStorageBucket(CreateObjectStorageBucketInput{Name: "objects", OrgID: "org-paid-bytes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, DeployInput{
+		Files:                []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdjustKVNamespaceSize(namespace.ID, *OrgLimitsForLevel(UsageLevelDefault).KVStorageBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdjustObjectStorageBucketSize(bucket.ID, *OrgLimitsForLevel(UsageLevelDefault).ObjectStorageBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.KVPut(app.RuntimeToken, namespace.ID, "key", []byte("paid")); err != nil {
+		t.Fatalf("paid KV put over default byte limit: %v", err)
+	}
+	if _, err := service.ObjectPut(app.RuntimeToken, bucket.ID, "paid.jpg", "image/jpeg", []byte("paid")); err != nil {
+		t.Fatalf("paid object put over default byte limit: %v", err)
+	}
+}
+
 func TestCreateAppGeneratesHostnameFromWildcardBase(t *testing.T) {
 	store := NewStore()
 	if err := store.CreateOrganization(Organization{ID: "org-1", Name: "Acme Org"}); err != nil {

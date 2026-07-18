@@ -1,6 +1,7 @@
 import { Center, ScrollArea, Stack, Table, Text } from "@mantine/core"
 import { KeyRound, Plus } from "lucide-react"
 import { useNavigate } from "react-router-dom"
+import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits"
 import { useWorkspace } from "../app/workspace-context"
 import { PageHeading, Panel } from "../components/shared/primitives"
 import { Badge } from "../components/ui/badge"
@@ -8,11 +9,22 @@ import { Button } from "../components/ui/button"
 
 export function KVNamespacesPage() {
   const navigate = useNavigate()
-  const { namespaces, workers, openNamespaceDialog } = useWorkspace()
+  const { activeOrgID, organizations, namespaces, workers, openNamespaceDialog } = useWorkspace()
+  const activeOrg = organizations.find((org) => org.id === activeOrgID)
+  const usageLevel = normalizeUsageLevel(activeOrg?.usage_level)
+  const namespaceLimit = orgLimitsForLevel(usageLevel).kvNamespaces
+  const namespaceLimitReached = namespaceLimit !== null && namespaces.length >= namespaceLimit
 
   return (
     <>
-      <PageHeading eyebrow="Storage" title="KV" copy="Manage KV namespace inventory for your workers." actions={<Button onClick={openNamespaceDialog}><Plus className="size-4" />New namespace</Button>} />
+      <PageHeading
+        eyebrow="Storage"
+        title="KV"
+        copy="Manage KV namespace inventory for your workers."
+        actions={namespaceLimitReached
+          ? <Text c="dimmed" size="sm">{limitReachedText("KV namespaces", namespaceLimit, usageLevel)}</Text>
+          : <Button onClick={openNamespaceDialog}><Plus className="size-4" />New namespace</Button>}
+      />
       <Panel flush>
         <ScrollArea>
           <Table highlightOnHover miw={760} verticalSpacing="sm" className="table-fixed">
@@ -36,4 +48,8 @@ export function KVNamespacesPage() {
       </Panel>
     </>
   )
+}
+
+function limitReachedText(resource: string, limit: number, usageLevel: string) {
+  return usageLevel === usageLevelPaid ? `Limit reached: ${limit} ${resource}.` : `Default plan limit reached: ${limit} ${resource}.`
 }

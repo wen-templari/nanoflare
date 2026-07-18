@@ -1,6 +1,7 @@
 import { Anchor, Group, ScrollArea, Table, Text } from "@mantine/core";
 import { ChevronRight, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits";
 import { useWorkspace } from "../app/workspace-context";
 import type { Worker } from "../app/types";
 import { PageHeading, Panel } from "../components/shared/primitives";
@@ -9,11 +10,22 @@ import { Button } from "../components/ui/button";
 
 export function WorkersPage() {
   const navigate = useNavigate();
-  const { workers, openWorkerDialog } = useWorkspace();
+  const { activeOrgID, organizations, workers, openWorkerDialog } = useWorkspace();
+  const activeOrg = organizations.find((org) => org.id === activeOrgID);
+  const usageLevel = normalizeUsageLevel(activeOrg?.usage_level);
+  const workerLimit = orgLimitsForLevel(usageLevel).workers;
+  const workerLimitReached = workerLimit !== null && workers.length >= workerLimit;
 
   return (
     <>
-      <PageHeading eyebrow="Runtime" title="Workers" copy="Register isolated services, deploy bundles, and watch the runtime pool." actions={<Button onClick={openWorkerDialog}><Plus className="size-4" />New worker</Button>} />
+      <PageHeading
+        eyebrow="Runtime"
+        title="Workers"
+        copy="Register isolated services, deploy bundles, and watch the runtime pool."
+        actions={workerLimitReached
+          ? <Text c="dimmed" size="sm">{limitReachedText("workers", workerLimit, usageLevel)}</Text>
+          : <Button onClick={openWorkerDialog}><Plus className="size-4" />New worker</Button>}
+      />
       <Panel flush>
         <ScrollArea>
           <Table highlightOnHover miw={720} verticalSpacing="sm">
@@ -40,4 +52,8 @@ function WorkerRow({ worker, onSelect }: { worker: Worker; onSelect: () => void 
 
 function hostnameHref(hostname: string) {
   return /^https?:\/\//i.test(hostname) ? hostname : `https://${hostname}`;
+}
+
+function limitReachedText(resource: string, limit: number, usageLevel: string) {
+  return usageLevel === usageLevelPaid ? `Limit reached: ${limit} ${resource}.` : `Default plan limit reached: ${limit} ${resource}.`;
 }

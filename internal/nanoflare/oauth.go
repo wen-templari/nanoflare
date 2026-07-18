@@ -160,6 +160,9 @@ func (s *OAuthService) CreateClient(input CreateOAuthClientInput) (OAuthClientCr
 	if ownerOrgID == "" {
 		return OAuthClientCreated{}, errors.New("owner_org_id is required")
 	}
+	if err := s.enforceClientLimit(ownerOrgID); err != nil {
+		return OAuthClientCreated{}, err
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return OAuthClientCreated{}, errors.New("name is required")
@@ -190,6 +193,25 @@ func (s *OAuthService) CreateClient(input CreateOAuthClientInput) (OAuthClientCr
 		return OAuthClientCreated{}, err
 	}
 	return OAuthClientCreated{OAuthClient: client, ClientSecret: secret}, nil
+}
+
+func (s *OAuthService) enforceClientLimit(ownerOrgID string) error {
+	org, err := s.store.GetOrganization(ownerOrgID)
+	if err != nil {
+		return err
+	}
+	limits := OrgLimitsForLevel(org.UsageLevel)
+	if limits.OAuthClients == nil {
+		return nil
+	}
+	count, err := s.store.CountOAuthClientsByOwnerOrg(ownerOrgID)
+	if err != nil {
+		return err
+	}
+	if count >= *limits.OAuthClients {
+		return usageLimitError(org.UsageLevel, "oauth client", *limits.OAuthClients)
+	}
+	return nil
 }
 
 func (s *OAuthService) Clients(ownerOrgID string) ([]OAuthClient, error) {
@@ -275,6 +297,19 @@ func (s *OAuthService) DisableClient(ownerOrgID, clientID string) error {
 		return err
 	}
 	return s.store.RevokeAllOAuthClientTokens(client.ID, now)
+}
+
+func (s *OAuthService) RestoreClient(ownerOrgID, clientID string) (OAuthClient, error) {
+	client, err := s.Client(ownerOrgID, clientID)
+	if err != nil {
+		return OAuthClient{}, err
+	}
+	client.Disabled = false
+	client.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateOAuthClient(client); err != nil {
+		return OAuthClient{}, err
+	}
+	return client, nil
 }
 
 func (s *OAuthService) Authorize(user User, input OAuthAuthorizeInput) (OAuthAuthorizeResponse, error) {

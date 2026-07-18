@@ -246,11 +246,12 @@ type User struct {
 }
 
 type Organization struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Role      string    `json:"role,omitempty"`
-	Scopes    []string  `json:"scopes,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	UsageLevel string    `json:"usage_level"`
+	Role       string    `json:"role,omitempty"`
+	Scopes     []string  `json:"scopes,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type OrganizationMembership struct {
@@ -356,6 +357,7 @@ type KVNamespaceMetrics struct {
 	Available bool  `json:"available"`
 	Reads     int64 `json:"reads"`
 	Writes    int64 `json:"writes"`
+	Size      int64 `json:"size"`
 }
 
 type ObjectStorageBucketMetrics struct {

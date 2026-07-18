@@ -95,7 +95,7 @@ export type WorkerTraffic = {
   status_codes: { code: string; value: number }[];
 };
 
-export type KVNamespaceMetrics = { available: boolean; reads: number; writes: number };
+export type KVNamespaceMetrics = { available: boolean; reads: number; writes: number; size: number };
 export type ObjectStorageBucketMetrics = { available: boolean; reads: number; writes: number; size: number };
 
 export type KVNamespace = { id: string; name: string; created_at: string };
@@ -125,7 +125,7 @@ export type OAuthClientConnection = {
   scopes: string[];
   created_at: string;
 };
-export type Organization = { id: string; name: string; role?: string; scopes?: string[]; created_at: string };
+export type Organization = { id: string; name: string; usage_level: string; role?: string; scopes?: string[]; created_at: string };
 export type ControlUser = { id: string; email: string; created_at: string };
 export type AuthSession = {
   token: string;

@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS organizations (
 	id text PRIMARY KEY,
 	name text NOT NULL,
+	usage_level text NOT NULL DEFAULT 'default',
 	created_at timestamptz NOT NULL
 );
 CREATE TABLE IF NOT EXISTS user_organizations (
@@ -172,6 +173,8 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::json
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS usage_level text NOT NULL DEFAULT 'default';
+UPDATE organizations SET usage_level = 'default' WHERE usage_level = '';
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS owner_org_id text NOT NULL DEFAULT '';
 ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'owner';
 ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS scopes jsonb NOT NULL DEFAULT '[]'::jsonb;
@@ -212,7 +215,8 @@ CREATE TABLE IF NOT EXISTS runtime_kv (
 CREATE TABLE IF NOT EXISTS kv_namespace_metrics (
 	kv_namespace_id text PRIMARY KEY REFERENCES kv_namespaces(id) ON DELETE CASCADE,
 	reads bigint NOT NULL DEFAULT 0,
-	writes bigint NOT NULL DEFAULT 0
+	writes bigint NOT NULL DEFAULT 0,
+	size bigint NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
 	bucket_id text PRIMARY KEY REFERENCES object_storage_buckets(id) ON DELETE CASCADE,
@@ -220,6 +224,13 @@ CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
 	writes bigint NOT NULL DEFAULT 0,
 	size bigint NOT NULL DEFAULT 0
 );
+ALTER TABLE kv_namespace_metrics ADD COLUMN IF NOT EXISTS size bigint NOT NULL DEFAULT 0;
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size)
+SELECT kv_namespace_id, 0, 0, COALESCE(SUM(octet_length(value)), 0)
+FROM runtime_kv
+GROUP BY kv_namespace_id
+ON CONFLICT (kv_namespace_id) DO UPDATE SET size = EXCLUDED.size
+WHERE kv_namespace_metrics.size = 0;
 DO $$
 BEGIN
 	IF EXISTS (
@@ -438,8 +449,8 @@ func (p *Postgres) UserCount() (int, error) {
 }
 
 func (p *Postgres) CreateOrganization(org nanoflare.Organization) error {
-	_, err := p.db.Exec(`INSERT INTO organizations (id, name, created_at) VALUES ($1, $2, $3)`,
-		org.ID, org.Name, org.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO organizations (id, name, usage_level, created_at) VALUES ($1, $2, $3, $4)`,
+		org.ID, org.Name, nanoflare.NormalizeUsageLevel(org.UsageLevel), org.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrOrganizationExists
 	}
@@ -448,11 +459,25 @@ func (p *Postgres) CreateOrganization(org nanoflare.Organization) error {
 
 func (p *Postgres) GetOrganization(orgID string) (nanoflare.Organization, error) {
 	var org nanoflare.Organization
-	err := p.db.QueryRow(`SELECT id, name, created_at FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, name, usage_level, created_at FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.UsageLevel, &org.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.Organization{}, nanoflare.ErrOrganizationNotFound
 	}
+	org.UsageLevel = nanoflare.NormalizeUsageLevel(org.UsageLevel)
 	return org, err
+}
+
+func (p *Postgres) CountOwnedOrganizationsByUser(userID string) (int, error) {
+	var exists bool
+	if err := p.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, nanoflare.ErrUserNotFound
+	}
+	var count int
+	err := p.db.QueryRow(`SELECT count(*) FROM user_organizations WHERE user_id = $1 AND role = 'owner'`, userID).Scan(&count)
+	return count, err
 }
 
 func (p *Postgres) UpsertOrganizationMembership(membership nanoflare.OrganizationMembership) error {
@@ -546,7 +571,7 @@ func (p *Postgres) DeleteOrganizationMembership(userID, orgID string) error {
 
 func (p *Postgres) ListOrganizationsForUser(userID string) ([]nanoflare.Organization, error) {
 	rows, err := p.db.Query(`
-SELECT o.id, o.name, uo.role, uo.scopes, o.created_at
+SELECT o.id, o.name, o.usage_level, uo.role, uo.scopes, o.created_at
 FROM organizations o
 JOIN user_organizations uo ON uo.organization_id = o.id
 WHERE uo.user_id = $1
@@ -559,9 +584,10 @@ ORDER BY o.name`, userID)
 	for rows.Next() {
 		var org nanoflare.Organization
 		var scopes []byte
-		if err := rows.Scan(&org.ID, &org.Name, &org.Role, &scopes, &org.CreatedAt); err != nil {
+		if err := rows.Scan(&org.ID, &org.Name, &org.UsageLevel, &org.Role, &scopes, &org.CreatedAt); err != nil {
 			return nil, err
 		}
+		org.UsageLevel = nanoflare.NormalizeUsageLevel(org.UsageLevel)
 		if err := json.Unmarshal(scopes, &org.Scopes); err != nil {
 			return nil, err
 		}
@@ -681,6 +707,12 @@ INSERT INTO oauth_clients (id, owner_org_id, name, redirect_uris, scopes, secret
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		client.ID, client.OwnerOrgID, client.Name, mustJSON(client.RedirectURIs), mustJSON(client.Scopes), client.SecretHash, client.Disabled, client.CreatedAt, client.UpdatedAt)
 	return err
+}
+
+func (p *Postgres) CountOAuthClientsByOwnerOrg(ownerOrgID string) (int, error) {
+	var count int
+	err := p.db.QueryRow(`SELECT count(*) FROM oauth_clients WHERE owner_org_id = $1`, ownerOrgID).Scan(&count)
+	return count, err
 }
 
 func (p *Postgres) OAuthClient(clientID string) (nanoflare.OAuthClient, error) {
@@ -923,6 +955,12 @@ func (p *Postgres) CreateApp(app nanoflare.App) error {
 	return err
 }
 
+func (p *Postgres) CountAppsByOrg(orgID string) (int, error) {
+	var count int
+	err := p.db.QueryRow(`SELECT count(*) FROM apps WHERE org_id = $1`, orgID).Scan(&count)
+	return count, err
+}
+
 func (p *Postgres) CreateKVNamespace(namespace nanoflare.KVNamespace) error {
 	_, err := p.db.Exec(`INSERT INTO kv_namespaces (id, org_id, name, external_id, oauth_client_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		namespace.ID, namespace.OrgID, namespace.Name, namespace.ExternalID, namespace.OAuthClientID, namespace.CreatedAt)
@@ -930,6 +968,12 @@ func (p *Postgres) CreateKVNamespace(namespace nanoflare.KVNamespace) error {
 		return nanoflare.ErrKVNamespaceExists
 	}
 	return err
+}
+
+func (p *Postgres) CountKVNamespacesByOrg(orgID string) (int, error) {
+	var count int
+	err := p.db.QueryRow(`SELECT count(*) FROM kv_namespaces WHERE org_id = $1`, orgID).Scan(&count)
+	return count, err
 }
 
 func (p *Postgres) ListKVNamespaces() ([]nanoflare.KVNamespace, error) {
@@ -995,6 +1039,12 @@ func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucke
 		return nanoflare.ErrObjectStorageBucketExists
 	}
 	return err
+}
+
+func (p *Postgres) CountObjectStorageBucketsByOrg(orgID string) (int, error) {
+	var count int
+	err := p.db.QueryRow(`SELECT count(*) FROM object_storage_buckets WHERE org_id = $1`, orgID).Scan(&count)
+	return count, err
 }
 
 func (p *Postgres) ListObjectStorageBuckets() ([]nanoflare.ObjectStorageBucket, error) {
@@ -1524,9 +1574,9 @@ func (p *Postgres) KVNamespaceMetrics(namespaceID string) (nanoflare.KVNamespace
 	}
 	var metrics nanoflare.KVNamespaceMetrics
 	err := p.db.QueryRow(`
-SELECT reads, writes
+SELECT reads, writes, size
 FROM kv_namespace_metrics
-WHERE kv_namespace_id = $1`, namespaceID).Scan(&metrics.Reads, &metrics.Writes)
+WHERE kv_namespace_id = $1`, namespaceID).Scan(&metrics.Reads, &metrics.Writes, &metrics.Size)
 	if errors.Is(err, sql.ErrNoRows) {
 		metrics.Available = true
 		return metrics, nil
@@ -1540,7 +1590,7 @@ func (p *Postgres) IncrementKVNamespaceReads(namespaceID string) error {
 		return err
 	}
 	_, err := p.db.Exec(`
-INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes) VALUES ($1, 1, 0)
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size) VALUES ($1, 1, 0, 0)
 ON CONFLICT (kv_namespace_id) DO UPDATE SET reads = kv_namespace_metrics.reads + 1`, namespaceID)
 	return err
 }
@@ -1550,9 +1600,29 @@ func (p *Postgres) IncrementKVNamespaceWrites(namespaceID string) error {
 		return err
 	}
 	_, err := p.db.Exec(`
-INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes) VALUES ($1, 0, 1)
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size) VALUES ($1, 0, 1, 0)
 ON CONFLICT (kv_namespace_id) DO UPDATE SET writes = kv_namespace_metrics.writes + 1`, namespaceID)
 	return err
+}
+
+func (p *Postgres) AdjustKVNamespaceSize(namespaceID string, delta int64) error {
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size) VALUES ($1, 0, 0, GREATEST($2, 0))
+ON CONFLICT (kv_namespace_id) DO UPDATE SET size = GREATEST(kv_namespace_metrics.size + $2, 0)`, namespaceID, delta)
+	return err
+}
+
+func (p *Postgres) KVStorageBytesByOrg(orgID string) (int64, error) {
+	var size int64
+	err := p.db.QueryRow(`
+SELECT COALESCE(SUM(m.size), 0)
+FROM kv_namespaces n
+LEFT JOIN kv_namespace_metrics m ON m.kv_namespace_id = n.id
+WHERE n.org_id = $1`, orgID).Scan(&size)
+	return size, err
 }
 
 func (p *Postgres) ObjectStorageBucketMetrics(bucketID string) (nanoflare.ObjectStorageBucketMetrics, error) {
@@ -1570,6 +1640,16 @@ WHERE bucket_id = $1`, bucketID).Scan(&metrics.Reads, &metrics.Writes, &metrics.
 	}
 	metrics.Available = err == nil
 	return metrics, err
+}
+
+func (p *Postgres) ObjectStorageBytesByOrg(orgID string) (int64, error) {
+	var size int64
+	err := p.db.QueryRow(`
+SELECT COALESCE(SUM(m.size), 0)
+FROM object_storage_buckets b
+LEFT JOIN object_storage_bucket_metrics m ON m.bucket_id = b.id
+WHERE b.org_id = $1`, orgID).Scan(&size)
+	return size, err
 }
 
 func (p *Postgres) IncrementObjectStorageBucketReads(bucketID string) error {

@@ -11,6 +11,10 @@ import (
 )
 
 func writeRuntimeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
+		writeError(w, http.StatusPaymentRequired, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrInvalidCapability) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
@@ -27,6 +31,10 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 }
 
 func writeWorkerError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
+		writeError(w, http.StatusPaymentRequired, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrAppNotFound) {
 		writeError(w, http.StatusNotFound, err)
 		return

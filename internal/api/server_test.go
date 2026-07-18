@@ -170,6 +170,57 @@ func TestWorkerConsoleKV(t *testing.T) {
 	}
 }
 
+func TestConsoleKVWriteOverOrgStorageLimitReturns402(t *testing.T) {
+	dir := t.TempDir()
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServer(service)
+	if err := store.CreateOrganization(nanoflare.Organization{ID: "org-console-kv-limit", Name: "Console KV Limit"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Console KV Limit", OrgID: "org-console-kv-limit", Hostname: "console-kv-limit.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, err := service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{Name: "console-kv-limit", OrgID: "org-console-kv-limit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployWithKV(t, server, app.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespace.ID}})
+	if err := store.AdjustKVNamespaceSize(namespace.ID, *nanoflare.OrgLimitsForLevel(nanoflare.UsageLevelDefault).KVStorageBytes); err != nil {
+		t.Fatal(err)
+	}
+
+	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/kv/namespaces/"+namespace.ID+"/over", []byte("x"), http.StatusPaymentRequired)
+}
+
+func TestRuntimeKVWriteOverOrgStorageLimitReturns402(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, discardWriter{})
+	if err := store.CreateOrganization(nanoflare.Organization{ID: "org-runtime-kv-limit", Name: "Runtime KV Limit"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Runtime KV Limit", OrgID: "org-runtime-kv-limit", Hostname: "runtime-kv-limit.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, err := service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{Name: "runtime-kv-limit", OrgID: "org-runtime-kv-limit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdjustKVNamespaceSize(namespace.ID, *nanoflare.OrgLimitsForLevel(nanoflare.UsageLevelDefault).KVStorageBytes); err != nil {
+		t.Fatal(err)
+	}
+
+	kv := NewRuntimeKVServer(service)
+	runtimeKVRequest(t, kv, http.MethodPut, "/over?urlencoded=true", app.RuntimeToken, namespace.ID, []byte("x"), http.StatusPaymentRequired)
+}
+
 func TestKVNamespaceAPIs(t *testing.T) {
 	service := nanoflare.NewService(nanoflare.NewStore(), discardWriter{})
 	server := NewServer(service)
@@ -576,6 +627,94 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("missing get status = %d", recorder.Code)
+	}
+}
+
+func TestRuntimeObjectWriteOverOrgStorageLimitReturns402(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	if err := store.CreateOrganization(nanoflare.Organization{ID: "org-runtime-object-limit", Name: "Runtime Object Limit"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Runtime Object Limit", OrgID: "org-runtime-object-limit", Hostname: "runtime-object-limit.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "runtime-object-limit", OrgID: "org-runtime-object-limit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:                []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { async fetch() { return new Response("ok"); } };`}},
+		Entrypoint:           "worker.js",
+		Format:               "modules",
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdjustObjectStorageBucketSize(bucket.ID, *nanoflare.OrgLimitsForLevel(nanoflare.UsageLevelDefault).ObjectStorageBytes); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, "/internal/runtime/objects/over.txt", bytes.NewReader([]byte("x")))
+	request.Header.Set("Authorization", "Bearer "+app.RuntimeToken)
+	request.Header.Set("X-Nanoflare-Object-Bucket-ID", bucket.ID)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("runtime object over limit status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestConsoleObjectWriteOverOrgStorageLimitReturns402(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	if err := store.CreateOrganization(nanoflare.Organization{ID: "org-console-object-limit", Name: "Console Object Limit"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Console Object Limit", OrgID: "org-console-object-limit", Hostname: "console-object-limit.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "console-object-limit", OrgID: "org-console-object-limit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:                []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { async fetch() { return new Response("ok"); } };`}},
+		Entrypoint:           "worker.js",
+		Format:               "modules",
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdjustObjectStorageBucketSize(bucket.ID, *nanoflare.OrgLimitsForLevel(nanoflare.UsageLevelDefault).ObjectStorageBytes); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, "/v1/apps/"+app.ID+"/object-storage-buckets/"+bucket.ID+"/over.txt", bytes.NewReader([]byte("x")))
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("console object over limit status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

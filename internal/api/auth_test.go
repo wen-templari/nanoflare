@@ -209,22 +209,30 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 		t.Fatalf("app org = %q, want %q", app.OrgID, session.ActiveOrgID)
 	}
 
-	createBody = bytes.NewBufferString(`{"name":"Generated App"}`)
+	for _, body := range []string{
+		`{"name":"Generated App","hostname":"generated.example.com"}`,
+		`{"name":"Third App","hostname":"third.example.com"}`,
+	} {
+		createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(body))
+		createRequest.Header.Set("Content-Type", "application/json")
+		createRequest.Header.Set("Authorization", "Bearer "+session.Token)
+		createRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+		createRecorder = httptest.NewRecorder()
+		server.ServeHTTP(createRecorder, createRequest)
+		if createRecorder.Code != http.StatusCreated {
+			t.Fatalf("create within default org limit status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+		}
+	}
+
+	createBody = bytes.NewBufferString(`{"name":"Fourth App","hostname":"fourth.example.com"}`)
 	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
 	createRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
 	createRecorder = httptest.NewRecorder()
 	server.ServeHTTP(createRecorder, createRequest)
-	if createRecorder.Code != http.StatusCreated {
-		t.Fatalf("generated create status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
-	}
-	var generatedApp nanoflare.App
-	if err := json.Unmarshal(createRecorder.Body.Bytes(), &generatedApp); err != nil {
-		t.Fatal(err)
-	}
-	if generatedApp.Hostname != "generated-app-acme.workers.example.test" {
-		t.Fatalf("generated hostname = %q", generatedApp.Hostname)
+	if createRecorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("default org limit status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
@@ -239,7 +247,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	if err := json.Unmarshal(listRecorder.Body.Bytes(), &apps); err != nil {
 		t.Fatal(err)
 	}
-	if len(apps) != 2 || !containsAppID(apps, app.ID) || !containsAppID(apps, generatedApp.ID) {
+	if len(apps) != 3 || !containsAppID(apps, app.ID) {
 		t.Fatalf("apps = %#v", apps)
 	}
 }
@@ -282,6 +290,15 @@ func TestOpenSignupAndCreateOrganization(t *testing.T) {
 	}
 	if org.Role != nanoflare.RoleOwner || !nanoflare.HasScope(org.Scopes, "members:owner") {
 		t.Fatalf("created org = %#v", org)
+	}
+
+	secondCreateRequest := httptest.NewRequest(http.MethodPost, "/v1/orgs", bytes.NewBufferString(`{"name":"Overflow Org"}`))
+	secondCreateRequest.Header.Set("Content-Type", "application/json")
+	secondCreateRequest.Header.Set("Authorization", "Bearer "+second.Token)
+	secondCreateRecorder := httptest.NewRecorder()
+	server.ServeHTTP(secondCreateRecorder, secondCreateRequest)
+	if secondCreateRecorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("second owned org status = %d body = %q", secondCreateRecorder.Code, secondCreateRecorder.Body.String())
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
@@ -327,6 +344,15 @@ func TestInvitesGrantScopedOrgAccess(t *testing.T) {
 	var viewer nanoflare.AuthSession
 	if err := json.Unmarshal(signupRecorder.Body.Bytes(), &viewer); err != nil {
 		t.Fatal(err)
+	}
+
+	viewerOrgRequest := httptest.NewRequest(http.MethodPost, "/v1/orgs", bytes.NewBufferString(`{"name":"Viewer Org"}`))
+	viewerOrgRequest.Header.Set("Content-Type", "application/json")
+	viewerOrgRequest.Header.Set("Authorization", "Bearer "+viewer.Token)
+	viewerOrgRecorder := httptest.NewRecorder()
+	server.ServeHTTP(viewerOrgRecorder, viewerOrgRequest)
+	if viewerOrgRecorder.Code != http.StatusCreated {
+		t.Fatalf("viewer own org status = %d body = %q", viewerOrgRecorder.Code, viewerOrgRecorder.Body.String())
 	}
 
 	acceptRequest := httptest.NewRequest(http.MethodPost, "/v1/invites/"+invite.Token+"/accept", bytes.NewBufferString(`{}`))
@@ -408,9 +434,10 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
-	client := createOAuthClient(t, server, session.Token, session.ActiveOrgID, []string{"apps:read", "apps:write", "kv:write"})
+	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-resources")
+	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"apps:read", "apps:write", "kv:write"})
 	assertOAuthClientInfo(t, server, client.ClientID)
-	token := authorizeOAuthClient(t, server, session.Token, session.ActiveOrgID, client, []string{"apps:write", "kv:write"})
+	token := authorizeOAuthClient(t, server, session.Token, paidOrgID, client, []string{"apps:write", "kv:write"})
 
 	createBody := bytes.NewBufferString(`{"name":"External App","hostname":"external.example.com","external_id":"ext-app-1"}`)
 	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
@@ -426,8 +453,8 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	if err := json.Unmarshal(createRecorder.Body.Bytes(), &app); err != nil {
 		t.Fatal(err)
 	}
-	if app.OrgID != session.ActiveOrgID || app.OAuthClientID != client.ClientID || app.ExternalID != "ext-app-1" {
-		t.Fatalf("oauth app metadata = %#v, session org = %q client = %q", app, session.ActiveOrgID, client.ClientID)
+	if app.OrgID != paidOrgID || app.OAuthClientID != client.ClientID || app.ExternalID != "ext-app-1" {
+		t.Fatalf("oauth app metadata = %#v, session org = %q client = %q", app, paidOrgID, client.ClientID)
 	}
 
 	readRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
@@ -451,13 +478,13 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	if err := json.Unmarshal(namespaceRecorder.Body.Bytes(), &namespace); err != nil {
 		t.Fatal(err)
 	}
-	if namespace.OrgID != session.ActiveOrgID || namespace.OAuthClientID != client.ClientID || namespace.ExternalID != "ext-kv-1" {
+	if namespace.OrgID != paidOrgID || namespace.OAuthClientID != client.ClientID || namespace.ExternalID != "ext-kv-1" {
 		t.Fatalf("oauth namespace metadata = %#v", namespace)
 	}
 
 	connectionsRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/connections", nil)
 	connectionsRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	connectionsRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	connectionsRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
 	connectionsRecorder := httptest.NewRecorder()
 	server.ServeHTTP(connectionsRecorder, connectionsRequest)
 	if connectionsRecorder.Code != http.StatusOK {
@@ -504,11 +531,22 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
-	client := createOAuthClient(t, server, session.Token, session.ActiveOrgID, []string{"apps:write", "kv:write"})
+	defaultClientBody := bytes.NewBufferString(`{"name":"Default External Platform","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["apps:write"]}`)
+	defaultClientRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients", defaultClientBody)
+	defaultClientRequest.Header.Set("Content-Type", "application/json")
+	defaultClientRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	defaultClientRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	defaultClientRecorder := httptest.NewRecorder()
+	server.ServeHTTP(defaultClientRecorder, defaultClientRequest)
+	if defaultClientRecorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("default org oauth client status = %d body = %q", defaultClientRecorder.Code, defaultClientRecorder.Body.String())
+	}
+	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-owner")
+	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"apps:write", "kv:write"})
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/clients", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	listRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	listRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
 	listRecorder := httptest.NewRecorder()
 	server.ServeHTTP(listRecorder, listRequest)
 	if listRecorder.Code != http.StatusOK {
@@ -518,7 +556,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 	if err := json.Unmarshal(listRecorder.Body.Bytes(), &clients); err != nil {
 		t.Fatal(err)
 	}
-	if len(clients) != 1 || clients[0].ID != client.ClientID || clients[0].OwnerOrgID != session.ActiveOrgID || len(clients[0].SecretHash) != 0 {
+	if len(clients) != 1 || clients[0].ID != client.ClientID || clients[0].OwnerOrgID != paidOrgID || len(clients[0].SecretHash) != 0 {
 		t.Fatalf("clients = %#v", clients)
 	}
 
@@ -537,7 +575,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 
 	connectionsRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/clients/"+client.ClientID+"/connections", nil)
 	connectionsRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	connectionsRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	connectionsRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
 	connectionsRecorder := httptest.NewRecorder()
 	server.ServeHTTP(connectionsRecorder, connectionsRequest)
 	if connectionsRecorder.Code != http.StatusOK {
@@ -566,7 +604,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 	updateRequest = httptest.NewRequest(http.MethodPatch, "/v1/oauth/clients/"+client.ClientID, updateBody)
 	updateRequest.Header.Set("Content-Type", "application/json")
 	updateRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	updateRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	updateRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
 	updateRecorder = httptest.NewRecorder()
 	server.ServeHTTP(updateRecorder, updateRequest)
 	if updateRecorder.Code != http.StatusOK {
@@ -589,12 +627,13 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
-	client := createOAuthClient(t, server, session.Token, session.ActiveOrgID, []string{"apps:write"})
-	token := authorizeOAuthClient(t, server, session.Token, session.ActiveOrgID, client, []string{"apps:write"})
+	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-secret")
+	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"apps:write"})
+	token := authorizeOAuthClient(t, server, session.Token, paidOrgID, client, []string{"apps:write"})
 
 	rotateRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients/"+client.ClientID+"/secret", nil)
 	rotateRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	rotateRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	rotateRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
 	rotateRecorder := httptest.NewRecorder()
 	server.ServeHTTP(rotateRecorder, rotateRequest)
 	if rotateRecorder.Code != http.StatusOK {
@@ -629,7 +668,7 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 
 	disableRequest := httptest.NewRequest(http.MethodDelete, "/v1/oauth/clients/"+client.ClientID, nil)
 	disableRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	disableRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	disableRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
 	disableRecorder := httptest.NewRecorder()
 	server.ServeHTTP(disableRecorder, disableRequest)
 	if disableRecorder.Code != http.StatusNoContent {
@@ -653,6 +692,39 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 	if assertOAuthInfoRecorder.Code != http.StatusUnauthorized {
 		t.Fatalf("disabled authorize info status = %d body = %q", assertOAuthInfoRecorder.Code, assertOAuthInfoRecorder.Body.String())
 	}
+
+	restoreRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients/"+client.ClientID+"/restore", nil)
+	restoreRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	restoreRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
+	restoreRecorder := httptest.NewRecorder()
+	server.ServeHTTP(restoreRecorder, restoreRequest)
+	if restoreRecorder.Code != http.StatusOK {
+		t.Fatalf("restore status = %d body = %q", restoreRecorder.Code, restoreRecorder.Body.String())
+	}
+	var restored nanoflare.OAuthClient
+	if err := json.Unmarshal(restoreRecorder.Body.Bytes(), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID != client.ClientID || restored.Disabled {
+		t.Fatalf("restored client = %#v", restored)
+	}
+
+	createRecorder = httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("restored client should not revive revoked token: status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+
+	restoredToken := authorizeOAuthClient(t, server, session.Token, paidOrgID, oauthClientFixture{ClientID: client.ClientID, ClientSecret: rotated.ClientSecret}, []string{"apps:write"})
+	createBody = bytes.NewBufferString(`{"name":"Restored Client App","hostname":"restored-client.example.com"}`)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+restoredToken.AccessToken)
+	createRecorder = httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("restored client token status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
 }
 
 type oauthClientFixture struct {
@@ -675,6 +747,24 @@ func signupControlUser(t *testing.T, server http.Handler) nanoflare.AuthSession 
 		t.Fatal(err)
 	}
 	return session
+}
+
+func addPaidOrgForSession(t *testing.T, store *nanoflare.Store, session nanoflare.AuthSession, orgID string) string {
+	t.Helper()
+	org := nanoflare.Organization{ID: orgID, Name: "Paid Org", UsageLevel: nanoflare.UsageLevelPaid, CreatedAt: time.Now().UTC()}
+	if err := store.CreateOrganization(org); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertOrganizationMembership(nanoflare.OrganizationMembership{
+		UserID:    session.User.ID,
+		OrgID:     org.ID,
+		Role:      nanoflare.RoleOwner,
+		Scopes:    nanoflare.RoleScopes(nanoflare.RoleOwner),
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return org.ID
 }
 
 func createOAuthClient(t *testing.T, server http.Handler, sessionToken, orgID string, scopes []string) oauthClientFixture {

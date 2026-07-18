@@ -29,6 +29,7 @@ func (s *Server) registerOAuthRoutes() {
 	s.mux.HandleFunc("GET /v1/oauth/clients/{clientID}/connections", s.oauthClientConnections)
 	s.mux.HandleFunc("PATCH /v1/oauth/clients/{clientID}", s.updateOAuthClient)
 	s.mux.HandleFunc("POST /v1/oauth/clients/{clientID}/secret", s.rotateOAuthClientSecret)
+	s.mux.HandleFunc("POST /v1/oauth/clients/{clientID}/restore", s.restoreOAuthClient)
 	s.mux.HandleFunc("DELETE /v1/oauth/clients/{clientID}", s.disableOAuthClient)
 	s.mux.HandleFunc("GET /v1/oauth/authorize", s.oauthAuthorizeInfo)
 	s.mux.HandleFunc("POST /v1/oauth/authorize", s.oauthAuthorize)
@@ -114,6 +115,18 @@ func (s *Server) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	client, err := s.oauth.RotateClientSecret(controlOrgID(r), r.PathValue("clientID"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, client)
+}
+
+func (s *Server) restoreOAuthClient(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:write") {
+		return
+	}
+	client, err := s.oauth.RestoreClient(controlOrgID(r), r.PathValue("clientID"))
 	if err != nil {
 		writeOAuthError(w, err)
 		return
@@ -355,6 +368,8 @@ func (s *Server) oauthDisconnect(w http.ResponseWriter, r *http.Request) {
 
 func writeOAuthError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, nanoflare.ErrUsageLimitExceeded):
+		writeError(w, http.StatusPaymentRequired, err)
 	case errors.Is(err, nanoflare.ErrOAuthClientNotFound), errors.Is(err, nanoflare.ErrOAuthInvalidGrant), errors.Is(err, nanoflare.ErrOAuthTokenNotFound):
 		writeError(w, http.StatusUnauthorized, err)
 	case errors.Is(err, nanoflare.ErrOAuthInvalidScope), errors.Is(err, nanoflare.ErrMembershipNotFound):
