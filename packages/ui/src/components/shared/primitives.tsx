@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Activity, MoreHorizontal } from "lucide-react";
+import { Activity } from "lucide-react";
 import { Box, Card, Center, Group, Input, Progress, Stack, Text, Title } from "@mantine/core";
 
 export function PageHeading({ title, copy, actions }: { eyebrow: string; title: string; copy: string; actions?: ReactNode }) {
@@ -26,7 +26,6 @@ export function Panel({ title, eyebrow, children, flush = false }: { title?: str
               {eyebrow && <Text c="dimmed" fw={700} size="xs" tt="uppercase">{eyebrow}</Text>}
               {title && <Title mt={2} order={3} size="h5">{title}</Title>}
             </Box>
-            <MoreHorizontal size={16} />
           </Group>
         </Card.Section>
       )}

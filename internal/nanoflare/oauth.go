@@ -27,6 +27,7 @@ var (
 
 type OAuthClient struct {
 	ID           string    `json:"client_id"`
+	OwnerOrgID   string    `json:"owner_org_id,omitempty"`
 	Name         string    `json:"name"`
 	RedirectURIs []string  `json:"redirect_uris"`
 	Scopes       []string  `json:"scopes"`
@@ -37,6 +38,13 @@ type OAuthClient struct {
 }
 
 type CreateOAuthClientInput struct {
+	OwnerOrgID   string   `json:"-"`
+	Name         string   `json:"name"`
+	RedirectURIs []string `json:"redirect_uris"`
+	Scopes       []string `json:"scopes"`
+}
+
+type UpdateOAuthClientInput struct {
 	Name         string   `json:"name"`
 	RedirectURIs []string `json:"redirect_uris"`
 	Scopes       []string `json:"scopes"`
@@ -82,6 +90,16 @@ type OAuthAccess struct {
 type OAuthConnection struct {
 	ClientID  string    `json:"client_id"`
 	Name      string    `json:"name"`
+	Scopes    []string  `json:"scopes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OAuthClientConnection struct {
+	ClientID  string    `json:"client_id"`
+	UserID    string    `json:"user_id"`
+	UserEmail string    `json:"user_email"`
+	OrgID     string    `json:"org_id"`
+	OrgName   string    `json:"org_name"`
 	Scopes    []string  `json:"scopes"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -138,6 +156,10 @@ func NewOAuthService(store Repository) *OAuthService {
 }
 
 func (s *OAuthService) CreateClient(input CreateOAuthClientInput) (OAuthClientCreated, error) {
+	ownerOrgID := strings.TrimSpace(input.OwnerOrgID)
+	if ownerOrgID == "" {
+		return OAuthClientCreated{}, errors.New("owner_org_id is required")
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return OAuthClientCreated{}, errors.New("name is required")
@@ -163,11 +185,96 @@ func (s *OAuthService) CreateClient(input CreateOAuthClientInput) (OAuthClientCr
 		return OAuthClientCreated{}, err
 	}
 	now := s.now().UTC()
-	client := OAuthClient{ID: clientID, Name: name, RedirectURIs: redirects, Scopes: scopes, SecretHash: hash, CreatedAt: now, UpdatedAt: now}
+	client := OAuthClient{ID: clientID, OwnerOrgID: ownerOrgID, Name: name, RedirectURIs: redirects, Scopes: scopes, SecretHash: hash, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.CreateOAuthClient(client); err != nil {
 		return OAuthClientCreated{}, err
 	}
 	return OAuthClientCreated{OAuthClient: client, ClientSecret: secret}, nil
+}
+
+func (s *OAuthService) Clients(ownerOrgID string) ([]OAuthClient, error) {
+	return s.store.OAuthClientsByOwnerOrg(strings.TrimSpace(ownerOrgID))
+}
+
+func (s *OAuthService) Client(ownerOrgID, clientID string) (OAuthClient, error) {
+	client, err := s.store.OAuthClient(strings.TrimSpace(clientID))
+	if err != nil {
+		return OAuthClient{}, err
+	}
+	if client.OwnerOrgID != strings.TrimSpace(ownerOrgID) {
+		return OAuthClient{}, ErrOAuthClientNotFound
+	}
+	return client, nil
+}
+
+func (s *OAuthService) ClientConnections(ownerOrgID, clientID string) ([]OAuthClientConnection, error) {
+	client, err := s.Client(ownerOrgID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.OAuthClientConnections(client.ID)
+}
+
+func (s *OAuthService) UpdateClient(ownerOrgID, clientID string, input UpdateOAuthClientInput) (OAuthClient, error) {
+	client, err := s.Client(ownerOrgID, clientID)
+	if err != nil {
+		return OAuthClient{}, err
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return OAuthClient{}, errors.New("name is required")
+	}
+	redirects, err := normalizeRedirectURIs(input.RedirectURIs)
+	if err != nil {
+		return OAuthClient{}, err
+	}
+	scopes, err := normalizeOAuthScopes(input.Scopes)
+	if err != nil {
+		return OAuthClient{}, err
+	}
+	client.Name = name
+	client.RedirectURIs = redirects
+	client.Scopes = scopes
+	client.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateOAuthClient(client); err != nil {
+		return OAuthClient{}, err
+	}
+	return client, nil
+}
+
+func (s *OAuthService) RotateClientSecret(ownerOrgID, clientID string) (OAuthClientCreated, error) {
+	client, err := s.Client(ownerOrgID, clientID)
+	if err != nil {
+		return OAuthClientCreated{}, err
+	}
+	secret, err := s.randomID()
+	if err != nil {
+		return OAuthClientCreated{}, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(secret), s.hashCost)
+	if err != nil {
+		return OAuthClientCreated{}, err
+	}
+	client.SecretHash = hash
+	client.UpdatedAt = s.now().UTC()
+	if err := s.store.UpdateOAuthClient(client); err != nil {
+		return OAuthClientCreated{}, err
+	}
+	return OAuthClientCreated{OAuthClient: client, ClientSecret: secret}, nil
+}
+
+func (s *OAuthService) DisableClient(ownerOrgID, clientID string) error {
+	client, err := s.Client(ownerOrgID, clientID)
+	if err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	client.Disabled = true
+	client.UpdatedAt = now
+	if err := s.store.UpdateOAuthClient(client); err != nil {
+		return err
+	}
+	return s.store.RevokeAllOAuthClientTokens(client.ID, now)
 }
 
 func (s *OAuthService) Authorize(user User, input OAuthAuthorizeInput) (OAuthAuthorizeResponse, error) {

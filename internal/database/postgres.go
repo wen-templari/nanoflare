@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS user_organizations (
 );
 CREATE TABLE IF NOT EXISTS oauth_clients (
 	id text PRIMARY KEY,
+	owner_org_id text NOT NULL DEFAULT '',
 	name text NOT NULL,
 	redirect_uris jsonb NOT NULL DEFAULT '[]'::jsonb,
 	scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -156,6 +157,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::json
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS owner_org_id text NOT NULL DEFAULT '';
 UPDATE apps SET name = hostname WHERE name = '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS assets jsonb NOT NULL DEFAULT '[]';
@@ -479,9 +481,9 @@ SELECT EXISTS (
 
 func (p *Postgres) CreateOAuthClient(client nanoflare.OAuthClient) error {
 	_, err := p.db.Exec(`
-INSERT INTO oauth_clients (id, name, redirect_uris, scopes, secret_hash, disabled, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		client.ID, client.Name, mustJSON(client.RedirectURIs), mustJSON(client.Scopes), client.SecretHash, client.Disabled, client.CreatedAt, client.UpdatedAt)
+INSERT INTO oauth_clients (id, owner_org_id, name, redirect_uris, scopes, secret_hash, disabled, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		client.ID, client.OwnerOrgID, client.Name, mustJSON(client.RedirectURIs), mustJSON(client.Scopes), client.SecretHash, client.Disabled, client.CreatedAt, client.UpdatedAt)
 	return err
 }
 
@@ -489,9 +491,9 @@ func (p *Postgres) OAuthClient(clientID string) (nanoflare.OAuthClient, error) {
 	var client nanoflare.OAuthClient
 	var redirectURIs, scopes []byte
 	err := p.db.QueryRow(`
-SELECT id, name, redirect_uris, scopes, secret_hash, disabled, created_at, updated_at
+SELECT id, owner_org_id, name, redirect_uris, scopes, secret_hash, disabled, created_at, updated_at
 FROM oauth_clients WHERE id = $1`, clientID).
-		Scan(&client.ID, &client.Name, &redirectURIs, &scopes, &client.SecretHash, &client.Disabled, &client.CreatedAt, &client.UpdatedAt)
+		Scan(&client.ID, &client.OwnerOrgID, &client.Name, &redirectURIs, &scopes, &client.SecretHash, &client.Disabled, &client.CreatedAt, &client.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.OAuthClient{}, nanoflare.ErrOAuthClientNotFound
 	}
@@ -505,6 +507,53 @@ FROM oauth_clients WHERE id = $1`, clientID).
 		return nanoflare.OAuthClient{}, err
 	}
 	return client, nil
+}
+
+func (p *Postgres) OAuthClientsByOwnerOrg(ownerOrgID string) ([]nanoflare.OAuthClient, error) {
+	rows, err := p.db.Query(`
+SELECT id, owner_org_id, name, redirect_uris, scopes, secret_hash, disabled, created_at, updated_at
+FROM oauth_clients
+WHERE owner_org_id = $1
+ORDER BY name, id`, ownerOrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	clients := make([]nanoflare.OAuthClient, 0)
+	for rows.Next() {
+		var client nanoflare.OAuthClient
+		var redirectURIs, scopes []byte
+		if err := rows.Scan(&client.ID, &client.OwnerOrgID, &client.Name, &redirectURIs, &scopes, &client.SecretHash, &client.Disabled, &client.CreatedAt, &client.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(redirectURIs, &client.RedirectURIs); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(scopes, &client.Scopes); err != nil {
+			return nil, err
+		}
+		clients = append(clients, client)
+	}
+	return clients, rows.Err()
+}
+
+func (p *Postgres) UpdateOAuthClient(client nanoflare.OAuthClient) error {
+	result, err := p.db.Exec(`
+UPDATE oauth_clients
+SET owner_org_id = $2, name = $3, redirect_uris = $4, scopes = $5, secret_hash = $6, disabled = $7, updated_at = $8
+WHERE id = $1`,
+		client.ID, client.OwnerOrgID, client.Name, mustJSON(client.RedirectURIs), mustJSON(client.Scopes), client.SecretHash, client.Disabled, client.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return nanoflare.ErrOAuthClientNotFound
+	}
+	return nil
 }
 
 func (p *Postgres) CreateOAuthAuthorizationCode(code nanoflare.OAuthAuthorizationCode) error {
@@ -606,11 +655,47 @@ ORDER BY t.client_id, t.created_at`, userID, orgID)
 	return connections, rows.Err()
 }
 
+func (p *Postgres) OAuthClientConnections(clientID string) ([]nanoflare.OAuthClientConnection, error) {
+	rows, err := p.db.Query(`
+SELECT DISTINCT ON (t.user_id, t.org_id)
+	t.client_id, t.user_id, u.email, t.org_id, o.name, t.scopes, t.created_at
+FROM oauth_tokens t
+JOIN users u ON u.id = t.user_id
+JOIN organizations o ON o.id = t.org_id
+WHERE t.client_id = $1 AND t.revoked_at IS NULL
+ORDER BY t.user_id, t.org_id, t.created_at`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	connections := make([]nanoflare.OAuthClientConnection, 0)
+	for rows.Next() {
+		var connection nanoflare.OAuthClientConnection
+		var scopes []byte
+		if err := rows.Scan(&connection.ClientID, &connection.UserID, &connection.UserEmail, &connection.OrgID, &connection.OrgName, &scopes, &connection.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(scopes, &connection.Scopes); err != nil {
+			return nil, err
+		}
+		connections = append(connections, connection)
+	}
+	return connections, rows.Err()
+}
+
 func (p *Postgres) RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error {
 	_, err := p.db.Exec(`
 UPDATE oauth_tokens
 SET revoked_at = $4
 WHERE user_id = $1 AND org_id = $2 AND client_id = $3 AND revoked_at IS NULL`, userID, orgID, clientID, revokedAt)
+	return err
+}
+
+func (p *Postgres) RevokeAllOAuthClientTokens(clientID string, revokedAt time.Time) error {
+	_, err := p.db.Exec(`
+UPDATE oauth_tokens
+SET revoked_at = $2
+WHERE client_id = $1 AND revoked_at IS NULL`, clientID, revokedAt)
 	return err
 }
 

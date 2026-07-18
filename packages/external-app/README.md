@@ -19,11 +19,14 @@ npm --prefix packages/ui run dev
 ```
 
 Register this external app in Nanoflare once, using a Nanoflare control-plane
-token from `nanoflare auth login` or `/v1/auth/login`:
+token from `nanoflare auth login` or `/v1/auth/login`. The client registration
+is owned by the organization in `X-Nanoflare-Org-ID`; users can still approve
+that client for any Nanoflare organization they belong to:
 
 ```sh
 curl -s -X POST http://127.0.0.1:8080/v1/oauth/clients \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
+  -H "X-Nanoflare-Org-ID: $NANOFLARE_OWNER_ORG_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "External App UI",

@@ -9,6 +9,8 @@ import { ObjectStorageBucketDetailPage } from "./pages/object-storage-bucket-det
 import { ObjectStorageBucketsPage } from "./pages/object-storage-buckets-page";
 import { OAuthAuthorizePage } from "./pages/oauth-authorize-page";
 import { OverviewPage } from "./pages/overview-page";
+import { SettingsPage } from "./pages/settings-page";
+import { OAuthClientDetailPage } from "./pages/oauth-client-detail-page";
 import { WorkerDetailPage } from "./pages/worker-detail-page";
 import { WorkersPage } from "./pages/workers-page";
 import { LoginPage } from "./pages/login-page";
@@ -36,6 +38,8 @@ export function App() {
               <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />
               <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
               <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="settings/oauth-clients/:clientId" element={<OAuthClientDetailPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

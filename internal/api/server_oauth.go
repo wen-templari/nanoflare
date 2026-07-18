@@ -23,7 +23,13 @@ type oauthRevokeRequest struct {
 }
 
 func (s *Server) registerOAuthRoutes() {
+	s.mux.HandleFunc("GET /v1/oauth/clients", s.oauthClients)
 	s.mux.HandleFunc("POST /v1/oauth/clients", s.createOAuthClient)
+	s.mux.HandleFunc("GET /v1/oauth/clients/{clientID}", s.oauthClient)
+	s.mux.HandleFunc("GET /v1/oauth/clients/{clientID}/connections", s.oauthClientConnections)
+	s.mux.HandleFunc("PATCH /v1/oauth/clients/{clientID}", s.updateOAuthClient)
+	s.mux.HandleFunc("POST /v1/oauth/clients/{clientID}/secret", s.rotateOAuthClientSecret)
+	s.mux.HandleFunc("DELETE /v1/oauth/clients/{clientID}", s.disableOAuthClient)
 	s.mux.HandleFunc("GET /v1/oauth/authorize", s.oauthAuthorizeInfo)
 	s.mux.HandleFunc("POST /v1/oauth/authorize", s.oauthAuthorize)
 	s.mux.HandleFunc("POST /v1/oauth/token", s.oauthToken)
@@ -32,18 +38,98 @@ func (s *Server) registerOAuthRoutes() {
 	s.mux.HandleFunc("DELETE /v1/oauth/connections/{clientID}", s.oauthDisconnect)
 }
 
+func (s *Server) oauthClients(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) {
+		return
+	}
+	clients, err := s.oauth.Clients(controlOrgID(r))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clients)
+}
+
 func (s *Server) createOAuthClient(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) {
+		return
+	}
 	var input nanoflare.CreateOAuthClientInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	input.OwnerOrgID = controlOrgID(r)
 	client, err := s.oauth.CreateClient(input)
 	if err != nil {
 		writeOAuthError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, client)
+}
+
+func (s *Server) oauthClient(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) {
+		return
+	}
+	client, err := s.oauth.Client(controlOrgID(r), r.PathValue("clientID"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, client)
+}
+
+func (s *Server) oauthClientConnections(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) {
+		return
+	}
+	connections, err := s.oauth.ClientConnections(controlOrgID(r), r.PathValue("clientID"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, connections)
+}
+
+func (s *Server) updateOAuthClient(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) {
+		return
+	}
+	var input nanoflare.UpdateOAuthClientInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	client, err := s.oauth.UpdateClient(controlOrgID(r), r.PathValue("clientID"), input)
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, client)
+}
+
+func (s *Server) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) {
+		return
+	}
+	client, err := s.oauth.RotateClientSecret(controlOrgID(r), r.PathValue("clientID"))
+	if err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, client)
+}
+
+func (s *Server) disableOAuthClient(w http.ResponseWriter, r *http.Request) {
+	if !s.requireControlUser(w, r) {
+		return
+	}
+	if err := s.oauth.DisableClient(controlOrgID(r), r.PathValue("clientID")); err != nil {
+		writeOAuthError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) oauthAuthorizeInfo(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +198,15 @@ func (s *Server) oauthBearerUser(w http.ResponseWriter, r *http.Request) (nanofl
 		return nanoflare.User{}, false
 	}
 	return user, true
+}
+
+func (s *Server) requireControlUser(w http.ResponseWriter, r *http.Request) bool {
+	user := controlUser(r)
+	if user.ID == "" {
+		writeError(w, http.StatusUnauthorized, errors.New("signed-in Nanoflare user is required"))
+		return false
+	}
+	return true
 }
 
 func (s *Server) oauthAuthorizePage(w http.ResponseWriter, r *http.Request, message string) {

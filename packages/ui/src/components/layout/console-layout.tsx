@@ -1,6 +1,6 @@
 import { ActionIcon, Anchor, AppShell, Box, Breadcrumbs, Burger, Group, NavLink as MantineNavLink, Notification, Select, Stack, Text, Title, Tooltip } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
-import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Waypoints } from "lucide-react"
+import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Settings, Waypoints } from "lucide-react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { useWorkspace } from "../../app/workspace-context"
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
@@ -12,6 +12,7 @@ const navItems = [
   { href: "/workers", match: "/workers", label: "Workers", icon: Waypoints },
   { href: "/kv", match: "/kv", label: "KV", icon: KeyRound },
   { href: "/object-storage", match: "/object-storage", label: "Object storage", icon: DatabaseZap },
+  { href: "/settings", match: "/settings", label: "Settings", icon: Settings },
 ]
 
 export function ConsoleLayout() {
@@ -163,6 +164,10 @@ function getBreadcrumbs(
   if (section === "object-storage") {
     const bucket = workspace.objectStorageBuckets.find((item) => item.id === id)
     return id ? [{ href: "/object-storage", label: "Object storage" }, { label: bucket?.name ?? id }] : [{ label: "Object storage" }]
+  }
+
+  if (section === "settings") {
+    return id ? [{ href: "/settings", label: "Settings" }, { label: id === "oauth-clients" ? "OAuth client" : id }] : [{ label: "Settings" }]
   }
 
   return [{ label: "Overview" }]

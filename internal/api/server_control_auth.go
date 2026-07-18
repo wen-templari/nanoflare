@@ -72,7 +72,7 @@ func isUserSessionOnlyOAuthPath(path string) bool {
 }
 
 func isNoOrgControlPath(path string) bool {
-	return path == "/v1/oauth/authorize" || path == "/v1/oauth/clients"
+	return path == "/v1/oauth/authorize"
 }
 
 func controlOrgID(r *http.Request) string {

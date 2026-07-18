@@ -192,11 +192,14 @@ locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 alternate file path when you need a different auth store location.
 
 External platforms can integrate through Nanoflare's OAuth control-plane flow.
-First create an OAuth client while signed in as a Nanoflare control-plane user:
+First create an OAuth client while signed in as a Nanoflare control-plane user.
+The client is owned by the organization in `X-Nanoflare-Org-ID`; any member of
+that owner organization can manage its redirect URIs, scopes, and secrets:
 
 ```sh
 curl -X POST http://127.0.0.1:8080/v1/oauth/clients \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
+  -H "X-Nanoflare-Org-ID: $NANOFLARE_OWNER_ORG_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "External Platform",
@@ -206,8 +209,10 @@ curl -X POST http://127.0.0.1:8080/v1/oauth/clients \
 ```
 
 The response includes a `client_id` and one-time-visible `client_secret`. The
-external platform redirects its user to its own connection flow, then asks
-Nanoflare to authorize a specific Nanoflare organization:
+owner organization controls the client registration, but authorization is per
+user and per resource organization. The external platform redirects its user to
+its own connection flow, then asks Nanoflare to authorize a specific Nanoflare
+organization that the approving user belongs to:
 
 ```sh
 curl -X POST http://127.0.0.1:8080/v1/oauth/authorize \

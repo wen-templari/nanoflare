@@ -252,7 +252,7 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
-	client := createOAuthClient(t, server, session.Token, []string{"apps:read", "apps:write", "kv:write"})
+	client := createOAuthClient(t, server, session.Token, session.ActiveOrgID, []string{"apps:read", "apps:write", "kv:write"})
 	assertOAuthClientInfo(t, server, client.ClientID)
 	token := authorizeOAuthClient(t, server, session.Token, session.ActiveOrgID, client, []string{"apps:write", "kv:write"})
 
@@ -340,6 +340,165 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	}
 }
 
+func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	oauth := nanoflare.NewOAuthService(store)
+	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+
+	session := signupControlUser(t, server)
+	client := createOAuthClient(t, server, session.Token, session.ActiveOrgID, []string{"apps:write", "kv:write"})
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/clients", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	listRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list clients status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
+	}
+	var clients []nanoflare.OAuthClient
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &clients); err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 1 || clients[0].ID != client.ClientID || clients[0].OwnerOrgID != session.ActiveOrgID || len(clients[0].SecretHash) != 0 {
+		t.Fatalf("clients = %#v", clients)
+	}
+
+	otherOrg := nanoflare.Organization{ID: "org-other", Name: "Other", CreatedAt: time.Now().UTC()}
+	if err := store.CreateOrganization(otherOrg); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUserToOrganization(session.User.ID, otherOrg.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	crossOrgToken := authorizeOAuthClient(t, server, session.Token, otherOrg.ID, client, []string{"apps:write"})
+	if crossOrgToken.AccessToken == "" {
+		t.Fatalf("cross org token = %#v", crossOrgToken)
+	}
+
+	connectionsRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/clients/"+client.ClientID+"/connections", nil)
+	connectionsRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	connectionsRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	connectionsRecorder := httptest.NewRecorder()
+	server.ServeHTTP(connectionsRecorder, connectionsRequest)
+	if connectionsRecorder.Code != http.StatusOK {
+		t.Fatalf("client connections status = %d body = %q", connectionsRecorder.Code, connectionsRecorder.Body.String())
+	}
+	var clientConnections []nanoflare.OAuthClientConnection
+	if err := json.Unmarshal(connectionsRecorder.Body.Bytes(), &clientConnections); err != nil {
+		t.Fatal(err)
+	}
+	if len(clientConnections) != 1 || clientConnections[0].ClientID != client.ClientID || clientConnections[0].OrgID != otherOrg.ID || clientConnections[0].UserEmail != session.User.Email {
+		t.Fatalf("client connections = %#v", clientConnections)
+	}
+
+	updateBody := bytes.NewBufferString(`{"name":"Wrong Org","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["apps:write"]}`)
+	updateRequest := httptest.NewRequest(http.MethodPatch, "/v1/oauth/clients/"+client.ClientID, updateBody)
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	updateRequest.Header.Set("X-Nanoflare-Org-ID", otherOrg.ID)
+	updateRecorder := httptest.NewRecorder()
+	server.ServeHTTP(updateRecorder, updateRequest)
+	if updateRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("cross-org update status = %d body = %q", updateRecorder.Code, updateRecorder.Body.String())
+	}
+
+	updateBody = bytes.NewBufferString(`{"name":"Updated External Platform","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["apps:write"]}`)
+	updateRequest = httptest.NewRequest(http.MethodPatch, "/v1/oauth/clients/"+client.ClientID, updateBody)
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	updateRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	updateRecorder = httptest.NewRecorder()
+	server.ServeHTTP(updateRecorder, updateRequest)
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d body = %q", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	var updated nanoflare.OAuthClient
+	if err := json.Unmarshal(updateRecorder.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Updated External Platform" || len(updated.Scopes) != 1 || updated.Scopes[0] != "apps:write" {
+		t.Fatalf("updated client = %#v", updated)
+	}
+}
+
+func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	oauth := nanoflare.NewOAuthService(store)
+	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+
+	session := signupControlUser(t, server)
+	client := createOAuthClient(t, server, session.Token, session.ActiveOrgID, []string{"apps:write"})
+	token := authorizeOAuthClient(t, server, session.Token, session.ActiveOrgID, client, []string{"apps:write"})
+
+	rotateRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients/"+client.ClientID+"/secret", nil)
+	rotateRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	rotateRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	rotateRecorder := httptest.NewRecorder()
+	server.ServeHTTP(rotateRecorder, rotateRequest)
+	if rotateRecorder.Code != http.StatusOK {
+		t.Fatalf("rotate status = %d body = %q", rotateRecorder.Code, rotateRecorder.Body.String())
+	}
+	var rotated struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.Unmarshal(rotateRecorder.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.ClientID != client.ClientID || rotated.ClientSecret == "" || rotated.ClientSecret == client.ClientSecret {
+		t.Fatalf("rotated = %#v", rotated)
+	}
+	oldRefreshBody, err := json.Marshal(map[string]string{
+		"grant_type":    "refresh_token",
+		"client_id":     client.ClientID,
+		"client_secret": client.ClientSecret,
+		"refresh_token": token.RefreshToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRefreshRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", bytes.NewReader(oldRefreshBody))
+	oldRefreshRequest.Header.Set("Content-Type", "application/json")
+	oldRefreshRecorder := httptest.NewRecorder()
+	server.ServeHTTP(oldRefreshRecorder, oldRefreshRequest)
+	if oldRefreshRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("old secret refresh status = %d body = %q", oldRefreshRecorder.Code, oldRefreshRecorder.Body.String())
+	}
+
+	disableRequest := httptest.NewRequest(http.MethodDelete, "/v1/oauth/clients/"+client.ClientID, nil)
+	disableRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	disableRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	disableRecorder := httptest.NewRecorder()
+	server.ServeHTTP(disableRecorder, disableRequest)
+	if disableRecorder.Code != http.StatusNoContent {
+		t.Fatalf("disable status = %d body = %q", disableRecorder.Code, disableRecorder.Body.String())
+	}
+
+	createBody := bytes.NewBufferString(`{"name":"Disabled Client App","hostname":"disabled-client.example.com"}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	createRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled client token status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+
+	assertOAuthInfoRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?client_id="+url.QueryEscape(client.ClientID)+"&redirect_uri="+url.QueryEscape("https://external.example.com/oauth/callback")+"&scope=apps:write", nil)
+	assertOAuthInfoRequest.Header.Set("Accept", "application/json")
+	assertOAuthInfoRecorder := httptest.NewRecorder()
+	server.ServeHTTP(assertOAuthInfoRecorder, assertOAuthInfoRequest)
+	if assertOAuthInfoRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled authorize info status = %d body = %q", assertOAuthInfoRecorder.Code, assertOAuthInfoRecorder.Body.String())
+	}
+}
+
 type oauthClientFixture struct {
 	ClientID     string
 	ClientSecret string
@@ -362,7 +521,7 @@ func signupControlUser(t *testing.T, server http.Handler) nanoflare.AuthSession 
 	return session
 }
 
-func createOAuthClient(t *testing.T, server http.Handler, sessionToken string, scopes []string) oauthClientFixture {
+func createOAuthClient(t *testing.T, server http.Handler, sessionToken, orgID string, scopes []string) oauthClientFixture {
 	t.Helper()
 	body, err := json.Marshal(nanoflare.CreateOAuthClientInput{
 		Name:         "External Platform",
@@ -375,6 +534,7 @@ func createOAuthClient(t *testing.T, server http.Handler, sessionToken string, s
 	request := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+sessionToken)
+	request.Header.Set("X-Nanoflare-Org-ID", orgID)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {

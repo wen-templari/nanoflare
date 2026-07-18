@@ -99,6 +99,32 @@ export type KVNamespaceMetrics = { available: boolean; reads: number; writes: nu
 export type ObjectStorageBucketMetrics = { available: boolean; reads: number; writes: number; size: number };
 
 export type KVNamespace = { id: string; name: string; created_at: string };
+export type OAuthClient = {
+  client_id: string;
+  owner_org_id?: string;
+  name: string;
+  redirect_uris: string[];
+  scopes: string[];
+  disabled?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+export type OAuthClientCreated = OAuthClient & { client_secret: string };
+export type OAuthConnection = {
+  client_id: string;
+  name: string;
+  scopes: string[];
+  created_at: string;
+};
+export type OAuthClientConnection = {
+  client_id: string;
+  user_id: string;
+  user_email: string;
+  org_id: string;
+  org_name: string;
+  scopes: string[];
+  created_at: string;
+};
 export type Organization = { id: string; name: string; created_at: string };
 export type ControlUser = { id: string; email: string; created_at: string };
 export type AuthSession = {

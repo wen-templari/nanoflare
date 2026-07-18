@@ -39,6 +39,9 @@ type Repository interface {
 	UserBelongsToOrganization(userID, orgID string) (bool, error)
 	CreateOAuthClient(OAuthClient) error
 	OAuthClient(string) (OAuthClient, error)
+	OAuthClientsByOwnerOrg(string) ([]OAuthClient, error)
+	OAuthClientConnections(clientID string) ([]OAuthClientConnection, error)
+	UpdateOAuthClient(OAuthClient) error
 	CreateOAuthAuthorizationCode(OAuthAuthorizationCode) error
 	OAuthAuthorizationCode(string) (OAuthAuthorizationCode, error)
 	UpdateOAuthAuthorizationCode(OAuthAuthorizationCode) error
@@ -48,6 +51,7 @@ type Repository interface {
 	UpdateOAuthToken(OAuthToken) error
 	OAuthConnections(userID, orgID string) ([]OAuthConnection, error)
 	RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error
+	RevokeAllOAuthClientTokens(clientID string, revokedAt time.Time) error
 	CreateApp(App) error
 	ListApps() ([]App, error)
 	ListAppsByOrg(string) ([]App, error)
@@ -242,6 +246,34 @@ func (s *Store) OAuthClient(clientID string) (OAuthClient, error) {
 	return cloneOAuthClient(client), nil
 }
 
+func (s *Store) OAuthClientsByOwnerOrg(ownerOrgID string) ([]OAuthClient, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	clients := make([]OAuthClient, 0)
+	for _, client := range s.oauthClients {
+		if client.OwnerOrgID == ownerOrgID {
+			clients = append(clients, cloneOAuthClient(client))
+		}
+	}
+	sort.Slice(clients, func(i, j int) bool {
+		if clients[i].Name == clients[j].Name {
+			return clients[i].ID < clients[j].ID
+		}
+		return clients[i].Name < clients[j].Name
+	})
+	return clients, nil
+}
+
+func (s *Store) UpdateOAuthClient(client OAuthClient) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.oauthClients[client.ID]; !exists {
+		return ErrOAuthClientNotFound
+	}
+	s.oauthClients[client.ID] = cloneOAuthClient(client)
+	return nil
+}
+
 func (s *Store) CreateOAuthAuthorizationCode(code OAuthAuthorizationCode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -341,11 +373,64 @@ func (s *Store) OAuthConnections(userID, orgID string) ([]OAuthConnection, error
 	return result, nil
 }
 
+func (s *Store) OAuthClientConnections(clientID string) ([]OAuthClientConnection, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	connections := make(map[string]OAuthClientConnection)
+	for _, token := range s.oauthTokens {
+		if token.ClientID != clientID || token.RevokedAt != nil {
+			continue
+		}
+		user, userOK := s.users[token.UserID]
+		org, orgOK := s.organizations[token.OrgID]
+		if !userOK || !orgOK {
+			continue
+		}
+		key := token.UserID + "\x00" + token.OrgID
+		existing, ok := connections[key]
+		if !ok || token.CreatedAt.Before(existing.CreatedAt) {
+			connections[key] = OAuthClientConnection{
+				ClientID:  token.ClientID,
+				UserID:    token.UserID,
+				UserEmail: user.Email,
+				OrgID:     token.OrgID,
+				OrgName:   org.Name,
+				Scopes:    append([]string(nil), token.Scopes...),
+				CreatedAt: token.CreatedAt,
+			}
+		}
+	}
+	result := make([]OAuthClientConnection, 0, len(connections))
+	for _, connection := range connections {
+		result = append(result, connection)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].OrgName == result[j].OrgName {
+			return result[i].UserEmail < result[j].UserEmail
+		}
+		return result[i].OrgName < result[j].OrgName
+	})
+	return result, nil
+}
+
 func (s *Store) RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for hash, token := range s.oauthTokens {
 		if token.UserID != userID || token.OrgID != orgID || token.ClientID != clientID || token.RevokedAt != nil {
+			continue
+		}
+		token.RevokedAt = &revokedAt
+		s.oauthTokens[hash] = cloneOAuthToken(token)
+	}
+	return nil
+}
+
+func (s *Store) RevokeAllOAuthClientTokens(clientID string, revokedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, token := range s.oauthTokens {
+		if token.ClientID != clientID || token.RevokedAt != nil {
 			continue
 		}
 		token.RevokedAt = &revokedAt

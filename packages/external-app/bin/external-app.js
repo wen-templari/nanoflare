@@ -21,7 +21,7 @@ async function main() {
 
   const client = process.env.EXTERNAL_APP_CLIENT_ID && process.env.EXTERNAL_APP_CLIENT_SECRET
     ? { client_id: process.env.EXTERNAL_APP_CLIENT_ID, client_secret: process.env.EXTERNAL_APP_CLIENT_SECRET }
-    : await createOAuthClient(session.token);
+    : await createOAuthClient(session.token, session.active_org_id);
   console.log(`Using OAuth client ${client.client_id}`);
 
   const authorization = await authorizeClient(session.token, session.active_org_id, client.client_id);
@@ -67,9 +67,10 @@ async function signIn() {
   throw new Error("Could not log in or create the first Nanoflare user. Set NANOFLARE_EMAIL and NANOFLARE_PASSWORD for an existing account.");
 }
 
-async function createOAuthClient(token) {
+async function createOAuthClient(token, orgID) {
   const response = await request("POST", "/v1/oauth/clients", {
     token,
+    headers: { "X-Nanoflare-Org-ID": orgID },
     body: {
       name: "External Platform Smoke Test",
       redirect_uris: [redirectURI],
