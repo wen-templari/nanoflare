@@ -43,7 +43,6 @@ export function LoginPage() {
               </ThemeIcon>
               <Box>
                 <Title order={1} size="h3">nanoflare</Title>
-                <Text c="dimmed" size="sm">Control plane access</Text>
               </Box>
             </Group>
             <Paper bg="white" p="xl" radius="lg" shadow="xs" withBorder>

@@ -1,4 +1,4 @@
-import { ActionIcon, Anchor, AppShell, Box, Breadcrumbs, Burger, Group, Modal, NavLink as MantineNavLink, Notification, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
+import { ActionIcon, Anchor, AppShell, Box, Breadcrumbs, Burger, Button, Group, Modal, NavLink as MantineNavLink, Notification, Paper, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
 import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
 import { useState } from "react"
@@ -69,6 +69,23 @@ export function ConsoleLayout() {
     }
   }
 
+  if (!hasOrg) {
+    return (
+      <OrganizationOnboarding
+        error={orgError}
+        name={orgName}
+        onLogout={() => {
+          logout()
+          navigate("/login", { replace: true })
+        }}
+        onNameChange={setOrgName}
+        onSubmit={submitOrganization}
+        saving={orgSaving}
+        toast={toast}
+      />
+    )
+  }
+
   return (
     <AppShell
       header={{ height: 64 }}
@@ -128,7 +145,6 @@ export function ConsoleLayout() {
           </Box>
           <Box>
             <Title order={2} size="h4">nanoflare</Title>
-            <Text c="dimmed" ff="monospace" size="xs">control plane</Text>
           </Box>
         </Group>
         <div className="flex flex-col gap-1">
@@ -153,7 +169,7 @@ export function ConsoleLayout() {
 
       <AppShell.Main>
         <Box maw={1280} mx="auto">
-          {hasOrg ? <Outlet /> : <NoOrganization onCreate={() => setOrgModalOpen(true)} />}
+          <Outlet />
         </Box>
       </AppShell.Main>
 
@@ -184,17 +200,100 @@ export function ConsoleLayout() {
   )
 }
 
-function NoOrganization({ onCreate }: { onCreate: () => void }) {
+function OrganizationOnboarding({
+  error,
+  name,
+  onLogout,
+  onNameChange,
+  onSubmit,
+  saving,
+  toast,
+}: {
+  error: string
+  name: string
+  onLogout: () => void
+  onNameChange: (name: string) => void
+  onSubmit: (event: React.FormEvent) => void
+  saving: boolean
+  toast: string
+}) {
   return (
-    <Box bg="white" className="rounded-lg border border-[var(--mantine-color-gray-3)]" p="xl">
-      <Stack align="start" gap="sm">
-        <Title order={1} size="h3">Create an organization</Title>
-        <Text c="dimmed" maw={560} size="sm">Organizations hold workers, KV namespaces, object buckets, OAuth clients, and member access. Create one to start using the control plane.</Text>
-        <ActionIcon aria-label="Create organization" onClick={onCreate} size="lg" variant="filled">
-          <Plus size={18} />
-        </ActionIcon>
-      </Stack>
+    <Box className="min-h-screen bg-[var(--mantine-color-gray-0)]">
+      <Group h={64} px="xl" justify="space-between">
+        <Group gap="sm">
+          <Box bg="blue" c="white" className="grid size-9 place-items-center rounded-md">
+            <Boxes size={18} />
+          </Box>
+          <Box>
+            <Title order={2} size="h4">nanoflare</Title>
+          </Box>
+        </Group>
+        <Tooltip label="Sign out">
+          <ActionIcon aria-label="Sign out" color="gray" onClick={onLogout} variant="subtle">
+            <LogOut size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+
+      <Group align="center" className="min-h-[calc(100vh-64px)]" gap={56} justify="center" px="xl" py={48}>
+        <Stack gap="lg" maw={500}>
+          <Box>
+            <Title order={1} size="h1">Create your first organization</Title>
+            <Text c="dimmed" mt="md" size="md">
+              Start with a workspace for your team, resources, OAuth clients, and member access. You can create more organizations later.
+            </Text>
+          </Box>
+          <Stack gap="xs">
+            <GuideStep label="1" title="Name the organization" copy="Use a team, company, project, or environment name." />
+            <GuideStep label="2" title="Become the owner" copy="You receive owner access and can invite other users next." />
+            <GuideStep label="3" title="Build in the console" copy="Workers, KV, object storage, and settings will open after creation." />
+          </Stack>
+        </Stack>
+
+        <Paper bg="white" p="xl" radius="lg" shadow="xs" withBorder w="100%" maw={430}>
+          <form onSubmit={onSubmit}>
+            <Stack>
+              <Box>
+                <Title order={2} size="h3">Organization details</Title>
+                <Text c="dimmed" size="sm">This creates a new org and selects it immediately.</Text>
+              </Box>
+              {error && <Text c="red" size="sm">{error}</Text>}
+              <TextInput
+                autoFocus
+                label="Organization name"
+                onChange={(event) => onNameChange(event.currentTarget.value)}
+                placeholder="Acme Production"
+                required
+                value={name}
+              />
+              <Button leftSection={<Check size={16} />} loading={saving} type="submit">
+                Create organization
+              </Button>
+            </Stack>
+          </form>
+        </Paper>
+      </Group>
+
+      {toast && (
+        <Notification className="fixed bottom-5 right-5 z-[60]" color="green" icon={<Check size={16} />} withCloseButton={false}>
+          {toast}
+        </Notification>
+      )}
     </Box>
+  )
+}
+
+function GuideStep({ label, title, copy }: { label: string; title: string; copy: string }) {
+  return (
+    <Group align="start" gap="sm" wrap="nowrap">
+      <Box bg="white" c="blue" className="grid size-7 shrink-0 place-items-center rounded-md border border-[var(--mantine-color-gray-3)] text-sm font-bold">
+        {label}
+      </Box>
+      <Box>
+        <Text fw={700} size="sm">{title}</Text>
+        <Text c="dimmed" size="sm">{copy}</Text>
+      </Box>
+    </Group>
   )
 }
 
