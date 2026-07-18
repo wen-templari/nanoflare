@@ -1,6 +1,7 @@
-import { ActionIcon, Anchor, AppShell, Box, Breadcrumbs, Burger, Group, NavLink as MantineNavLink, Notification, Select, Stack, Text, Title, Tooltip } from "@mantine/core"
+import { ActionIcon, Anchor, AppShell, Box, Breadcrumbs, Burger, Group, Modal, NavLink as MantineNavLink, Notification, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
-import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Settings, Waypoints } from "lucide-react"
+import { Boxes, Check, CircleGauge, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
+import { useState } from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { useWorkspace } from "../../app/workspace-context"
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
@@ -30,6 +31,7 @@ export function ConsoleLayout() {
     activeOrgID,
     organizations,
     setActiveOrgID,
+    createOrganization,
     logout,
     workerDialogOpen,
     namespaceDialogOpen,
@@ -42,8 +44,30 @@ export function ConsoleLayout() {
     toast,
     notify,
   } = useWorkspace()
+  const [orgModalOpen, setOrgModalOpen] = useState(false)
+  const [orgName, setOrgName] = useState("")
+  const [orgSaving, setOrgSaving] = useState(false)
+  const [orgError, setOrgError] = useState("")
 
   const breadcrumbs = getBreadcrumbs(location.pathname, { workers, namespaces, objectStorageBuckets })
+  const hasOrg = Boolean(activeOrgID)
+
+  async function submitOrganization(event: React.FormEvent) {
+    event.preventDefault()
+    setOrgSaving(true)
+    setOrgError("")
+    try {
+      await createOrganization(orgName)
+      setOrgName("")
+      setOrgModalOpen(false)
+      notify("Organization created")
+      navigate("/")
+    } catch (err) {
+      setOrgError(err instanceof Error ? err.message : "Could not create organization")
+    } finally {
+      setOrgSaving(false)
+    }
+  }
 
   return (
     <AppShell
@@ -68,11 +92,18 @@ export function ConsoleLayout() {
             <Select
               allowDeselect={false}
               data={organizations.map((org) => ({ value: org.id, label: org.name }))}
+              disabled={!organizations.length}
               maw={220}
               onChange={(value) => value && setActiveOrgID(value)}
+              placeholder="No organization"
               size="xs"
               value={activeOrgID}
             />
+            <Tooltip label="Create organization">
+              <ActionIcon aria-label="Create organization" onClick={() => setOrgModalOpen(true)} variant="subtle">
+                <Plus size={16} />
+              </ActionIcon>
+            </Tooltip>
             <Tooltip label="Sign out">
               <ActionIcon
                 aria-label="Sign out"
@@ -122,7 +153,7 @@ export function ConsoleLayout() {
 
       <AppShell.Main>
         <Box maw={1280} mx="auto">
-          <Outlet />
+          {hasOrg ? <Outlet /> : <NoOrganization onCreate={() => setOrgModalOpen(true)} />}
         </Box>
       </AppShell.Main>
 
@@ -135,7 +166,35 @@ export function ConsoleLayout() {
           {toast}
         </Notification>
       )}
+
+      <Modal opened={orgModalOpen} onClose={() => setOrgModalOpen(false)} title="Create organization">
+        <form onSubmit={submitOrganization}>
+          <Stack>
+            {orgError && <Text c="red" size="sm">{orgError}</Text>}
+            <TextInput label="Name" onChange={(event) => setOrgName(event.currentTarget.value)} required value={orgName} />
+            <Group justify="end">
+              <ActionIcon aria-label="Create organization" loading={orgSaving} type="submit" variant="filled">
+                <Check size={16} />
+              </ActionIcon>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
     </AppShell>
+  )
+}
+
+function NoOrganization({ onCreate }: { onCreate: () => void }) {
+  return (
+    <Box bg="white" className="rounded-lg border border-[var(--mantine-color-gray-3)]" p="xl">
+      <Stack align="start" gap="sm">
+        <Title order={1} size="h3">Create an organization</Title>
+        <Text c="dimmed" maw={560} size="sm">Organizations hold workers, KV namespaces, object buckets, OAuth clients, and member access. Create one to start using the control plane.</Text>
+        <ActionIcon aria-label="Create organization" onClick={onCreate} size="lg" variant="filled">
+          <Plus size={18} />
+        </ActionIcon>
+      </Stack>
+    </Box>
   )
 }
 

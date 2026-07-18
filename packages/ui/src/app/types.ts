@@ -125,7 +125,7 @@ export type OAuthClientConnection = {
   scopes: string[];
   created_at: string;
 };
-export type Organization = { id: string; name: string; created_at: string };
+export type Organization = { id: string; name: string; role?: string; scopes?: string[]; created_at: string };
 export type ControlUser = { id: string; email: string; created_at: string };
 export type AuthSession = {
   token: string;
@@ -133,6 +133,9 @@ export type AuthSession = {
   organizations: Organization[];
   active_org_id?: string;
 };
+export type OrganizationMember = { user_id: string; user_email: string; org_id: string; role: string; scopes: string[]; created_at: string };
+export type OrganizationInvite = { id: string; org_id: string; org_name?: string; email: string; role: string; scopes: string[]; inviter_id: string; inviter_email?: string; expires_at: string; accepted_at?: string; revoked_at?: string; created_at: string };
+export type OrganizationInviteCreated = OrganizationInvite & { token: string; invite_url: string };
 export type KVNamespaceOption = { id: string; label: string };
 export type ObjectStorageBucketOption = { id: string; label: string };
 
@@ -147,6 +150,7 @@ export type WorkspaceContextValue = {
   activeOrgID: string;
   organizations: Organization[];
   setActiveOrgID: (orgID: string) => void;
+  createOrganization: (name: string) => Promise<void>;
   logout: () => void;
   workerDialogOpen: boolean;
   namespaceDialogOpen: boolean;

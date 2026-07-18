@@ -84,6 +84,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         activeOrgID: auth.activeOrgID,
         organizations: auth.organizations,
         setActiveOrgID: auth.setActiveOrgID,
+        createOrganization: auth.createOrganization,
         logout: auth.logout,
         workerDialogOpen,
         namespaceDialogOpen,

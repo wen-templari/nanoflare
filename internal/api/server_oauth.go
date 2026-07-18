@@ -39,7 +39,7 @@ func (s *Server) registerOAuthRoutes() {
 }
 
 func (s *Server) oauthClients(w http.ResponseWriter, r *http.Request) {
-	if !s.requireControlUser(w, r) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:read") {
 		return
 	}
 	clients, err := s.oauth.Clients(controlOrgID(r))
@@ -51,7 +51,7 @@ func (s *Server) oauthClients(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createOAuthClient(w http.ResponseWriter, r *http.Request) {
-	if !s.requireControlUser(w, r) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:write") {
 		return
 	}
 	var input nanoflare.CreateOAuthClientInput
@@ -69,7 +69,7 @@ func (s *Server) createOAuthClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) oauthClient(w http.ResponseWriter, r *http.Request) {
-	if !s.requireControlUser(w, r) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:read") {
 		return
 	}
 	client, err := s.oauth.Client(controlOrgID(r), r.PathValue("clientID"))
@@ -81,7 +81,7 @@ func (s *Server) oauthClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) oauthClientConnections(w http.ResponseWriter, r *http.Request) {
-	if !s.requireControlUser(w, r) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:read") {
 		return
 	}
 	connections, err := s.oauth.ClientConnections(controlOrgID(r), r.PathValue("clientID"))
@@ -93,7 +93,7 @@ func (s *Server) oauthClientConnections(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) updateOAuthClient(w http.ResponseWriter, r *http.Request) {
-	if !s.requireControlUser(w, r) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:write") {
 		return
 	}
 	var input nanoflare.UpdateOAuthClientInput
@@ -110,7 +110,7 @@ func (s *Server) updateOAuthClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request) {
-	if !s.requireControlUser(w, r) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:write") {
 		return
 	}
 	client, err := s.oauth.RotateClientSecret(controlOrgID(r), r.PathValue("clientID"))
@@ -122,7 +122,7 @@ func (s *Server) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) disableOAuthClient(w http.ResponseWriter, r *http.Request) {
-	if !s.requireControlUser(w, r) {
+	if !s.requireControlUser(w, r) || !s.requireScope(w, r, "orgs:write") {
 		return
 	}
 	if err := s.oauth.DisableClient(controlOrgID(r), r.PathValue("clientID")); err != nil {

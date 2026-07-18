@@ -244,6 +244,162 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	}
 }
 
+func TestOpenSignupAndCreateOrganization(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+
+	first := signupControlUser(t, server)
+	signupBody := bytes.NewBufferString(`{"email":"second@example.com","password":"secret"}`)
+	signupRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/signup", signupBody)
+	signupRequest.Header.Set("Content-Type", "application/json")
+	signupRecorder := httptest.NewRecorder()
+	server.ServeHTTP(signupRecorder, signupRequest)
+	if signupRecorder.Code != http.StatusCreated {
+		t.Fatalf("open signup status = %d body = %q", signupRecorder.Code, signupRecorder.Body.String())
+	}
+	var second nanoflare.AuthSession
+	if err := json.Unmarshal(signupRecorder.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Organizations) != 0 || second.ActiveOrgID != "" {
+		t.Fatalf("signup session = %#v", second)
+	}
+
+	createBody := bytes.NewBufferString(`{"name":"Second Org"}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/orgs", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+second.Token)
+	createRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create org status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+	var org nanoflare.Organization
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &org); err != nil {
+		t.Fatal(err)
+	}
+	if org.Role != nanoflare.RoleOwner || !nanoflare.HasScope(org.Scopes, "members:owner") {
+		t.Fatalf("created org = %#v", org)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+first.Token)
+	listRequest.Header.Set("X-Nanoflare-Org-ID", org.ID)
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusForbidden {
+		t.Fatalf("cross-org list status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
+	}
+}
+
+func TestInvitesGrantScopedOrgAccess(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+
+	owner := signupControlUser(t, server)
+	inviteBody := bytes.NewBufferString(`{"email":"viewer@example.com","role":"viewer"}`)
+	inviteRequest := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+owner.ActiveOrgID+"/invites", inviteBody)
+	inviteRequest.Header.Set("Content-Type", "application/json")
+	inviteRequest.Header.Set("Authorization", "Bearer "+owner.Token)
+	inviteRequest.Header.Set("X-Nanoflare-Org-ID", owner.ActiveOrgID)
+	inviteRecorder := httptest.NewRecorder()
+	server.ServeHTTP(inviteRecorder, inviteRequest)
+	if inviteRecorder.Code != http.StatusCreated {
+		t.Fatalf("invite status = %d body = %q", inviteRecorder.Code, inviteRecorder.Body.String())
+	}
+	var invite nanoflare.InviteCreated
+	if err := json.Unmarshal(inviteRecorder.Body.Bytes(), &invite); err != nil {
+		t.Fatal(err)
+	}
+
+	signupBody := bytes.NewBufferString(`{"email":"viewer@example.com","password":"secret"}`)
+	signupRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/signup", signupBody)
+	signupRequest.Header.Set("Content-Type", "application/json")
+	signupRecorder := httptest.NewRecorder()
+	server.ServeHTTP(signupRecorder, signupRequest)
+	if signupRecorder.Code != http.StatusCreated {
+		t.Fatalf("viewer signup status = %d body = %q", signupRecorder.Code, signupRecorder.Body.String())
+	}
+	var viewer nanoflare.AuthSession
+	if err := json.Unmarshal(signupRecorder.Body.Bytes(), &viewer); err != nil {
+		t.Fatal(err)
+	}
+
+	acceptRequest := httptest.NewRequest(http.MethodPost, "/v1/invites/"+invite.Token+"/accept", bytes.NewBufferString(`{}`))
+	acceptRequest.Header.Set("Content-Type", "application/json")
+	acceptRequest.Header.Set("Authorization", "Bearer "+viewer.Token)
+	acceptRecorder := httptest.NewRecorder()
+	server.ServeHTTP(acceptRecorder, acceptRequest)
+	if acceptRecorder.Code != http.StatusOK {
+		t.Fatalf("accept status = %d body = %q", acceptRecorder.Code, acceptRecorder.Body.String())
+	}
+
+	createBody := bytes.NewBufferString(`{"name":"Viewer App","hostname":"viewer.example.com"}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+viewer.Token)
+	createRequest.Header.Set("X-Nanoflare-Org-ID", owner.ActiveOrgID)
+	createRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusForbidden {
+		t.Fatalf("viewer create status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+viewer.Token)
+	listRequest.Header.Set("X-Nanoflare-Org-ID", owner.ActiveOrgID)
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("viewer list status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
+	}
+}
+
+func TestPendingInviteCanBeRevoked(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+
+	owner := signupControlUser(t, server)
+	inviteBody := bytes.NewBufferString(`{"email":"pending@example.com","role":"member"}`)
+	inviteRequest := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+owner.ActiveOrgID+"/invites", inviteBody)
+	inviteRequest.Header.Set("Content-Type", "application/json")
+	inviteRequest.Header.Set("Authorization", "Bearer "+owner.Token)
+	inviteRequest.Header.Set("X-Nanoflare-Org-ID", owner.ActiveOrgID)
+	inviteRecorder := httptest.NewRecorder()
+	server.ServeHTTP(inviteRecorder, inviteRequest)
+	if inviteRecorder.Code != http.StatusCreated {
+		t.Fatalf("invite status = %d body = %q", inviteRecorder.Code, inviteRecorder.Body.String())
+	}
+	var invite nanoflare.InviteCreated
+	if err := json.Unmarshal(inviteRecorder.Body.Bytes(), &invite); err != nil {
+		t.Fatal(err)
+	}
+
+	revokeRequest := httptest.NewRequest(http.MethodDelete, "/v1/orgs/"+owner.ActiveOrgID+"/invites/"+invite.ID, nil)
+	revokeRequest.Header.Set("Authorization", "Bearer "+owner.Token)
+	revokeRequest.Header.Set("X-Nanoflare-Org-ID", owner.ActiveOrgID)
+	revokeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(revokeRecorder, revokeRequest)
+	if revokeRecorder.Code != http.StatusNoContent {
+		t.Fatalf("revoke status = %d body = %q", revokeRecorder.Code, revokeRecorder.Body.String())
+	}
+
+	acceptBody := bytes.NewBufferString(`{"email":"pending@example.com","password":"secret"}`)
+	acceptRequest := httptest.NewRequest(http.MethodPost, "/v1/invites/"+invite.Token+"/accept", acceptBody)
+	acceptRequest.Header.Set("Content-Type", "application/json")
+	acceptRecorder := httptest.NewRecorder()
+	server.ServeHTTP(acceptRecorder, acceptRequest)
+	if acceptRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("accept revoked status = %d body = %q", acceptRecorder.Code, acceptRecorder.Body.String())
+	}
+}
+
 func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})

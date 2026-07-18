@@ -14,6 +14,7 @@ import { OAuthClientDetailPage } from "./pages/oauth-client-detail-page";
 import { WorkerDetailPage } from "./pages/worker-detail-page";
 import { WorkersPage } from "./pages/workers-page";
 import { LoginPage } from "./pages/login-page";
+import { InvitePage } from "./pages/invite-page";
 
 const theme = createTheme({
   primaryColor: "blue",
@@ -29,6 +30,7 @@ export function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/invites/:token" element={<InvitePage />} />
             <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
             <Route element={<ProtectedConsole />}>
               <Route index element={<OverviewPage />} />

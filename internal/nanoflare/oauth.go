@@ -286,12 +286,14 @@ func (s *OAuthService) Authorize(user User, input OAuthAuthorizeInput) (OAuthAut
 	if orgID == "" {
 		return OAuthAuthorizeResponse{}, errors.New("org_id is required")
 	}
-	ok, err := s.store.UserBelongsToOrganization(user.ID, orgID)
+	membership, err := s.store.OrganizationMembership(user.ID, orgID)
 	if err != nil {
 		return OAuthAuthorizeResponse{}, err
 	}
-	if !ok {
-		return OAuthAuthorizeResponse{}, ErrMembershipNotFound
+	for _, scope := range scopes {
+		if !HasScope(membership.Scopes, scope) {
+			return OAuthAuthorizeResponse{}, ErrOAuthInvalidScope
+		}
 	}
 	code, err := s.randomID()
 	if err != nil {
@@ -521,7 +523,7 @@ func normalizeOAuthScopes(values []string) ([]string, error) {
 
 func isAllowedOAuthScope(scope string) bool {
 	switch scope {
-	case "apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write":
+	case "apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner":
 		return true
 	default:
 		return false

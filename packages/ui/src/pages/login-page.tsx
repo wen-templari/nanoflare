@@ -11,8 +11,7 @@ export function LoginPage() {
   const next = searchParams.get("next") || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [organizationName, setOrganizationName] = useState("");
-  const [setupMode, setSetupMode] = useState(false);
+  const [signupMode, setSignupMode] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -23,7 +22,8 @@ export function LoginPage() {
     setSubmitting(true);
     setError("");
     try {
-      await auth.login(email, password, setupMode ? organizationName : undefined);
+      if (signupMode) await auth.signup(email, password);
+      else await auth.login(email, password);
       navigate(next, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -51,9 +51,9 @@ export function LoginPage() {
                 <Stack>
                   {error && <Alert color="red">{error}</Alert>}
                   <Box>
-                    <Title order={2} size="h4">{setupMode ? "First time setup" : "Sign in"}</Title>
+                    <Title order={2} size="h4">{signupMode ? "Create account" : "Sign in"}</Title>
                     <Text c="dimmed" size="sm">
-                      {setupMode ? "Create the first user and organization." : "Use your control-plane account."}
+                      {signupMode ? "Create your Nanoflare account. You can create or join an organization next." : "Use your control-plane account."}
                     </Text>
                   </Box>
                   <TextInput
@@ -65,25 +65,17 @@ export function LoginPage() {
                     value={email}
                   />
                   <PasswordInput
-                    autoComplete={setupMode ? "new-password" : "current-password"}
+                    autoComplete={signupMode ? "new-password" : "current-password"}
                     label="Password"
                     onChange={(event) => setPassword(event.currentTarget.value)}
                     required
                     value={password}
                   />
-                  {setupMode && (
-                    <TextInput
-                      label="Organization"
-                      onChange={(event) => setOrganizationName(event.currentTarget.value)}
-                      required
-                      value={organizationName}
-                    />
-                  )}
                   <Button leftSection={<LogIn size={16} />} loading={submitting} type="submit">
-                    {setupMode ? "Create account" : "Sign in"}
+                    {signupMode ? "Create account" : "Sign in"}
                   </Button>
-                  <Button color="gray" onClick={() => setSetupMode((value) => !value)} variant="subtle">
-                    {setupMode ? "Use existing account" : "Set up a new control plane"}
+                  <Button color="gray" onClick={() => setSignupMode((value) => !value)} variant="subtle">
+                    {signupMode ? "Use existing account" : "Create a new account"}
                   </Button>
                 </Stack>
               </form>

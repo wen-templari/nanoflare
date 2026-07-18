@@ -12,6 +12,7 @@ export function activeOrgID() {
 export function saveAuth(token: string, orgID: string) {
   window.localStorage.setItem(tokenKey, token);
   if (orgID) window.localStorage.setItem(activeOrgKey, orgID);
+  else window.localStorage.removeItem(activeOrgKey);
 }
 
 export function saveActiveOrg(orgID: string) {

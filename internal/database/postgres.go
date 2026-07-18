@@ -68,8 +68,23 @@ CREATE TABLE IF NOT EXISTS organizations (
 CREATE TABLE IF NOT EXISTS user_organizations (
 	user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+	role text NOT NULL DEFAULT 'owner',
+	scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
 	created_at timestamptz NOT NULL DEFAULT NOW(),
 	PRIMARY KEY (user_id, organization_id)
+);
+CREATE TABLE IF NOT EXISTS organization_invites (
+	id text PRIMARY KEY,
+	token_hash text NOT NULL UNIQUE,
+	org_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+	email text NOT NULL,
+	role text NOT NULL,
+	scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+	inviter_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	expires_at timestamptz NOT NULL,
+	accepted_at timestamptz,
+	revoked_at timestamptz,
+	created_at timestamptz NOT NULL
 );
 CREATE TABLE IF NOT EXISTS oauth_clients (
 	id text PRIMARY KEY,
@@ -158,6 +173,10 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS owner_org_id text NOT NULL DEFAULT '';
+ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'owner';
+ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS scopes jsonb NOT NULL DEFAULT '[]'::jsonb;
+UPDATE user_organizations SET role = 'owner' WHERE role = '';
+UPDATE user_organizations SET scopes = '["apps:read","apps:write","deployments:write","secrets:write","kv:read","kv:write","objects:read","objects:write","orgs:read","members:read","members:write","orgs:write","members:owner"]'::jsonb WHERE scopes = '[]'::jsonb;
 UPDATE apps SET name = hostname WHERE name = '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS assets jsonb NOT NULL DEFAULT '[]';
@@ -436,20 +455,98 @@ func (p *Postgres) GetOrganization(orgID string) (nanoflare.Organization, error)
 	return org, err
 }
 
-func (p *Postgres) AddUserToOrganization(userID, orgID string) error {
+func (p *Postgres) UpsertOrganizationMembership(membership nanoflare.OrganizationMembership) error {
 	_, err := p.db.Exec(`
-INSERT INTO user_organizations (user_id, organization_id)
-VALUES ($1, $2)
-ON CONFLICT (user_id, organization_id) DO NOTHING`, userID, orgID)
+INSERT INTO user_organizations (user_id, organization_id, role, scopes, created_at)
+VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, '0001-01-01T00:00:00Z')::timestamptz, NOW()))
+ON CONFLICT (user_id, organization_id) DO UPDATE SET role = EXCLUDED.role, scopes = EXCLUDED.scopes`,
+		membership.UserID, membership.OrgID, membership.Role, mustJSON(membership.Scopes), membership.CreatedAt.Format(time.RFC3339))
 	if isForeignKeyViolation(err) {
 		return nanoflare.ErrMembershipNotFound
 	}
 	return err
 }
 
+func (p *Postgres) AddUserToOrganization(userID, orgID string) error {
+	return p.UpsertOrganizationMembership(nanoflare.OrganizationMembership{
+		UserID: userID,
+		OrgID:  orgID,
+		Role:   nanoflare.RoleOwner,
+		Scopes: nanoflare.RoleScopes(nanoflare.RoleOwner),
+	})
+}
+
+func (p *Postgres) OrganizationMembership(userID, orgID string) (nanoflare.OrganizationMembership, error) {
+	var membership nanoflare.OrganizationMembership
+	var scopes []byte
+	err := p.db.QueryRow(`
+SELECT uo.user_id, u.email, uo.organization_id, uo.role, uo.scopes, uo.created_at
+FROM user_organizations uo
+JOIN users u ON u.id = uo.user_id
+WHERE uo.user_id = $1 AND uo.organization_id = $2`, userID, orgID).
+		Scan(&membership.UserID, &membership.UserEmail, &membership.OrgID, &membership.Role, &scopes, &membership.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.OrganizationMembership{}, nanoflare.ErrMembershipNotFound
+	}
+	if err != nil {
+		return nanoflare.OrganizationMembership{}, err
+	}
+	if err := json.Unmarshal(scopes, &membership.Scopes); err != nil {
+		return nanoflare.OrganizationMembership{}, err
+	}
+	return membership, nil
+}
+
+func (p *Postgres) ListOrganizationMembers(orgID string) ([]nanoflare.OrganizationMembership, error) {
+	rows, err := p.db.Query(`
+SELECT uo.user_id, u.email, uo.organization_id, uo.role, uo.scopes, uo.created_at
+FROM user_organizations uo
+JOIN users u ON u.id = uo.user_id
+WHERE uo.organization_id = $1
+ORDER BY u.email`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	members := []nanoflare.OrganizationMembership{}
+	for rows.Next() {
+		var member nanoflare.OrganizationMembership
+		var scopes []byte
+		if err := rows.Scan(&member.UserID, &member.UserEmail, &member.OrgID, &member.Role, &scopes, &member.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(scopes, &member.Scopes); err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	return members, rows.Err()
+}
+
+func (p *Postgres) OwnerCount(orgID string) (int, error) {
+	var count int
+	err := p.db.QueryRow(`SELECT count(*) FROM user_organizations WHERE organization_id = $1 AND role = 'owner'`, orgID).Scan(&count)
+	return count, err
+}
+
+func (p *Postgres) DeleteOrganizationMembership(userID, orgID string) error {
+	result, err := p.db.Exec(`DELETE FROM user_organizations WHERE user_id = $1 AND organization_id = $2`, userID, orgID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return nanoflare.ErrMembershipNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) ListOrganizationsForUser(userID string) ([]nanoflare.Organization, error) {
 	rows, err := p.db.Query(`
-SELECT o.id, o.name, o.created_at
+SELECT o.id, o.name, uo.role, uo.scopes, o.created_at
 FROM organizations o
 JOIN user_organizations uo ON uo.organization_id = o.id
 WHERE uo.user_id = $1
@@ -461,7 +558,11 @@ ORDER BY o.name`, userID)
 	orgs := []nanoflare.Organization{}
 	for rows.Next() {
 		var org nanoflare.Organization
-		if err := rows.Scan(&org.ID, &org.Name, &org.CreatedAt); err != nil {
+		var scopes []byte
+		if err := rows.Scan(&org.ID, &org.Name, &org.Role, &scopes, &org.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(scopes, &org.Scopes); err != nil {
 			return nil, err
 		}
 		orgs = append(orgs, org)
@@ -477,6 +578,101 @@ SELECT EXISTS (
 	WHERE user_id = $1 AND organization_id = $2
 )`, userID, orgID).Scan(&exists)
 	return exists, err
+}
+
+func (p *Postgres) CreateOrganizationInvite(invite nanoflare.OrganizationInvite) error {
+	_, err := p.db.Exec(`
+INSERT INTO organization_invites (id, token_hash, org_id, email, role, scopes, inviter_id, expires_at, accepted_at, revoked_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		invite.ID, invite.TokenHash, invite.OrgID, invite.Email, invite.Role, mustJSON(invite.Scopes), invite.InviterID, invite.ExpiresAt, invite.AcceptedAt, invite.RevokedAt, invite.CreatedAt)
+	return err
+}
+
+func (p *Postgres) OrganizationInviteByTokenHash(tokenHash string) (nanoflare.OrganizationInvite, error) {
+	return p.organizationInvite(`i.token_hash = $1`, tokenHash)
+}
+
+func (p *Postgres) OrganizationInviteByID(orgID, inviteID string) (nanoflare.OrganizationInvite, error) {
+	row := p.db.QueryRow(`
+SELECT i.id, i.token_hash, i.org_id, o.name, i.email, i.role, i.scopes, i.inviter_id, u.email, i.expires_at, i.accepted_at, i.revoked_at, i.created_at
+FROM organization_invites i
+JOIN organizations o ON o.id = i.org_id
+JOIN users u ON u.id = i.inviter_id
+WHERE i.org_id = $1 AND i.id = $2`, orgID, inviteID)
+	invite, err := scanOrganizationInvite(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.OrganizationInvite{}, nanoflare.ErrInviteNotFound
+	}
+	return invite, err
+}
+
+func (p *Postgres) organizationInvite(where, arg string) (nanoflare.OrganizationInvite, error) {
+	row := p.db.QueryRow(`
+SELECT i.id, i.token_hash, i.org_id, o.name, i.email, i.role, i.scopes, i.inviter_id, u.email, i.expires_at, i.accepted_at, i.revoked_at, i.created_at
+FROM organization_invites i
+JOIN organizations o ON o.id = i.org_id
+JOIN users u ON u.id = i.inviter_id
+WHERE `+where, arg)
+	invite, err := scanOrganizationInvite(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.OrganizationInvite{}, nanoflare.ErrInviteNotFound
+	}
+	return invite, err
+}
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanOrganizationInvite(row scanner) (nanoflare.OrganizationInvite, error) {
+	var invite nanoflare.OrganizationInvite
+	var scopes []byte
+	err := row.Scan(&invite.ID, &invite.TokenHash, &invite.OrgID, &invite.OrgName, &invite.Email, &invite.Role, &scopes, &invite.InviterID, &invite.InviterEmail, &invite.ExpiresAt, &invite.AcceptedAt, &invite.RevokedAt, &invite.CreatedAt)
+	if err != nil {
+		return nanoflare.OrganizationInvite{}, err
+	}
+	if err := json.Unmarshal(scopes, &invite.Scopes); err != nil {
+		return nanoflare.OrganizationInvite{}, err
+	}
+	return invite, nil
+}
+
+func (p *Postgres) OrganizationInvitesByOrg(orgID string) ([]nanoflare.OrganizationInvite, error) {
+	rows, err := p.db.Query(`
+SELECT i.id, i.token_hash, i.org_id, o.name, i.email, i.role, i.scopes, i.inviter_id, u.email, i.expires_at, i.accepted_at, i.revoked_at, i.created_at
+FROM organization_invites i
+JOIN organizations o ON o.id = i.org_id
+JOIN users u ON u.id = i.inviter_id
+WHERE i.org_id = $1
+ORDER BY i.created_at DESC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	invites := []nanoflare.OrganizationInvite{}
+	for rows.Next() {
+		invite, err := scanOrganizationInvite(rows)
+		if err != nil {
+			return nil, err
+		}
+		invites = append(invites, invite)
+	}
+	return invites, rows.Err()
+}
+
+func (p *Postgres) UpdateOrganizationInvite(invite nanoflare.OrganizationInvite) error {
+	result, err := p.db.Exec(`UPDATE organization_invites SET accepted_at = $2, revoked_at = $3 WHERE token_hash = $1`, invite.TokenHash, invite.AcceptedAt, invite.RevokedAt)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return nanoflare.ErrInviteNotFound
+	}
+	return nil
 }
 
 func (p *Postgres) CreateOAuthClient(client nanoflare.OAuthClient) error {

@@ -34,9 +34,18 @@ type Repository interface {
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
 	GetOrganization(string) (Organization, error)
-	AddUserToOrganization(userID, orgID string) error
+	UpsertOrganizationMembership(OrganizationMembership) error
+	OrganizationMembership(userID, orgID string) (OrganizationMembership, error)
+	ListOrganizationMembers(orgID string) ([]OrganizationMembership, error)
+	OwnerCount(orgID string) (int, error)
+	DeleteOrganizationMembership(userID, orgID string) error
 	ListOrganizationsForUser(userID string) ([]Organization, error)
 	UserBelongsToOrganization(userID, orgID string) (bool, error)
+	CreateOrganizationInvite(OrganizationInvite) error
+	OrganizationInviteByID(orgID, inviteID string) (OrganizationInvite, error)
+	OrganizationInviteByTokenHash(tokenHash string) (OrganizationInvite, error)
+	OrganizationInvitesByOrg(orgID string) ([]OrganizationInvite, error)
+	UpdateOrganizationInvite(OrganizationInvite) error
 	CreateOAuthClient(OAuthClient) error
 	OAuthClient(string) (OAuthClient, error)
 	OAuthClientsByOwnerOrg(string) ([]OAuthClient, error)
@@ -97,7 +106,8 @@ type Store struct {
 	users           map[string]User
 	usersByEmail    map[string]string
 	organizations   map[string]Organization
-	memberships     map[string]map[string]bool
+	memberships     map[string]map[string]OrganizationMembership
+	invites         map[string]OrganizationInvite
 	oauthClients    map[string]OAuthClient
 	oauthCodes      map[string]OAuthAuthorizationCode
 	oauthTokens     map[string]OAuthToken
@@ -119,7 +129,8 @@ func NewStore() *Store {
 		users:           make(map[string]User),
 		usersByEmail:    make(map[string]string),
 		organizations:   make(map[string]Organization),
-		memberships:     make(map[string]map[string]bool),
+		memberships:     make(map[string]map[string]OrganizationMembership),
+		invites:         make(map[string]OrganizationInvite),
 		oauthClients:    make(map[string]OAuthClient),
 		oauthCodes:      make(map[string]OAuthAuthorizationCode),
 		oauthTokens:     make(map[string]OAuthToken),
@@ -187,19 +198,89 @@ func (s *Store) GetOrganization(orgID string) (Organization, error) {
 	return org, nil
 }
 
-func (s *Store) AddUserToOrganization(userID, orgID string) error {
+func (s *Store) UpsertOrganizationMembership(membership OrganizationMembership) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.users[userID]; !exists {
+	if _, exists := s.users[membership.UserID]; !exists {
 		return ErrUserNotFound
 	}
-	if _, exists := s.organizations[orgID]; !exists {
+	if _, exists := s.organizations[membership.OrgID]; !exists {
 		return ErrOrganizationNotFound
 	}
-	if s.memberships[userID] == nil {
-		s.memberships[userID] = make(map[string]bool)
+	if s.memberships[membership.UserID] == nil {
+		s.memberships[membership.UserID] = make(map[string]OrganizationMembership)
 	}
-	s.memberships[userID][orgID] = true
+	if membership.CreatedAt.IsZero() {
+		if existing, ok := s.memberships[membership.UserID][membership.OrgID]; ok {
+			membership.CreatedAt = existing.CreatedAt
+		} else {
+			membership.CreatedAt = time.Now().UTC()
+		}
+	}
+	membership.Role = NormalizeRole(membership.Role)
+	membership.Scopes = append([]string{}, membership.Scopes...)
+	s.memberships[membership.UserID][membership.OrgID] = membership
+	return nil
+}
+
+func (s *Store) AddUserToOrganization(userID, orgID string) error {
+	return s.UpsertOrganizationMembership(OrganizationMembership{
+		UserID: userID,
+		OrgID:  orgID,
+		Role:   RoleOwner,
+		Scopes: RoleScopes(RoleOwner),
+	})
+}
+
+func (s *Store) OrganizationMembership(userID, orgID string) (OrganizationMembership, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	membership, exists := s.memberships[userID][orgID]
+	if !exists {
+		return OrganizationMembership{}, ErrMembershipNotFound
+	}
+	membership.UserEmail = s.users[userID].Email
+	membership.Scopes = append([]string{}, membership.Scopes...)
+	return membership, nil
+}
+
+func (s *Store) ListOrganizationMembers(orgID string) ([]OrganizationMembership, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, exists := s.organizations[orgID]; !exists {
+		return nil, ErrOrganizationNotFound
+	}
+	members := []OrganizationMembership{}
+	for userID, orgs := range s.memberships {
+		if membership, ok := orgs[orgID]; ok {
+			membership.UserEmail = s.users[userID].Email
+			membership.Scopes = append([]string{}, membership.Scopes...)
+			members = append(members, membership)
+		}
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].UserEmail < members[j].UserEmail })
+	return members, nil
+}
+
+func (s *Store) OwnerCount(orgID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, orgs := range s.memberships {
+		if membership, ok := orgs[orgID]; ok && membership.Role == RoleOwner {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *Store) DeleteOrganizationMembership(userID, orgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.memberships[userID][orgID]; !ok {
+		return ErrMembershipNotFound
+	}
+	delete(s.memberships[userID], orgID)
 	return nil
 }
 
@@ -210,8 +291,11 @@ func (s *Store) ListOrganizationsForUser(userID string) ([]Organization, error) 
 		return nil, ErrUserNotFound
 	}
 	orgs := make([]Organization, 0, len(s.memberships[userID]))
-	for orgID := range s.memberships[userID] {
-		orgs = append(orgs, s.organizations[orgID])
+	for orgID, membership := range s.memberships[userID] {
+		org := s.organizations[orgID]
+		org.Role = membership.Role
+		org.Scopes = append([]string{}, membership.Scopes...)
+		orgs = append(orgs, org)
 	}
 	sort.Slice(orgs, func(i, j int) bool { return orgs[i].Name < orgs[j].Name })
 	return orgs, nil
@@ -223,7 +307,80 @@ func (s *Store) UserBelongsToOrganization(userID, orgID string) (bool, error) {
 	if _, exists := s.users[userID]; !exists {
 		return false, ErrUserNotFound
 	}
-	return s.memberships[userID][orgID], nil
+	_, ok := s.memberships[userID][orgID]
+	return ok, nil
+}
+
+func (s *Store) CreateOrganizationInvite(invite OrganizationInvite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.organizations[invite.OrgID]; !exists {
+		return ErrOrganizationNotFound
+	}
+	s.invites[invite.TokenHash] = cloneOrganizationInvite(invite)
+	return nil
+}
+
+func (s *Store) OrganizationInviteByTokenHash(tokenHash string) (OrganizationInvite, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	invite, exists := s.invites[tokenHash]
+	if !exists {
+		return OrganizationInvite{}, ErrInviteNotFound
+	}
+	invite = cloneOrganizationInvite(invite)
+	if org, ok := s.organizations[invite.OrgID]; ok {
+		invite.OrgName = org.Name
+	}
+	if user, ok := s.users[invite.InviterID]; ok {
+		invite.InviterEmail = user.Email
+	}
+	return invite, nil
+}
+
+func (s *Store) OrganizationInviteByID(orgID, inviteID string) (OrganizationInvite, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, invite := range s.invites {
+		if invite.OrgID == orgID && invite.ID == inviteID {
+			invite = cloneOrganizationInvite(invite)
+			if org, ok := s.organizations[invite.OrgID]; ok {
+				invite.OrgName = org.Name
+			}
+			if user, ok := s.users[invite.InviterID]; ok {
+				invite.InviterEmail = user.Email
+			}
+			return invite, nil
+		}
+	}
+	return OrganizationInvite{}, ErrInviteNotFound
+}
+
+func (s *Store) OrganizationInvitesByOrg(orgID string) ([]OrganizationInvite, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	invites := []OrganizationInvite{}
+	for _, invite := range s.invites {
+		if invite.OrgID == orgID {
+			invite = cloneOrganizationInvite(invite)
+			if user, ok := s.users[invite.InviterID]; ok {
+				invite.InviterEmail = user.Email
+			}
+			invites = append(invites, invite)
+		}
+	}
+	sort.Slice(invites, func(i, j int) bool { return invites[i].CreatedAt.After(invites[j].CreatedAt) })
+	return invites, nil
+}
+
+func (s *Store) UpdateOrganizationInvite(invite OrganizationInvite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.invites[invite.TokenHash]; !exists {
+		return ErrInviteNotFound
+	}
+	s.invites[invite.TokenHash] = cloneOrganizationInvite(invite)
+	return nil
 }
 
 func (s *Store) CreateOAuthClient(client OAuthClient) error {
@@ -989,4 +1146,17 @@ func cloneOAuthToken(token OAuthToken) OAuthToken {
 		token.RevokedAt = &revoked
 	}
 	return token
+}
+
+func cloneOrganizationInvite(invite OrganizationInvite) OrganizationInvite {
+	invite.Scopes = append([]string(nil), invite.Scopes...)
+	if invite.AcceptedAt != nil {
+		accepted := *invite.AcceptedAt
+		invite.AcceptedAt = &accepted
+	}
+	if invite.RevokedAt != nil {
+		revoked := *invite.RevokedAt
+		invite.RevokedAt = &revoked
+	}
+	return invite
 }

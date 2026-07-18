@@ -8,7 +8,10 @@ type AuthContextValue = {
   userEmail: string;
   organizations: Organization[];
   activeOrgID: string;
-  login: (email: string, password: string, organizationName?: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string) => Promise<void>;
+  createOrganization: (name: string) => Promise<void>;
+  refresh: () => Promise<AuthSession>;
   setActiveOrgID: (orgID: string) => void;
   logout: () => void;
 };
@@ -31,15 +34,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       try {
-        const response = await apiFetch("/v1/auth/me");
-        if (!response.ok) throw new Error("auth expired");
-        const session = await response.json() as AuthSession;
+        const session = await refresh();
         if (cancelled) return;
-        const orgID = activeOrgIDState || session.active_org_id || session.organizations[0]?.id || "";
-        setUserEmail(session.user.email);
-        setOrganizations(session.organizations);
-        setActiveOrgIDState(orgID);
-        if (orgID) saveActiveOrg(orgID);
       } catch {
         if (!cancelled) {
           clearAuth();
@@ -58,15 +54,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  async function login(email: string, password: string, organizationName?: string) {
-    const payload = organizationName
-      ? { email, password, organization_name: organizationName }
-      : { email, password };
-    const path = organizationName ? "/v1/setup/signup" : "/v1/auth/login";
+  async function refresh() {
+    const response = await apiFetch("/v1/auth/me");
+    if (!response.ok) throw new Error("auth expired");
+    const session = await response.json() as AuthSession;
+    const currentOrgID = window.localStorage.getItem("nanoflare.auth.active_org_id") || "";
+    const savedOrgID = currentOrgID && session.organizations.some((org) => org.id === currentOrgID) ? currentOrgID : "";
+    const orgID = savedOrgID || session.active_org_id || session.organizations[0]?.id || "";
+    setUserEmail(session.user.email);
+    setOrganizations(session.organizations);
+    setActiveOrgIDState(orgID);
+    if (orgID) saveActiveOrg(orgID);
+    else window.localStorage.removeItem("nanoflare.auth.active_org_id");
+    return session;
+  }
+
+  async function authenticate(path: string, email: string, password: string) {
     const response = await fetch(path, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ email, password }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({ error: "Login failed" }));
@@ -78,6 +85,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUserEmail(session.user.email);
     setOrganizations(session.organizations);
     setActiveOrgIDState(orgID);
+  }
+
+  async function login(email: string, password: string) {
+    await authenticate("/v1/auth/login", email, password);
+  }
+
+  async function signup(email: string, password: string) {
+    await authenticate("/v1/auth/signup", email, password);
+  }
+
+  async function createOrganization(name: string) {
+    const response = await apiFetch("/v1/orgs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({ error: "Could not create organization" }));
+      throw new Error(body.error || "Could not create organization");
+    }
+    const org = await response.json() as Organization;
+    const nextOrgs = [...organizations.filter((item) => item.id !== org.id), org].sort((a, b) => a.name.localeCompare(b.name));
+    setOrganizations(nextOrgs);
+    setActiveOrgID(org.id);
   }
 
   function setActiveOrgID(orgID: string) {
@@ -101,6 +132,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         organizations,
         activeOrgID: activeOrgIDState,
         login,
+        signup,
+        createOrganization,
+        refresh,
         setActiveOrgID,
         logout,
       }}

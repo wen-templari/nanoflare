@@ -248,7 +248,34 @@ type User struct {
 type Organization struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	Role      string    `json:"role,omitempty"`
+	Scopes    []string  `json:"scopes,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type OrganizationMembership struct {
+	UserID    string    `json:"user_id"`
+	UserEmail string    `json:"user_email,omitempty"`
+	OrgID     string    `json:"org_id"`
+	Role      string    `json:"role"`
+	Scopes    []string  `json:"scopes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OrganizationInvite struct {
+	ID           string     `json:"id"`
+	TokenHash    string     `json:"-"`
+	OrgID        string     `json:"org_id"`
+	OrgName      string     `json:"org_name,omitempty"`
+	Email        string     `json:"email"`
+	Role         string     `json:"role"`
+	Scopes       []string   `json:"scopes"`
+	InviterID    string     `json:"inviter_id"`
+	InviterEmail string     `json:"inviter_email,omitempty"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	AcceptedAt   *time.Time `json:"accepted_at,omitempty"`
+	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type RunWorkerFirst []string
