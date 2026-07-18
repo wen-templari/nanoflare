@@ -190,7 +190,8 @@ func main() {
 		authenticator = verifier
 	}
 	controlAuth := nanoflare.NewControlAuthService(store, *authSecret)
-	server := api.NewServerWithRuntime(service, traefikStore, *traefikToken, authenticator, controlAuth, runtimeEnsurer)
+	oauth := nanoflare.NewOAuthService(store)
+	server := api.NewServerWithRuntimeAndOAuth(service, traefikStore, *traefikToken, authenticator, controlAuth, oauth, runtimeEnsurer)
 	runtimeMux := newRuntimeMux(service, server, durationTelemetry)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {

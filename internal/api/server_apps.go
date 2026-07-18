@@ -29,6 +29,9 @@ func (s *Server) registerAppRoutes() {
 }
 
 func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:read") {
+		return
+	}
 	deployments, err := s.service.WorkerDeploymentsForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -38,6 +41,9 @@ func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:read") {
+		return
+	}
 	detail, err := s.service.WorkerDetailForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -47,6 +53,9 @@ func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerFiles(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:read") {
+		return
+	}
 	files, err := s.service.WorkerFilesForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -56,6 +65,9 @@ func (s *Server) workerFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:read") {
+		return
+	}
 	output, err := s.service.WorkerOutputForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -65,6 +77,9 @@ func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:read") {
+		return
+	}
 	traffic, err := s.service.WorkerTrafficForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
@@ -78,6 +93,9 @@ func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:read") {
+		return
+	}
 	apps, err := s.service.ListAppsForOrg(controlOrgID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -87,12 +105,18 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:write") {
+		return
+	}
 	var input nanoflare.CreateAppInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	input.OrgID = controlOrgID(r)
+	if access, ok := controlOAuthAccess(r); ok {
+		input.OAuthClientID = access.ClientID
+	}
 	app, err := s.service.CreateApp(input)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -106,6 +130,9 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:write") {
+		return
+	}
 	var input nanoflare.UpdateAppInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -127,6 +154,9 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "apps:write") {
+		return
+	}
 	if err := s.service.DeleteAppForOrg(controlOrgID(r), r.PathValue("appID")); err != nil {
 		writeWorkerError(w, err)
 		return
@@ -135,6 +165,9 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "deployments:write") {
+		return
+	}
 	var input nanoflare.DeployInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -153,6 +186,9 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "secrets:write") {
+		return
+	}
 	secrets, err := s.service.ListSecretsForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -162,6 +198,9 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putSecret(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "secrets:write") {
+		return
+	}
 	var input nanoflare.PutSecretInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -175,6 +214,9 @@ func (s *Server) putSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "secrets:write") {
+		return
+	}
 	if err := s.service.DeleteSecretForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("name")); err != nil {
 		writeWorkerError(w, err)
 		return

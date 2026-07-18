@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 )
 
 var (
@@ -36,6 +37,17 @@ type Repository interface {
 	AddUserToOrganization(userID, orgID string) error
 	ListOrganizationsForUser(userID string) ([]Organization, error)
 	UserBelongsToOrganization(userID, orgID string) (bool, error)
+	CreateOAuthClient(OAuthClient) error
+	OAuthClient(string) (OAuthClient, error)
+	CreateOAuthAuthorizationCode(OAuthAuthorizationCode) error
+	OAuthAuthorizationCode(string) (OAuthAuthorizationCode, error)
+	UpdateOAuthAuthorizationCode(OAuthAuthorizationCode) error
+	CreateOAuthToken(OAuthToken) error
+	OAuthAccessToken(string) (OAuthToken, error)
+	OAuthRefreshToken(string) (OAuthToken, error)
+	UpdateOAuthToken(OAuthToken) error
+	OAuthConnections(userID, orgID string) ([]OAuthConnection, error)
+	RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error
 	CreateApp(App) error
 	ListApps() ([]App, error)
 	ListAppsByOrg(string) ([]App, error)
@@ -82,6 +94,10 @@ type Store struct {
 	usersByEmail    map[string]string
 	organizations   map[string]Organization
 	memberships     map[string]map[string]bool
+	oauthClients    map[string]OAuthClient
+	oauthCodes      map[string]OAuthAuthorizationCode
+	oauthTokens     map[string]OAuthToken
+	oauthRefresh    map[string]string
 	apps            map[string]App
 	kvNamespaces    map[string]KVNamespace
 	objectBuckets   map[string]ObjectStorageBucket
@@ -100,6 +116,10 @@ func NewStore() *Store {
 		usersByEmail:    make(map[string]string),
 		organizations:   make(map[string]Organization),
 		memberships:     make(map[string]map[string]bool),
+		oauthClients:    make(map[string]OAuthClient),
+		oauthCodes:      make(map[string]OAuthAuthorizationCode),
+		oauthTokens:     make(map[string]OAuthToken),
+		oauthRefresh:    make(map[string]string),
 		apps:            make(map[string]App),
 		kvNamespaces:    make(map[string]KVNamespace),
 		objectBuckets:   make(map[string]ObjectStorageBucket),
@@ -200,6 +220,138 @@ func (s *Store) UserBelongsToOrganization(userID, orgID string) (bool, error) {
 		return false, ErrUserNotFound
 	}
 	return s.memberships[userID][orgID], nil
+}
+
+func (s *Store) CreateOAuthClient(client OAuthClient) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.oauthClients[client.ID]; exists {
+		return ErrOAuthClientNotFound
+	}
+	s.oauthClients[client.ID] = cloneOAuthClient(client)
+	return nil
+}
+
+func (s *Store) OAuthClient(clientID string) (OAuthClient, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	client, exists := s.oauthClients[clientID]
+	if !exists {
+		return OAuthClient{}, ErrOAuthClientNotFound
+	}
+	return cloneOAuthClient(client), nil
+}
+
+func (s *Store) CreateOAuthAuthorizationCode(code OAuthAuthorizationCode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.oauthCodes[code.CodeHash] = cloneOAuthAuthorizationCode(code)
+	return nil
+}
+
+func (s *Store) OAuthAuthorizationCode(codeHash string) (OAuthAuthorizationCode, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	code, exists := s.oauthCodes[codeHash]
+	if !exists {
+		return OAuthAuthorizationCode{}, ErrOAuthInvalidGrant
+	}
+	return cloneOAuthAuthorizationCode(code), nil
+}
+
+func (s *Store) UpdateOAuthAuthorizationCode(code OAuthAuthorizationCode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.oauthCodes[code.CodeHash]; !exists {
+		return ErrOAuthInvalidGrant
+	}
+	s.oauthCodes[code.CodeHash] = cloneOAuthAuthorizationCode(code)
+	return nil
+}
+
+func (s *Store) CreateOAuthToken(token OAuthToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.oauthTokens[token.TokenHash] = cloneOAuthToken(token)
+	if token.RefreshTokenHash != "" {
+		s.oauthRefresh[token.RefreshTokenHash] = token.TokenHash
+	}
+	return nil
+}
+
+func (s *Store) OAuthAccessToken(tokenHash string) (OAuthToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	token, exists := s.oauthTokens[tokenHash]
+	if !exists {
+		return OAuthToken{}, ErrOAuthTokenNotFound
+	}
+	return cloneOAuthToken(token), nil
+}
+
+func (s *Store) OAuthRefreshToken(refreshTokenHash string) (OAuthToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	accessHash, exists := s.oauthRefresh[refreshTokenHash]
+	if !exists {
+		return OAuthToken{}, ErrOAuthTokenNotFound
+	}
+	token, exists := s.oauthTokens[accessHash]
+	if !exists {
+		return OAuthToken{}, ErrOAuthTokenNotFound
+	}
+	return cloneOAuthToken(token), nil
+}
+
+func (s *Store) UpdateOAuthToken(token OAuthToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.oauthTokens[token.TokenHash]; !exists {
+		return ErrOAuthTokenNotFound
+	}
+	s.oauthTokens[token.TokenHash] = cloneOAuthToken(token)
+	if token.RefreshTokenHash != "" {
+		s.oauthRefresh[token.RefreshTokenHash] = token.TokenHash
+	}
+	return nil
+}
+
+func (s *Store) OAuthConnections(userID, orgID string) ([]OAuthConnection, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	connections := make(map[string]OAuthConnection)
+	for _, token := range s.oauthTokens {
+		if token.UserID != userID || token.OrgID != orgID || token.RevokedAt != nil {
+			continue
+		}
+		client, ok := s.oauthClients[token.ClientID]
+		if !ok {
+			continue
+		}
+		existing, ok := connections[token.ClientID]
+		if !ok || token.CreatedAt.Before(existing.CreatedAt) {
+			connections[token.ClientID] = OAuthConnection{ClientID: token.ClientID, Name: client.Name, Scopes: append([]string(nil), token.Scopes...), CreatedAt: token.CreatedAt}
+		}
+	}
+	result := make([]OAuthConnection, 0, len(connections))
+	for _, connection := range connections {
+		result = append(result, connection)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
+}
+
+func (s *Store) RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, token := range s.oauthTokens {
+		if token.UserID != userID || token.OrgID != orgID || token.ClientID != clientID || token.RevokedAt != nil {
+			continue
+		}
+		token.RevokedAt = &revokedAt
+		s.oauthTokens[hash] = cloneOAuthToken(token)
+	}
+	return nil
 }
 
 func (s *Store) CreateApp(app App) error {
@@ -727,4 +879,29 @@ func (s *Store) AdjustObjectStorageBucketSize(bucketID string, delta int64) erro
 	}
 	s.objectMetrics[bucketID] = metrics
 	return nil
+}
+
+func cloneOAuthClient(client OAuthClient) OAuthClient {
+	client.RedirectURIs = append([]string(nil), client.RedirectURIs...)
+	client.Scopes = append([]string(nil), client.Scopes...)
+	client.SecretHash = append([]byte(nil), client.SecretHash...)
+	return client
+}
+
+func cloneOAuthAuthorizationCode(code OAuthAuthorizationCode) OAuthAuthorizationCode {
+	code.Scopes = append([]string(nil), code.Scopes...)
+	if code.UsedAt != nil {
+		used := *code.UsedAt
+		code.UsedAt = &used
+	}
+	return code
+}
+
+func cloneOAuthToken(token OAuthToken) OAuthToken {
+	token.Scopes = append([]string(nil), token.Scopes...)
+	if token.RevokedAt != nil {
+		revoked := *token.RevokedAt
+		token.RevokedAt = &revoked
+	}
+	return token
 }

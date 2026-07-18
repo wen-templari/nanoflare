@@ -8,14 +8,16 @@ import (
 )
 
 type App struct {
-	ID           string            `json:"id"`
-	OrgID        string            `json:"org_id,omitempty"`
-	Name         string            `json:"name"`
-	Hostname     string            `json:"hostname"`
-	Auth         AuthConfig        `json:"auth,omitempty"`
-	RuntimeToken string            `json:"-"`
-	SecretValues map[string]string `json:"-"`
-	CreatedAt    time.Time         `json:"created_at"`
+	ID            string            `json:"id"`
+	OrgID         string            `json:"org_id,omitempty"`
+	Name          string            `json:"name"`
+	Hostname      string            `json:"hostname"`
+	Auth          AuthConfig        `json:"auth,omitempty"`
+	ExternalID    string            `json:"external_id,omitempty"`
+	OAuthClientID string            `json:"oauth_client_id,omitempty"`
+	RuntimeToken  string            `json:"-"`
+	SecretValues  map[string]string `json:"-"`
+	CreatedAt     time.Time         `json:"created_at"`
 }
 
 type AuthConfig struct {
@@ -53,15 +55,19 @@ type DeploymentRecord struct {
 }
 
 type CreateAppInput struct {
-	OrgID    string     `json:"-"`
-	Name     string     `json:"name"`
-	Hostname string     `json:"hostname"`
-	Auth     AuthConfig `json:"auth,omitempty"`
+	OrgID         string     `json:"-"`
+	Name          string     `json:"name"`
+	Hostname      string     `json:"hostname"`
+	Auth          AuthConfig `json:"auth,omitempty"`
+	ExternalID    string     `json:"external_id,omitempty"`
+	OAuthClientID string     `json:"-"`
 }
 
 type CreateKVNamespaceInput struct {
-	OrgID string `json:"-"`
-	Name  string `json:"name"`
+	OrgID         string `json:"-"`
+	Name          string `json:"name"`
+	ExternalID    string `json:"external_id,omitempty"`
+	OAuthClientID string `json:"-"`
 }
 
 type UpdateKVNamespaceInput struct {
@@ -69,8 +75,10 @@ type UpdateKVNamespaceInput struct {
 }
 
 type CreateObjectStorageBucketInput struct {
-	OrgID string `json:"-"`
-	Name  string `json:"name"`
+	OrgID         string `json:"-"`
+	Name          string `json:"name"`
+	ExternalID    string `json:"external_id,omitempty"`
+	OAuthClientID string `json:"-"`
 }
 
 type UpdateObjectStorageBucketInput struct {
@@ -213,17 +221,21 @@ func (d *DeployInput) UnmarshalJSON(data []byte) error {
 }
 
 type KVNamespace struct {
-	ID        string    `json:"id"`
-	OrgID     string    `json:"org_id,omitempty"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	OrgID         string    `json:"org_id,omitempty"`
+	Name          string    `json:"name"`
+	ExternalID    string    `json:"external_id,omitempty"`
+	OAuthClientID string    `json:"oauth_client_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type ObjectStorageBucket struct {
-	ID        string    `json:"id"`
-	OrgID     string    `json:"org_id,omitempty"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	OrgID         string    `json:"org_id,omitempty"`
+	Name          string    `json:"name"`
+	ExternalID    string    `json:"external_id,omitempty"`
+	OAuthClientID string    `json:"oauth_client_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type User struct {

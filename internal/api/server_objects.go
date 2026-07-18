@@ -39,6 +39,9 @@ func (s *Server) registerObjectRoutes() {
 }
 
 func (s *Server) workerObjectList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:read") {
+		return
+	}
 	objects, err := s.service.WorkerObjectListForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -48,6 +51,9 @@ func (s *Server) workerObjectList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerObjectGet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:read") {
+		return
+	}
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -68,6 +74,9 @@ func (s *Server) workerObjectGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerObjectPut(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:write") {
+		return
+	}
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -88,6 +97,9 @@ func (s *Server) workerObjectPut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerObjectDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:write") {
+		return
+	}
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -101,6 +113,9 @@ func (s *Server) workerObjectDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listObjectStorageBuckets(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:read") {
+		return
+	}
 	buckets, err := s.service.ListObjectStorageBucketsForOrg(controlOrgID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -110,12 +125,18 @@ func (s *Server) listObjectStorageBuckets(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) createObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:write") {
+		return
+	}
 	var input nanoflare.CreateObjectStorageBucketInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	input.OrgID = controlOrgID(r)
+	if access, ok := controlOAuthAccess(r); ok {
+		input.OAuthClientID = access.ClientID
+	}
 	bucket, err := s.service.CreateObjectStorageBucket(input)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -129,6 +150,9 @@ func (s *Server) createObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) getObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:read") {
+		return
+	}
 	bucket, err := s.service.GetObjectStorageBucketForOrg(controlOrgID(r), r.PathValue("bucketID"))
 	if err != nil {
 		status := http.StatusBadRequest
@@ -142,6 +166,9 @@ func (s *Server) getObjectStorageBucket(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) updateObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:write") {
+		return
+	}
 	var input nanoflare.UpdateObjectStorageBucketInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -163,6 +190,9 @@ func (s *Server) updateObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) deleteObjectStorageBucket(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:write") {
+		return
+	}
 	err := s.service.DeleteObjectStorageBucketForOrg(controlOrgID(r), r.PathValue("bucketID"))
 	if err != nil {
 		status := http.StatusBadRequest
@@ -179,6 +209,9 @@ func (s *Server) deleteObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) objectStorageBucketMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:read") {
+		return
+	}
 	metrics, err := s.service.ObjectStorageBucketMetricsForOrg(controlOrgID(r), r.PathValue("bucketID"))
 	if err != nil {
 		writeWorkerError(w, err)

@@ -7,6 +7,7 @@ import { KVNamespaceDetailPage } from "./pages/kv-namespace-detail-page";
 import { KVNamespacesPage } from "./pages/kv-namespaces-page";
 import { ObjectStorageBucketDetailPage } from "./pages/object-storage-bucket-detail-page";
 import { ObjectStorageBucketsPage } from "./pages/object-storage-buckets-page";
+import { OAuthAuthorizePage } from "./pages/oauth-authorize-page";
 import { OverviewPage } from "./pages/overview-page";
 import { WorkerDetailPage } from "./pages/worker-detail-page";
 import { WorkersPage } from "./pages/workers-page";
@@ -26,6 +27,7 @@ export function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
             <Route element={<ProtectedConsole />}>
               <Route index element={<OverviewPage />} />
               <Route path="workers" element={<WorkersPage />} />

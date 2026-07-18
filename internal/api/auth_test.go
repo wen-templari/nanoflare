@@ -7,7 +7,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,6 +242,256 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	if len(apps) != 2 || !containsAppID(apps, app.ID) || !containsAppID(apps, generatedApp.ID) {
 		t.Fatalf("apps = %#v", apps)
 	}
+}
+
+func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	oauth := nanoflare.NewOAuthService(store)
+	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+
+	session := signupControlUser(t, server)
+	client := createOAuthClient(t, server, session.Token, []string{"apps:read", "apps:write", "kv:write"})
+	assertOAuthClientInfo(t, server, client.ClientID)
+	token := authorizeOAuthClient(t, server, session.Token, session.ActiveOrgID, client, []string{"apps:write", "kv:write"})
+
+	createBody := bytes.NewBufferString(`{"name":"External App","hostname":"external.example.com","external_id":"ext-app-1"}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	createRequest.Header.Set("X-Nanoflare-Org-ID", "ignored-org")
+	createRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("oauth create app status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+	var app nanoflare.App
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &app); err != nil {
+		t.Fatal(err)
+	}
+	if app.OrgID != session.ActiveOrgID || app.OAuthClientID != client.ClientID || app.ExternalID != "ext-app-1" {
+		t.Fatalf("oauth app metadata = %#v, session org = %q client = %q", app, session.ActiveOrgID, client.ClientID)
+	}
+
+	readRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	readRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	readRecorder := httptest.NewRecorder()
+	server.ServeHTTP(readRecorder, readRequest)
+	if readRecorder.Code != http.StatusForbidden {
+		t.Fatalf("missing read scope status = %d body = %q", readRecorder.Code, readRecorder.Body.String())
+	}
+
+	namespaceBody := bytes.NewBufferString(`{"name":"external-cache","external_id":"ext-kv-1"}`)
+	namespaceRequest := httptest.NewRequest(http.MethodPost, "/v1/kv/namespaces", namespaceBody)
+	namespaceRequest.Header.Set("Content-Type", "application/json")
+	namespaceRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	namespaceRecorder := httptest.NewRecorder()
+	server.ServeHTTP(namespaceRecorder, namespaceRequest)
+	if namespaceRecorder.Code != http.StatusCreated {
+		t.Fatalf("oauth create namespace status = %d body = %q", namespaceRecorder.Code, namespaceRecorder.Body.String())
+	}
+	var namespace nanoflare.KVNamespace
+	if err := json.Unmarshal(namespaceRecorder.Body.Bytes(), &namespace); err != nil {
+		t.Fatal(err)
+	}
+	if namespace.OrgID != session.ActiveOrgID || namespace.OAuthClientID != client.ClientID || namespace.ExternalID != "ext-kv-1" {
+		t.Fatalf("oauth namespace metadata = %#v", namespace)
+	}
+
+	connectionsRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/connections", nil)
+	connectionsRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	connectionsRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	connectionsRecorder := httptest.NewRecorder()
+	server.ServeHTTP(connectionsRecorder, connectionsRequest)
+	if connectionsRecorder.Code != http.StatusOK {
+		t.Fatalf("connections status = %d body = %q", connectionsRecorder.Code, connectionsRecorder.Body.String())
+	}
+	var connections []nanoflare.OAuthConnection
+	if err := json.Unmarshal(connectionsRecorder.Body.Bytes(), &connections); err != nil {
+		t.Fatal(err)
+	}
+	if len(connections) != 1 || connections[0].ClientID != client.ClientID {
+		t.Fatalf("connections = %#v, want client %q", connections, client.ClientID)
+	}
+
+	refreshed := refreshOAuthToken(t, server, client, token.RefreshToken)
+	if refreshed.AccessToken == token.AccessToken || refreshed.RefreshToken == token.RefreshToken {
+		t.Fatalf("refresh did not rotate tokens: before=%#v after=%#v", token, refreshed)
+	}
+
+	revokeBody := bytes.NewBufferString(`{"token":` + strconv.Quote(refreshed.AccessToken) + `}`)
+	revokeRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/revoke", revokeBody)
+	revokeRequest.Header.Set("Content-Type", "application/json")
+	revokeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(revokeRecorder, revokeRequest)
+	if revokeRecorder.Code != http.StatusNoContent {
+		t.Fatalf("revoke status = %d body = %q", revokeRecorder.Code, revokeRecorder.Body.String())
+	}
+
+	createBody = bytes.NewBufferString(`{"name":"Revoked App","hostname":"revoked.example.com"}`)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+refreshed.AccessToken)
+	createRecorder = httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked token status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+}
+
+type oauthClientFixture struct {
+	ClientID     string
+	ClientSecret string
+}
+
+func signupControlUser(t *testing.T, server http.Handler) nanoflare.AuthSession {
+	t.Helper()
+	signupBody := bytes.NewBufferString(`{"email":"admin@example.com","password":"secret","organization_name":"Acme"}`)
+	signupRequest := httptest.NewRequest(http.MethodPost, "/v1/setup/signup", signupBody)
+	signupRequest.Header.Set("Content-Type", "application/json")
+	signupRecorder := httptest.NewRecorder()
+	server.ServeHTTP(signupRecorder, signupRequest)
+	if signupRecorder.Code != http.StatusCreated {
+		t.Fatalf("signup status = %d body = %q", signupRecorder.Code, signupRecorder.Body.String())
+	}
+	var session nanoflare.AuthSession
+	if err := json.Unmarshal(signupRecorder.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+func createOAuthClient(t *testing.T, server http.Handler, sessionToken string, scopes []string) oauthClientFixture {
+	t.Helper()
+	body, err := json.Marshal(nanoflare.CreateOAuthClientInput{
+		Name:         "External Platform",
+		RedirectURIs: []string{"https://external.example.com/oauth/callback"},
+		Scopes:       scopes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+sessionToken)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create oauth client status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ClientID == "" || response.ClientSecret == "" {
+		t.Fatalf("oauth client response = %#v", response)
+	}
+	return oauthClientFixture{ClientID: response.ClientID, ClientSecret: response.ClientSecret}
+}
+
+func assertOAuthClientInfo(t *testing.T, server http.Handler, clientID string) {
+	t.Helper()
+	path := "/v1/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
+		"&redirect_uri=" + url.QueryEscape("https://external.example.com/oauth/callback") +
+		"&scope=" + url.QueryEscape("apps:write kv:write")
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("oauth client info status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	var info nanoflare.OAuthAuthorizeInfo
+	if err := json.Unmarshal(recorder.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.ClientID != clientID || info.ClientName != "External Platform" {
+		t.Fatalf("oauth client info = %#v", info)
+	}
+}
+
+func authorizeOAuthClient(t *testing.T, server http.Handler, sessionToken, orgID string, client oauthClientFixture, scopes []string) nanoflare.OAuthTokenResponse {
+	t.Helper()
+	authorizeBody, err := json.Marshal(nanoflare.OAuthAuthorizeInput{
+		ClientID:    client.ClientID,
+		RedirectURI: "https://external.example.com/oauth/callback",
+		Scopes:      scopes,
+		State:       "state-123",
+		OrgID:       orgID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizeRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/authorize", bytes.NewReader(authorizeBody))
+	authorizeRequest.Header.Set("Content-Type", "application/json")
+	authorizeRequest.Header.Set("Authorization", "Bearer "+sessionToken)
+	authorizeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(authorizeRecorder, authorizeRequest)
+	if authorizeRecorder.Code != http.StatusOK {
+		t.Fatalf("authorize status = %d body = %q", authorizeRecorder.Code, authorizeRecorder.Body.String())
+	}
+	var authorize nanoflare.OAuthAuthorizeResponse
+	if err := json.Unmarshal(authorizeRecorder.Body.Bytes(), &authorize); err != nil {
+		t.Fatal(err)
+	}
+	if authorize.Code == "" || !strings.Contains(authorize.RedirectTo, "state=state-123") {
+		t.Fatalf("authorize response = %#v", authorize)
+	}
+
+	tokenBody, err := json.Marshal(map[string]string{
+		"grant_type":    "authorization_code",
+		"client_id":     client.ClientID,
+		"client_secret": client.ClientSecret,
+		"code":          authorize.Code,
+		"redirect_uri":  "https://external.example.com/oauth/callback",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", bytes.NewReader(tokenBody))
+	tokenRequest.Header.Set("Content-Type", "application/json")
+	tokenRecorder := httptest.NewRecorder()
+	server.ServeHTTP(tokenRecorder, tokenRequest)
+	if tokenRecorder.Code != http.StatusOK {
+		t.Fatalf("token status = %d body = %q", tokenRecorder.Code, tokenRecorder.Body.String())
+	}
+	var token nanoflare.OAuthTokenResponse
+	if err := json.Unmarshal(tokenRecorder.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	if token.AccessToken == "" || token.RefreshToken == "" || token.TokenType != "Bearer" {
+		t.Fatalf("token response = %#v", token)
+	}
+	return token
+}
+
+func refreshOAuthToken(t *testing.T, server http.Handler, client oauthClientFixture, refreshToken string) nanoflare.OAuthTokenResponse {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{
+		"grant_type":    "refresh_token",
+		"client_id":     client.ClientID,
+		"client_secret": client.ClientSecret,
+		"refresh_token": refreshToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	var token nanoflare.OAuthTokenResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 func containsAppID(apps []nanoflare.App, appID string) bool {

@@ -1,11 +1,13 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
+RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 FROM nginx:1.27-alpine
 

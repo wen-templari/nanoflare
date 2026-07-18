@@ -22,6 +22,9 @@ func (s *Server) registerKVRoutes() {
 }
 
 func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
 	keys, err := s.service.WorkerKVListForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -31,6 +34,9 @@ func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerKVGet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
 	if r.PathValue("key") == "" {
 		s.workerKVList(w, r)
 		return
@@ -55,6 +61,9 @@ func (s *Server) workerKVGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerKVPut(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:write") {
+		return
+	}
 	key, err := consoleKVKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -78,6 +87,9 @@ func (s *Server) workerKVPut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerKVDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:write") {
+		return
+	}
 	key, err := consoleKVKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -91,6 +103,9 @@ func (s *Server) workerKVDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listKVNamespaces(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
 	namespaces, err := s.service.ListKVNamespacesForOrg(controlOrgID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -100,12 +115,18 @@ func (s *Server) listKVNamespaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createKVNamespace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:write") {
+		return
+	}
 	var input nanoflare.CreateKVNamespaceInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	input.OrgID = controlOrgID(r)
+	if access, ok := controlOAuthAccess(r); ok {
+		input.OAuthClientID = access.ClientID
+	}
 	namespace, err := s.service.CreateKVNamespace(input)
 	if err != nil {
 		writeWorkerError(w, err)
@@ -115,6 +136,9 @@ func (s *Server) createKVNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getKVNamespace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
 	namespace, err := s.service.GetKVNamespaceForOrg(controlOrgID(r), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -124,6 +148,9 @@ func (s *Server) getKVNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateKVNamespace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:write") {
+		return
+	}
 	var input nanoflare.UpdateKVNamespaceInput
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -138,6 +165,9 @@ func (s *Server) updateKVNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteKVNamespace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:write") {
+		return
+	}
 	if err := s.service.DeleteKVNamespaceForOrg(controlOrgID(r), r.PathValue("namespaceID")); err != nil {
 		writeWorkerError(w, err)
 		return
@@ -146,6 +176,9 @@ func (s *Server) deleteKVNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) kvNamespaceMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
 	metrics, err := s.service.KVNamespaceMetricsForOrg(controlOrgID(r), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)

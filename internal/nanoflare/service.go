@@ -82,6 +82,8 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.OrgID = strings.TrimSpace(input.OrgID)
 	input.Hostname = strings.TrimSpace(strings.ToLower(input.Hostname))
+	input.ExternalID = strings.TrimSpace(input.ExternalID)
+	input.OAuthClientID = strings.TrimSpace(input.OAuthClientID)
 	if input.Name == "" {
 		return App{}, errors.New("name is required")
 	}
@@ -122,7 +124,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 		if err != nil {
 			return App{}, err
 		}
-		app := App{ID: appID, OrgID: input.OrgID, Name: input.Name, Hostname: hostname, Auth: auth, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
+		app := App{ID: appID, OrgID: input.OrgID, Name: input.Name, Hostname: hostname, Auth: auth, ExternalID: input.ExternalID, OAuthClientID: input.OAuthClientID, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
 		if err := s.store.CreateApp(app); err != nil {
 			if generated && errors.Is(err, ErrAppExists) {
 				lastErr = err
@@ -140,6 +142,8 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 
 func (s *Service) CreateKVNamespace(input CreateKVNamespaceInput) (KVNamespace, error) {
 	input.OrgID = strings.TrimSpace(input.OrgID)
+	input.ExternalID = strings.TrimSpace(input.ExternalID)
+	input.OAuthClientID = strings.TrimSpace(input.OAuthClientID)
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return KVNamespace{}, errors.New("name is required")
@@ -148,7 +152,7 @@ func (s *Service) CreateKVNamespace(input CreateKVNamespaceInput) (KVNamespace, 
 	if err != nil {
 		return KVNamespace{}, err
 	}
-	namespace := KVNamespace{ID: namespaceID, OrgID: input.OrgID, Name: name, CreatedAt: time.Now().UTC()}
+	namespace := KVNamespace{ID: namespaceID, OrgID: input.OrgID, Name: name, ExternalID: input.ExternalID, OAuthClientID: input.OAuthClientID, CreatedAt: time.Now().UTC()}
 	if err := s.store.CreateKVNamespace(namespace); err != nil {
 		return KVNamespace{}, err
 	}
@@ -165,6 +169,8 @@ func (s *Service) ListKVNamespacesForOrg(orgID string) ([]KVNamespace, error) {
 
 func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput) (ObjectStorageBucket, error) {
 	input.OrgID = strings.TrimSpace(input.OrgID)
+	input.ExternalID = strings.TrimSpace(input.ExternalID)
+	input.OAuthClientID = strings.TrimSpace(input.OAuthClientID)
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return ObjectStorageBucket{}, errors.New("name is required")
@@ -173,7 +179,7 @@ func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput
 	if err != nil {
 		return ObjectStorageBucket{}, err
 	}
-	bucket := ObjectStorageBucket{ID: bucketID, OrgID: input.OrgID, Name: name, CreatedAt: time.Now().UTC()}
+	bucket := ObjectStorageBucket{ID: bucketID, OrgID: input.OrgID, Name: name, ExternalID: input.ExternalID, OAuthClientID: input.OAuthClientID, CreatedAt: time.Now().UTC()}
 	if err := s.store.CreateObjectStorageBucket(bucket); err != nil {
 		return ObjectStorageBucket{}, err
 	}

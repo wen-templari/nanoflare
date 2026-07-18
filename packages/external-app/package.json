@@ -1,0 +1,20 @@
+{
+  "name": "@nanoflare/external-app",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "External platform simulator for testing Nanoflare OAuth resource management.",
+  "bin": {
+    "nanoflare-external-app": "./bin/external-app.js",
+    "nanoflare-external-app-ui": "./bin/server.js"
+  },
+  "scripts": {
+    "test": "node --check ./bin/external-app.js",
+    "check": "node --check ./bin/external-app.js && node --check ./bin/server.js",
+    "run": "node ./bin/external-app.js",
+    "dev": "node ./bin/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

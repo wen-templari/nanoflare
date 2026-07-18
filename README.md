@@ -191,6 +191,66 @@ locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 `~/.config/nanoflare/auth.json` by default; set `NANOFLARE_AUTH_STORE` to an
 alternate file path when you need a different auth store location.
 
+External platforms can integrate through Nanoflare's OAuth control-plane flow.
+First create an OAuth client while signed in as a Nanoflare control-plane user:
+
+```sh
+curl -X POST http://127.0.0.1:8080/v1/oauth/clients \
+  -H "Authorization: Bearer $NANOFLARE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "External Platform",
+    "redirect_uris": ["https://external.example.com/oauth/callback"],
+    "scopes": ["apps:read", "apps:write", "deployments:write", "kv:write"]
+  }'
+```
+
+The response includes a `client_id` and one-time-visible `client_secret`. The
+external platform redirects its user to its own connection flow, then asks
+Nanoflare to authorize a specific Nanoflare organization:
+
+```sh
+curl -X POST http://127.0.0.1:8080/v1/oauth/authorize \
+  -H "Authorization: Bearer $NANOFLARE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "CLIENT_ID",
+    "redirect_uri": "https://external.example.com/oauth/callback",
+    "scopes": ["apps:write", "deployments:write"],
+    "org_id": "NANOFLARE_ORG_ID",
+    "state": "opaque-state"
+  }'
+```
+
+Exchange the returned code from the external platform backend:
+
+```sh
+curl -X POST http://127.0.0.1:8080/v1/oauth/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "grant_type": "authorization_code",
+    "client_id": "CLIENT_ID",
+    "client_secret": "CLIENT_SECRET",
+    "code": "AUTHORIZATION_CODE",
+    "redirect_uri": "https://external.example.com/oauth/callback"
+  }'
+```
+
+Use the returned access token with existing `/v1` resource APIs. Nanoflare
+derives the organization from the OAuth token and enforces the granted scopes:
+
+```sh
+curl -X POST http://127.0.0.1:8080/v1/apps \
+  -H "Authorization: Bearer $NANOFLARE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Managed Worker","hostname":"managed.example.com","external_id":"external-worker-123"}'
+```
+
+When the access token expires, exchange the refresh token with
+`grant_type=refresh_token`. Users can inspect connected external apps with
+`GET /v1/oauth/connections` and disconnect one with
+`DELETE /v1/oauth/connections/{clientID}`.
+
 The starter project is plain JavaScript and can be deployed immediately. The
 example apps under `examples/` use npm-based build steps first because they
 bundle TypeScript, React, or both before `nanoflare deploy`.

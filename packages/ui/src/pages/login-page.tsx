@@ -1,12 +1,14 @@
 import { Alert, Box, Button, Group, Paper, PasswordInput, Stack, Text, TextInput, ThemeIcon, Title } from "@mantine/core";
 import { Boxes, LogIn } from "lucide-react";
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../app/auth-context";
 
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const next = searchParams.get("next") || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [organizationName, setOrganizationName] = useState("");
@@ -14,7 +16,7 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  if (auth.signedIn) return <Navigate to="/" replace />;
+  if (auth.signedIn) return <Navigate to={next} replace />;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -22,7 +24,7 @@ export function LoginPage() {
     setError("");
     try {
       await auth.login(email, password, setupMode ? organizationName : undefined);
-      navigate("/", { replace: true });
+      navigate(next, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

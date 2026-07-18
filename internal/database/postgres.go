@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 	_ "github.com/lib/pq"
@@ -48,6 +49,8 @@ CREATE TABLE IF NOT EXISTS apps (
 	name text NOT NULL,
 	hostname text NOT NULL UNIQUE,
 	auth jsonb NOT NULL DEFAULT '{}'::jsonb,
+	external_id text NOT NULL DEFAULT '',
+	oauth_client_id text NOT NULL DEFAULT '',
 	runtime_token text,
 	created_at timestamptz NOT NULL
 );
@@ -67,6 +70,39 @@ CREATE TABLE IF NOT EXISTS user_organizations (
 	organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
 	created_at timestamptz NOT NULL DEFAULT NOW(),
 	PRIMARY KEY (user_id, organization_id)
+);
+CREATE TABLE IF NOT EXISTS oauth_clients (
+	id text PRIMARY KEY,
+	name text NOT NULL,
+	redirect_uris jsonb NOT NULL DEFAULT '[]'::jsonb,
+	scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+	secret_hash bytea NOT NULL,
+	disabled boolean NOT NULL DEFAULT false,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+	code_hash text PRIMARY KEY,
+	client_id text NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+	user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	org_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+	redirect_uri text NOT NULL,
+	scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+	expires_at timestamptz NOT NULL,
+	used_at timestamptz,
+	created_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+	token_hash text PRIMARY KEY,
+	refresh_token_hash text NOT NULL UNIQUE,
+	client_id text NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+	user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	org_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+	scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+	expires_at timestamptz NOT NULL,
+	refresh_expires_at timestamptz NOT NULL,
+	revoked_at timestamptz,
+	created_at timestamptz NOT NULL
 );
 CREATE TABLE IF NOT EXISTS deployments (
 	id text PRIMARY KEY,
@@ -91,12 +127,16 @@ CREATE TABLE IF NOT EXISTS kv_namespaces (
 	id text PRIMARY KEY,
 	org_id text NOT NULL DEFAULT '',
 	name text NOT NULL UNIQUE,
+	external_id text NOT NULL DEFAULT '',
+	oauth_client_id text NOT NULL DEFAULT '',
 	created_at timestamptz NOT NULL
 );
 CREATE TABLE IF NOT EXISTS object_storage_buckets (
 	id text PRIMARY KEY,
 	org_id text NOT NULL DEFAULT '',
 	name text NOT NULL UNIQUE,
+	external_id text NOT NULL DEFAULT '',
+	oauth_client_id text NOT NULL DEFAULT '',
 	created_at timestamptz NOT NULL
 );
 CREATE TABLE IF NOT EXISTS app_secrets (
@@ -113,6 +153,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS deployments_active_app_idx
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
 UPDATE apps SET name = hostname WHERE name = '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]';
@@ -127,7 +169,11 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEF
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
+ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
+ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
 ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
+ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
+ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
 UPDATE deployments SET format = CASE
 	WHEN jsonb_array_length(files) = 1 THEN 'service-worker'
 	ELSE 'modules'
@@ -431,9 +477,165 @@ SELECT EXISTS (
 	return exists, err
 }
 
+func (p *Postgres) CreateOAuthClient(client nanoflare.OAuthClient) error {
+	_, err := p.db.Exec(`
+INSERT INTO oauth_clients (id, name, redirect_uris, scopes, secret_hash, disabled, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		client.ID, client.Name, mustJSON(client.RedirectURIs), mustJSON(client.Scopes), client.SecretHash, client.Disabled, client.CreatedAt, client.UpdatedAt)
+	return err
+}
+
+func (p *Postgres) OAuthClient(clientID string) (nanoflare.OAuthClient, error) {
+	var client nanoflare.OAuthClient
+	var redirectURIs, scopes []byte
+	err := p.db.QueryRow(`
+SELECT id, name, redirect_uris, scopes, secret_hash, disabled, created_at, updated_at
+FROM oauth_clients WHERE id = $1`, clientID).
+		Scan(&client.ID, &client.Name, &redirectURIs, &scopes, &client.SecretHash, &client.Disabled, &client.CreatedAt, &client.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.OAuthClient{}, nanoflare.ErrOAuthClientNotFound
+	}
+	if err != nil {
+		return nanoflare.OAuthClient{}, err
+	}
+	if err := json.Unmarshal(redirectURIs, &client.RedirectURIs); err != nil {
+		return nanoflare.OAuthClient{}, err
+	}
+	if err := json.Unmarshal(scopes, &client.Scopes); err != nil {
+		return nanoflare.OAuthClient{}, err
+	}
+	return client, nil
+}
+
+func (p *Postgres) CreateOAuthAuthorizationCode(code nanoflare.OAuthAuthorizationCode) error {
+	_, err := p.db.Exec(`
+INSERT INTO oauth_authorization_codes (code_hash, client_id, user_id, org_id, redirect_uri, scopes, expires_at, used_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		code.CodeHash, code.ClientID, code.UserID, code.OrgID, code.RedirectURI, mustJSON(code.Scopes), code.ExpiresAt, code.UsedAt, code.CreatedAt)
+	return err
+}
+
+func (p *Postgres) OAuthAuthorizationCode(codeHash string) (nanoflare.OAuthAuthorizationCode, error) {
+	var code nanoflare.OAuthAuthorizationCode
+	var scopes []byte
+	err := p.db.QueryRow(`
+SELECT code_hash, client_id, user_id, org_id, redirect_uri, scopes, expires_at, used_at, created_at
+FROM oauth_authorization_codes WHERE code_hash = $1`, codeHash).
+		Scan(&code.CodeHash, &code.ClientID, &code.UserID, &code.OrgID, &code.RedirectURI, &scopes, &code.ExpiresAt, &code.UsedAt, &code.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.OAuthAuthorizationCode{}, nanoflare.ErrOAuthInvalidGrant
+	}
+	if err != nil {
+		return nanoflare.OAuthAuthorizationCode{}, err
+	}
+	if err := json.Unmarshal(scopes, &code.Scopes); err != nil {
+		return nanoflare.OAuthAuthorizationCode{}, err
+	}
+	return code, nil
+}
+
+func (p *Postgres) UpdateOAuthAuthorizationCode(code nanoflare.OAuthAuthorizationCode) error {
+	result, err := p.db.Exec(`UPDATE oauth_authorization_codes SET used_at = $2 WHERE code_hash = $1`, code.CodeHash, code.UsedAt)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return nanoflare.ErrOAuthInvalidGrant
+	}
+	return nil
+}
+
+func (p *Postgres) CreateOAuthToken(token nanoflare.OAuthToken) error {
+	_, err := p.db.Exec(`
+INSERT INTO oauth_tokens (token_hash, refresh_token_hash, client_id, user_id, org_id, scopes, expires_at, refresh_expires_at, revoked_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		token.TokenHash, token.RefreshTokenHash, token.ClientID, token.UserID, token.OrgID, mustJSON(token.Scopes), token.ExpiresAt, token.RefreshExpiresAt, token.RevokedAt, token.CreatedAt)
+	return err
+}
+
+func (p *Postgres) OAuthAccessToken(tokenHash string) (nanoflare.OAuthToken, error) {
+	return p.oauthToken(`token_hash = $1`, tokenHash)
+}
+
+func (p *Postgres) OAuthRefreshToken(refreshTokenHash string) (nanoflare.OAuthToken, error) {
+	return p.oauthToken(`refresh_token_hash = $1`, refreshTokenHash)
+}
+
+func (p *Postgres) UpdateOAuthToken(token nanoflare.OAuthToken) error {
+	result, err := p.db.Exec(`UPDATE oauth_tokens SET revoked_at = $2 WHERE token_hash = $1`, token.TokenHash, token.RevokedAt)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return nanoflare.ErrOAuthTokenNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) OAuthConnections(userID, orgID string) ([]nanoflare.OAuthConnection, error) {
+	rows, err := p.db.Query(`
+SELECT DISTINCT ON (t.client_id) t.client_id, c.name, t.scopes, t.created_at
+FROM oauth_tokens t
+JOIN oauth_clients c ON c.id = t.client_id
+WHERE t.user_id = $1 AND t.org_id = $2 AND t.revoked_at IS NULL
+ORDER BY t.client_id, t.created_at`, userID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	connections := make([]nanoflare.OAuthConnection, 0)
+	for rows.Next() {
+		var connection nanoflare.OAuthConnection
+		var scopes []byte
+		if err := rows.Scan(&connection.ClientID, &connection.Name, &scopes, &connection.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(scopes, &connection.Scopes); err != nil {
+			return nil, err
+		}
+		connections = append(connections, connection)
+	}
+	return connections, rows.Err()
+}
+
+func (p *Postgres) RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error {
+	_, err := p.db.Exec(`
+UPDATE oauth_tokens
+SET revoked_at = $4
+WHERE user_id = $1 AND org_id = $2 AND client_id = $3 AND revoked_at IS NULL`, userID, orgID, clientID, revokedAt)
+	return err
+}
+
+func (p *Postgres) oauthToken(where, value string) (nanoflare.OAuthToken, error) {
+	var token nanoflare.OAuthToken
+	var scopes []byte
+	err := p.db.QueryRow(`
+SELECT token_hash, refresh_token_hash, client_id, user_id, org_id, scopes, expires_at, refresh_expires_at, revoked_at, created_at
+FROM oauth_tokens WHERE `+where, value).
+		Scan(&token.TokenHash, &token.RefreshTokenHash, &token.ClientID, &token.UserID, &token.OrgID, &scopes, &token.ExpiresAt, &token.RefreshExpiresAt, &token.RevokedAt, &token.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.OAuthToken{}, nanoflare.ErrOAuthTokenNotFound
+	}
+	if err != nil {
+		return nanoflare.OAuthToken{}, err
+	}
+	if err := json.Unmarshal(scopes, &token.Scopes); err != nil {
+		return nanoflare.OAuthToken{}, err
+	}
+	return token, nil
+}
+
 func (p *Postgres) CreateApp(app nanoflare.App) error {
-	_, err := p.db.Exec(`INSERT INTO apps (id, org_id, name, hostname, auth, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.RuntimeToken, app.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO apps (id, org_id, name, hostname, auth, external_id, oauth_client_id, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.ExternalID, app.OAuthClientID, app.RuntimeToken, app.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrAppExists
 	}
@@ -441,8 +643,8 @@ func (p *Postgres) CreateApp(app nanoflare.App) error {
 }
 
 func (p *Postgres) CreateKVNamespace(namespace nanoflare.KVNamespace) error {
-	_, err := p.db.Exec(`INSERT INTO kv_namespaces (id, org_id, name, created_at) VALUES ($1, $2, $3, $4)`,
-		namespace.ID, namespace.OrgID, namespace.Name, namespace.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO kv_namespaces (id, org_id, name, external_id, oauth_client_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		namespace.ID, namespace.OrgID, namespace.Name, namespace.ExternalID, namespace.OAuthClientID, namespace.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrKVNamespaceExists
 	}
@@ -454,7 +656,7 @@ func (p *Postgres) ListKVNamespaces() ([]nanoflare.KVNamespace, error) {
 }
 
 func (p *Postgres) ListKVNamespacesByOrg(orgID string) ([]nanoflare.KVNamespace, error) {
-	query := `SELECT id, org_id, name, created_at FROM kv_namespaces`
+	query := `SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM kv_namespaces`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -469,7 +671,7 @@ func (p *Postgres) ListKVNamespacesByOrg(orgID string) ([]nanoflare.KVNamespace,
 	namespaces := make([]nanoflare.KVNamespace, 0)
 	for rows.Next() {
 		var namespace nanoflare.KVNamespace
-		if err := rows.Scan(&namespace.ID, &namespace.OrgID, &namespace.Name, &namespace.CreatedAt); err != nil {
+		if err := rows.Scan(&namespace.ID, &namespace.OrgID, &namespace.Name, &namespace.ExternalID, &namespace.OAuthClientID, &namespace.CreatedAt); err != nil {
 			return nil, err
 		}
 		namespaces = append(namespaces, namespace)
@@ -479,8 +681,8 @@ func (p *Postgres) ListKVNamespacesByOrg(orgID string) ([]nanoflare.KVNamespace,
 
 func (p *Postgres) GetKVNamespace(namespaceID string) (nanoflare.KVNamespace, error) {
 	var namespace nanoflare.KVNamespace
-	err := p.db.QueryRow(`SELECT id, org_id, name, created_at FROM kv_namespaces WHERE id = $1`, namespaceID).
-		Scan(&namespace.ID, &namespace.OrgID, &namespace.Name, &namespace.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM kv_namespaces WHERE id = $1`, namespaceID).
+		Scan(&namespace.ID, &namespace.OrgID, &namespace.Name, &namespace.ExternalID, &namespace.OAuthClientID, &namespace.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.KVNamespace{}, nanoflare.ErrKVNamespaceNotFound
 	}
@@ -506,8 +708,8 @@ func (p *Postgres) UpdateKVNamespace(namespace nanoflare.KVNamespace) error {
 }
 
 func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
-	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, created_at) VALUES ($1, $2, $3, $4)`,
-		bucket.ID, bucket.OrgID, bucket.Name, bucket.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		bucket.ID, bucket.OrgID, bucket.Name, bucket.ExternalID, bucket.OAuthClientID, bucket.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrObjectStorageBucketExists
 	}
@@ -519,7 +721,7 @@ func (p *Postgres) ListObjectStorageBuckets() ([]nanoflare.ObjectStorageBucket, 
 }
 
 func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.ObjectStorageBucket, error) {
-	query := `SELECT id, org_id, name, created_at FROM object_storage_buckets`
+	query := `SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM object_storage_buckets`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -534,7 +736,7 @@ func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.Obje
 	buckets := make([]nanoflare.ObjectStorageBucket, 0)
 	for rows.Next() {
 		var bucket nanoflare.ObjectStorageBucket
-		if err := rows.Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.CreatedAt); err != nil {
+		if err := rows.Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt); err != nil {
 			return nil, err
 		}
 		buckets = append(buckets, bucket)
@@ -544,8 +746,8 @@ func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.Obje
 
 func (p *Postgres) GetObjectStorageBucket(bucketID string) (nanoflare.ObjectStorageBucket, error) {
 	var bucket nanoflare.ObjectStorageBucket
-	err := p.db.QueryRow(`SELECT id, org_id, name, created_at FROM object_storage_buckets WHERE id = $1`, bucketID).
-		Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM object_storage_buckets WHERE id = $1`, bucketID).
+		Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.ObjectStorageBucket{}, nanoflare.ErrObjectStorageBucketNotFound
 	}
@@ -575,7 +777,7 @@ func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 }
 
 func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
-	query := `SELECT id, org_id, name, hostname, auth, runtime_token, created_at FROM apps`
+	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, runtime_token, created_at FROM apps`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -591,7 +793,7 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 	for rows.Next() {
 		var app nanoflare.App
 		var auth []byte
-		if err := rows.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt); err != nil {
+		if err := rows.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.RuntimeToken, &app.CreatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &app.Auth); err != nil {
@@ -605,8 +807,8 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
 	var app nanoflare.App
 	var auth []byte
-	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, runtime_token, created_at FROM apps WHERE id = $1`, appID).
-		Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.RuntimeToken, &app.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, runtime_token, created_at FROM apps WHERE id = $1`, appID).
+		Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.RuntimeToken, &app.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.App{}, nanoflare.ErrAppNotFound
 	}
@@ -852,7 +1054,7 @@ func (p *Postgres) DeleteDeployment(id string) error {
 
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
-SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
+SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.runtime_token, a.created_at,
 	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
@@ -867,7 +1069,7 @@ ORDER BY a.id`)
 		var item nanoflare.ActiveDeployment
 		var files, assets, triggers, vars, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &triggers, &vars, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
@@ -907,7 +1109,7 @@ ORDER BY a.id`)
 
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
-	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.runtime_token, a.created_at,
+	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.runtime_token, a.created_at,
 		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
@@ -921,7 +1123,7 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 		var item nanoflare.DeploymentRecord
 		var assets, triggers, vars, kvNamespaces, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &triggers, &vars, &kvNamespaces, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,

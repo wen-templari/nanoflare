@@ -12,14 +12,15 @@ import (
 type controlContextKey string
 
 const (
-	controlUserKey controlContextKey = "controlUser"
-	controlOrgKey  controlContextKey = "controlOrg"
-	orgHeaderName                    = "X-Nanoflare-Org-ID"
+	controlUserKey  controlContextKey = "controlUser"
+	controlOrgKey   controlContextKey = "controlOrg"
+	controlOAuthKey controlContextKey = "controlOAuth"
+	orgHeaderName                     = "X-Nanoflare-Org-ID"
 )
 
 func isPublicControlPath(path string) bool {
 	switch path {
-	case "/v1/setup/signup", "/v1/auth/login", "/v1/auth/validate", "/v1/auth/userinfo":
+	case "/v1/setup/signup", "/v1/auth/login", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
 		return true
 	default:
 		return false
@@ -32,13 +33,21 @@ func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, errors.New("bearer token is required"))
 		return nil, false
 	}
+	if s.oauth != nil && !isUserSessionOnlyOAuthPath(r.URL.Path) {
+		access, err := s.oauth.ValidateAccessToken(token)
+		if err == nil {
+			ctx := context.WithValue(r.Context(), controlOrgKey, access.OrgID)
+			ctx = context.WithValue(ctx, controlOAuthKey, access)
+			return r.WithContext(ctx), true
+		}
+	}
 	user, err := s.controlAuth.ValidateToken(token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return nil, false
 	}
 	orgID := strings.TrimSpace(r.Header.Get(orgHeaderName))
-	if r.URL.Path != "/v1/auth/me" {
+	if r.URL.Path != "/v1/auth/me" && !isNoOrgControlPath(r.URL.Path) {
 		if orgID == "" {
 			writeError(w, http.StatusBadRequest, errors.New("X-Nanoflare-Org-ID is required"))
 			return nil, false
@@ -58,6 +67,14 @@ func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Reque
 	return r.WithContext(ctx), true
 }
 
+func isUserSessionOnlyOAuthPath(path string) bool {
+	return path == "/v1/oauth/authorize" || path == "/v1/oauth/clients" || path == "/v1/oauth/connections" || strings.HasPrefix(path, "/v1/oauth/connections/")
+}
+
+func isNoOrgControlPath(path string) bool {
+	return path == "/v1/oauth/authorize" || path == "/v1/oauth/clients"
+}
+
 func controlOrgID(r *http.Request) string {
 	value, _ := r.Context().Value(controlOrgKey).(string)
 	return value
@@ -66,6 +83,25 @@ func controlOrgID(r *http.Request) string {
 func controlUser(r *http.Request) nanoflare.User {
 	value, _ := r.Context().Value(controlUserKey).(nanoflare.User)
 	return value
+}
+
+func controlOAuthAccess(r *http.Request) (nanoflare.OAuthAccess, bool) {
+	value, ok := r.Context().Value(controlOAuthKey).(nanoflare.OAuthAccess)
+	return value, ok
+}
+
+func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope string) bool {
+	access, ok := controlOAuthAccess(r)
+	if !ok {
+		return true
+	}
+	for _, candidate := range access.Scopes {
+		if candidate == scope {
+			return true
+		}
+	}
+	writeError(w, http.StatusForbidden, errors.New("oauth scope is required: "+scope))
+	return false
 }
 
 func (s *Server) registerControlAuthRoutes() {

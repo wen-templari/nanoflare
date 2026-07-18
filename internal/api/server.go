@@ -17,6 +17,7 @@ type Server struct {
 	traefikToken string
 	auth         Authenticator
 	controlAuth  *nanoflare.ControlAuthService
+	oauth        *nanoflare.OAuthService
 	runtime      RuntimeEnsurer
 	mux          *http.ServeMux
 }
@@ -77,6 +78,12 @@ func NewServerWithRuntime(service *nanoflare.Service, traefik TraefikConfigReade
 	return server
 }
 
+func NewServerWithRuntimeAndOAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, oauth *nanoflare.OAuthService, runtime RuntimeEnsurer) *Server {
+	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, controlAuth: controlAuth, oauth: oauth, runtime: runtime, mux: http.NewServeMux()}
+	server.routes()
+	return server
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.controlAuth != nil && strings.HasPrefix(r.URL.Path, "/v1/") && !isPublicControlPath(r.URL.Path) {
 		next, ok := s.authenticateControlRequest(w, r)
@@ -99,6 +106,9 @@ func (s *Server) routes() {
 	s.registerAuthRoutes()
 	if s.controlAuth != nil {
 		s.registerControlAuthRoutes()
+	}
+	if s.oauth != nil {
+		s.registerOAuthRoutes()
 	}
 	s.registerInternalRoutes()
 }
