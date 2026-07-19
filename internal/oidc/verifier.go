@@ -59,6 +59,7 @@ type browserSession struct {
 
 type discoveryDocument struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	EndSessionEndpoint    string `json:"end_session_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
 	JWKSURI               string `json:"jwks_uri"`
 	UserInfoEndpoint      string `json:"userinfo_endpoint"`
@@ -337,6 +338,25 @@ func (v *Verifier) HandleConsoleCallback(r *http.Request) (api.AuthResult, strin
 		return api.AuthResult{}, "", errors.New("oidc subject is required")
 	}
 	return result, safeConsoleNext(state.ReturnURL), nil
+}
+
+func (v *Verifier) ConsoleLogoutURL(ctx context.Context, next string) (string, error) {
+	next = safeConsoleNext(next)
+	if next == "/" {
+		next = "/login?sso_logged_out=1"
+	}
+	discovery, err := v.discoveryForContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(discovery.EndSessionEndpoint) == "" {
+		return next, nil
+	}
+	query := url.Values{
+		"client_id":                {v.clientID},
+		"post_logout_redirect_uri": {v.publicURL + next},
+	}
+	return discovery.EndSessionEndpoint + "?" + query.Encode(), nil
 }
 
 func (v *Verifier) RedirectURL() string {

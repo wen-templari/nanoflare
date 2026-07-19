@@ -364,6 +364,45 @@ func TestConsoleCallbackRejectsFailedTokenExchange(t *testing.T) {
 	}
 }
 
+func TestVerifierConsoleLogoutURLUsesEndSessionEndpoint(t *testing.T) {
+	var issuer string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"authorization_endpoint": issuer + "/authorize",
+				"end_session_endpoint":   issuer + "/logout",
+				"token_endpoint":         issuer + "/token",
+				"jwks_uri":               issuer + "/jwks",
+				"userinfo_endpoint":      issuer + "/userinfo",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	issuer = server.URL
+
+	verifier := NewConsoleVerifier(issuer, "email", "client-id", "secret", "https://console.example.com", server.Client())
+	logoutURL, err := verifier.ConsoleLogoutURL(context.Background(), "/login?sso_logged_out=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(logoutURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/logout" {
+		t.Fatalf("logout path = %q", parsed.Path)
+	}
+	if got := parsed.Query().Get("client_id"); got != "client-id" {
+		t.Fatalf("client_id = %q", got)
+	}
+	if got := parsed.Query().Get("post_logout_redirect_uri"); got != "https://console.example.com/login?sso_logged_out=1" {
+		t.Fatalf("post_logout_redirect_uri = %q", got)
+	}
+}
+
 func TestVerifierRejectsInvalidCookieDomain(t *testing.T) {
 	verifier := NewBrowserVerifier("https://auth.example.com/oidc", "nanoflare", "email", "client-id", "", "https://nanoflare.local.nbtca.space:8443", ".other.example.com", nil)
 	if err := verifier.ValidateBrowserConfig(); err == nil || !strings.Contains(err.Error(), "cookie domain") {

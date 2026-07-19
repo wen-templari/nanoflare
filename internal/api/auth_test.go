@@ -159,6 +159,7 @@ func TestAuthAPIsReturnNormalizedResponses(t *testing.T) {
 func TestControlOIDCConfigReportsDisabled(t *testing.T) {
 	store := nanoflare.NewStore()
 	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server.SetControlOIDCDirectLogin(true)
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/config", nil)
 	recorder := httptest.NewRecorder()
@@ -167,13 +168,70 @@ func TestControlOIDCConfigReportsDisabled(t *testing.T) {
 		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
 	var payload struct {
-		Enabled bool `json:"enabled"`
+		Enabled     bool `json:"enabled"`
+		DirectLogin bool `json:"direct_login"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
 	if payload.Enabled {
 		t.Fatal("oidc config reported enabled")
+	}
+	if payload.DirectLogin {
+		t.Fatal("oidc config reported direct login enabled")
+	}
+}
+
+func TestControlOIDCConfigReportsEnabledWithoutDirectLogin(t *testing.T) {
+	store := nanoflare.NewStore()
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server.SetControlOIDC(fakeControlOIDC{enabled: true})
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/config", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Enabled     bool `json:"enabled"`
+		DirectLogin bool `json:"direct_login"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Enabled {
+		t.Fatal("oidc config reported disabled")
+	}
+	if payload.DirectLogin {
+		t.Fatal("oidc config reported direct login enabled")
+	}
+}
+
+func TestControlOIDCConfigReportsDirectLogin(t *testing.T) {
+	store := nanoflare.NewStore()
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server.SetControlOIDC(fakeControlOIDC{enabled: true})
+	server.SetControlOIDCDirectLogin(true)
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/config", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Enabled     bool `json:"enabled"`
+		DirectLogin bool `json:"direct_login"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Enabled {
+		t.Fatal("oidc config reported disabled")
+	}
+	if !payload.DirectLogin {
+		t.Fatal("oidc config reported direct login disabled")
 	}
 }
 
@@ -272,6 +330,40 @@ func TestControlOIDCCallbackCanRedirectToCLICompletionPage(t *testing.T) {
 	server.ServeHTTP(pageRecorder, pageRequest)
 	if pageRecorder.Code != http.StatusOK || !strings.Contains(pageRecorder.Body.String(), "Copy this one-time code") {
 		t.Fatalf("cli page status = %d body = %q", pageRecorder.Code, pageRecorder.Body.String())
+	}
+}
+
+func TestControlOIDCLogoutRedirectsToProviderLogout(t *testing.T) {
+	store := nanoflare.NewStore()
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server.SetControlOIDC(fakeControlOIDC{
+		enabled:   true,
+		logoutURL: "https://issuer.example.com/logout?post_logout_redirect_uri=https%3A%2F%2Fconsole.example.com%2Flogin%3Fsso_logged_out%3D1",
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/logout", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Location"); got != "https://issuer.example.com/logout?post_logout_redirect_uri=https%3A%2F%2Fconsole.example.com%2Flogin%3Fsso_logged_out%3D1" {
+		t.Fatalf("location = %q", got)
+	}
+}
+
+func TestControlOIDCLogoutFallsBackToLoginWhenDisabled(t *testing.T) {
+	store := nanoflare.NewStore()
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/logout", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Location"); got != "/login?sso_logged_out=1" {
+		t.Fatalf("location = %q", got)
 	}
 }
 
@@ -1275,6 +1367,8 @@ type fakeControlOIDC struct {
 	beginAuthURL string
 	beginAuthErr error
 	callbackErr  error
+	logoutURL    string
+	logoutErr    error
 }
 
 func (f fakeControlOIDC) BrowserFlowEnabled() bool {
@@ -1297,6 +1391,16 @@ func (f fakeControlOIDC) HandleConsoleCallback(*http.Request) (AuthResult, strin
 		return AuthResult{}, "", f.callbackErr
 	}
 	return f.result, f.next, nil
+}
+
+func (f fakeControlOIDC) ConsoleLogoutURL(context.Context, string) (string, error) {
+	if f.logoutErr != nil {
+		return "", f.logoutErr
+	}
+	if f.logoutURL == "" {
+		return "/login?sso_logged_out=1", nil
+	}
+	return f.logoutURL, nil
 }
 
 func (f fakeControlOIDC) Issuer() string {

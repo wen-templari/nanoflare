@@ -76,6 +76,11 @@ export function ConsoleLayout() {
       : []),
   ]
 
+  function signOut() {
+    logout()
+    window.location.assign("/v1/auth/oidc/logout")
+  }
+
   async function submitOrganization(event: React.FormEvent) {
     event.preventDefault()
     if (ownedOrganizationLimitReached) {
@@ -102,10 +107,7 @@ export function ConsoleLayout() {
       <OrganizationOnboarding
         error={orgError}
         name={orgName}
-        onLogout={() => {
-          logout()
-          navigate("/login", { replace: true })
-        }}
+        onLogout={signOut}
         onNameChange={setOrgName}
         onSubmit={submitOrganization}
         saving={orgSaving}
@@ -191,10 +193,7 @@ export function ConsoleLayout() {
               <ActionIcon
                 aria-label="Sign out"
                 color="gray"
-                onClick={() => {
-                  logout()
-                  navigate("/login", { replace: true })
-                }}
+                onClick={signOut}
                 variant="subtle"
               >
                 <LogOut size={16} />

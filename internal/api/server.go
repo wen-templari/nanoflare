@@ -15,18 +15,19 @@ import (
 )
 
 type Server struct {
-	service          *nanoflare.Service
-	traefik          TraefikConfigReader
-	traefikToken     string
-	auth             Authenticator
-	controlAuth      *nanoflare.ControlAuthService
-	controlOIDC      ControlOIDCAuthenticator
-	controlOIDCMu    sync.Mutex
-	controlOIDCCodes map[string]controlOIDCCode
-	controlCLICodes  map[string]controlCLICode
-	oauth            *nanoflare.OAuthService
-	runtime          RuntimeEnsurer
-	mux              *http.ServeMux
+	service                *nanoflare.Service
+	traefik                TraefikConfigReader
+	traefikToken           string
+	auth                   Authenticator
+	controlAuth            *nanoflare.ControlAuthService
+	controlOIDC            ControlOIDCAuthenticator
+	controlOIDCDirectLogin bool
+	controlOIDCMu          sync.Mutex
+	controlOIDCCodes       map[string]controlOIDCCode
+	controlCLICodes        map[string]controlCLICode
+	oauth                  *nanoflare.OAuthService
+	runtime                RuntimeEnsurer
+	mux                    *http.ServeMux
 }
 
 type RuntimeEnsurer interface {
@@ -49,6 +50,7 @@ type ControlOIDCAuthenticator interface {
 	BrowserFlowEnabled() bool
 	BeginConsoleAuth(http.ResponseWriter, *http.Request, string) error
 	HandleConsoleCallback(*http.Request) (AuthResult, string, error)
+	ConsoleLogoutURL(context.Context, string) (string, error)
 	Issuer() string
 }
 
@@ -111,6 +113,10 @@ func NewServerWithRuntimeAndOAuth(service *nanoflare.Service, traefik TraefikCon
 
 func (s *Server) SetControlOIDC(auth ControlOIDCAuthenticator) {
 	s.controlOIDC = auth
+}
+
+func (s *Server) SetControlOIDCDirectLogin(enabled bool) {
+	s.controlOIDCDirectLogin = enabled
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

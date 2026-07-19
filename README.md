@@ -200,6 +200,7 @@ NANOFLARE_CONTROL_OIDC_CLIENT_ID=nanoflare-console
 NANOFLARE_CONTROL_OIDC_CLIENT_SECRET=change-me
 NANOFLARE_CONTROL_OIDC_PUBLIC_URL=https://console.example.com
 NANOFLARE_CONTROL_OIDC_EMAIL_CLAIM=email
+NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN=true
 ```
 
 Register `https://console.example.com/v1/auth/oidc/callback` as the OIDC client

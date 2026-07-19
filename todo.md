@@ -4,9 +4,8 @@
 - worker init
 
 ## Bindings 
-- db
 - queue
 
 ## Access control
 
-- PAT 
+- improve cli login -web flow

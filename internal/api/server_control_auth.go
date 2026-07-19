@@ -24,7 +24,7 @@ const (
 
 func isPublicControlPath(path string) bool {
 	switch path {
-	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh", "/v1/auth/pat/session", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/cli", "/v1/auth/oidc/session", "/v1/auth/cli/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
+	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh", "/v1/auth/pat/session", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/cli", "/v1/auth/oidc/logout", "/v1/auth/oidc/session", "/v1/auth/cli/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
 		return true
 	default:
 		if strings.HasPrefix(path, "/v1/invites/") {
@@ -164,6 +164,7 @@ func (s *Server) registerControlAuthRoutes() {
 	s.mux.HandleFunc("GET /v1/auth/oidc/start", s.controlOIDCStart)
 	s.mux.HandleFunc("GET /v1/auth/oidc/callback", s.controlOIDCCallback)
 	s.mux.HandleFunc("GET /v1/auth/oidc/cli", s.controlOIDCCLI)
+	s.mux.HandleFunc("GET /v1/auth/oidc/logout", s.controlOIDCLogout)
 	s.mux.HandleFunc("POST /v1/auth/oidc/session", s.controlOIDCSession)
 	s.mux.HandleFunc("POST /v1/auth/cli/code", s.controlCLICode)
 	s.mux.HandleFunc("POST /v1/auth/cli/session", s.controlCLISession)
@@ -184,7 +185,10 @@ func (s *Server) registerControlAuthRoutes() {
 
 func (s *Server) controlOIDCConfig(w http.ResponseWriter, r *http.Request) {
 	enabled := s.controlAuth != nil && s.controlOIDC != nil && s.controlOIDC.BrowserFlowEnabled()
-	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"enabled":      enabled,
+		"direct_login": enabled && s.controlOIDCDirectLogin,
+	})
 }
 
 func (s *Server) controlOIDCStart(w http.ResponseWriter, r *http.Request) {
@@ -238,6 +242,23 @@ func (s *Server) controlOIDCCLI(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>Nanoflare CLI Login</title><style>body{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:3rem;line-height:1.5;color:#111827}code{display:inline-block;padding:.75rem 1rem;border:1px solid #d1d5db;border-radius:.5rem;background:#f9fafb;font-size:1.1rem}</style></head><body><h1>Nanoflare CLI login</h1><p>Copy this one-time code back into your terminal:</p><p><code>` + code + `</code></p><p>You can close this tab after the CLI confirms login.</p></body></html>`))
+}
+
+func (s *Server) controlOIDCLogout(w http.ResponseWriter, r *http.Request) {
+	next := safeControlNext(r.URL.Query().Get("next"))
+	if next == "/" {
+		next = "/login?sso_logged_out=1"
+	}
+	if s.controlOIDC == nil || !s.controlOIDC.BrowserFlowEnabled() {
+		http.Redirect(w, r, next, http.StatusFound)
+		return
+	}
+	logoutURL, err := s.controlOIDC.ConsoleLogoutURL(r.Context(), next)
+	if err != nil {
+		http.Redirect(w, r, next, http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, logoutURL, http.StatusFound)
 }
 
 func (s *Server) controlOIDCSession(w http.ResponseWriter, r *http.Request) {

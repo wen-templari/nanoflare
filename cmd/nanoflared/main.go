@@ -66,6 +66,7 @@ func main() {
 		controlOIDCClientID = flag.String("control-oidc-client-id", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_ID"), "OIDC client ID for console login")
 		controlOIDCSecret   = flag.String("control-oidc-client-secret", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_SECRET"), "OIDC client secret for console login")
 		controlOIDCPublic   = flag.String("control-oidc-public-url", os.Getenv("NANOFLARE_CONTROL_OIDC_PUBLIC_URL"), "Public console base URL for OIDC login callbacks, for example https://console.example.com")
+		controlOIDCDirect   = flag.Bool("control-oidc-direct-login", envBoolOrDefault("NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN", false), "start console OIDC login directly instead of showing the login form first")
 	)
 	flag.Parse()
 
@@ -233,6 +234,7 @@ func main() {
 		}
 		log.Printf("nanoflared control oidc callback URL %s", controlVerifier.RedirectURL())
 		server.SetControlOIDC(controlVerifier)
+		server.SetControlOIDCDirectLogin(*controlOIDCDirect)
 	}
 	runtimeMux := newRuntimeMux(service, server, durationTelemetry)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
@@ -265,6 +267,18 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBoolOrDefault(name string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return parsed
 }
 
 func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry) *http.ServeMux {

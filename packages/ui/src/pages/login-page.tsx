@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../app/auth-context";
 
+type OIDCConfig = {
+  directLogin: boolean;
+  enabled: boolean;
+  loading: boolean;
+};
+
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -15,17 +21,28 @@ export function LoginPage() {
   const [signupMode, setSignupMode] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [oidcEnabled, setOIDCEnabled] = useState(false);
+  const [oidcConfig, setOIDCConfig] = useState<OIDCConfig>({ directLogin: false, enabled: false, loading: true });
   const [oidcLoading, setOIDCLoading] = useState(false);
+  const [suppressDirectLogin, setSuppressDirectLogin] = useState(() => searchParams.get("sso_logged_out") === "1");
   const handledOIDCCode = useRef("");
+  const startedDirectLogin = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     async function loadOIDCConfig() {
       const response = await fetch("/v1/auth/oidc/config").catch(() => null);
-      if (!response?.ok) return;
-      const config = await response.json().catch(() => ({ enabled: false })) as { enabled?: boolean };
-      if (!cancelled) setOIDCEnabled(Boolean(config.enabled));
+      if (!response?.ok) {
+        if (!cancelled) setOIDCConfig({ directLogin: false, enabled: false, loading: false });
+        return;
+      }
+      const config = await response.json().catch(() => ({ direct_login: false, enabled: false })) as { direct_login?: boolean; enabled?: boolean };
+      if (!cancelled) {
+        setOIDCConfig({
+          directLogin: Boolean(config.direct_login),
+          enabled: Boolean(config.enabled),
+          loading: false,
+        });
+      }
     }
     void loadOIDCConfig();
     return () => {
@@ -47,6 +64,7 @@ export function LoginPage() {
       } catch (err) {
         if (!cancelled) {
           handledOIDCCode.current = "";
+          setSuppressDirectLogin(true);
           setError(err instanceof Error ? err.message : "OIDC login failed");
           const params = new URLSearchParams(searchParams);
           params.delete("oidc_code");
@@ -62,7 +80,19 @@ export function LoginPage() {
     };
   }, [auth, navigate, next, oidcCode, searchParams, setSearchParams]);
 
+  const shouldStartDirectLogin = oidcConfig.directLogin && oidcConfig.enabled && !auth.signedIn && !oidcCode && !suppressDirectLogin;
+
+  useEffect(() => {
+    if (oidcConfig.loading || !shouldStartDirectLogin || startedDirectLogin.current) return;
+    startedDirectLogin.current = true;
+    setOIDCLoading(true);
+    startOIDCLogin();
+  }, [oidcConfig.loading, shouldStartDirectLogin]);
+
   if (auth.signedIn) return <Navigate to={next} replace />;
+  if ((oidcConfig.loading && !oidcCode) || shouldStartDirectLogin) {
+    return <Box className="min-h-screen bg-[var(--mantine-color-gray-0)]" />;
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -126,7 +156,7 @@ export function LoginPage() {
                   <Button leftSection={<LogIn size={16} />} loading={submitting} type="submit">
                     {signupMode ? "Create account" : "Sign in"}
                   </Button>
-                  {oidcEnabled && !signupMode && (
+                  {oidcConfig.enabled && !signupMode && (
                     <>
                       <Divider label="or" labelPosition="center" />
                       <Button leftSection={<LogIn size={16} />} loading={oidcLoading} onClick={startOIDCLogin} type="button" variant="light">
