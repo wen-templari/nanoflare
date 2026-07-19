@@ -37,6 +37,7 @@ services:
       - -worker-host=nanoflare-runner
       - -prometheus-url=http://prometheus:9090
       - -runner-url=http://nanoflare-runner:8090
+      - -litestream-enabled=${NANOFLARE_LITESTREAM_ENABLED:-false}
     environment:
       DATABASE_URL: postgres://nanoflare:nanoflare-development@postgres:5432/nanoflare?sslmode=disable
       MINIO_ENDPOINT: minio:9000

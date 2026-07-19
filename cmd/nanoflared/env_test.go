@@ -35,3 +35,42 @@ func TestLoadEnvFileAllowsMissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGeneratedLitestreamReplicaConfigUsesExplicitPrefix(t *testing.T) {
+	t.Setenv("NANOFLARE_LITESTREAM_REPLICA_URL_PREFIX", "s3://backups/nanoflare")
+	t.Setenv("NANOFLARE_LITESTREAM_ENDPOINT", "https://s3.example.com")
+	t.Setenv("NANOFLARE_LITESTREAM_REGION", "auto")
+	t.Setenv("NANOFLARE_LITESTREAM_ACCESS_KEY_ID", "access")
+	t.Setenv("NANOFLARE_LITESTREAM_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("NANOFLARE_LITESTREAM_FORCE_PATH_STYLE", "true")
+
+	config, err := generatedLitestreamReplicaConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.URLPrefix != "s3://backups/nanoflare" || config.Endpoint != "https://s3.example.com" || config.Region != "auto" {
+		t.Fatalf("config = %#v", config)
+	}
+	if config.AccessKeyID != "access" || config.SecretAccessKey != "secret" || !config.ForcePathStyle {
+		t.Fatalf("config = %#v", config)
+	}
+}
+
+func TestGeneratedLitestreamReplicaConfigFallsBackToMinIO(t *testing.T) {
+	t.Setenv("MINIO_ENDPOINT", "minio:9000")
+	t.Setenv("MINIO_BUCKET", "nanoflare")
+	t.Setenv("MINIO_ACCESS_KEY", "minio-access")
+	t.Setenv("MINIO_SECRET_KEY", "minio-secret")
+	t.Setenv("MINIO_SECURE", "false")
+
+	config, err := generatedLitestreamReplicaConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.URLPrefix != "s3://nanoflare/litestream" || config.Endpoint != "http://minio:9000" || config.Region != "us-east-1" {
+		t.Fatalf("config = %#v", config)
+	}
+	if config.AccessKeyID != "minio-access" || config.SecretAccessKey != "minio-secret" || !config.ForcePathStyle {
+		t.Fatalf("config = %#v", config)
+	}
+}

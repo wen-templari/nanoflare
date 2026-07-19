@@ -24,6 +24,8 @@ FROM node:22-bookworm-slim AS runtime-base
 ARG WORKERD_VERSION=1.20260706.1
 RUN npm install -g workerd@${WORKERD_VERSION}
 
+FROM litestream/litestream:latest AS litestream
+
 FROM scratch AS packages
 COPY --from=go-build /out/ /bin/
 COPY --from=ui-build /src/packages/ui/dist/ /ui/
@@ -31,6 +33,7 @@ COPY packages/workers-types/ /packages/workers-types/
 
 FROM runtime-base AS nanoflared
 COPY --from=go-build /out/nanoflared /usr/local/bin/nanoflared
+COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 ENTRYPOINT ["nanoflared"]
 
 FROM runtime-base AS nanoflare-runner

@@ -197,6 +197,17 @@ func (m *SQLiteManager) open(databaseID string) (*sql.DB, error) {
 	}
 	m.dbs[databaseID] = db
 	m.mu.Unlock()
+	if m.litestream != nil {
+		if err := m.litestream.EnsureDatabase(m.path(databaseID)); err != nil {
+			m.mu.Lock()
+			if m.dbs[databaseID] == db {
+				delete(m.dbs, databaseID)
+			}
+			m.mu.Unlock()
+			db.Close()
+			return nil, err
+		}
+	}
 	return db, nil
 }
 

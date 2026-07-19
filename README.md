@@ -361,11 +361,29 @@ nanoflare db migrations apply db_123
 ```
 
 `nanoflared` stores SQLite files under `-db-dir`, defaulting to
-`<config-dir>/db`. Litestream can be enabled with `-litestream-enabled`,
-`-litestream-bin`, and `-litestream-config`. Litestream restores a missing local
-database before it is opened and then runs as a long-lived replication process;
-it is not started per query and does not provide multi-node writes or automatic
-primary failover.
+`<config-dir>/db`. Litestream can be enabled with `-litestream-enabled`.
+When `-litestream-config` is omitted, `nanoflared` generates
+`<config-dir>/litestream.generated.yml`, adds databases to it as they are opened,
+and starts or restarts Litestream replication as needed. The generated config
+uses `NANOFLARE_LITESTREAM_REPLICA_URL_PREFIX` when set, or falls back to
+`MINIO_ENDPOINT`, `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, and
+`MINIO_SECURE`.
+
+For a custom S3-compatible target:
+
+```sh
+NANOFLARE_LITESTREAM_REPLICA_URL_PREFIX=s3://my-bucket/nanoflare-litestream
+NANOFLARE_LITESTREAM_ENDPOINT=https://s3.example.com
+NANOFLARE_LITESTREAM_ACCESS_KEY_ID=...
+NANOFLARE_LITESTREAM_SECRET_ACCESS_KEY=...
+nanoflared -litestream-enabled
+```
+
+`-litestream-config` and `-litestream-bin` are still available for fully manual
+configurations or non-default binary locations. Litestream restores a missing
+local database before it is opened and then runs as a long-lived replication
+process; it is not started per query and does not provide multi-node writes or
+automatic primary failover.
 
 Static assets can be attached to a Worker deployment by setting an assets
 directory in `nanoflare.json`. The binding defaults to `ASSETS`, matching

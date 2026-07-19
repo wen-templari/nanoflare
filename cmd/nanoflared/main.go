@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -168,6 +169,15 @@ func main() {
 
 	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
 	litestream := database.NewLitestreamSupervisor(*litestreamEnabled, *litestreamBin, *litestreamConfig)
+	if litestream.Enabled() && strings.TrimSpace(*litestreamConfig) == "" {
+		replica, err := generatedLitestreamReplicaConfig()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := litestream.UseGeneratedConfig(filepath.Join(*configDir, "litestream.generated.yml"), replica); err != nil {
+			log.Fatal(err)
+		}
+	}
 	dbRuntime, err := database.NewSQLiteManager(*dbDir, litestream)
 	if err != nil {
 		log.Fatal(err)

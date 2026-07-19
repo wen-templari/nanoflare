@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,69 @@ func TestLitestreamRestoreRunsOnlyWhenDatabaseMissing(t *testing.T) {
 	got := string(calls)
 	if strings.Count(got, "restore\n") != 1 || !strings.Contains(got, filepath.Join(dir, "db-litestream.sqlite")) {
 		t.Fatalf("litestream calls = %q", got)
+	}
+}
+
+func TestLitestreamGeneratedConfigTracksOpenedDatabases(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	configPath := filepath.Join(dir, "litestream.yml")
+	fake := filepath.Join(dir, "litestream")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + logPath + "\nexit 0\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := NewLitestreamSupervisor(true, fake, "")
+	if err := supervisor.UseGeneratedConfig(configPath, LitestreamReplicaConfig{
+		URLPrefix:       "s3://backups/nanoflare",
+		Endpoint:        "http://minio:9000",
+		Region:          "us-east-1",
+		AccessKeyID:     "access",
+		SecretAccessKey: "secret",
+		ForcePathStyle:  true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewSQLiteManager(dir, supervisor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Execute("db-generated", nanoflare.DBQueryRequest{
+		Method:     "exec",
+		Statements: []nanoflare.DBStatementRequest{{SQL: `CREATE TABLE t (id integer);`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotConfig := string(config)
+	for _, want := range []string{
+		`path: "` + filepath.Join(dir, "db-generated.sqlite") + `"`,
+		`url: "s3://backups/nanoflare/db-generated.sqlite"`,
+		`endpoint: "http://minio:9000"`,
+		`access-key-id: "access"`,
+		`secret-access-key: "secret"`,
+		`force-path-style: true`,
+	} {
+		if !strings.Contains(gotConfig, want) {
+			t.Fatalf("generated config missing %q:\n%s", want, gotConfig)
+		}
+	}
+	var calls []byte
+	for i := 0; i < 20; i++ {
+		calls, err = os.ReadFile(logPath)
+		if err == nil && strings.Contains(string(calls), "replicate\n-config\n"+configPath) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	gotCalls := string(calls)
+	if !strings.Contains(gotCalls, "restore\n-if-db-not-exists\n-if-replica-exists\n-config\n"+configPath) || !strings.Contains(gotCalls, "replicate\n-config\n"+configPath) {
+		t.Fatalf("litestream calls = %q", gotCalls)
 	}
 }
