@@ -30,6 +30,7 @@ var (
 	ErrOIDCIdentityExists          = errors.New("oidc identity already exists")
 	ErrOIDCIdentityNotFound        = errors.New("oidc identity not found")
 	ErrControlRefreshTokenNotFound = errors.New("control refresh token not found")
+	ErrPersonalAccessTokenNotFound = errors.New("personal access token not found")
 	ErrOrganizationExists          = errors.New("organization already exists")
 	ErrOrganizationNotFound        = errors.New("organization not found")
 	ErrMembershipNotFound          = errors.New("user is not a member of the organization")
@@ -44,6 +45,10 @@ type Repository interface {
 	CreateControlRefreshToken(ControlRefreshToken) error
 	ControlRefreshToken(string) (ControlRefreshToken, error)
 	UpdateControlRefreshToken(ControlRefreshToken) error
+	CreatePersonalAccessToken(PersonalAccessToken) error
+	PersonalAccessTokenByHash(string) (PersonalAccessToken, error)
+	PersonalAccessTokensByUser(string) ([]PersonalAccessToken, error)
+	UpdatePersonalAccessToken(PersonalAccessToken) error
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
 	GetOrganization(string) (Organization, error)
@@ -137,6 +142,8 @@ type Store struct {
 	usersByEmail    map[string]string
 	oidcIdentities  map[string]UserOIDCIdentity
 	controlRefresh  map[string]ControlRefreshToken
+	pats            map[string]PersonalAccessToken
+	patsByHash      map[string]string
 	organizations   map[string]Organization
 	memberships     map[string]map[string]OrganizationMembership
 	invites         map[string]OrganizationInvite
@@ -164,6 +171,8 @@ func NewStore() *Store {
 		usersByEmail:    make(map[string]string),
 		oidcIdentities:  make(map[string]UserOIDCIdentity),
 		controlRefresh:  make(map[string]ControlRefreshToken),
+		pats:            make(map[string]PersonalAccessToken),
+		patsByHash:      make(map[string]string),
 		organizations:   make(map[string]Organization),
 		memberships:     make(map[string]map[string]OrganizationMembership),
 		invites:         make(map[string]OrganizationInvite),
@@ -276,6 +285,62 @@ func (s *Store) UpdateControlRefreshToken(token ControlRefreshToken) error {
 		return ErrControlRefreshTokenNotFound
 	}
 	s.controlRefresh[token.TokenHash] = token
+	return nil
+}
+
+func (s *Store) CreatePersonalAccessToken(token PersonalAccessToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.pats[token.ID]; exists {
+		return ErrPersonalAccessTokenNotFound
+	}
+	if _, exists := s.patsByHash[token.TokenHash]; exists {
+		return ErrPersonalAccessTokenNotFound
+	}
+	s.pats[token.ID] = clonePersonalAccessToken(token)
+	s.patsByHash[token.TokenHash] = token.ID
+	return nil
+}
+
+func (s *Store) PersonalAccessTokenByHash(tokenHash string) (PersonalAccessToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, exists := s.patsByHash[tokenHash]
+	if !exists {
+		return PersonalAccessToken{}, ErrPersonalAccessTokenNotFound
+	}
+	token, exists := s.pats[id]
+	if !exists {
+		return PersonalAccessToken{}, ErrPersonalAccessTokenNotFound
+	}
+	return clonePersonalAccessToken(token), nil
+}
+
+func (s *Store) PersonalAccessTokensByUser(userID string) ([]PersonalAccessToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tokens := make([]PersonalAccessToken, 0)
+	for _, token := range s.pats {
+		if token.UserID == userID {
+			tokens = append(tokens, clonePersonalAccessToken(token))
+		}
+	}
+	sort.Slice(tokens, func(i, j int) bool { return tokens[i].CreatedAt.After(tokens[j].CreatedAt) })
+	return tokens, nil
+}
+
+func (s *Store) UpdatePersonalAccessToken(token PersonalAccessToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, exists := s.pats[token.ID]
+	if !exists {
+		return ErrPersonalAccessTokenNotFound
+	}
+	if existing.TokenHash != token.TokenHash {
+		delete(s.patsByHash, existing.TokenHash)
+		s.patsByHash[token.TokenHash] = token.ID
+	}
+	s.pats[token.ID] = clonePersonalAccessToken(token)
 	return nil
 }
 
@@ -1556,6 +1621,23 @@ func cloneOAuthAuthorizationCode(code OAuthAuthorizationCode) OAuthAuthorization
 
 func cloneOAuthToken(token OAuthToken) OAuthToken {
 	token.Scopes = append([]string(nil), token.Scopes...)
+	if token.RevokedAt != nil {
+		revoked := *token.RevokedAt
+		token.RevokedAt = &revoked
+	}
+	return token
+}
+
+func clonePersonalAccessToken(token PersonalAccessToken) PersonalAccessToken {
+	token.Scopes = append([]string(nil), token.Scopes...)
+	if token.ExpiresAt != nil {
+		expires := *token.ExpiresAt
+		token.ExpiresAt = &expires
+	}
+	if token.LastUsedAt != nil {
+		lastUsed := *token.LastUsedAt
+		token.LastUsedAt = &lastUsed
+	}
 	if token.RevokedAt != nil {
 		revoked := *token.RevokedAt
 		token.RevokedAt = &revoked

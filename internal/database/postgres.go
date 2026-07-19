@@ -74,6 +74,19 @@ CREATE TABLE IF NOT EXISTS control_refresh_tokens (
 	revoked_at timestamptz,
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS personal_access_tokens (
+	id text PRIMARY KEY,
+	token_hash text NOT NULL UNIQUE,
+	name text NOT NULL,
+	user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	org_id text NOT NULL DEFAULT '',
+	scope_type text NOT NULL DEFAULT 'user',
+	scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+	expires_at timestamptz,
+	last_used_at timestamptz,
+	revoked_at timestamptz,
+	created_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS organizations (
 	id text PRIMARY KEY,
 	name text NOT NULL,
@@ -199,6 +212,9 @@ UPDATE organizations SET usage_level = 'default' WHERE usage_level = '';
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS owner_org_id text NOT NULL DEFAULT '';
 ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'owner';
 ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS scopes jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS scope_type text NOT NULL DEFAULT 'user';
+ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS scopes jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS last_used_at timestamptz;
 UPDATE user_organizations SET role = 'owner' WHERE role = '';
 UPDATE user_organizations SET scopes = '["apps:read","apps:write","deployments:write","secrets:write","kv:read","kv:write","objects:read","objects:write","orgs:read","members:read","members:write","orgs:write","members:owner"]'::jsonb WHERE scopes = '[]'::jsonb;
 UPDATE user_organizations
@@ -577,6 +593,75 @@ func (p *Postgres) UpdateControlRefreshToken(token nanoflare.ControlRefreshToken
 	return nil
 }
 
+func (p *Postgres) CreatePersonalAccessToken(token nanoflare.PersonalAccessToken) error {
+	_, err := p.db.Exec(`
+INSERT INTO personal_access_tokens (id, token_hash, name, user_id, org_id, scope_type, scopes, expires_at, last_used_at, revoked_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		token.ID, token.TokenHash, token.Name, token.UserID, token.OrgID, token.ScopeType, mustJSON(token.Scopes), token.ExpiresAt, token.LastUsedAt, token.RevokedAt, token.CreatedAt)
+	if isForeignKeyViolation(err) {
+		return nanoflare.ErrUserNotFound
+	}
+	if isUniqueViolation(err) {
+		return nanoflare.ErrPersonalAccessTokenNotFound
+	}
+	return err
+}
+
+func (p *Postgres) PersonalAccessTokenByHash(tokenHash string) (nanoflare.PersonalAccessToken, error) {
+	return p.personalAccessToken(`token_hash = $1`, tokenHash)
+}
+
+func (p *Postgres) PersonalAccessTokensByUser(userID string) ([]nanoflare.PersonalAccessToken, error) {
+	rows, err := p.db.Query(`
+SELECT id, token_hash, name, user_id, org_id, scope_type, scopes, expires_at, last_used_at, revoked_at, created_at
+FROM personal_access_tokens
+WHERE user_id = $1
+ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []nanoflare.PersonalAccessToken
+	for rows.Next() {
+		token, err := scanPersonalAccessToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, token)
+	}
+	return tokens, rows.Err()
+}
+
+func (p *Postgres) UpdatePersonalAccessToken(token nanoflare.PersonalAccessToken) error {
+	result, err := p.db.Exec(`
+UPDATE personal_access_tokens
+SET token_hash = $2, name = $3, user_id = $4, org_id = $5, scope_type = $6, scopes = $7, expires_at = $8, last_used_at = $9, revoked_at = $10, created_at = $11
+WHERE id = $1`,
+		token.ID, token.TokenHash, token.Name, token.UserID, token.OrgID, token.ScopeType, mustJSON(token.Scopes), token.ExpiresAt, token.LastUsedAt, token.RevokedAt, token.CreatedAt)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return nanoflare.ErrPersonalAccessTokenNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) personalAccessToken(where, value string) (nanoflare.PersonalAccessToken, error) {
+	row := p.db.QueryRow(`
+SELECT id, token_hash, name, user_id, org_id, scope_type, scopes, expires_at, last_used_at, revoked_at, created_at
+FROM personal_access_tokens WHERE `+where, value)
+	token, err := scanPersonalAccessToken(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.PersonalAccessToken{}, nanoflare.ErrPersonalAccessTokenNotFound
+	}
+	return token, err
+}
+
 func (p *Postgres) UserCount() (int, error) {
 	var count int
 	err := p.db.QueryRow(`SELECT count(*) FROM users`).Scan(&count)
@@ -796,6 +881,19 @@ func scanOrganizationInvite(row scanner) (nanoflare.OrganizationInvite, error) {
 		return nanoflare.OrganizationInvite{}, err
 	}
 	return invite, nil
+}
+
+func scanPersonalAccessToken(row scanner) (nanoflare.PersonalAccessToken, error) {
+	var token nanoflare.PersonalAccessToken
+	var scopes []byte
+	err := row.Scan(&token.ID, &token.TokenHash, &token.Name, &token.UserID, &token.OrgID, &token.ScopeType, &scopes, &token.ExpiresAt, &token.LastUsedAt, &token.RevokedAt, &token.CreatedAt)
+	if err != nil {
+		return nanoflare.PersonalAccessToken{}, err
+	}
+	if err := json.Unmarshal(scopes, &token.Scopes); err != nil {
+		return nanoflare.PersonalAccessToken{}, err
+	}
+	return token, nil
 }
 
 func (p *Postgres) OrganizationInvitesByOrg(orgID string) ([]nanoflare.OrganizationInvite, error) {

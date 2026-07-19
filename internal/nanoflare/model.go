@@ -180,6 +180,25 @@ type ControlRefreshToken struct {
 	CreatedAt time.Time
 }
 
+type PersonalAccessToken struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	UserID     string     `json:"user_id"`
+	OrgID      string     `json:"org_id,omitempty"`
+	ScopeType  string     `json:"scope_type"`
+	Scopes     []string   `json:"scopes"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	TokenHash  string     `json:"-"`
+}
+
+type PersonalAccessTokenCreated struct {
+	PersonalAccessToken
+	Token string `json:"token"`
+}
+
 type PutSecretInput struct {
 	Value string `json:"value"`
 }

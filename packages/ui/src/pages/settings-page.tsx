@@ -5,20 +5,23 @@ import { Check, Copy, Plus, RotateCcw, Settings, SquarePen, Trash2, UserMinus, U
 import { useNavigate } from "react-router-dom"
 import { apiFetch, errorText, fetchJSON } from "../app/api"
 import { formatBytes, normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits"
-import type { KVNamespaceMetrics, OAuthClient, OAuthClientCreated, ObjectStorageBucketMetrics, OrganizationInvite, OrganizationInviteCreated, OrganizationMember } from "../app/types"
+import type { KVNamespaceMetrics, OAuthClient, OAuthClientCreated, ObjectStorageBucketMetrics, OrganizationInvite, OrganizationInviteCreated, OrganizationMember, PersonalAccessToken, PersonalAccessTokenCreated } from "../app/types"
 import { useWorkspace } from "../app/workspace-context"
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
 import { PageHeading, Panel } from "../components/shared/primitives"
 
 const oauthScopes = ["apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"]
+const controlScopes = ["apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner"]
 const roleOptions = ["viewer", "member", "admin", "owner"]
 const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] }
+const emptyPATForm = { name: "", scopeType: "org", scopes: [] as string[], expiresIn: "never" }
 
 export function SettingsPage() {
   const navigate = useNavigate()
   const { activeOrgID, organizations, workers, namespaces, objectStorageBuckets, notify } = useWorkspace()
   const [clients, setClients] = useState<OAuthClient[]>([])
+  const [pats, setPats] = useState<PersonalAccessToken[]>([])
   const [members, setMembers] = useState<OrganizationMember[]>([])
   const [invites, setInvites] = useState<OrganizationInvite[]>([])
   const [loading, setLoading] = useState(true)
@@ -27,6 +30,9 @@ export function SettingsPage() {
   const [editingClient, setEditingClient] = useState<OAuthClient | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [oneTimeSecret, setOneTimeSecret] = useState<OAuthClientCreated | null>(null)
+  const [oneTimePAT, setOneTimePAT] = useState<PersonalAccessTokenCreated | null>(null)
+  const [patOpen, setPATOpen] = useState(false)
+  const [patForm, setPATForm] = useState(emptyPATForm)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState("")
   const [inviteRole, setInviteRole] = useState("member")
@@ -47,6 +53,7 @@ export function SettingsPage() {
   const canReadMembers = activeOrg?.scopes?.includes("members:read")
   const canWriteMembers = activeOrg?.scopes?.includes("members:write")
   const canManageOwners = activeOrg?.scopes?.includes("members:owner")
+  const patScopeOptions = patForm.scopeType === "org" ? controlScopes.filter((scope) => activeOrg?.scopes?.includes(scope)) : controlScopes
   const pendingInvites = useMemo(() => {
     const memberEmails = new Set(members.map((member) => member.user_email.toLowerCase()))
     return invites.filter((invite) => !invite.accepted_at && !invite.revoked_at && !memberEmails.has(invite.email.toLowerCase()))
@@ -91,17 +98,20 @@ export function SettingsPage() {
   async function refresh() {
     setLoading(true)
     try {
-      const [nextClients, nextMembers, nextInvites] = await Promise.all([
+      const [nextClients, nextPATs, nextMembers, nextInvites] = await Promise.all([
         fetchJSON<OAuthClient[] | null>("/v1/oauth/clients").catch(() => []),
+        fetchJSON<PersonalAccessToken[] | null>("/v1/pats").catch(() => []),
         canReadMembers ? fetchJSON<OrganizationMember[] | null>(`/v1/orgs/${activeOrgID}/members`).catch(() => []) : Promise.resolve([]),
         canReadMembers ? fetchJSON<OrganizationInvite[] | null>(`/v1/orgs/${activeOrgID}/invites`).catch(() => []) : Promise.resolve([]),
       ])
       setClients((nextClients ?? []).filter((client) => !client.disabled))
+      setPats((nextPATs ?? []).filter((token) => !token.revoked_at))
       setMembers(nextMembers ?? [])
       setInvites(nextInvites ?? [])
       setError("")
     } catch (err) {
       setClients([])
+      setPats([])
       setMembers([])
       setInvites([])
       setError(err instanceof Error ? err.message : "Could not load OAuth settings")
@@ -174,6 +184,53 @@ export function SettingsPage() {
   async function copy(value: string, label: string) {
     await navigator.clipboard.writeText(value)
     notify(`${label} copied`)
+  }
+
+  function openCreatePAT() {
+    setPATForm({ ...emptyPATForm, scopes: activeOrg?.scopes?.filter((scope) => controlScopes.includes(scope)) ?? [] })
+    setError("")
+    setPATOpen(true)
+  }
+
+  async function submitPAT() {
+    setSaving(true)
+    const expiresAt = expiryDate(patForm.expiresIn)
+    const payload = {
+      name: patForm.name,
+      scope_type: patForm.scopeType,
+      org_id: patForm.scopeType === "org" ? activeOrgID : undefined,
+      scopes: patForm.scopes,
+      expires_at: expiresAt,
+    }
+    try {
+      const response = await apiFetch("/v1/pats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      if (!response.ok) throw new Error(await errorText(response, "Could not create personal access token"))
+      const created = await response.json() as PersonalAccessTokenCreated
+      setOneTimePAT(created)
+      setPats((current) => [created, ...current.filter((token) => token.id !== created.id)])
+      setPATOpen(false)
+      setPATForm(emptyPATForm)
+      notify("Personal access token created")
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create personal access token")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function revokePAT(token: PersonalAccessToken) {
+    const response = await apiFetch(`/v1/pats/${token.id}`, { method: "DELETE" })
+    if (!response.ok) {
+      setError(await errorText(response, "Could not revoke personal access token"))
+      return
+    }
+    notify("Personal access token revoked")
+    await refresh()
   }
 
   async function submitInvite() {
@@ -250,6 +307,18 @@ export function SettingsPage() {
         </Alert>
       )}
 
+      {oneTimePAT && (
+        <Alert color="blue" mb="md" title="Personal access token shown once">
+          <Group align="center" justify="space-between" wrap="nowrap">
+            <Box>
+              <Text size="sm">Store this token now. Nanoflare will not show it again after this page refreshes.</Text>
+              <Code mt={8} className="block break-all">{oneTimePAT.token}</Code>
+            </Box>
+            <Button variant="outline" onClick={() => copy(oneTimePAT.token, "Personal access token")}><Copy className="size-4" />Copy</Button>
+          </Group>
+        </Alert>
+      )}
+
       {inviteCreated && (
         <Alert color="blue" mb="md" title="Invite link">
           <Group align="center" justify="space-between" wrap="nowrap">
@@ -270,6 +339,51 @@ export function SettingsPage() {
             <LimitRow current={clients.length} label="OAuth clients" limit={limits.oauthClients} loading={loading} />
           </Stack>
         </Panel>
+
+        <Box>
+          <SectionHeading
+            title="Personal access tokens"
+            actions={<Button onClick={openCreatePAT}><Plus className="size-4" />New token</Button>}
+          />
+          <TableSurface>
+            <ScrollArea>
+              <Table highlightOnHover miw={920} verticalSpacing="sm" className="table-fixed">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th className="w-[30%]">Name</Table.Th>
+                    <Table.Th className="w-[22%]">Scope</Table.Th>
+                    <Table.Th className="w-[16%]">Created</Table.Th>
+                    <Table.Th className="w-[14%]">Expires</Table.Th>
+                    <Table.Th className="w-[12%]">Last used</Table.Th>
+                    <Table.Th className="w-[6%]">Actions</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {pats.map((token) => (
+                    <Table.Tr key={token.id}>
+                      <Table.Td><Text fw={700} truncate>{token.name}</Text></Table.Td>
+                      <Table.Td>
+                        <Stack gap={4}>
+                          <Badge tone={token.scope_type === "org" ? "blue" : "green"}>{token.scope_type}</Badge>
+                          <Text c="dimmed" size="xs" truncate>{token.scope_type === "org" ? orgName(token.org_id, organizations) : "All available orgs"}</Text>
+                        </Stack>
+                      </Table.Td>
+                      <Table.Td><Text c="dimmed" size="sm">{formatDate(token.created_at)}</Text></Table.Td>
+                      <Table.Td><Text c="dimmed" size="sm">{formatDate(token.expires_at)}</Text></Table.Td>
+                      <Table.Td><Text c="dimmed" size="sm">{formatDate(token.last_used_at)}</Text></Table.Td>
+                      <Table.Td>
+                        <Tooltip label="Revoke token">
+                          <ActionIcon aria-label="Revoke token" color="red" onClick={() => revokePAT(token)} variant="subtle"><Trash2 size={16} /></ActionIcon>
+                        </Tooltip>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+            {!loading && !pats.length && <EmptyState icon={<Settings />} title="No personal access tokens" copy="Create one to authenticate automation or the Nanoflare CLI." />}
+          </TableSurface>
+        </Box>
 
         {canReadMembers && (
           <Box>
@@ -418,6 +532,55 @@ export function SettingsPage() {
         </Stack>
       </Modal>
 
+      <Modal opened={patOpen} onClose={() => setPATOpen(false)} title="New personal access token" size="lg">
+        <Stack>
+          <TextInput
+            label="Name"
+            value={patForm.name}
+            onChange={(event) => {
+              const name = event.currentTarget.value
+              setPATForm((current) => ({ ...current, name }))
+            }}
+          />
+          <Select
+            allowDeselect={false}
+            data={[
+              { value: "org", label: "Current organization" },
+              { value: "user", label: "User scoped" },
+            ]}
+            label="Scope"
+            value={patForm.scopeType}
+            onChange={(scopeType) => scopeType && setPATForm((current) => ({
+              ...current,
+              scopeType,
+              scopes: scopeType === "org" ? (activeOrg?.scopes?.filter((scope) => controlScopes.includes(scope)) ?? []) : controlScopes,
+            }))}
+          />
+          <MultiSelect
+            data={patScopeOptions}
+            label="Allowed scopes"
+            value={patForm.scopes}
+            onChange={(scopes) => setPATForm((current) => ({ ...current, scopes }))}
+          />
+          <Select
+            allowDeselect={false}
+            data={[
+              { value: "never", label: "Never" },
+              { value: "30", label: "30 days" },
+              { value: "90", label: "90 days" },
+              { value: "365", label: "1 year" },
+            ]}
+            label="Expiration"
+            value={patForm.expiresIn}
+            onChange={(expiresIn) => expiresIn && setPATForm((current) => ({ ...current, expiresIn }))}
+          />
+          <Group justify="end">
+            <Button variant="ghost" onClick={() => setPATOpen(false)}>Cancel</Button>
+            <Button loading={saving} onClick={submitPAT}><Check className="size-4" />Create token</Button>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Modal opened={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite member">
         <Stack>
           <TextInput label="Email" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.currentTarget.value)} />
@@ -474,6 +637,25 @@ function LimitRow({
 
 function formatCount(value = 0) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)
+}
+
+function expiryDate(value: string) {
+  if (value === "never") return undefined
+  const days = Number(value)
+  if (!Number.isFinite(days) || days <= 0) return undefined
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return date.toISOString()
+}
+
+function formatDate(value?: string) {
+  if (!value) return "Never"
+  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+}
+
+function orgName(orgID: string | undefined, organizations: { id: string; name: string }[]) {
+  if (!orgID) return "Unknown org"
+  return organizations.find((org) => org.id === orgID)?.name ?? orgID
 }
 
 function SectionHeading({ title, eyebrow, actions }: { title: string; eyebrow?: string; actions?: ReactNode }) {

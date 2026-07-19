@@ -906,6 +906,139 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 	}
 }
 
+func TestPersonalAccessTokenAPIsAndAuth(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	controlAuth.SetTestHashCost(4)
+	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	session := signupControlUser(t, server)
+	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-pat")
+
+	createBody := bytes.NewBufferString(`{"name":"Deploy automation","scope_type":"org","org_id":"` + paidOrgID + `","scopes":["apps:read","apps:write"]}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/pats", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	createRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create pat status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+	var created nanoflare.PersonalAccessTokenCreated
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Token == "" || created.TokenHash != "" || created.OrgID != paidOrgID {
+		t.Fatalf("created pat = %#v", created)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/pats", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list pat status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
+	}
+	if strings.Contains(listRecorder.Body.String(), created.Token) {
+		t.Fatalf("list leaked token: %s", listRecorder.Body.String())
+	}
+
+	appBody := bytes.NewBufferString(`{"name":"PAT App","hostname":"pat.example.com"}`)
+	appRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", appBody)
+	appRequest.Header.Set("Content-Type", "application/json")
+	appRequest.Header.Set("Authorization", "Bearer "+created.Token)
+	appRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	appRecorder := httptest.NewRecorder()
+	server.ServeHTTP(appRecorder, appRequest)
+	if appRecorder.Code != http.StatusCreated {
+		t.Fatalf("pat create app status = %d body = %q", appRecorder.Code, appRecorder.Body.String())
+	}
+	var app nanoflare.App
+	if err := json.Unmarshal(appRecorder.Body.Bytes(), &app); err != nil {
+		t.Fatal(err)
+	}
+	if app.OrgID != paidOrgID {
+		t.Fatalf("app org = %q, want org-scoped pat org %q", app.OrgID, paidOrgID)
+	}
+
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/v1/pats/"+created.ID, nil)
+	deleteRequest.Header.Set("Authorization", "Bearer "+created.Token)
+	deleteRecorder := httptest.NewRecorder()
+	server.ServeHTTP(deleteRecorder, deleteRequest)
+	if deleteRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("pat managed pat status = %d body = %q", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	deleteRequest = httptest.NewRequest(http.MethodDelete, "/v1/pats/"+created.ID, nil)
+	deleteRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	deleteRecorder = httptest.NewRecorder()
+	server.ServeHTTP(deleteRecorder, deleteRequest)
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delete pat status = %d body = %q", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	appRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(`{"name":"Revoked","hostname":"revoked.example.com"}`))
+	appRequest.Header.Set("Content-Type", "application/json")
+	appRequest.Header.Set("Authorization", "Bearer "+created.Token)
+	appRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
+	appRecorder = httptest.NewRecorder()
+	server.ServeHTTP(appRecorder, appRequest)
+	if appRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked pat status = %d body = %q", appRecorder.Code, appRecorder.Body.String())
+	}
+}
+
+func TestUserScopedPersonalAccessTokenUsesOrgHeader(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	controlAuth.SetTestHashCost(4)
+	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	session := signupControlUser(t, server)
+	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-user-pat")
+
+	createBody := bytes.NewBufferString(`{"name":"Multi org","scope_type":"user","scopes":["apps:read"]}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/pats", createBody)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	createRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create user pat status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
+	}
+	var created nanoflare.PersonalAccessTokenCreated
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+created.Token)
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("missing org pat status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
+	}
+
+	listRequest = httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+created.Token)
+	listRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
+	listRecorder = httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list with user pat status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
+	}
+
+	createAppRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(`{"name":"No Write","hostname":"no-write.example.com"}`))
+	createAppRequest.Header.Set("Content-Type", "application/json")
+	createAppRequest.Header.Set("Authorization", "Bearer "+created.Token)
+	createAppRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
+	createAppRecorder := httptest.NewRecorder()
+	server.ServeHTTP(createAppRecorder, createAppRequest)
+	if createAppRecorder.Code != http.StatusForbidden {
+		t.Fatalf("write with read-only pat status = %d body = %q", createAppRecorder.Code, createAppRecorder.Body.String())
+	}
+}
+
 type oauthClientFixture struct {
 	ClientID     string
 	ClientSecret string

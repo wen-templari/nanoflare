@@ -103,6 +103,10 @@ func NewControlAuthService(store Repository, secret string) *ControlAuthService 
 	}
 }
 
+func (s *ControlAuthService) SetTestHashCost(cost int) {
+	s.hashCost = cost
+}
+
 func (s *ControlAuthService) Signup(input SignupInput) (AuthSession, error) {
 	email, password, err := normalizeCredentials(input.Email, input.Password)
 	if err != nil {

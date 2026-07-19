@@ -466,6 +466,57 @@ func TestAuthLoginWebUsesConsoleLoginFlow(t *testing.T) {
 	}
 }
 
+func TestAuthLoginPATUsesPersonalAccessTokenSession(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/pat/session":
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["token"] != "pat-token" {
+				t.Fatalf("pat token = %q", input["token"])
+			}
+			writeJSON(t, w, http.StatusOK, nanoflare.AuthSession{
+				Token:       "server-echo-is-ignored",
+				ActiveOrgID: "org-123",
+				User:        nanoflare.User{ID: "user-123", Email: "user@example.com"},
+				Organizations: []nanoflare.Organization{
+					{ID: "org-123", Name: "Example Org"},
+					{ID: "org-456", Name: "Other Org"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	runner.Stdin = strings.NewReader("pat-token\n")
+	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL, "--pat"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Logged in as user@example.com") || !strings.Contains(got, "Using organization org-123") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if got := stderr.String(); got != "Personal access token: " {
+		t.Fatalf("stderr = %q", got)
+	}
+	auth, err := loadAuthConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.Token != "pat-token" || auth.RefreshToken != "" || len(auth.Orgs) != 2 {
+		t.Fatalf("auth = %#v", auth)
+	}
+}
+
 func TestAuthLoginOIDCFlagIsRemoved(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := NewRunner(&stdout, &stderr)

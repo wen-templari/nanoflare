@@ -17,13 +17,14 @@ const (
 	controlUserKey   controlContextKey = "controlUser"
 	controlOrgKey    controlContextKey = "controlOrg"
 	controlOAuthKey  controlContextKey = "controlOAuth"
+	controlPATKey    controlContextKey = "controlPAT"
 	controlScopesKey controlContextKey = "controlScopes"
 	orgHeaderName                      = "X-Nanoflare-Org-ID"
 )
 
 func isPublicControlPath(path string) bool {
 	switch path {
-	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/cli", "/v1/auth/oidc/session", "/v1/auth/cli/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
+	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh", "/v1/auth/pat/session", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/cli", "/v1/auth/oidc/session", "/v1/auth/cli/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
 		return true
 	default:
 		if strings.HasPrefix(path, "/v1/invites/") {
@@ -44,6 +45,16 @@ func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Reque
 		if err == nil {
 			ctx := context.WithValue(r.Context(), controlOrgKey, access.OrgID)
 			ctx = context.WithValue(ctx, controlOAuthKey, access)
+			return r.WithContext(ctx), true
+		}
+	}
+	if !isUserSessionOnlyControlPath(r.URL.Path) {
+		access, err := s.controlAuth.ValidatePersonalAccessToken(token, r.Header.Get(orgHeaderName))
+		if err == nil {
+			ctx := context.WithValue(r.Context(), controlUserKey, access.User)
+			ctx = context.WithValue(ctx, controlOrgKey, access.OrgID)
+			ctx = context.WithValue(ctx, controlPATKey, access)
+			ctx = context.WithValue(ctx, controlScopesKey, access.Scopes)
 			return r.WithContext(ctx), true
 		}
 	}
@@ -78,11 +89,15 @@ func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Reque
 }
 
 func isUserSessionOnlyOAuthPath(path string) bool {
-	return path == "/v1/oauth/authorize" || path == "/v1/oauth/clients" || path == "/v1/oauth/connections" || strings.HasPrefix(path, "/v1/oauth/connections/")
+	return path == "/v1/oauth/authorize" || path == "/v1/oauth/clients" || strings.HasPrefix(path, "/v1/oauth/clients/") || path == "/v1/oauth/connections" || strings.HasPrefix(path, "/v1/oauth/connections/")
+}
+
+func isUserSessionOnlyControlPath(path string) bool {
+	return isUserSessionOnlyOAuthPath(path) || path == "/v1/auth/me" || path == "/v1/auth/cli/code" || path == "/v1/orgs" || path == "/v1/pats" || strings.HasPrefix(path, "/v1/pats/")
 }
 
 func isNoOrgControlPath(path string) bool {
-	return path == "/v1/oauth/authorize" || path == "/v1/orgs" || path == "/v1/auth/cli/code"
+	return path == "/v1/oauth/authorize" || path == "/v1/orgs" || path == "/v1/auth/cli/code" || path == "/v1/pats" || strings.HasPrefix(path, "/v1/pats/")
 }
 
 func controlOrgID(r *http.Request) string {
@@ -100,6 +115,11 @@ func controlOAuthAccess(r *http.Request) (nanoflare.OAuthAccess, bool) {
 	return value, ok
 }
 
+func controlPATAccess(r *http.Request) (nanoflare.PATAccess, bool) {
+	value, ok := r.Context().Value(controlPATKey).(nanoflare.PATAccess)
+	return value, ok
+}
+
 func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope string) bool {
 	if s.controlAuth == nil {
 		return true
@@ -112,6 +132,16 @@ func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope stri
 			}
 		}
 		writeError(w, http.StatusForbidden, errors.New("oauth scope is required: "+scope))
+		return false
+	}
+	if _, ok := controlPATAccess(r); ok {
+		scopes, _ := r.Context().Value(controlScopesKey).([]string)
+		for _, candidate := range scopes {
+			if candidate == scope {
+				return true
+			}
+		}
+		writeError(w, http.StatusForbidden, errors.New("personal access token scope is required: "+scope))
 		return false
 	}
 	scopes, _ := r.Context().Value(controlScopesKey).([]string)
@@ -129,6 +159,7 @@ func (s *Server) registerControlAuthRoutes() {
 	s.mux.HandleFunc("POST /v1/auth/signup", s.controlSignup)
 	s.mux.HandleFunc("POST /v1/auth/login", s.controlLogin)
 	s.mux.HandleFunc("POST /v1/auth/refresh", s.controlRefresh)
+	s.mux.HandleFunc("POST /v1/auth/pat/session", s.controlPATSession)
 	s.mux.HandleFunc("GET /v1/auth/oidc/config", s.controlOIDCConfig)
 	s.mux.HandleFunc("GET /v1/auth/oidc/start", s.controlOIDCStart)
 	s.mux.HandleFunc("GET /v1/auth/oidc/callback", s.controlOIDCCallback)
@@ -137,6 +168,9 @@ func (s *Server) registerControlAuthRoutes() {
 	s.mux.HandleFunc("POST /v1/auth/cli/code", s.controlCLICode)
 	s.mux.HandleFunc("POST /v1/auth/cli/session", s.controlCLISession)
 	s.mux.HandleFunc("GET /v1/auth/me", s.controlMe)
+	s.mux.HandleFunc("GET /v1/pats", s.personalAccessTokens)
+	s.mux.HandleFunc("POST /v1/pats", s.createPersonalAccessToken)
+	s.mux.HandleFunc("DELETE /v1/pats/{patID}", s.revokePersonalAccessToken)
 	s.mux.HandleFunc("POST /v1/orgs", s.createOrganization)
 	s.mux.HandleFunc("GET /v1/orgs/{orgID}/members", s.organizationMembers)
 	s.mux.HandleFunc("PATCH /v1/orgs/{orgID}/members/{userID}", s.updateOrganizationMember)
@@ -324,6 +358,22 @@ func (s *Server) controlRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, session)
 }
 
+func (s *Server) controlPATSession(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token string `json:"token"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	session, err := s.controlAuth.SessionForPersonalAccessToken(input.Token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
 func safeControlNext(next string) string {
 	next = strings.TrimSpace(next)
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
@@ -393,6 +443,60 @@ func (s *Server) controlMe(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = controlUser(r)
 	writeJSON(w, http.StatusOK, session)
+}
+
+func (s *Server) personalAccessTokens(w http.ResponseWriter, r *http.Request) {
+	user := controlUser(r)
+	if user.ID == "" {
+		writeError(w, http.StatusUnauthorized, errors.New("signed-in Nanoflare user is required"))
+		return
+	}
+	tokens, err := s.controlAuth.PersonalAccessTokens(user.ID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+func (s *Server) createPersonalAccessToken(w http.ResponseWriter, r *http.Request) {
+	user := controlUser(r)
+	if user.ID == "" {
+		writeError(w, http.StatusUnauthorized, errors.New("signed-in Nanoflare user is required"))
+		return
+	}
+	var input nanoflare.CreatePersonalAccessTokenInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	token, err := s.controlAuth.CreatePersonalAccessToken(user.ID, input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrMembershipNotFound) {
+			status = http.StatusForbidden
+		}
+		writeError(w, status, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, token)
+}
+
+func (s *Server) revokePersonalAccessToken(w http.ResponseWriter, r *http.Request) {
+	user := controlUser(r)
+	if user.ID == "" {
+		writeError(w, http.StatusUnauthorized, errors.New("signed-in Nanoflare user is required"))
+		return
+	}
+	if err := s.controlAuth.RevokePersonalAccessToken(user.ID, r.PathValue("patID")); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrPersonalAccessTokenNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {

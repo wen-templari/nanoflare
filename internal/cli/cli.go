@@ -381,11 +381,21 @@ func (r *Runner) authLogin(args []string) error {
 	email := flags.String("email", "", "user email")
 	password := flags.String("password", "", "user password")
 	webLogin := flags.Bool("web", false, "use browser login flow")
+	patLogin := flags.Bool("pat", false, "use personal access token login flow")
 	setupOrg := flags.String("setup-org", "", "create first user and organization when setup has not run")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	baseURL := strings.TrimRight(*apiURL, "/")
+	if *patLogin {
+		if strings.TrimSpace(*setupOrg) != "" {
+			return errors.New("--setup-org cannot be used with --pat")
+		}
+		if *webLogin {
+			return errors.New("--web cannot be used with --pat")
+		}
+		return r.authLoginPAT(baseURL)
+	}
 	if *webLogin {
 		if strings.TrimSpace(*setupOrg) != "" {
 			return errors.New("--setup-org cannot be used with --web")
@@ -423,6 +433,37 @@ func (r *Runner) authLogin(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := writeAuthConfig(auth); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Logged in as %s\n", auth.User.Email)
+	if auth.ActiveOrgID != "" {
+		fmt.Fprintf(r.Stdout, "Using organization %s\n", auth.ActiveOrgID)
+	}
+	return nil
+}
+
+func (r *Runner) authLoginPAT(baseURL string) error {
+	fmt.Fprint(r.Stderr, "Personal access token: ")
+	value, err := bufio.NewReader(r.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	token := strings.TrimSpace(value)
+	if token == "" {
+		return errors.New("personal access token is required")
+	}
+	var session nanoflare.AuthSession
+	if err := r.requestNoAuth(http.MethodPost, baseURL+"/v1/auth/pat/session", map[string]string{"token": token}, &session); err != nil {
+		return err
+	}
+	session.Token = token
+	session.RefreshToken = ""
+	auth, err := authConfigFromSession(baseURL, session, "")
+	if err != nil {
+		return err
+	}
+	auth.RefreshToken = ""
 	if err := writeAuthConfig(auth); err != nil {
 		return err
 	}

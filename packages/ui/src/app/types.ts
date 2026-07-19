@@ -170,6 +170,19 @@ export type OAuthClientConnection = {
   scopes: string[];
   created_at: string;
 };
+export type PersonalAccessToken = {
+  id: string;
+  name: string;
+  user_id: string;
+  org_id?: string;
+  scope_type: "user" | "org";
+  scopes: string[];
+  expires_at?: string;
+  last_used_at?: string;
+  revoked_at?: string;
+  created_at: string;
+};
+export type PersonalAccessTokenCreated = PersonalAccessToken & { token: string };
 export type Organization = { id: string; name: string; usage_level: string; role?: string; scopes?: string[]; created_at: string };
 export type ControlUser = { id: string; email: string; created_at: string };
 export type AuthSession = {
