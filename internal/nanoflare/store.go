@@ -95,6 +95,9 @@ type Repository interface {
 	ListDatabasesByOrg(string) ([]Database, error)
 	GetDatabase(string) (Database, error)
 	DeleteDatabase(string) error
+	DatabaseMetrics(databaseID string) (DatabaseMetrics, error)
+	RecordDatabaseQueryMetrics(DatabaseQueryMetricsInput) error
+	UpdateDatabaseRuntimeStats(databaseID string, stats DatabaseRuntimeStats) error
 	CreateObjectStorageBucket(ObjectStorageBucket) error
 	CountObjectStorageBucketsByOrg(string) (int, error)
 	ListObjectStorageBuckets() ([]ObjectStorageBucket, error)
@@ -144,6 +147,7 @@ type Store struct {
 	apps            map[string]App
 	kvNamespaces    map[string]KVNamespace
 	databases       map[string]Database
+	dbMetrics       map[string]DatabaseMetrics
 	objectBuckets   map[string]ObjectStorageBucket
 	secrets         map[string]map[string]SecretRecord
 	deployments     map[string][]Deployment
@@ -170,6 +174,7 @@ func NewStore() *Store {
 		apps:            make(map[string]App),
 		kvNamespaces:    make(map[string]KVNamespace),
 		databases:       make(map[string]Database),
+		dbMetrics:       make(map[string]DatabaseMetrics),
 		objectBuckets:   make(map[string]ObjectStorageBucket),
 		secrets:         make(map[string]map[string]SecretRecord),
 		deployments:     make(map[string][]Deployment),
@@ -976,7 +981,130 @@ func (s *Store) DeleteDatabase(databaseID string) error {
 		}
 	}
 	delete(s.databases, databaseID)
+	delete(s.dbMetrics, databaseID)
 	return nil
+}
+
+func (s *Store) DatabaseMetrics(databaseID string) (DatabaseMetrics, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.databases[databaseID]; !ok {
+		return DatabaseMetrics{}, ErrDatabaseNotFound
+	}
+	metrics := s.dbMetrics[databaseID]
+	metrics.Available = true
+	return metrics, nil
+}
+
+func (s *Store) RecordDatabaseQueryMetrics(input DatabaseQueryMetricsInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.databases[input.DatabaseID]; !ok {
+		return ErrDatabaseNotFound
+	}
+	metrics := s.dbMetrics[input.DatabaseID]
+	metrics.Queries++
+	if input.ChangedDB || input.RowsWritten > 0 {
+		metrics.WriteQueries++
+	} else {
+		metrics.ReadQueries++
+	}
+	metrics.RowsRead += input.RowsRead
+	metrics.RowsReturned += input.RowsReturned
+	metrics.RowsWritten += input.RowsWritten
+	metrics.TotalDurationMS += input.DurationMS
+	if input.SizeAfter >= 0 {
+		metrics.StorageBytes = input.SizeAfter
+	}
+	if input.TableCount >= 0 {
+		metrics.TableCount = input.TableCount
+	}
+	recordDatabaseDurationBucket(&metrics, input.DurationMS)
+	metrics.P50DurationMS = databaseDurationPercentile(metrics, 0.50)
+	metrics.P99DurationMS = databaseDurationPercentile(metrics, 0.99)
+	s.dbMetrics[input.DatabaseID] = metrics
+	return nil
+}
+
+func (s *Store) UpdateDatabaseRuntimeStats(databaseID string, stats DatabaseRuntimeStats) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.databases[databaseID]; !ok {
+		return ErrDatabaseNotFound
+	}
+	metrics := s.dbMetrics[databaseID]
+	metrics.StorageBytes = stats.StorageBytes
+	metrics.TableCount = stats.TableCount
+	s.dbMetrics[databaseID] = metrics
+	return nil
+}
+
+func recordDatabaseDurationBucket(metrics *DatabaseMetrics, durationMS float64) {
+	if durationMS <= 0.5 {
+		metrics.DurationBucket0_5++
+	} else if durationMS <= 1 {
+		metrics.DurationBucket1++
+	} else if durationMS <= 2.5 {
+		metrics.DurationBucket2_5++
+	} else if durationMS <= 5 {
+		metrics.DurationBucket5++
+	} else if durationMS <= 10 {
+		metrics.DurationBucket10++
+	} else if durationMS <= 25 {
+		metrics.DurationBucket25++
+	} else if durationMS <= 50 {
+		metrics.DurationBucket50++
+	} else if durationMS <= 100 {
+		metrics.DurationBucket100++
+	} else if durationMS <= 250 {
+		metrics.DurationBucket250++
+	} else if durationMS <= 500 {
+		metrics.DurationBucket500++
+	} else if durationMS <= 1000 {
+		metrics.DurationBucket1000++
+	} else {
+		metrics.DurationBucketInf++
+	}
+}
+
+func databaseDurationPercentile(metrics DatabaseMetrics, percentile float64) float64 {
+	if metrics.Queries <= 0 {
+		return 0
+	}
+	target := int64(float64(metrics.Queries) * percentile)
+	if target < 1 {
+		target = 1
+	}
+	var seen int64
+	for _, bucket := range databaseDurationBuckets(metrics) {
+		seen += bucket.count
+		if seen >= target {
+			return bucket.upper
+		}
+	}
+	return 1000
+}
+
+type databaseDurationBucket struct {
+	upper float64
+	count int64
+}
+
+func databaseDurationBuckets(metrics DatabaseMetrics) []databaseDurationBucket {
+	return []databaseDurationBucket{
+		{upper: 0.5, count: metrics.DurationBucket0_5},
+		{upper: 1, count: metrics.DurationBucket1},
+		{upper: 2.5, count: metrics.DurationBucket2_5},
+		{upper: 5, count: metrics.DurationBucket5},
+		{upper: 10, count: metrics.DurationBucket10},
+		{upper: 25, count: metrics.DurationBucket25},
+		{upper: 50, count: metrics.DurationBucket50},
+		{upper: 100, count: metrics.DurationBucket100},
+		{upper: 250, count: metrics.DurationBucket250},
+		{upper: 500, count: metrics.DurationBucket500},
+		{upper: 1000, count: metrics.DurationBucket1000},
+		{upper: 1000, count: metrics.DurationBucketInf},
+	}
 }
 
 func (s *Store) CreateObjectStorageBucket(bucket ObjectStorageBucket) error {

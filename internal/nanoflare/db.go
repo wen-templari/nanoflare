@@ -3,6 +3,7 @@ package nanoflare
 type DBExecutor interface {
 	Execute(databaseID string, request DBQueryRequest) (DBQueryResponse, error)
 	ApplyMigration(databaseID, name, sql string) (DBMigrationResult, error)
+	Stats(databaseID string) (DatabaseRuntimeStats, error)
 	Delete(databaseID string) error
 	RestoreMissing(databaseID string) error
 }
@@ -53,4 +54,9 @@ type D1ExecResult struct {
 type DBMigrationResult struct {
 	Name    string `json:"name"`
 	Applied bool   `json:"applied"`
+}
+
+type DatabaseRuntimeStats struct {
+	StorageBytes int64 `json:"storage_bytes"`
+	TableCount   int64 `json:"table_count"`
 }

@@ -61,6 +61,38 @@ func TestTrafficQueriesRouterMetrics(t *testing.T) {
 	}
 }
 
+func TestDatabaseMetricsTimeseriesQueriesPrometheus(t *testing.T) {
+	var queries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"result":[{"values":[[1,"2"],[2,"3"]]}]}}`)
+	}))
+	defer server.Close()
+
+	series, err := NewClient(server.URL).DatabaseMetricsTimeseries("db_123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !series.Available || len(series.Queries) != 2 || series.Queries[1].Value != 3 || series.Queries[0].Timestamp.IsZero() {
+		t.Fatalf("unexpected database series: %#v", series)
+	}
+	if len(queries) != 10 {
+		t.Fatalf("got %d queries, want 10: %#v", len(queries), queries)
+	}
+	for _, query := range queries {
+		if !strings.Contains(query, `database_id="db_123"`) {
+			t.Fatalf("query is not database scoped: %s", query)
+		}
+	}
+	if !queryWasSent(queries, `sum(increase(nanoflare_db_queries_total{database_id="db_123"}[5m]))`) {
+		t.Fatalf("missing query count range query: %#v", queries)
+	}
+	if !queryWasSent(queries, `histogram_quantile(0.99, sum by (le) (rate(nanoflare_db_query_duration_seconds_bucket{database_id="db_123"}[5m]))) * 1000`) {
+		t.Fatalf("missing p99 latency range query: %#v", queries)
+	}
+}
+
 func queryWasSent(queries []string, expected string) bool {
 	for _, query := range queries {
 		if query == expected {

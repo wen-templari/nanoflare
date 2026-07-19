@@ -141,6 +141,25 @@ func (m *SQLiteManager) ApplyMigration(databaseID, name, migrationSQL string) (n
 	return nanoflare.DBMigrationResult{Name: name, Applied: true}, nil
 }
 
+func (m *SQLiteManager) Stats(databaseID string) (nanoflare.DatabaseRuntimeStats, error) {
+	databaseID = strings.TrimSpace(databaseID)
+	if databaseID == "" {
+		return nanoflare.DatabaseRuntimeStats{}, nanoflare.ErrDatabaseNotFound
+	}
+	db, err := m.open(databaseID)
+	if err != nil {
+		return nanoflare.DatabaseRuntimeStats{}, err
+	}
+	var tableCount int64
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'nanoflare_db_migrations'`).Scan(&tableCount); err != nil {
+		return nanoflare.DatabaseRuntimeStats{}, err
+	}
+	return nanoflare.DatabaseRuntimeStats{
+		StorageBytes: databaseFileSize(m.path(databaseID)),
+		TableCount:   tableCount,
+	}, nil
+}
+
 func (m *SQLiteManager) RestoreMissing(databaseID string) error {
 	if _, err := os.Stat(m.path(databaseID)); err == nil {
 		return nil
@@ -281,7 +300,10 @@ func runStatement(ctx context.Context, runner statementRunner, dbPath string, st
 	var lastRowID, changes int64
 	_ = runner.QueryRowContext(ctx, `SELECT last_insert_rowid(), changes()`).Scan(&lastRowID, &changes)
 	size := databaseFileSize(dbPath)
-	changed := changes > 0 || looksLikeWrite(statement.SQL)
+	writeStatement := looksLikeWrite(statement.SQL)
+	if !writeStatement {
+		changes = 0
+	}
 	return nanoflare.D1Result{
 		Success: true,
 		Meta: nanoflare.D1Meta{
@@ -290,7 +312,7 @@ func runStatement(ctx context.Context, runner statementRunner, dbPath string, st
 			Duration:        durationMilliseconds(time.Since(started)),
 			Changes:         changes,
 			LastRowID:       lastRowID,
-			ChangedDB:       changed,
+			ChangedDB:       writeStatement,
 			SizeAfter:       size,
 			RowsRead:        int64(len(resultRows)),
 			RowsWritten:     changes,

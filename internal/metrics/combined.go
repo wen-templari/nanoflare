@@ -9,6 +9,10 @@ type trafficReader interface {
 	Traffic(string) (nanoflare.WorkerTraffic, error)
 }
 
+type databaseMetricsTimeseriesReader interface {
+	DatabaseMetricsTimeseries(string) (nanoflare.DatabaseMetricsTimeseries, error)
+}
+
 type durationStatsReader interface {
 	Stats(string) runtime.DurationStats
 }
@@ -38,4 +42,11 @@ func (r *CombinedReader) Traffic(appID string) (nanoflare.WorkerTraffic, error) 
 		result.DurationSeries = durations.DurationSeries
 	}
 	return result, nil
+}
+
+func (r *CombinedReader) DatabaseMetricsTimeseries(databaseID string) (nanoflare.DatabaseMetricsTimeseries, error) {
+	if prometheus, ok := r.prometheus.(databaseMetricsTimeseriesReader); ok {
+		return prometheus.DatabaseMetricsTimeseries(databaseID)
+	}
+	return nanoflare.DatabaseMetricsTimeseries{}, nil
 }

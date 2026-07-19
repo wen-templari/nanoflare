@@ -43,11 +43,13 @@ services:
       - --providers.http.headers.Authorization=Bearer ${NANOFLARE_TRAEFIK_TOKEN:-nanoflare-development}
     ports:
       - "8088:80"
-      - "8443:443"
+      - "443:443"
       - "8089:8080"
 
   prometheus:
     image: prom/prometheus:v3.5.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus

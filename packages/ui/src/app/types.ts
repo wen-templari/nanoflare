@@ -102,6 +102,46 @@ export type WorkerTraffic = {
 
 export type KVNamespaceMetrics = { available: boolean; reads: number; writes: number; size: number };
 export type ObjectStorageBucketMetrics = { available: boolean; reads: number; writes: number; size: number };
+export type DatabaseMetrics = {
+  available: boolean;
+  queries: number;
+  read_queries: number;
+  write_queries: number;
+  rows_read: number;
+  rows_returned: number;
+  rows_written: number;
+  storage_bytes: number;
+  table_count: number;
+  total_duration_ms: number;
+  p50_duration_ms: number;
+  p99_duration_ms: number;
+  duration_bucket_0_5: number;
+  duration_bucket_1: number;
+  duration_bucket_2_5: number;
+  duration_bucket_5: number;
+  duration_bucket_10: number;
+  duration_bucket_25: number;
+  duration_bucket_50: number;
+  duration_bucket_100: number;
+  duration_bucket_250: number;
+  duration_bucket_500: number;
+  duration_bucket_1000: number;
+  duration_bucket_inf: number;
+};
+export type MetricPoint = { timestamp: string; value: number };
+export type DatabaseMetricsTimeseries = {
+  available: boolean;
+  queries: MetricPoint[];
+  read_queries: MetricPoint[];
+  write_queries: MetricPoint[];
+  rows_read: MetricPoint[];
+  rows_written: MetricPoint[];
+  storage_bytes: MetricPoint[];
+  table_count: MetricPoint[];
+  p50_latency_ms: MetricPoint[];
+  p95_latency_ms: MetricPoint[];
+  p99_latency_ms: MetricPoint[];
+};
 
 export type KVNamespace = { id: string; name: string; created_at: string };
 export type OAuthClient = {

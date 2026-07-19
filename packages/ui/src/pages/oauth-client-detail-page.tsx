@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ActionIcon, Alert, Box, Center, Code, Group, Modal, MultiSelect, ScrollArea, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Alert, Box, Center, Code, Group, Modal, MultiSelect, ScrollArea, SegmentedControl, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip } from "@mantine/core";
 import { Check, Copy, PlugZap, Settings, SquarePen, Trash2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
@@ -8,7 +8,7 @@ import type { OAuthClient, OAuthClientConnection } from "../app/types";
 import { useWorkspace } from "../app/workspace-context";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { PageHeading, Panel } from "../components/shared/primitives";
+import { Panel } from "../components/shared/primitives";
 
 const oauthScopes = ["apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"];
 const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] };
@@ -21,6 +21,7 @@ export function OAuthClientDetailPage() {
   const [connections, setConnections] = useState<OAuthClientConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<"overview" | "connections" | "settings">("overview");
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
@@ -105,77 +106,116 @@ export function OAuthClientDetailPage() {
 
   return (
     <>
-      <PageHeading
-        eyebrow="OAuth client"
-        title={client?.name ?? "OAuth client"}
-        copy="Review this client registration, allowed scopes, and active user connections."
-        actions={client && (
-          <Group gap="xs">
-            <Button variant="outline" onClick={openEdit}><SquarePen className="size-4" />Edit</Button>
-            <Button variant="danger" onClick={deleteClient}><Trash2 className="size-4" />Delete</Button>
-          </Group>
-        )}
-      />
-
       {error && <Alert color="red" mb="md">{error}</Alert>}
 
       {client && (
         <Stack gap="lg">
-          <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
-            <Panel title="Client ID" eyebrow="Registration">
-              <Group gap="xs" wrap="nowrap">
-                <Code className="min-w-0 truncate">{client.client_id}</Code>
-                <CopyButton label="Client ID" value={client.client_id} onCopy={copy} />
-              </Group>
-            </Panel>
-            <Panel title="Status" eyebrow="Lifecycle">
-              <Badge tone="green">Active</Badge>
-              <Text c="dimmed" mt="xs" size="xs">Updated {new Date(client.updated_at).toLocaleString()}</Text>
-            </Panel>
-            <Panel title="Scopes" eyebrow={`${client.scopes.length} allowed`}>
-              <ScopeBadges scopes={client.scopes} />
-            </Panel>
-          </SimpleGrid>
+          <SegmentedControl
+            data={[
+              { label: "Overview", value: "overview" },
+              { label: "Connections", value: "connections" },
+              { label: "Settings", value: "settings" },
+            ]}
+            onChange={(value) => setTab(value as "overview" | "connections" | "settings")}
+            value={tab}
+          />
 
-          <Panel title="Redirect URIs" eyebrow={`${client.redirect_uris.length} configured`}>
-            <Stack gap="xs">
-              {client.redirect_uris.map((uri) => (
-                <Group key={uri} gap="xs" wrap="nowrap">
-                  <Text c="dimmed" ff="monospace" size="xs" truncate>{uri}</Text>
-                  <CopyButton label="Redirect URI" value={uri} onCopy={copy} />
-                </Group>
-              ))}
-            </Stack>
-          </Panel>
+          {tab === "overview" && (
+            <>
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                <Panel title="Client ID" eyebrow="Registration">
+                  <Group gap="xs" wrap="nowrap">
+                    <Code className="min-w-0 truncate">{client.client_id}</Code>
+                    <CopyButton label="Client ID" value={client.client_id} onCopy={copy} />
+                  </Group>
+                </Panel>
+                <Panel title="Status" eyebrow="Lifecycle">
+                  <Badge tone="green">Active</Badge>
+                  <Text c="dimmed" mt="xs" size="xs">Updated {new Date(client.updated_at).toLocaleString()}</Text>
+                </Panel>
+                <Panel title="Scopes" eyebrow={`${client.scopes.length} allowed`}>
+                  <ScopeBadges scopes={client.scopes} />
+                </Panel>
+              </SimpleGrid>
 
-          <Box>
-            <SectionHeading title="Connected" eyebrow={`${connections.length} active`} />
-            <TableSurface>
-              <ScrollArea>
-                <Table highlightOnHover miw={860} verticalSpacing="sm" className="table-fixed">
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th className="w-[30%]">User</Table.Th>
-                      <Table.Th className="w-[30%]">Resource org</Table.Th>
-                      <Table.Th className="w-[28%]">Granted scopes</Table.Th>
-                      <Table.Th className="w-[12%]">Connected</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {connections.map((connection) => (
-                      <Table.Tr key={`${connection.user_id}-${connection.org_id}`}>
-                        <Table.Td className="w-[30%]"><Text fw={700} truncate>{connection.user_email}</Text><Text c="dimmed" ff="monospace" size="xs" truncate>{connection.user_id}</Text></Table.Td>
-                        <Table.Td className="w-[30%]"><Text fw={700} truncate>{connection.org_name}</Text><Text c="dimmed" ff="monospace" size="xs" truncate>{connection.org_id}</Text></Table.Td>
-                        <Table.Td className="w-[28%]"><ScopeBadges scopes={connection.scopes} /></Table.Td>
-                        <Table.Td className="w-[12%]"><Text c="dimmed" size="sm" truncate>{new Date(connection.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
+              <Panel title="Redirect URIs" eyebrow={`${client.redirect_uris.length} configured`}>
+                <Stack gap="xs">
+                  {client.redirect_uris.map((uri) => (
+                    <Group key={uri} gap="xs" wrap="nowrap">
+                      <Text c="dimmed" ff="monospace" size="xs" truncate>{uri}</Text>
+                      <CopyButton label="Redirect URI" value={uri} onCopy={copy} />
+                    </Group>
+                  ))}
+                </Stack>
+              </Panel>
+            </>
+          )}
+
+          {tab === "connections" && (
+            <Box>
+              <SectionHeading title="Connected" eyebrow={`${connections.length} active`} />
+              <TableSurface>
+                <ScrollArea>
+                  <Table highlightOnHover miw={860} verticalSpacing="sm" className="table-fixed">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th className="w-[30%]">User</Table.Th>
+                        <Table.Th className="w-[30%]">Resource org</Table.Th>
+                        <Table.Th className="w-[28%]">Granted scopes</Table.Th>
+                        <Table.Th className="w-[12%]">Connected</Table.Th>
                       </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-              {!loading && !connections.length && <EmptyState icon={<PlugZap />} title="No active connections" copy="Approved users and resource organizations will appear here." />}
-            </TableSurface>
-          </Box>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {connections.map((connection) => (
+                        <Table.Tr key={`${connection.user_id}-${connection.org_id}`}>
+                          <Table.Td className="w-[30%]"><Text fw={700} truncate>{connection.user_email}</Text><Text c="dimmed" ff="monospace" size="xs" truncate>{connection.user_id}</Text></Table.Td>
+                          <Table.Td className="w-[30%]"><Text fw={700} truncate>{connection.org_name}</Text><Text c="dimmed" ff="monospace" size="xs" truncate>{connection.org_id}</Text></Table.Td>
+                          <Table.Td className="w-[28%]"><ScopeBadges scopes={connection.scopes} /></Table.Td>
+                          <Table.Td className="w-[12%]"><Text c="dimmed" size="sm" truncate>{new Date(connection.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+                {!loading && !connections.length && <EmptyState icon={<PlugZap />} title="No active connections" copy="Approved users and resource organizations will appear here." />}
+              </TableSurface>
+            </Box>
+          )}
+
+          {tab === "settings" && (
+            <Stack gap="md">
+              <Panel title="Basic info" eyebrow="OAuth client">
+                <div className="overflow-hidden rounded-lg border border-[#e2ddd2]">
+                  {[
+                    ["Client ID", client.client_id],
+                    ["Name", client.name],
+                    ["Status", "Active"],
+                    ["Created", new Date(client.created_at).toLocaleString()],
+                    ["Updated", new Date(client.updated_at).toLocaleString()],
+                    ["Redirect URIs", String(client.redirect_uris.length)],
+                    ["Allowed scopes", String(client.scopes.length)],
+                  ].map(([label, value]) => (
+                    <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
+                      <span className="font-mono text-[10px] text-[#93978f]">{label}</span>
+                      <span className="break-all font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+              <Panel title="Actions" eyebrow="Manage client">
+                <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+                  <Text c="dimmed" size="sm">Update this client registration, redirect URIs, and allowed scopes.</Text>
+                  <Button variant="outline" onClick={openEdit}><SquarePen className="size-4" />Edit</Button>
+                </div>
+              </Panel>
+              <Panel title="Delete client" eyebrow="Danger zone">
+                <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+                  <Text c="dimmed" size="sm">Permanently remove this OAuth client so integrations can no longer authorize through it.</Text>
+                  <Button variant="danger" onClick={deleteClient}><Trash2 className="size-4" />Delete client</Button>
+                </div>
+              </Panel>
+            </Stack>
+          )}
         </Stack>
       )}
 

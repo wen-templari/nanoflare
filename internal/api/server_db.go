@@ -17,6 +17,8 @@ func (s *Server) registerDBRoutes() {
 	s.mux.HandleFunc("GET /v1/db", s.listDatabases)
 	s.mux.HandleFunc("POST /v1/db", s.createDatabase)
 	s.mux.HandleFunc("DELETE /v1/db/{databaseID}", s.deleteDatabase)
+	s.mux.HandleFunc("GET /v1/db/{databaseID}/metrics", s.databaseMetrics)
+	s.mux.HandleFunc("GET /v1/db/{databaseID}/metrics/timeseries", s.databaseMetricsTimeseries)
 	s.mux.HandleFunc("POST /v1/db/{databaseID}/execute", s.executeDatabase)
 	s.mux.HandleFunc("POST /v1/db/{databaseID}/migrations", s.applyDatabaseMigration)
 }
@@ -60,6 +62,30 @@ func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) databaseMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "db:read") {
+		return
+	}
+	metrics, err := s.service.DatabaseMetricsForOrg(controlOrgID(r), r.PathValue("databaseID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
+func (s *Server) databaseMetricsTimeseries(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "db:read") {
+		return
+	}
+	series, err := s.service.DatabaseMetricsTimeseriesForOrg(controlOrgID(r), r.PathValue("databaseID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, series)
 }
 
 func (s *Server) executeDatabase(w http.ResponseWriter, r *http.Request) {

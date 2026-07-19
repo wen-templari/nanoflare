@@ -90,6 +90,63 @@ func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
 	return result, nil
 }
 
+func (c *Client) DatabaseMetricsTimeseries(databaseID string) (nanoflare.DatabaseMetricsTimeseries, error) {
+	selector := `database_id=` + strconv.Quote(databaseID)
+	queries, err := c.queryRange(`sum(increase(nanoflare_db_queries_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	readQueries, err := c.queryRange(`sum(increase(nanoflare_db_read_queries_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	writeQueries, err := c.queryRange(`sum(increase(nanoflare_db_write_queries_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	rowsRead, err := c.queryRange(`sum(increase(nanoflare_db_rows_read_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	rowsWritten, err := c.queryRange(`sum(increase(nanoflare_db_rows_written_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	storageBytes, err := c.queryRange(`max(nanoflare_db_storage_size_bytes{` + selector + `})`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	tableCount, err := c.queryRange(`max(nanoflare_db_tables{` + selector + `})`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	p50Latency, err := c.queryRange(`histogram_quantile(0.50, sum by (le) (rate(nanoflare_db_query_duration_seconds_bucket{` + selector + `}[5m]))) * 1000`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	p95Latency, err := c.queryRange(`histogram_quantile(0.95, sum by (le) (rate(nanoflare_db_query_duration_seconds_bucket{` + selector + `}[5m]))) * 1000`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	p99Latency, err := c.queryRange(`histogram_quantile(0.99, sum by (le) (rate(nanoflare_db_query_duration_seconds_bucket{` + selector + `}[5m]))) * 1000`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	return nanoflare.DatabaseMetricsTimeseries{
+		Available:    true,
+		Queries:      resultPoints(queries),
+		ReadQueries:  resultPoints(readQueries),
+		WriteQueries: resultPoints(writeQueries),
+		RowsRead:     resultPoints(rowsRead),
+		RowsWritten:  resultPoints(rowsWritten),
+		StorageBytes: resultPoints(storageBytes),
+		TableCount:   resultPoints(tableCount),
+		P50LatencyMS: resultPoints(p50Latency),
+		P95LatencyMS: resultPoints(p95Latency),
+		P99LatencyMS: resultPoints(p99Latency),
+	}, nil
+}
+
 func (c *Client) query(query string) ([]prometheusResult, error) {
 	return c.get("/api/v1/query", url.Values{"query": []string{query}})
 }
@@ -140,6 +197,40 @@ func resultValues(result []prometheusResult) []float64 {
 		values = append(values, valueNumber(value))
 	}
 	return values
+}
+
+func resultPoints(result []prometheusResult) []nanoflare.MetricPoint {
+	if len(result) == 0 {
+		return []nanoflare.MetricPoint{}
+	}
+	points := make([]nanoflare.MetricPoint, 0, len(result[0].Values))
+	for _, value := range result[0].Values {
+		points = append(points, nanoflare.MetricPoint{
+			Timestamp: valueTimestamp(value),
+			Value:     valueNumber(value),
+		})
+	}
+	return points
+}
+
+func valueTimestamp(value []any) time.Time {
+	if len(value) == 0 {
+		return time.Time{}
+	}
+	switch raw := value[0].(type) {
+	case float64:
+		seconds := int64(raw)
+		return time.Unix(seconds, int64((raw-float64(seconds))*1_000_000_000)).UTC()
+	case string:
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return time.Time{}
+		}
+		seconds := int64(parsed)
+		return time.Unix(seconds, int64((parsed-float64(seconds))*1_000_000_000)).UTC()
+	default:
+		return time.Time{}
+	}
 }
 
 func valueNumber(value []any) float64 {

@@ -36,6 +36,10 @@ type WorkerTrafficReader interface {
 	Traffic(string) (WorkerTraffic, error)
 }
 
+type DatabaseMetricsTimeseriesReader interface {
+	DatabaseMetricsTimeseries(string) (DatabaseMetricsTimeseries, error)
+}
+
 type Service struct {
 	store                Repository
 	writer               ConfigWriter
@@ -43,6 +47,7 @@ type Service struct {
 	db                   DBExecutor
 	output               WorkerOutputReader
 	traffic              WorkerTrafficReader
+	dbTimeseries         DatabaseMetricsTimeseriesReader
 	secrets              *SecretCodec
 	baseHostname         string
 	randomHostnameSuffix func() (string, error)
@@ -63,7 +68,11 @@ func NewServiceWithObjects(store Repository, writer ConfigWriter, objects Object
 }
 
 func NewServiceWithConsole(store Repository, writer ConfigWriter, objects ObjectStore, output WorkerOutputReader, traffic WorkerTrafficReader) *Service {
-	return &Service{store: store, writer: writer, objects: objects, output: output, traffic: traffic, randomHostnameSuffix: randomHostnameSuffix}
+	service := &Service{store: store, writer: writer, objects: objects, output: output, traffic: traffic, randomHostnameSuffix: randomHostnameSuffix}
+	if reader, ok := traffic.(DatabaseMetricsTimeseriesReader); ok {
+		service.dbTimeseries = reader
+	}
+	return service
 }
 
 func (s *Service) SetBaseHostname(hostname string) error {
@@ -1788,7 +1797,7 @@ func (s *Service) DBExecute(capability, databaseID string, request DBQueryReques
 	if s.db == nil {
 		return DBQueryResponse{}, errors.New("database runtime is not configured")
 	}
-	return s.db.Execute(databaseID, request)
+	return s.executeDBWithMetrics(databaseID, request)
 }
 
 func (s *Service) WorkerDBExecuteForOrg(orgID, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
@@ -1798,7 +1807,7 @@ func (s *Service) WorkerDBExecuteForOrg(orgID, databaseID string, request DBQuer
 	if s.db == nil {
 		return DBQueryResponse{}, errors.New("database runtime is not configured")
 	}
-	return s.db.Execute(databaseID, request)
+	return s.executeDBWithMetrics(databaseID, request)
 }
 
 func (s *Service) ApplyDBMigrationForOrg(orgID, databaseID, name, sql string) (DBMigrationResult, error) {
@@ -1809,6 +1818,128 @@ func (s *Service) ApplyDBMigrationForOrg(orgID, databaseID, name, sql string) (D
 		return DBMigrationResult{}, errors.New("database runtime is not configured")
 	}
 	return s.db.ApplyMigration(databaseID, name, sql)
+}
+
+func (s *Service) DatabaseMetrics(databaseID string) (DatabaseMetrics, error) {
+	databaseID = strings.TrimSpace(databaseID)
+	if databaseID == "" {
+		return DatabaseMetrics{}, ErrDatabaseNotFound
+	}
+	if s.db != nil {
+		if stats, err := s.db.Stats(databaseID); err == nil {
+			_ = s.store.UpdateDatabaseRuntimeStats(databaseID, stats)
+		}
+	}
+	return s.store.DatabaseMetrics(databaseID)
+}
+
+func (s *Service) DatabaseMetricsForOrg(orgID, databaseID string) (DatabaseMetrics, error) {
+	if _, err := s.GetDatabaseForOrg(orgID, databaseID); err != nil {
+		return DatabaseMetrics{}, err
+	}
+	return s.DatabaseMetrics(databaseID)
+}
+
+func (s *Service) DatabaseMetricsTimeseries(databaseID string) (DatabaseMetricsTimeseries, error) {
+	databaseID = strings.TrimSpace(databaseID)
+	if databaseID == "" {
+		return DatabaseMetricsTimeseries{}, ErrDatabaseNotFound
+	}
+	if _, err := s.GetDatabase(databaseID); err != nil {
+		return DatabaseMetricsTimeseries{}, err
+	}
+	if s.dbTimeseries == nil {
+		return DatabaseMetricsTimeseries{}, nil
+	}
+	return s.dbTimeseries.DatabaseMetricsTimeseries(databaseID)
+}
+
+func (s *Service) DatabaseMetricsTimeseriesForOrg(orgID, databaseID string) (DatabaseMetricsTimeseries, error) {
+	if _, err := s.GetDatabaseForOrg(orgID, databaseID); err != nil {
+		return DatabaseMetricsTimeseries{}, err
+	}
+	return s.DatabaseMetricsTimeseries(databaseID)
+}
+
+func (s *Service) executeDBWithMetrics(databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
+	response, err := s.db.Execute(databaseID, request)
+	if err != nil {
+		return DBQueryResponse{}, err
+	}
+	s.recordDBQueryMetrics(databaseID, request, response)
+	return response, nil
+}
+
+func (s *Service) recordDBQueryMetrics(databaseID string, request DBQueryRequest, response DBQueryResponse) {
+	stats := DatabaseRuntimeStats{TableCount: -1}
+	if s.db != nil {
+		if nextStats, err := s.db.Stats(databaseID); err == nil {
+			stats = nextStats
+			_ = s.store.UpdateDatabaseRuntimeStats(databaseID, stats)
+		}
+	}
+	method := strings.TrimSpace(request.Method)
+	if method == "" {
+		method = "run"
+	}
+	statements := request.Statements
+	if len(response.Results) > 0 {
+		for i, result := range response.Results {
+			sql := ""
+			if i < len(statements) {
+				sql = statements[i].SQL
+			}
+			s.recordDBResultMetrics(databaseID, sql, result, stats)
+		}
+		return
+	}
+	if response.Exec != nil {
+		sql := ""
+		if len(statements) > 0 {
+			sql = statements[0].SQL
+		}
+		changed := dbStatementLooksLikeWrite(sql)
+		_ = s.store.RecordDatabaseQueryMetrics(DatabaseQueryMetricsInput{
+			DatabaseID: databaseID,
+			DurationMS: response.Exec.Duration,
+			ChangedDB:  changed,
+			SizeAfter:  stats.StorageBytes,
+			TableCount: stats.TableCount,
+		})
+	}
+}
+
+func (s *Service) recordDBResultMetrics(databaseID, sql string, result D1Result, stats DatabaseRuntimeStats) {
+	if !result.Success {
+		return
+	}
+	rowsReturned := int64(len(result.Results))
+	rowsWritten := result.Meta.RowsWritten
+	changed := result.Meta.ChangedDB || rowsWritten > 0 || dbStatementLooksLikeWrite(sql)
+	sizeAfter := result.Meta.SizeAfter
+	if sizeAfter <= 0 {
+		sizeAfter = stats.StorageBytes
+	}
+	_ = s.store.RecordDatabaseQueryMetrics(DatabaseQueryMetricsInput{
+		DatabaseID:   databaseID,
+		DurationMS:   result.Meta.Duration,
+		RowsRead:     result.Meta.RowsRead,
+		RowsReturned: rowsReturned,
+		RowsWritten:  rowsWritten,
+		ChangedDB:    changed,
+		SizeAfter:    sizeAfter,
+		TableCount:   stats.TableCount,
+	})
+}
+
+func dbStatementLooksLikeWrite(sql string) bool {
+	sql = strings.ToUpper(strings.TrimSpace(sql))
+	for _, prefix := range []string{"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "REPLACE", "VACUUM", "PRAGMA"} {
+		if strings.HasPrefix(sql, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) WorkerObjectList(appID, bucketID string) ([]ObjectInfo, error) {

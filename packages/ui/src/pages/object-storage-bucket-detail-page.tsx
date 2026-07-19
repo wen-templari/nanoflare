@@ -1,5 +1,5 @@
 import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
-import { Title } from "@mantine/core";
+import { SegmentedControl, Text } from "@mantine/core";
 import { Archive, ArrowDownToLine, BookOpen, DatabaseZap, FileJson, FileText, Globe2, HardDrive, RefreshCw, Search, Trash2, Upload, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
@@ -35,6 +35,7 @@ function ObjectStorageBucketDetailContent({
   onBack: () => void;
 }) {
   const { workers, setObjectStorageBuckets, notify, apiConnected } = useWorkspace();
+  const [tab, setTab] = useState<"overview" | "objects" | "settings">("overview");
   const [name, setName] = useState(bucket.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -267,28 +268,55 @@ function ObjectStorageBucketDetailContent({
 
   return (
     <>
-      <div className="mb-10 flex flex-col justify-between gap-4 py-2 md:flex-row md:items-start">
-        <div>
-          <Title className="flex h-12 items-center" order={1}>{bucket.name}</Title>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-[#858b84]"><span className="flex items-center gap-1.5"><DatabaseZap className="size-3" />{bucket.id}</span></div>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => void deleteBucket()} disabled={deleting || saving}><Trash2 className="size-3.5" />Delete</Button>
-          <Button onClick={() => void saveBucket()} disabled={saving || deleting || !name.trim()}><Archive className="size-3.5" />Save</Button>
-        </div>
+      <div className="mb-6">
+        <SegmentedControl
+          data={[
+            { label: "Overview", value: "overview" },
+            { label: "Objects", value: "objects" },
+            { label: "Settings", value: "settings" },
+          ]}
+          onChange={(value) => setTab(value as "overview" | "objects" | "settings")}
+          value={tab}
+        />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
-      </div>
+      {tab === "overview" && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
+        </div>
+      )}
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.55fr_1fr]">
+      {tab === "settings" && <div className="space-y-6">
         <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <header className="border-b border-gray-200 px-5 py-4"><h2 className="text-sm font-extrabold">Edit bucket</h2></header>
+          <header className="border-b border-gray-200 px-5 py-4"><h2 className="text-sm font-extrabold">Settings</h2></header>
           <div className="p-5">
             <Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="customer-files" /></Field>
+            <div className="mt-4 overflow-hidden rounded-lg border border-[#e2ddd2]">
+              {[
+                ["Bucket ID", bucket.id],
+                ["Created", new Date(bucket.created_at).toLocaleString()],
+                ["Bindings", String(bindings.length)],
+                ["Workers", String(accessorWorkers.length)],
+                ["Objects", String(objects.length)],
+              ].map(([label, value]) => (
+                <div key={label} className="grid gap-1 border-b border-gray-200 bg-white px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
+                  <span className="font-mono text-[10px] text-gray-500">{label}</span>
+                  <span className="break-all font-mono text-[11px] font-bold text-gray-700">{value}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Button onClick={() => void saveBucket()} disabled={saving || deleting || !name.trim()}><Archive className="size-3.5" />Save</Button>
+            </div>
           </div>
         </section>
+
+        <Panel title="Delete bucket" eyebrow="Danger zone">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+            <Text c="dimmed" size="sm">Permanently remove this bucket and its objects. Worker bindings should be updated before deleting it.</Text>
+            <Button variant="ghost" onClick={() => void deleteBucket()} disabled={deleting || saving}><Trash2 className="size-3.5" />Delete bucket</Button>
+          </div>
+        </Panel>
 
         <Panel title="Bound workers">
           {bindings.length ? (
@@ -309,9 +337,9 @@ function ObjectStorageBucketDetailContent({
             <p className="text-sm leading-6 text-[#7a8079]">This bucket is not bound by any active deployment yet, so there is no worker path available for object inspection.</p>
           )}
         </Panel>
-      </div>
+      </div>}
 
-      <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-7rem)] md:min-h-[540px]">
+      {tab === "objects" && <section className="overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-7rem)] md:min-h-[540px]">
         {!accessorWorkerID ? (
           <WorkerDetailEmpty icon={<DatabaseZap />} title="No worker access path" copy="Bind this bucket to a worker to browse objects through the runtime API." />
         ) : (
@@ -398,7 +426,7 @@ function ObjectStorageBucketDetailContent({
             </div>
           </div>
         )}
-      </section>
+      </section>}
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
-import { Title } from "@mantine/core";
+import { SegmentedControl, Text } from "@mantine/core";
 import { Archive, BookOpen, Globe2, HardDrive, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2, Waypoints, Workflow } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
@@ -32,6 +32,7 @@ function KVNamespaceDetailContent({
   onBack: () => void;
 }) {
   const { workers, setNamespaces, notify, apiConnected } = useWorkspace();
+  const [tab, setTab] = useState<"overview" | "keys" | "settings">("overview");
   const [name, setName] = useState(namespace.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -284,25 +285,28 @@ function KVNamespaceDetailContent({
 
   return (
     <>
-      <div className="mb-10 flex flex-col justify-between gap-4 py-2 md:flex-row md:items-start">
-        <div>
-          <Title className="flex h-12 items-center" order={1}>{namespace.name}</Title>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] text-[#858b84]"><span className="flex items-center gap-1.5"><KeyRound className="size-3" />{namespace.id}</span></div>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => void deleteNamespace()} disabled={deleting || saving}><Trash2 className="size-3.5" />Delete</Button>
-          <Button onClick={() => void saveNamespace()} disabled={saving || deleting || !name.trim()}><Archive className="size-3.5" />Save</Button>
-        </div>
+      <div className="mb-6">
+        <SegmentedControl
+          data={[
+            { label: "Overview", value: "overview" },
+            { label: "Keys", value: "keys" },
+            { label: "Settings", value: "settings" },
+          ]}
+          onChange={(value) => setTab(value as "overview" | "keys" | "settings")}
+          value={tab}
+        />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-        {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
-      </div>
+      {tab === "overview" && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+          {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
+        </div>
+      )}
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.55fr_1fr]">
+      {tab === "settings" && <div className="space-y-6">
         <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           <header className="border-b border-gray-200 px-5 py-4">
-            <h2 className="text-sm font-extrabold">Edit namespace</h2>
+            <h2 className="text-sm font-extrabold">Settings</h2>
           </header>
           <div className="p-5">
             <Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="shared-cache" /></Field>
@@ -310,6 +314,8 @@ function KVNamespaceDetailContent({
               {[
                 ["Namespace ID", namespace.id],
                 ["Created", new Date(namespace.created_at).toLocaleString()],
+                ["Bindings", String(bindingCount)],
+                ["Workers", String(accessorWorkers.length)],
               ].map(([label, value]) => (
                 <div key={label} className="grid gap-1 border-b border-gray-200 bg-white px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
                   <span className="font-mono text-[10px] text-gray-500">{label}</span>
@@ -317,8 +323,18 @@ function KVNamespaceDetailContent({
                 </div>
               ))}
             </div>
+            <div className="mt-4 flex gap-2">
+              <Button onClick={() => void saveNamespace()} disabled={saving || deleting || !name.trim()}><Archive className="size-3.5" />Save</Button>
+            </div>
           </div>
         </section>
+
+        <Panel title="Delete namespace" eyebrow="Danger zone">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+            <Text c="dimmed" size="sm">Permanently remove this namespace and its keys. Worker bindings should be updated before deleting it.</Text>
+            <Button variant="ghost" onClick={() => void deleteNamespace()} disabled={deleting || saving}><Trash2 className="size-3.5" />Delete namespace</Button>
+          </div>
+        </Panel>
 
         <Panel title="Bound workers">
           {bindings.length ? (
@@ -339,9 +355,9 @@ function KVNamespaceDetailContent({
             <p className="text-sm leading-6 text-[#7a8079]">This namespace is not bound by any active deployment yet, so there is no worker path available for key inspection.</p>
           )}
         </Panel>
-      </div>
+      </div>}
 
-      <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
+      {tab === "keys" && <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
           <div>
             <h2 className="text-sm font-extrabold">Namespace keys</h2>
@@ -417,7 +433,7 @@ function KVNamespaceDetailContent({
         ) : (
           <WorkerDetailEmpty icon={<KeyRound />} title="No worker access yet" copy="Bind this namespace to a live worker deployment to read or write shared keys." />
         )}
-      </section>
+      </section>}
 
       <KVKeyDialog
         open={dialogOpen}

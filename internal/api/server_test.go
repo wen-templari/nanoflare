@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/database"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtime"
 )
@@ -303,6 +304,75 @@ func TestPrometheusMetricsExportsRuntimeAggregates(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics body missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestDatabaseMetricsAPIAndPrometheusExport(t *testing.T) {
+	service := nanoflare.NewService(nanoflare.NewStore(), discardWriter{})
+	dbRuntime, err := database.NewSQLiteManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetDBExecutor(dbRuntime)
+	server := NewServer(service)
+	db, err := service.CreateDatabase(nanoflare.CreateDatabaseInput{Name: "metrics-db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, sql := range []string{
+		`CREATE TABLE papers (id integer primary key, title text)`,
+		`INSERT INTO papers (title) VALUES ('hello')`,
+		`SELECT * FROM papers`,
+	} {
+		requestJSONBytes(t, server, http.MethodPost, "/v1/db/"+db.ID+"/execute", []byte(`{"statements":[{"sql":`+strconv.Quote(sql)+`}]}`), http.StatusOK, &nanoflare.DBQueryResponse{})
+	}
+
+	var metrics nanoflare.DatabaseMetrics
+	requestJSON(t, server, http.MethodGet, "/v1/db/"+db.ID+"/metrics", http.StatusOK, &metrics)
+	if !metrics.Available || metrics.Queries != 3 || metrics.ReadQueries != 1 || metrics.WriteQueries != 2 {
+		t.Fatalf("unexpected database query metrics: %#v", metrics)
+	}
+	if metrics.RowsRead != 1 || metrics.RowsReturned != 1 || metrics.RowsWritten != 1 {
+		t.Fatalf("unexpected database row metrics: %#v", metrics)
+	}
+	if metrics.StorageBytes <= 0 || metrics.TableCount != 1 || metrics.P99DurationMS <= 0 {
+		t.Fatalf("unexpected database runtime metrics: %#v", metrics)
+	}
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`nanoflare_db_queries_total{database_id="` + db.ID + `",database_name="metrics-db"} 3`,
+		`nanoflare_db_read_queries_total{database_id="` + db.ID + `",database_name="metrics-db"} 1`,
+		`nanoflare_db_write_queries_total{database_id="` + db.ID + `",database_name="metrics-db"} 2`,
+		`nanoflare_db_rows_read_total{database_id="` + db.ID + `",database_name="metrics-db"} 1`,
+		`nanoflare_db_rows_written_total{database_id="` + db.ID + `",database_name="metrics-db"} 1`,
+		`nanoflare_db_tables{database_id="` + db.ID + `",database_name="metrics-db"} 1`,
+		`nanoflare_db_query_duration_seconds_count{database_id="` + db.ID + `",database_name="metrics-db"} 3`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestDatabaseMetricsTimeseriesAPI(t *testing.T) {
+	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), discardWriter{}, nil, nil, fakeTraffic{})
+	server := NewServer(service)
+	db, err := service.CreateDatabase(nanoflare.CreateDatabaseInput{Name: "series-db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var series nanoflare.DatabaseMetricsTimeseries
+	requestJSON(t, server, http.MethodGet, "/v1/db/"+db.ID+"/metrics/timeseries", http.StatusOK, &series)
+	if !series.Available || len(series.Queries) != 1 || series.Queries[0].Value != 7 {
+		t.Fatalf("unexpected database series: %#v", series)
 	}
 }
 
@@ -1181,6 +1251,16 @@ func (fakeTraffic) Traffic(string) (nanoflare.WorkerTraffic, error) {
 			DurationMsPerSecond: 1.5,
 			DurationSeries:      []float64{1.25, 1.75},
 		},
+	}, nil
+}
+
+func (fakeTraffic) DatabaseMetricsTimeseries(string) (nanoflare.DatabaseMetricsTimeseries, error) {
+	return nanoflare.DatabaseMetricsTimeseries{
+		Available: true,
+		Queries: []nanoflare.MetricPoint{{
+			Timestamp: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+			Value:     7,
+		}},
 	}, nil
 }
 

@@ -258,6 +258,30 @@ CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
 	writes bigint NOT NULL DEFAULT 0,
 	size bigint NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS database_metrics (
+	database_id text PRIMARY KEY REFERENCES databases(id) ON DELETE CASCADE,
+	queries bigint NOT NULL DEFAULT 0,
+	read_queries bigint NOT NULL DEFAULT 0,
+	write_queries bigint NOT NULL DEFAULT 0,
+	rows_read bigint NOT NULL DEFAULT 0,
+	rows_returned bigint NOT NULL DEFAULT 0,
+	rows_written bigint NOT NULL DEFAULT 0,
+	storage_bytes bigint NOT NULL DEFAULT 0,
+	table_count bigint NOT NULL DEFAULT 0,
+	total_duration_ms double precision NOT NULL DEFAULT 0,
+	duration_bucket_0_5 bigint NOT NULL DEFAULT 0,
+	duration_bucket_1 bigint NOT NULL DEFAULT 0,
+	duration_bucket_2_5 bigint NOT NULL DEFAULT 0,
+	duration_bucket_5 bigint NOT NULL DEFAULT 0,
+	duration_bucket_10 bigint NOT NULL DEFAULT 0,
+	duration_bucket_25 bigint NOT NULL DEFAULT 0,
+	duration_bucket_50 bigint NOT NULL DEFAULT 0,
+	duration_bucket_100 bigint NOT NULL DEFAULT 0,
+	duration_bucket_250 bigint NOT NULL DEFAULT 0,
+	duration_bucket_500 bigint NOT NULL DEFAULT 0,
+	duration_bucket_1000 bigint NOT NULL DEFAULT 0,
+	duration_bucket_inf bigint NOT NULL DEFAULT 0
+);
 ALTER TABLE kv_namespace_metrics ADD COLUMN IF NOT EXISTS size bigint NOT NULL DEFAULT 0;
 INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size)
 SELECT kv_namespace_id, 0, 0, COALESCE(SUM(octet_length(value)), 0)
@@ -1228,6 +1252,80 @@ SELECT EXISTS (
 	return tx.Commit()
 }
 
+func (p *Postgres) DatabaseMetrics(databaseID string) (nanoflare.DatabaseMetrics, error) {
+	if _, err := p.GetDatabase(databaseID); err != nil {
+		return nanoflare.DatabaseMetrics{}, err
+	}
+	var metrics nanoflare.DatabaseMetrics
+	err := p.db.QueryRow(`
+SELECT queries, read_queries, write_queries, rows_read, rows_returned, rows_written,
+	storage_bytes, table_count, total_duration_ms,
+	duration_bucket_0_5, duration_bucket_1, duration_bucket_2_5, duration_bucket_5,
+	duration_bucket_10, duration_bucket_25, duration_bucket_50, duration_bucket_100,
+	duration_bucket_250, duration_bucket_500, duration_bucket_1000, duration_bucket_inf
+FROM database_metrics
+WHERE database_id = $1`, databaseID).Scan(
+		&metrics.Queries, &metrics.ReadQueries, &metrics.WriteQueries, &metrics.RowsRead, &metrics.RowsReturned, &metrics.RowsWritten,
+		&metrics.StorageBytes, &metrics.TableCount, &metrics.TotalDurationMS,
+		&metrics.DurationBucket0_5, &metrics.DurationBucket1, &metrics.DurationBucket2_5, &metrics.DurationBucket5,
+		&metrics.DurationBucket10, &metrics.DurationBucket25, &metrics.DurationBucket50, &metrics.DurationBucket100,
+		&metrics.DurationBucket250, &metrics.DurationBucket500, &metrics.DurationBucket1000, &metrics.DurationBucketInf,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		metrics.Available = true
+		return metrics, nil
+	}
+	if err != nil {
+		return nanoflare.DatabaseMetrics{}, err
+	}
+	metrics.Available = true
+	metrics.P50DurationMS = postgresDatabaseDurationPercentile(metrics, 0.50)
+	metrics.P99DurationMS = postgresDatabaseDurationPercentile(metrics, 0.99)
+	return metrics, nil
+}
+
+func (p *Postgres) RecordDatabaseQueryMetrics(input nanoflare.DatabaseQueryMetricsInput) error {
+	if _, err := p.GetDatabase(input.DatabaseID); err != nil {
+		return err
+	}
+	readQueries := int64(1)
+	writeQueries := int64(0)
+	if input.ChangedDB || input.RowsWritten > 0 {
+		readQueries = 0
+		writeQueries = 1
+	}
+	bucketColumn := databaseDurationBucketColumn(input.DurationMS)
+	_, err := p.db.Exec(fmt.Sprintf(`
+INSERT INTO database_metrics (
+	database_id, queries, read_queries, write_queries, rows_read, rows_returned, rows_written,
+	storage_bytes, table_count, total_duration_ms, %s
+) VALUES ($1, 1, $2, $3, $4, $5, $6, GREATEST($7, 0), GREATEST($8, 0), $9, 1)
+ON CONFLICT (database_id) DO UPDATE SET
+	queries = database_metrics.queries + 1,
+	read_queries = database_metrics.read_queries + $2,
+	write_queries = database_metrics.write_queries + $3,
+	rows_read = database_metrics.rows_read + $4,
+	rows_returned = database_metrics.rows_returned + $5,
+	rows_written = database_metrics.rows_written + $6,
+	storage_bytes = GREATEST($7, 0),
+	table_count = GREATEST($8, 0),
+	total_duration_ms = database_metrics.total_duration_ms + $9,
+	%s = database_metrics.%s + 1`, bucketColumn, bucketColumn, bucketColumn),
+		input.DatabaseID, readQueries, writeQueries, input.RowsRead, input.RowsReturned, input.RowsWritten, input.SizeAfter, input.TableCount, input.DurationMS)
+	return err
+}
+
+func (p *Postgres) UpdateDatabaseRuntimeStats(databaseID string, stats nanoflare.DatabaseRuntimeStats) error {
+	if _, err := p.GetDatabase(databaseID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO database_metrics (database_id, storage_bytes, table_count) VALUES ($1, GREATEST($2, 0), GREATEST($3, 0))
+ON CONFLICT (database_id) DO UPDATE SET storage_bytes = GREATEST($2, 0), table_count = GREATEST($3, 0)`,
+		databaseID, stats.StorageBytes, stats.TableCount)
+	return err
+}
+
 func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
 	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		bucket.ID, bucket.OrgID, bucket.Name, bucket.ExternalID, bucket.OAuthClientID, bucket.CreatedAt)
@@ -1882,6 +1980,69 @@ func (p *Postgres) AdjustObjectStorageBucketSize(bucketID string, delta int64) e
 INSERT INTO object_storage_bucket_metrics (bucket_id, reads, writes, size) VALUES ($1, 0, 0, GREATEST($2, 0))
 ON CONFLICT (bucket_id) DO UPDATE SET size = GREATEST(object_storage_bucket_metrics.size + $2, 0)`, bucketID, delta)
 	return err
+}
+
+func databaseDurationBucketColumn(durationMS float64) string {
+	switch {
+	case durationMS <= 0.5:
+		return "duration_bucket_0_5"
+	case durationMS <= 1:
+		return "duration_bucket_1"
+	case durationMS <= 2.5:
+		return "duration_bucket_2_5"
+	case durationMS <= 5:
+		return "duration_bucket_5"
+	case durationMS <= 10:
+		return "duration_bucket_10"
+	case durationMS <= 25:
+		return "duration_bucket_25"
+	case durationMS <= 50:
+		return "duration_bucket_50"
+	case durationMS <= 100:
+		return "duration_bucket_100"
+	case durationMS <= 250:
+		return "duration_bucket_250"
+	case durationMS <= 500:
+		return "duration_bucket_500"
+	case durationMS <= 1000:
+		return "duration_bucket_1000"
+	default:
+		return "duration_bucket_inf"
+	}
+}
+
+func postgresDatabaseDurationPercentile(metrics nanoflare.DatabaseMetrics, percentile float64) float64 {
+	if metrics.Queries <= 0 {
+		return 0
+	}
+	target := int64(float64(metrics.Queries) * percentile)
+	if target < 1 {
+		target = 1
+	}
+	var seen int64
+	for _, bucket := range []struct {
+		upper float64
+		count int64
+	}{
+		{0.5, metrics.DurationBucket0_5},
+		{1, metrics.DurationBucket1},
+		{2.5, metrics.DurationBucket2_5},
+		{5, metrics.DurationBucket5},
+		{10, metrics.DurationBucket10},
+		{25, metrics.DurationBucket25},
+		{50, metrics.DurationBucket50},
+		{100, metrics.DurationBucket100},
+		{250, metrics.DurationBucket250},
+		{500, metrics.DurationBucket500},
+		{1000, metrics.DurationBucket1000},
+		{1000, metrics.DurationBucketInf},
+	} {
+		seen += bucket.count
+		if seen >= target {
+			return bucket.upper
+		}
+	}
+	return 1000
 }
 
 func isUniqueViolation(err error) bool {

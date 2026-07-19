@@ -128,8 +128,8 @@ export function ConsoleLayout() {
             <Breadcrumbs>
               {breadcrumbs.map((item, index) => (
                 item.href && index < breadcrumbs.length - 1
-                  ? <Anchor component={Link} key={item.href} size="sm" to={item.href}>{item.label}</Anchor>
-                  : <Text c="dimmed" key={`${item.label}-${index}`} size="sm">{item.label}</Text>
+                  ? <Anchor c="gray.5" component={Link} key={item.href} size="sm" to={item.href}>{item.label}</Anchor>
+                  : <Text c="gray.9" fw={700} key={`${item.label}-${index}`} size="sm">{item.label}</Text>
               ))}
             </Breadcrumbs>
           </Group>

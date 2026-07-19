@@ -404,6 +404,63 @@ type ObjectStorageBucketMetrics struct {
 	Size      int64 `json:"size"`
 }
 
+type DatabaseMetrics struct {
+	Available          bool    `json:"available"`
+	Queries            int64   `json:"queries"`
+	ReadQueries        int64   `json:"read_queries"`
+	WriteQueries       int64   `json:"write_queries"`
+	RowsRead           int64   `json:"rows_read"`
+	RowsReturned       int64   `json:"rows_returned"`
+	RowsWritten        int64   `json:"rows_written"`
+	StorageBytes       int64   `json:"storage_bytes"`
+	TableCount         int64   `json:"table_count"`
+	TotalDurationMS    float64 `json:"total_duration_ms"`
+	P50DurationMS      float64 `json:"p50_duration_ms"`
+	P99DurationMS      float64 `json:"p99_duration_ms"`
+	DurationBucket0_5  int64   `json:"duration_bucket_0_5"`
+	DurationBucket1    int64   `json:"duration_bucket_1"`
+	DurationBucket2_5  int64   `json:"duration_bucket_2_5"`
+	DurationBucket5    int64   `json:"duration_bucket_5"`
+	DurationBucket10   int64   `json:"duration_bucket_10"`
+	DurationBucket25   int64   `json:"duration_bucket_25"`
+	DurationBucket50   int64   `json:"duration_bucket_50"`
+	DurationBucket100  int64   `json:"duration_bucket_100"`
+	DurationBucket250  int64   `json:"duration_bucket_250"`
+	DurationBucket500  int64   `json:"duration_bucket_500"`
+	DurationBucket1000 int64   `json:"duration_bucket_1000"`
+	DurationBucketInf  int64   `json:"duration_bucket_inf"`
+}
+
+type MetricPoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	Value     float64   `json:"value"`
+}
+
+type DatabaseMetricsTimeseries struct {
+	Available    bool          `json:"available"`
+	Queries      []MetricPoint `json:"queries"`
+	ReadQueries  []MetricPoint `json:"read_queries"`
+	WriteQueries []MetricPoint `json:"write_queries"`
+	RowsRead     []MetricPoint `json:"rows_read"`
+	RowsWritten  []MetricPoint `json:"rows_written"`
+	StorageBytes []MetricPoint `json:"storage_bytes"`
+	TableCount   []MetricPoint `json:"table_count"`
+	P50LatencyMS []MetricPoint `json:"p50_latency_ms"`
+	P95LatencyMS []MetricPoint `json:"p95_latency_ms"`
+	P99LatencyMS []MetricPoint `json:"p99_latency_ms"`
+}
+
+type DatabaseQueryMetricsInput struct {
+	DatabaseID   string
+	DurationMS   float64
+	RowsRead     int64
+	RowsReturned int64
+	RowsWritten  int64
+	ChangedDB    bool
+	SizeAfter    int64
+	TableCount   int64
+}
+
 type WorkerKVKey struct {
 	Key  string `json:"key"`
 	Size int64  `json:"size"`
