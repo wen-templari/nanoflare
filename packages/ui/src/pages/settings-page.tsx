@@ -463,15 +463,11 @@ function LimitRow({
     <Box>
       <Group justify="space-between" mb={6}>
         <Text fw={700} size="sm">{label}</Text>
-        <Text c={hasLimit && current >= limit ? "orange" : "dimmed"} ff="monospace" size="xs">
+        <Text c={hasLimit ? (current >= limit ? "orange" : "dimmed") : "gray.7"} ff="monospace" size="xs">
           {hasLimit ? usageLabel : `${usageLabel} · Unlimited`}
         </Text>
       </Group>
-      {hasLimit ? (
-        <Progress color={current >= limit ? "orange" : "blue"} radius="xs" size="sm" value={percent} />
-      ) : (
-        <Progress color="green" radius="xs" size="sm" value={100} />
-      )}
+      {hasLimit && <Progress color={current >= limit ? "orange" : "blue"} radius="xs" size="sm" value={percent} />}
     </Box>
   )
 }
