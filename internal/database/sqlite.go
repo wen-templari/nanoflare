@@ -242,7 +242,7 @@ func (m *SQLiteManager) exec(ctx context.Context, db *sql.DB, databaseID, query 
 	if _, err := db.ExecContext(ctx, query); err != nil {
 		return nanoflare.D1ExecResult{}, err
 	}
-	return nanoflare.D1ExecResult{Count: statementCount(query), Duration: float64(time.Since(started).Milliseconds())}, nil
+	return nanoflare.D1ExecResult{Count: statementCount(query), Duration: durationMilliseconds(time.Since(started))}, nil
 }
 
 type statementRunner interface {
@@ -276,7 +276,7 @@ func runStatement(ctx context.Context, runner statementRunner, dbPath string, st
 		Meta: nanoflare.D1Meta{
 			ServedBy:        "nanoflare.db",
 			ServedByPrimary: true,
-			Duration:        float64(time.Since(started).Milliseconds()),
+			Duration:        durationMilliseconds(time.Since(started)),
 			Changes:         changes,
 			LastRowID:       lastRowID,
 			ChangedDB:       changed,
@@ -286,6 +286,10 @@ func runStatement(ctx context.Context, runner statementRunner, dbPath string, st
 		},
 		Results: resultRows,
 	}, nil
+}
+
+func durationMilliseconds(duration time.Duration) float64 {
+	return float64(duration) / float64(time.Millisecond)
 }
 
 func normalizeParams(params []any) []any {

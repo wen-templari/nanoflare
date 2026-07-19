@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
@@ -51,6 +52,12 @@ func TestSQLiteManagerD1Methods(t *testing.T) {
 	}
 	if len(raw.Raw) != 2 || raw.Raw[1][0] != "hello" {
 		t.Fatalf("raw = %#v", raw.Raw)
+	}
+}
+
+func TestDurationMillisecondsKeepsSubMillisecondPrecision(t *testing.T) {
+	if got := durationMilliseconds(500 * time.Microsecond); got != 0.5 {
+		t.Fatalf("durationMilliseconds(500us) = %v, want 0.5", got)
 	}
 }
 
