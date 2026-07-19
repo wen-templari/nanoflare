@@ -407,6 +407,149 @@ func TestAuthCommandsUseAuthStoreOverride(t *testing.T) {
 	}
 }
 
+func TestAuthLoginWebUsesConsoleLoginFlow(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+
+	var openedURL string
+	originalOpenBrowser := openBrowserFunc
+	openBrowserFunc = func(target string) error {
+		openedURL = target
+		return nil
+	}
+	t.Cleanup(func() {
+		openBrowserFunc = originalOpenBrowser
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/cli/session":
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["code"] != "cli-code" {
+				t.Fatalf("cli code = %q", input["code"])
+			}
+			writeJSON(t, w, http.StatusOK, nanoflare.AuthSession{
+				Token:       "session-token",
+				ActiveOrgID: "org-123",
+				User:        nanoflare.User{ID: "user-123", Email: "user@example.com"},
+				Organizations: []nanoflare.Organization{
+					{ID: "org-123", Name: "Example Org"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	runner.Stdin = strings.NewReader("cli-code\n")
+	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL, "--web"}); err != nil {
+		t.Fatal(err)
+	}
+	if openedURL != server.URL+"/login?next=%2Fcli-login" {
+		t.Fatalf("opened URL = %q", openedURL)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Logged in as user@example.com") || !strings.Contains(got, "Using organization org-123") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if got := stderr.String(); !strings.Contains(got, "Open this URL to continue web login:\n"+server.URL+"/login?next=%2Fcli-login") || !strings.Contains(got, "Opened browser for web login.") || !strings.HasSuffix(got, "CLI code: ") {
+		t.Fatalf("stderr = %q", got)
+	}
+	if _, err := os.Stat(authPath); err != nil {
+		t.Fatalf("stat auth config: %v", err)
+	}
+}
+
+func TestAuthLoginOIDCFlagIsRemoved(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	err := runner.Run([]string{"auth", "login", "--oidc"})
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -oidc") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRequestRefreshesAuthTokenAndRetries(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+
+	appRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps":
+			appRequests++
+			if appRequests == 1 {
+				writeJSON(t, w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+				return
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer refreshed-token" {
+				t.Fatalf("authorization = %q", got)
+			}
+			if got := r.Header.Get("X-Nanoflare-Org-ID"); got != "org-123" {
+				t.Fatalf("org header = %q", got)
+			}
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello", Hostname: "hello.example.com"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/refresh":
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["refresh_token"] != "refresh-token" {
+				t.Fatalf("refresh token = %q", input["refresh_token"])
+			}
+			writeJSON(t, w, http.StatusOK, nanoflare.AuthSession{
+				Token:        "refreshed-token",
+				RefreshToken: "rotated-refresh-token",
+				ActiveOrgID:  "org-123",
+				User:         nanoflare.User{ID: "user-123", Email: "user@example.com"},
+				Organizations: []nanoflare.Organization{
+					{ID: "org-123", Name: "Example Org"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := writeAuthConfig(AuthConfig{
+		APIURL:       server.URL,
+		Token:        "expired-token",
+		RefreshToken: "refresh-token",
+		ActiveOrgID:  "org-123",
+		User:         nanoflare.User{ID: "user-123", Email: "user@example.com"},
+		Orgs:         []nanoflare.Organization{{ID: "org-123", Name: "Example Org"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"list", "--api-url", server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if appRequests != 2 {
+		t.Fatalf("app requests = %d", appRequests)
+	}
+	if got := stdout.String(); got != "app-123\tHello\thello.example.com\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	auth, err := loadAuthConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.Token != "refreshed-token" || auth.RefreshToken != "rotated-refresh-token" {
+		t.Fatalf("auth = %#v", auth)
+	}
+}
+
 func TestListWorkers(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

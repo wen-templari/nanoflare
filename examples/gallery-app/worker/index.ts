@@ -1,4 +1,4 @@
-import type { AssetFetcher, KVNamespace, ObjectStorageBucket } from "@nanoflare/workers-types";
+import type { AssetFetcher, D1Database, ObjectStorageBucket } from "@nanoflare/workers-types";
 import mime from "mime";
 
 interface GalleryItem {
@@ -11,21 +11,34 @@ interface GalleryItem {
   previewCount: number;
 }
 
+interface GalleryRow {
+  id: string;
+  object_key: string;
+  filename: string;
+  content_type: string;
+  uploaded_at: string;
+  size: number;
+  preview_count: number;
+}
+
 interface GalleryEnv {
   ASSETS: AssetFetcher;
-  GALLERY_KV: KVNamespace;
+  GALLERY_DB: D1Database;
   OBJECTS: ObjectStorageBucket;
 }
 
-const GALLERY_INDEX_KEY = "gallery:index";
 const MAX_ITEMS = 24;
 
 export default {
   async fetch(request: Request, env: GalleryEnv): Promise<Response> {
     const url = new URL(request.url);
 
+    if (url.pathname.startsWith("/api/")) {
+      await ensureGallerySchema(env);
+    }
+
     if (request.method === "GET" && url.pathname === "/api/gallery") {
-      return Response.json({ items: await readGalleryIndex(env) });
+      return Response.json({ items: await readGalleryItems(env) });
     }
 
     if (request.method === "POST" && url.pathname === "/api/gallery") {
@@ -61,6 +74,15 @@ async function uploadImage(request: Request, env: GalleryEnv): Promise<Response>
   const extension = mime.getExtension(contentType) || "bin";
   const key = `gallery/${timestamp}-${id}.${extension}`;
   const bytes = await uploaded.arrayBuffer();
+  const item: GalleryItem = {
+    id,
+    key,
+    filename: uploaded.name || `upload.${extension}`,
+    contentType,
+    uploadedAt: new Date().toISOString(),
+    size: bytes.byteLength,
+    previewCount: 0,
+  };
 
   console.log("[gallery upload] received file", {
     name: uploaded.name,
@@ -84,19 +106,19 @@ async function uploadImage(request: Request, env: GalleryEnv): Promise<Response>
     etag: stored?.etag ?? "",
   });
 
-  const item: GalleryItem = {
-    id,
-    key,
-    filename: uploaded.name || `upload.${extension}`,
-    contentType,
-    uploadedAt: new Date().toISOString(),
-    size: bytes.byteLength,
-    previewCount: 0,
-  };
-
-  const items = await readGalleryIndex(env);
-  items.unshift(item);
-  await env.GALLERY_KV.put(GALLERY_INDEX_KEY, JSON.stringify(items.slice(0, MAX_ITEMS)));
+  await env.GALLERY_DB.prepare(`
+    INSERT INTO gallery_items (
+      id,
+      object_key,
+      filename,
+      content_type,
+      uploaded_at,
+      size,
+      preview_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+    .bind(item.id, item.key, item.filename, item.contentType, item.uploadedAt, item.size, item.previewCount)
+    .run();
 
   return Response.json({ ok: true, item }, { status: 201 });
 }
@@ -107,8 +129,7 @@ async function serveImage(pathname: string, env: GalleryEnv): Promise<Response> 
     return new Response("Not found", { status: 404 });
   }
 
-  const items = await readGalleryIndex(env);
-  const item = items.find((candidate) => candidate.id === id);
+  const item = await readGalleryItem(env, id);
   if (!item) {
     return Response.json({ ok: false, error: "Image not found" }, { status: 404 });
   }
@@ -145,23 +166,20 @@ async function trackPreview(pathname: string, env: GalleryEnv): Promise<Response
     return new Response("Not found", { status: 404 });
   }
 
-  const items = await readGalleryIndex(env);
-  const item = items.find((candidate) => candidate.id === id);
+  await env.GALLERY_DB.prepare(`
+    UPDATE gallery_items
+    SET preview_count = preview_count + 1
+    WHERE id = ?
+  `)
+    .bind(id)
+    .run();
+
+  const item = await readGalleryItem(env, id);
   if (!item) {
     return Response.json({ ok: false, error: "Image not found" }, { status: 404 });
   }
 
-  const nextItem = {
-    ...item,
-    previewCount: item.previewCount + 1,
-  };
-
-  await writeGalleryIndex(
-    env,
-    items.map((candidate) => (candidate.id === id ? nextItem : candidate)),
-  );
-
-  return Response.json({ ok: true, item: nextItem });
+  return Response.json({ ok: true, item });
 }
 
 async function deleteImage(pathname: string, env: GalleryEnv): Promise<Response> {
@@ -170,29 +188,80 @@ async function deleteImage(pathname: string, env: GalleryEnv): Promise<Response>
     return new Response("Not found", { status: 404 });
   }
 
-  const items = await readGalleryIndex(env);
-  const item = items.find((candidate) => candidate.id === id);
+  const item = await readGalleryItem(env, id);
   if (!item) {
     return Response.json({ ok: false, error: "Image not found" }, { status: 404 });
   }
 
   await env.OBJECTS.delete(item.key);
-  await writeGalleryIndex(
-    env,
-    items.filter((candidate) => candidate.id !== id),
-  );
+  await env.GALLERY_DB.prepare("DELETE FROM gallery_items WHERE id = ?").bind(id).run();
 
   return Response.json({ ok: true, id });
 }
 
-async function readGalleryIndex(env: GalleryEnv): Promise<GalleryItem[]> {
-  const items = (await env.GALLERY_KV.get<GalleryItem[]>(GALLERY_INDEX_KEY, "json")) ?? [];
-  return items.map((item) => ({
-    ...item,
-    previewCount: item.previewCount ?? 0,
-  }));
+async function ensureGallerySchema(env: GalleryEnv): Promise<void> {
+  await env.GALLERY_DB.exec(`
+    CREATE TABLE IF NOT EXISTS gallery_items (
+      id text PRIMARY KEY,
+      object_key text NOT NULL,
+      filename text NOT NULL,
+      content_type text NOT NULL,
+      uploaded_at text NOT NULL,
+      size integer NOT NULL,
+      preview_count integer NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS gallery_items_uploaded_at_idx
+      ON gallery_items (uploaded_at DESC);
+  `);
 }
 
-async function writeGalleryIndex(env: GalleryEnv, items: GalleryItem[]): Promise<void> {
-  await env.GALLERY_KV.put(GALLERY_INDEX_KEY, JSON.stringify(items.slice(0, MAX_ITEMS)));
+async function readGalleryItems(env: GalleryEnv): Promise<GalleryItem[]> {
+  const result = await env.GALLERY_DB.prepare(`
+    SELECT
+      id,
+      object_key,
+      filename,
+      content_type,
+      uploaded_at,
+      size,
+      preview_count
+    FROM gallery_items
+    ORDER BY uploaded_at DESC
+    LIMIT ?
+  `)
+    .bind(MAX_ITEMS)
+    .all<GalleryRow>();
+
+  return result.results.map(rowToGalleryItem);
+}
+
+async function readGalleryItem(env: GalleryEnv, id: string): Promise<GalleryItem | null> {
+  const row = await env.GALLERY_DB.prepare(`
+    SELECT
+      id,
+      object_key,
+      filename,
+      content_type,
+      uploaded_at,
+      size,
+      preview_count
+    FROM gallery_items
+    WHERE id = ?
+  `)
+    .bind(id)
+    .first<GalleryRow>();
+
+  return row ? rowToGalleryItem(row) : null;
+}
+
+function rowToGalleryItem(row: GalleryRow): GalleryItem {
+  return {
+    id: row.id,
+    key: row.object_key,
+    filename: row.filename,
+    contentType: row.content_type,
+    uploadedAt: row.uploaded_at,
+    size: Number(row.size),
+    previewCount: Number(row.preview_count ?? 0),
+  };
 }

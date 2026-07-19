@@ -1,8 +1,9 @@
 import type { Dispatch, SetStateAction } from "react";
 
-export type Section = "overview" | "workers" | "kv" | "object-storage";
+export type Section = "overview" | "workers" | "kv" | "databases" | "object-storage";
 export type WorkerAuth = { protected_routes?: string[] };
 export type WorkerKVNamespaceBinding = { binding: string; id: string; preview_id?: string };
+export type WorkerDatabaseBinding = { binding: string; database_id: string };
 export type WorkerObjectStorageBucketBinding = { binding: string; bucket_id: string };
 export type WorkerAssetConfig = {
   binding?: string;
@@ -12,10 +13,12 @@ export type WorkerAssetConfig = {
 };
 export type WorkerTriggerConfig = { crons?: string[] };
 export type WorkerBinding = {
-  kind: "kv" | "asset" | "object_storage_bucket";
+  kind: "kv" | "db" | "asset" | "object_storage_bucket";
   binding: string;
   namespace_id?: string;
   namespace_name?: string;
+  database_id?: string;
+  database_name?: string;
   bucket_id?: string;
   bucket_name?: string;
   asset_count?: number;
@@ -46,6 +49,7 @@ export type WorkerDeployment = {
   vars?: Record<string, unknown>;
   created_at: string;
   kv_namespaces?: WorkerKVNamespaceBinding[];
+  db?: WorkerDatabaseBinding[];
   object_storage_buckets?: WorkerObjectStorageBucketBinding[];
   bindings?: WorkerBinding[];
 };
@@ -70,6 +74,7 @@ export type WorkerFile = { name: string; path: string; size: number; content: st
 export type WorkerOutputLine = { timestamp: string; level: string; message: string };
 export type WorkerKVKey = { key: string; size: number };
 export type ObjectStorageBucket = { id: string; name: string; created_at: string };
+export type Database = { id: string; name: string; created_at: string };
 export type ObjectStorageObject = {
   key: string;
   size: number;
@@ -138,12 +143,15 @@ export type OrganizationInvite = { id: string; org_id: string; org_name?: string
 export type OrganizationInviteCreated = OrganizationInvite & { token: string; invite_url: string };
 export type KVNamespaceOption = { id: string; label: string };
 export type ObjectStorageBucketOption = { id: string; label: string };
+export type DatabaseOption = { id: string; label: string };
 
 export type WorkspaceContextValue = {
   workers: Worker[];
   setWorkers: Dispatch<SetStateAction<Worker[]>>;
   namespaces: KVNamespace[];
   setNamespaces: Dispatch<SetStateAction<KVNamespace[]>>;
+  databases: Database[];
+  setDatabases: Dispatch<SetStateAction<Database[]>>;
   objectStorageBuckets: ObjectStorageBucket[];
   setObjectStorageBuckets: Dispatch<SetStateAction<ObjectStorageBucket[]>>;
   apiConnected: boolean;
@@ -154,11 +162,14 @@ export type WorkspaceContextValue = {
   logout: () => void;
   workerDialogOpen: boolean;
   namespaceDialogOpen: boolean;
+  databaseDialogOpen: boolean;
   objectStorageBucketDialogOpen: boolean;
   openWorkerDialog: () => void;
   closeWorkerDialog: () => void;
   openNamespaceDialog: () => void;
   closeNamespaceDialog: () => void;
+  openDatabaseDialog: () => void;
+  closeDatabaseDialog: () => void;
   openObjectStorageBucketDialog: () => void;
   closeObjectStorageBucketDialog: () => void;
   toast: string;

@@ -206,7 +206,8 @@ Register `https://console.example.com/v1/auth/oidc/callback` as the OIDC client
 redirect URI. These settings may point at the same identity provider as
 protected worker-route OIDC, but they are intentionally separate so enabling
 worker auth does not automatically enable console registration and login. CLI
-login continues to use email and password.
+login can use email and password, or `nanoflare auth login --web` for the
+web console flow.
 
 External platforms can integrate through Nanoflare's OAuth control-plane flow.
 First create an OAuth client while signed in as a Nanoflare control-plane user.
@@ -320,6 +321,51 @@ export default {
   },
 };
 ```
+
+SQLite databases use explicit `db` bindings. Create a database first:
+
+```sh
+nanoflare db create app-data
+nanoflare db list
+```
+
+Then bind it in `nanoflare.json`:
+
+```json
+{
+  "db": [
+    { "binding": "DB", "database_id": "db_123" }
+  ]
+}
+```
+
+Worker code receives a D1-style binding:
+
+```js
+export default {
+  async fetch(_request, env) {
+    await env.DB.exec("CREATE TABLE IF NOT EXISTS messages (body text)");
+    await env.DB.prepare("INSERT INTO messages (body) VALUES (?)").bind("hello").run();
+    const row = await env.DB.prepare("SELECT body FROM messages LIMIT 1").first();
+    return Response.json(row);
+  },
+};
+```
+
+For one-shot SQL and migrations:
+
+```sh
+nanoflare db execute db_123 --command "CREATE TABLE messages (body text)"
+nanoflare db migrations create add_messages
+nanoflare db migrations apply db_123
+```
+
+`nanoflared` stores SQLite files under `-db-dir`, defaulting to
+`<config-dir>/db`. Litestream can be enabled with `-litestream-enabled`,
+`-litestream-bin`, and `-litestream-config`. Litestream restores a missing local
+database before it is opened and then runs as a long-lived replication process;
+it is not started per query and does not provide multi-node writes or automatic
+primary failover.
 
 Static assets can be attached to a Worker deployment by setting an assets
 directory in `nanoflare.json`. The binding defaults to `ASSETS`, matching

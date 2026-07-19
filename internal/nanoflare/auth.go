@@ -13,6 +13,7 @@ import (
 )
 
 const defaultControlTokenTTL = 24 * time.Hour
+const defaultControlRefreshTTL = 30 * 24 * time.Hour
 const defaultInviteTTL = 7 * 24 * time.Hour
 
 var ErrInvalidCredentials = errors.New("invalid email or password")
@@ -42,6 +43,8 @@ type OIDCLoginInput struct {
 
 type AuthSession struct {
 	Token         string         `json:"token"`
+	RefreshToken  string         `json:"refresh_token,omitempty"`
+	ExpiresIn     int64          `json:"expires_in,omitempty"`
 	User          User           `json:"user"`
 	Organizations []Organization `json:"organizations"`
 	ActiveOrgID   string         `json:"active_org_id,omitempty"`
@@ -77,24 +80,26 @@ type AcceptInviteResponse struct {
 }
 
 type ControlAuthService struct {
-	store     Repository
-	secret    []byte
-	now       func() time.Time
-	tokenTTL  time.Duration
-	randomID  func() (string, error)
-	hashCost  int
-	inviteTTL time.Duration
+	store      Repository
+	secret     []byte
+	now        func() time.Time
+	tokenTTL   time.Duration
+	refreshTTL time.Duration
+	randomID   func() (string, error)
+	hashCost   int
+	inviteTTL  time.Duration
 }
 
 func NewControlAuthService(store Repository, secret string) *ControlAuthService {
 	return &ControlAuthService{
-		store:     store,
-		secret:    []byte(strings.TrimSpace(secret)),
-		now:       time.Now,
-		tokenTTL:  defaultControlTokenTTL,
-		randomID:  randomToken,
-		hashCost:  bcrypt.DefaultCost,
-		inviteTTL: defaultInviteTTL,
+		store:      store,
+		secret:     []byte(strings.TrimSpace(secret)),
+		now:        time.Now,
+		tokenTTL:   defaultControlTokenTTL,
+		refreshTTL: defaultControlRefreshTTL,
+		randomID:   randomToken,
+		hashCost:   bcrypt.DefaultCost,
+		inviteTTL:  defaultInviteTTL,
 	}
 }
 
@@ -206,6 +211,45 @@ func (s *ControlAuthService) Me(token string) (AuthSession, error) {
 		return AuthSession{}, err
 	}
 	return AuthSession{User: safeUser(user), Organizations: orgs, ActiveOrgID: firstOrgID(orgs)}, nil
+}
+
+func (s *ControlAuthService) SessionForUserID(userID string) (AuthSession, error) {
+	user, err := s.store.UserByID(strings.TrimSpace(userID))
+	if err != nil {
+		return AuthSession{}, err
+	}
+	return s.sessionForUser(user)
+}
+
+func (s *ControlAuthService) Refresh(refreshToken string) (AuthSession, error) {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if refreshToken == "" {
+		return AuthSession{}, errors.New("refresh token is required")
+	}
+	now := s.now().UTC()
+	existing, err := s.store.ControlRefreshToken(tokenHash(refreshToken))
+	if err != nil {
+		if errors.Is(err, ErrControlRefreshTokenNotFound) {
+			return AuthSession{}, errors.New("invalid refresh token")
+		}
+		return AuthSession{}, err
+	}
+	if existing.RevokedAt != nil || !existing.ExpiresAt.After(now) {
+		return AuthSession{}, errors.New("invalid refresh token")
+	}
+	revokedAt := now
+	existing.RevokedAt = &revokedAt
+	if err := s.store.UpdateControlRefreshToken(existing); err != nil {
+		if errors.Is(err, ErrControlRefreshTokenNotFound) {
+			return AuthSession{}, errors.New("invalid refresh token")
+		}
+		return AuthSession{}, err
+	}
+	user, err := s.store.UserByID(existing.UserID)
+	if err != nil {
+		return AuthSession{}, err
+	}
+	return s.sessionForUser(user)
 }
 
 func (s *ControlAuthService) ValidateToken(token string) (User, error) {
@@ -424,7 +468,36 @@ func (s *ControlAuthService) sessionForUser(user User) (AuthSession, error) {
 	if err != nil {
 		return AuthSession{}, err
 	}
-	return AuthSession{Token: token, User: safeUser(user), Organizations: orgs, ActiveOrgID: firstOrgID(orgs)}, nil
+	refreshToken, err := s.issueRefreshToken(user)
+	if err != nil {
+		return AuthSession{}, err
+	}
+	return AuthSession{
+		Token:         token,
+		RefreshToken:  refreshToken,
+		ExpiresIn:     int64(s.tokenTTL.Seconds()),
+		User:          safeUser(user),
+		Organizations: orgs,
+		ActiveOrgID:   firstOrgID(orgs),
+	}, nil
+}
+
+func (s *ControlAuthService) issueRefreshToken(user User) (string, error) {
+	refresh, err := s.randomID()
+	if err != nil {
+		return "", err
+	}
+	now := s.now().UTC()
+	record := ControlRefreshToken{
+		TokenHash: tokenHash(refresh),
+		UserID:    user.ID,
+		ExpiresAt: now.Add(s.refreshTTL),
+		CreatedAt: now,
+	}
+	if err := s.store.CreateControlRefreshToken(record); err != nil {
+		return "", err
+	}
+	return refresh, nil
 }
 
 func (s *ControlAuthService) issueToken(user User) (string, error) {

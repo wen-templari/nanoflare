@@ -1,4 +1,4 @@
-import type { KVNamespace, ObjectStorageBucket } from "./types";
+import type { Database, KVNamespace, ObjectStorageBucket } from "./types";
 
 export function formatBytes(value: number) {
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -22,4 +22,8 @@ export function sortNamespaces(namespaces: KVNamespace[]) {
 
 export function sortObjectStorageBuckets(buckets: ObjectStorageBucket[]) {
   return [...buckets].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function sortDatabases(databases: Database[]) {
+  return [...databases].sort((a, b) => a.name.localeCompare(b.name));
 }

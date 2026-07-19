@@ -3,6 +3,8 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./app/auth-context";
 import { WorkspaceProvider } from "./app/workspace-context";
 import { ConsoleLayout } from "./components/layout/console-layout";
+import { DatabaseDetailPage } from "./pages/database-detail-page";
+import { DatabasesPage } from "./pages/databases-page";
 import { KVNamespaceDetailPage } from "./pages/kv-namespace-detail-page";
 import { KVNamespacesPage } from "./pages/kv-namespaces-page";
 import { ObjectStorageBucketDetailPage } from "./pages/object-storage-bucket-detail-page";
@@ -15,6 +17,7 @@ import { WorkerDetailPage } from "./pages/worker-detail-page";
 import { WorkersPage } from "./pages/workers-page";
 import { LoginPage } from "./pages/login-page";
 import { InvitePage } from "./pages/invite-page";
+import { CLILoginPage } from "./pages/cli-login-page";
 
 const theme = createTheme({
   primaryColor: "blue",
@@ -30,6 +33,7 @@ export function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/cli-login" element={<CLILoginPage />} />
             <Route path="/invites/:token" element={<InvitePage />} />
             <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
             <Route element={<ProtectedConsole />}>
@@ -38,6 +42,8 @@ export function App() {
               <Route path="workers/:workerId" element={<WorkerDetailPage />} />
               <Route path="kv" element={<KVNamespacesPage />} />
               <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />
+              <Route path="databases" element={<DatabasesPage />} />
+              <Route path="databases/:databaseId" element={<DatabaseDetailPage />} />
               <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
               <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />
               <Route path="settings" element={<SettingsPage />} />

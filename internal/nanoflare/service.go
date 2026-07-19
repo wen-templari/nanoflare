@@ -40,6 +40,7 @@ type Service struct {
 	store                Repository
 	writer               ConfigWriter
 	objects              ObjectStore
+	db                   DBExecutor
 	output               WorkerOutputReader
 	traffic              WorkerTrafficReader
 	secrets              *SecretCodec
@@ -76,6 +77,10 @@ func (s *Service) SetBaseHostname(hostname string) error {
 
 func (s *Service) SetSecretCodec(codec *SecretCodec) {
 	s.secrets = codec
+}
+
+func (s *Service) SetDBExecutor(db DBExecutor) {
+	s.db = db
 }
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
@@ -171,6 +176,34 @@ func (s *Service) ListKVNamespaces() ([]KVNamespace, error) {
 
 func (s *Service) ListKVNamespacesForOrg(orgID string) ([]KVNamespace, error) {
 	return s.store.ListKVNamespacesByOrg(strings.TrimSpace(orgID))
+}
+
+func (s *Service) CreateDatabase(input CreateDatabaseInput) (Database, error) {
+	input.OrgID = strings.TrimSpace(input.OrgID)
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return Database{}, errors.New("name is required")
+	}
+	databaseID, err := randomToken()
+	if err != nil {
+		return Database{}, err
+	}
+	database := Database{ID: databaseID, OrgID: input.OrgID, Name: name, CreatedAt: time.Now().UTC()}
+	if err := s.store.CreateDatabase(database); err != nil {
+		return Database{}, err
+	}
+	if s.db != nil {
+		_ = s.db.RestoreMissing(database.ID)
+	}
+	return database, nil
+}
+
+func (s *Service) ListDatabases() ([]Database, error) {
+	return s.store.ListDatabases()
+}
+
+func (s *Service) ListDatabasesForOrg(orgID string) ([]Database, error) {
+	return s.store.ListDatabasesByOrg(strings.TrimSpace(orgID))
 }
 
 func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput) (ObjectStorageBucket, error) {
@@ -303,6 +336,46 @@ func (s *Service) GetKVNamespaceForOrg(orgID, namespaceID string) (KVNamespace, 
 	return namespace, nil
 }
 
+func (s *Service) GetDatabase(databaseID string) (Database, error) {
+	databaseID = strings.TrimSpace(databaseID)
+	if databaseID == "" {
+		return Database{}, ErrDatabaseNotFound
+	}
+	return s.store.GetDatabase(databaseID)
+}
+
+func (s *Service) GetDatabaseForOrg(orgID, databaseID string) (Database, error) {
+	database, err := s.GetDatabase(databaseID)
+	if err != nil {
+		return Database{}, err
+	}
+	if strings.TrimSpace(orgID) != "" && database.OrgID != strings.TrimSpace(orgID) {
+		return Database{}, ErrDatabaseNotFound
+	}
+	return database, nil
+}
+
+func (s *Service) DeleteDatabase(databaseID string) error {
+	databaseID = strings.TrimSpace(databaseID)
+	if databaseID == "" {
+		return ErrDatabaseNotFound
+	}
+	if err := s.store.DeleteDatabase(databaseID); err != nil {
+		return err
+	}
+	if s.db != nil {
+		return s.db.Delete(databaseID)
+	}
+	return nil
+}
+
+func (s *Service) DeleteDatabaseForOrg(orgID, databaseID string) error {
+	if _, err := s.GetDatabaseForOrg(orgID, databaseID); err != nil {
+		return err
+	}
+	return s.DeleteDatabase(databaseID)
+}
+
 func (s *Service) UpdateKVNamespace(namespaceID string, input UpdateKVNamespaceInput) (KVNamespace, error) {
 	namespaceID = strings.TrimSpace(namespaceID)
 	if namespaceID == "" {
@@ -430,7 +503,7 @@ func (s *Service) PutSecret(appID, name, value string) error {
 		return err
 	}
 	if item := activeForApp(active, appID); item != nil {
-		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.ObjectStorageBuckets, item.Deployment.AssetConfig); err != nil {
+		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.Databases, item.Deployment.ObjectStorageBuckets, item.Deployment.AssetConfig); err != nil {
 			return err
 		}
 	}
@@ -609,6 +682,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		Triggers:             active.Deployment.Triggers,
 		Vars:                 cloneVars(active.Deployment.Vars),
 		KVNamespaces:         append([]KVBinding(nil), active.Deployment.KVNamespaces...),
+		Databases:            append([]DatabaseBinding(nil), active.Deployment.Databases...),
 		ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), active.Deployment.ObjectStorageBuckets...),
 		AssetConfig:          active.Deployment.AssetConfig,
 		Bindings:             s.deploymentBindings(active.Deployment),
@@ -788,6 +862,10 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
+	databases, err := s.normalizeDatabases(input.Databases)
+	if err != nil {
+		return Deployment{}, err
+	}
 	objectStorageBuckets, err := s.normalizeObjectStorageBuckets(input.ObjectStorageBuckets)
 	if err != nil {
 		return Deployment{}, err
@@ -804,7 +882,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil && !errors.Is(err, ErrAppNotFound) {
 		return Deployment{}, err
 	}
-	if err := validateBindingCollisions(vars, secrets, kvNamespaces, objectStorageBuckets, input.AssetConfig); err != nil {
+	if err := validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, input.AssetConfig); err != nil {
 		return Deployment{}, err
 	}
 	format, err := workerFormat(input.Format, len(files))
@@ -833,6 +911,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Triggers:             triggers,
 		Vars:                 vars,
 		KVNamespaces:         kvNamespaces,
+		Databases:            databases,
 		ObjectStorageBuckets: objectStorageBuckets,
 		AssetConfig:          assetConfig,
 		BundleSize:           bundleSize(files),
@@ -893,6 +972,11 @@ func (s *Service) DeployForOrg(orgID, appID string, input DeployInput) (Deployme
 	}
 	for _, binding := range input.KVNamespaces {
 		if _, err := s.GetKVNamespaceForOrg(orgID, strings.TrimSpace(binding.ID)); err != nil {
+			return Deployment{}, err
+		}
+	}
+	for _, binding := range input.Databases {
+		if _, err := s.GetDatabaseForOrg(orgID, strings.TrimSpace(binding.DatabaseID)); err != nil {
 			return Deployment{}, err
 		}
 	}
@@ -1051,6 +1135,33 @@ func (s *Service) normalizeKVNamespaces(bindings []KVBinding) ([]KVBinding, erro
 	return normalized, nil
 }
 
+func (s *Service) normalizeDatabases(bindings []DatabaseBinding) ([]DatabaseBinding, error) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+	normalized := make([]DatabaseBinding, 0, len(bindings))
+	seenBindings := make(map[string]bool, len(bindings))
+	for _, binding := range bindings {
+		binding.Binding = strings.TrimSpace(binding.Binding)
+		binding.DatabaseID = strings.TrimSpace(binding.DatabaseID)
+		if binding.Binding == "" {
+			return nil, errors.New("db.binding is required")
+		}
+		if binding.DatabaseID == "" {
+			return nil, errors.New("db.database_id is required")
+		}
+		if seenBindings[binding.Binding] {
+			return nil, fmt.Errorf("db binding %q is duplicated", binding.Binding)
+		}
+		if _, err := s.store.GetDatabase(binding.DatabaseID); err != nil {
+			return nil, err
+		}
+		seenBindings[binding.Binding] = true
+		normalized = append(normalized, binding)
+	}
+	return normalized, nil
+}
+
 func (s *Service) normalizeObjectStorageBuckets(bindings []ObjectStorageBucketBinding) ([]ObjectStorageBucketBinding, error) {
 	if len(bindings) == 0 {
 		return nil, nil
@@ -1100,7 +1211,7 @@ func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage,
 	return normalized, nil
 }
 
-func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, objectBindings []ObjectStorageBucketBinding, assetConfig AssetConfig) error {
+func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, dbBindings []DatabaseBinding, objectBindings []ObjectStorageBucketBinding, assetConfig AssetConfig) error {
 	seen := make(map[string]string)
 	add := func(name, kind string) error {
 		if existing, exists := seen[name]; exists {
@@ -1124,6 +1235,11 @@ func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[stri
 			return err
 		}
 	}
+	for _, binding := range dbBindings {
+		if err := add(binding.Binding, "db"); err != nil {
+			return err
+		}
+	}
 	if err := add(deploymentAssetBindingName(assetConfig), "assets"); err != nil {
 		return err
 	}
@@ -1136,11 +1252,18 @@ func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[stri
 }
 
 func (s *Service) deploymentBindings(deployment Deployment) []Binding {
-	bindings := make([]Binding, 0, len(deployment.KVNamespaces)+len(deployment.ObjectStorageBuckets)+1)
+	bindings := make([]Binding, 0, len(deployment.KVNamespaces)+len(deployment.Databases)+len(deployment.ObjectStorageBuckets)+1)
 	for _, binding := range deployment.KVNamespaces {
 		item := Binding{Kind: "kv", Binding: binding.Binding, NamespaceID: binding.ID}
 		if namespace, err := s.store.GetKVNamespace(binding.ID); err == nil {
 			item.NamespaceName = namespace.Name
+		}
+		bindings = append(bindings, item)
+	}
+	for _, binding := range deployment.Databases {
+		item := Binding{Kind: "db", Binding: binding.Binding, DatabaseID: binding.DatabaseID}
+		if database, err := s.store.GetDatabase(binding.DatabaseID); err == nil {
+			item.DatabaseName = database.Name
 		}
 		bindings = append(bindings, item)
 	}
@@ -1654,6 +1777,40 @@ func (s *Service) WorkerKVDeleteForOrg(orgID, appID, namespaceID, key string) er
 	return s.WorkerKVDelete(appID, namespaceID, key)
 }
 
+func (s *Service) DBExecute(capability, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
+	appID, err := s.store.AppIDForCapability(capability)
+	if err != nil {
+		return DBQueryResponse{}, err
+	}
+	if err := s.ensureActiveDeploymentBindsDatabase(appID, databaseID); err != nil {
+		return DBQueryResponse{}, err
+	}
+	if s.db == nil {
+		return DBQueryResponse{}, errors.New("database runtime is not configured")
+	}
+	return s.db.Execute(databaseID, request)
+}
+
+func (s *Service) WorkerDBExecuteForOrg(orgID, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
+	if _, err := s.GetDatabaseForOrg(orgID, databaseID); err != nil {
+		return DBQueryResponse{}, err
+	}
+	if s.db == nil {
+		return DBQueryResponse{}, errors.New("database runtime is not configured")
+	}
+	return s.db.Execute(databaseID, request)
+}
+
+func (s *Service) ApplyDBMigrationForOrg(orgID, databaseID, name, sql string) (DBMigrationResult, error) {
+	if _, err := s.GetDatabaseForOrg(orgID, databaseID); err != nil {
+		return DBMigrationResult{}, err
+	}
+	if s.db == nil {
+		return DBMigrationResult{}, errors.New("database runtime is not configured")
+	}
+	return s.db.ApplyMigration(databaseID, name, sql)
+}
+
 func (s *Service) WorkerObjectList(appID, bucketID string) ([]ObjectInfo, error) {
 	app, _, err := s.worker(appID)
 	if err != nil {
@@ -1906,6 +2063,40 @@ func (s *Service) ensureAppAndKVNamespaceInOrg(orgID, appID, namespaceID string)
 	}
 	if app.OrgID != namespace.OrgID {
 		return ErrKVNamespaceNotFound
+	}
+	return nil
+}
+
+func (s *Service) ensureActiveDeploymentBindsDatabase(appID, databaseID string) error {
+	_, active, err := s.worker(appID)
+	if err != nil {
+		return err
+	}
+	if active == nil {
+		return ErrDatabaseNotBound
+	}
+	for _, binding := range active.Deployment.Databases {
+		if binding.DatabaseID == databaseID {
+			return nil
+		}
+	}
+	return ErrDatabaseNotBound
+}
+
+func (s *Service) ensureAppAndDatabaseInOrg(orgID, appID, databaseID string) error {
+	if strings.TrimSpace(orgID) == "" {
+		return nil
+	}
+	app, err := s.appForOrg(orgID, appID)
+	if err != nil {
+		return err
+	}
+	database, err := s.GetDatabaseForOrg(orgID, databaseID)
+	if err != nil {
+		return err
+	}
+	if app.OrgID != database.OrgID {
+		return ErrDatabaseNotFound
 	}
 	return nil
 }

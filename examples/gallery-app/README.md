@@ -1,6 +1,6 @@
 # gallery-app
 
-`gallery-app` is a gallery app using nanoflare Workers, KV, and Object Storage.
+`gallery-app` is a gallery app using nanoflare Workers, db, and Object Storage.
 
 ## What It Demonstrates
 
@@ -8,7 +8,7 @@
 - a dedicated Worker entrypoint under `worker/`
 - static assets built into `dist/client/` and served through `ASSETS`
 - uploaded image files stored in `OBJECTS`
-- gallery metadata and preview counts stored in `GALLERY_KV`
+- gallery metadata and preview counts stored in `GALLERY_DB`
 - a bundled Worker artifact at `dist/worker.js`
 - a Worker-first asset setup where `/api/*` stays dynamic and `/` serves the SPA
 
@@ -18,14 +18,14 @@ From this directory:
 
 ```sh
 npm install
-npm run build
 nanoflare create
-nanoflare kv namespace create gallery-metadata
+nanoflare db create gallery-metadata
 nanoflare object-storage bucket create gallery-images
+npm run build
 ```
 
-Update [nanoflare.json](nanoflare.json) so the KV namespace id and object
-storage bucket id match what the CLI returned, then deploy:
+Update [nanoflare.json](nanoflare.json) so the database id and object storage
+bucket id match what the CLI returned, then deploy:
 
 ```sh
 nanoflare deploy
@@ -50,4 +50,4 @@ frontend or the Worker. TypeScript validation is split between
 - `POST /api/gallery` accepts a multipart upload with an `image` file field
 - `POST /api/gallery/:id/preview` increments and returns that image's preview count
 - `GET /api/gallery/:id` streams a stored image back from object storage
-- `DELETE /api/gallery/:id` removes the image from object storage and the gallery index
+- `DELETE /api/gallery/:id` removes the image from object storage and db

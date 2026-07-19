@@ -23,6 +23,10 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if errors.Is(err, nanoflare.ErrDatabaseNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -43,6 +47,10 @@ func writeWorkerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if errors.Is(err, nanoflare.ErrDatabaseNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -52,6 +60,10 @@ func writeWorkerError(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, nanoflare.ErrKVNamespaceExists) || errors.Is(err, nanoflare.ErrKVNamespaceInUse) || errors.Is(err, nanoflare.ErrKVNamespaceNotBound) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrDatabaseExists) || errors.Is(err, nanoflare.ErrDatabaseInUse) || errors.Is(err, nanoflare.ErrDatabaseNotBound) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

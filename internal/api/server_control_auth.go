@@ -23,7 +23,7 @@ const (
 
 func isPublicControlPath(path string) bool {
 	switch path {
-	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
+	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/cli", "/v1/auth/oidc/session", "/v1/auth/cli/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
 		return true
 	default:
 		if strings.HasPrefix(path, "/v1/invites/") {
@@ -82,7 +82,7 @@ func isUserSessionOnlyOAuthPath(path string) bool {
 }
 
 func isNoOrgControlPath(path string) bool {
-	return path == "/v1/oauth/authorize" || path == "/v1/orgs"
+	return path == "/v1/oauth/authorize" || path == "/v1/orgs" || path == "/v1/auth/cli/code"
 }
 
 func controlOrgID(r *http.Request) string {
@@ -128,10 +128,14 @@ func (s *Server) registerControlAuthRoutes() {
 	s.mux.HandleFunc("POST /v1/setup/signup", s.controlSignup)
 	s.mux.HandleFunc("POST /v1/auth/signup", s.controlSignup)
 	s.mux.HandleFunc("POST /v1/auth/login", s.controlLogin)
+	s.mux.HandleFunc("POST /v1/auth/refresh", s.controlRefresh)
 	s.mux.HandleFunc("GET /v1/auth/oidc/config", s.controlOIDCConfig)
 	s.mux.HandleFunc("GET /v1/auth/oidc/start", s.controlOIDCStart)
 	s.mux.HandleFunc("GET /v1/auth/oidc/callback", s.controlOIDCCallback)
+	s.mux.HandleFunc("GET /v1/auth/oidc/cli", s.controlOIDCCLI)
 	s.mux.HandleFunc("POST /v1/auth/oidc/session", s.controlOIDCSession)
+	s.mux.HandleFunc("POST /v1/auth/cli/code", s.controlCLICode)
+	s.mux.HandleFunc("POST /v1/auth/cli/session", s.controlCLISession)
 	s.mux.HandleFunc("GET /v1/auth/me", s.controlMe)
 	s.mux.HandleFunc("POST /v1/orgs", s.createOrganization)
 	s.mux.HandleFunc("GET /v1/orgs/{orgID}/members", s.organizationMembers)
@@ -183,8 +187,23 @@ func (s *Server) controlOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	values := url.Values{}
 	values.Set("oidc_code", code)
-	values.Set("next", safeControlNext(next))
+	next = safeControlNext(next)
+	if next == "/v1/auth/oidc/cli" {
+		http.Redirect(w, r, next+"?"+values.Encode(), http.StatusFound)
+		return
+	}
+	values.Set("next", next)
 	http.Redirect(w, r, "/login?"+values.Encode(), http.StatusFound)
+}
+
+func (s *Server) controlOIDCCLI(w http.ResponseWriter, r *http.Request) {
+	code := strings.TrimSpace(r.URL.Query().Get("oidc_code"))
+	if code == "" {
+		writeError(w, http.StatusBadRequest, errors.New("oidc_code is required"))
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>Nanoflare CLI Login</title><style>body{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:3rem;line-height:1.5;color:#111827}code{display:inline-block;padding:.75rem 1rem;border:1px solid #d1d5db;border-radius:.5rem;background:#f9fafb;font-size:1.1rem}</style></head><body><h1>Nanoflare CLI login</h1><p>Copy this one-time code back into your terminal:</p><p><code>` + code + `</code></p><p>You can close this tab after the CLI confirms login.</p></body></html>`))
 }
 
 func (s *Server) controlOIDCSession(w http.ResponseWriter, r *http.Request) {
@@ -219,6 +238,85 @@ func (s *Server) controlOIDCSession(w http.ResponseWriter, r *http.Request) {
 		Subject: pending.Result.Subject,
 		Email:   pending.Result.Email,
 	})
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
+func (s *Server) controlCLICode(w http.ResponseWriter, r *http.Request) {
+	user := controlUser(r)
+	if user.ID == "" {
+		writeError(w, http.StatusUnauthorized, errors.New("signed-in Nanoflare user is required"))
+		return
+	}
+	code, err := randomControlCode()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.controlOIDCMu.Lock()
+	if s.controlCLICodes == nil {
+		s.controlCLICodes = make(map[string]controlCLICode)
+	}
+	s.controlCLICodes[code] = controlCLICode{
+		UserID:      user.ID,
+		ActiveOrgID: strings.TrimSpace(controlOrgID(r)),
+		ExpiresAt:   time.Now().UTC().Add(5 * time.Minute),
+	}
+	s.controlOIDCMu.Unlock()
+	writeJSON(w, http.StatusCreated, map[string]string{"code": code})
+}
+
+func (s *Server) controlCLISession(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Code string `json:"code"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	code := strings.TrimSpace(input.Code)
+	if code == "" {
+		writeError(w, http.StatusBadRequest, errors.New("code is required"))
+		return
+	}
+	s.controlOIDCMu.Lock()
+	pending, ok := s.controlCLICodes[code]
+	if ok {
+		delete(s.controlCLICodes, code)
+	}
+	s.controlOIDCMu.Unlock()
+	if !ok || !pending.ExpiresAt.After(time.Now().UTC()) {
+		writeError(w, http.StatusUnauthorized, errors.New("web login code is invalid or expired"))
+		return
+	}
+	session, err := s.controlAuth.SessionForUserID(pending.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	if pending.ActiveOrgID != "" {
+		for _, org := range session.Organizations {
+			if org.ID == pending.ActiveOrgID {
+				session.ActiveOrgID = pending.ActiveOrgID
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
+func (s *Server) controlRefresh(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	session, err := s.controlAuth.Refresh(input.RefreshToken)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return

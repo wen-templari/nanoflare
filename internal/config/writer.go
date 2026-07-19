@@ -92,6 +92,10 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-KV-Namespace-ID\", value = %s)]))),\n",
 				quote(kvServiceName(item.App.ID, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.ID))
 		}
+		for index, binding := range item.Deployment.Databases {
+			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"db\"), (name = \"X-Nanoflare-Database-ID\", value = %s)]))),\n",
+				quote(dbServiceName(item.App.ID, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.DatabaseID))
+		}
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\")]))),\n",
 			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
 		for index, binding := range item.Deployment.ObjectStorageBuckets {
@@ -121,7 +125,7 @@ func durationTelemetryServices(runtimeAddr string) string {
 }
 
 func workerBindings(item nanoflare.ActiveDeployment) []string {
-	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.ObjectStorageBuckets)+3)
+	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.Databases)+len(item.Deployment.ObjectStorageBuckets)+3)
 	bindings = append(bindings,
 		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", quote(item.App.ID)),
 		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
@@ -154,6 +158,9 @@ func workerBindings(item nanoflare.ActiveDeployment) []string {
 	for index, binding := range item.Deployment.KVNamespaces {
 		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", quote(binding.Binding), quote(kvServiceName(item.App.ID, index))))
 	}
+	for index, binding := range item.Deployment.Databases {
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(dbServiceName(item.App.ID, index))))
+	}
 	bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID))))
 	for index, binding := range item.Deployment.ObjectStorageBuckets {
 		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(objectServiceName(item.App.ID, index))))
@@ -163,21 +170,22 @@ func workerBindings(item nanoflare.ActiveDeployment) []string {
 
 func writeWorkerSource(out *strings.Builder, deployment nanoflare.Deployment) {
 	if deploymentFormat(deployment) == "service-worker" {
-		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content, deployment.ObjectStorageBuckets)))
+		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content, deployment.Databases, deployment.ObjectStorageBuckets)))
 		return
 	}
 	out.WriteString("  modules = [\n")
-	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.ObjectStorageBuckets)))
+	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)))
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
 	}
 	out.WriteString("  ],\n")
 }
 
-func entrypointWrapper(entrypoint, binding string, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
+func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
 	return fmt.Sprintf(`import userWorker from %s;
 
 const assetBindingName = %s;
+const dbBindingNames = %s;
 const objectBindingNames = %s;
 
 function recordRuntimeDuration(env, ctx, startedAt, outcome) {
@@ -354,6 +362,98 @@ function wrapObjectsBinding(bindingName, binding) {
   };
 }
 
+async function dbRequest(bindingName, binding, payload) {
+  const response = await binding.fetch(new Request("https://db.local/internal/runtime/db/query", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  }));
+  if (!response.ok) {
+    const detail = (await response.text()).trim();
+    throw new Error(detail ? bindingName + " query failed: " + response.status + " - " + detail : bindingName + " query failed: " + response.status);
+  }
+  return response.json();
+}
+
+function makePreparedStatement(bindingName, binding, sql, params = []) {
+  return {
+    __sql: sql,
+    __params: params,
+    bind(...values) {
+      return makePreparedStatement(bindingName, binding, sql, values);
+    },
+    async run() {
+      const response = await dbRequest(bindingName, binding, { method: "run", statements: [{ sql, params }] });
+      return response.results?.[0] ?? { success: true, meta: {}, results: [] };
+    },
+    async all() {
+      return this.run();
+    },
+    async raw(options) {
+      const response = await dbRequest(bindingName, binding, { method: "raw", column_names: !!options?.columnNames, statements: [{ sql, params }] });
+      return response.raw ?? [];
+    },
+    async first(columnName) {
+      const response = await dbRequest(bindingName, binding, { method: "first", first_column: columnName || "", statements: [{ sql, params }] });
+      return response.first ?? null;
+    },
+  };
+}
+
+function wrapDBBinding(bindingName, binding) {
+  if (!binding) return binding;
+  return {
+    prepare(sql) {
+      return makePreparedStatement(bindingName, binding, String(sql));
+    },
+    async batch(statements) {
+      const response = await dbRequest(bindingName, binding, {
+        method: "batch",
+        statements: statements.map((statement) => ({ sql: statement.__sql || statement.sql, params: statement.__params || statement.params || [] })),
+      });
+      return response.results ?? [];
+    },
+    async exec(sql) {
+      const response = await dbRequest(bindingName, binding, { method: "exec", statements: [{ sql: String(sql) }] });
+      return response.exec ?? { count: 0, duration: 0 };
+    },
+    withSession(initialBookmark) {
+      let bookmark = typeof initialBookmark === "string" && initialBookmark !== "first-primary" && initialBookmark !== "first-unconstrained" ? initialBookmark : null;
+      const base = this;
+      return {
+        prepare(sql) {
+          const statement = base.prepare(sql);
+          return {
+            bind(...values) {
+              const bound = statement.bind(...values);
+              return {
+                async run() {
+                  const result = await bound.run();
+                  bookmark = result?.meta?.bookmark || bookmark;
+                  return result;
+                },
+                all() { return this.run(); },
+                raw(options) { return bound.raw(options); },
+                first(columnName) { return bound.first(columnName); },
+              };
+            },
+            run: statement.run,
+            all: statement.all,
+            raw: statement.raw,
+            first: statement.first,
+          };
+        },
+        batch(statements) {
+          return base.batch(statements);
+        },
+        getBookmark() {
+          return bookmark;
+        },
+      };
+    },
+  };
+}
+
 function wrapEnv(env) {
   if (!env) return env;
   const wrapped = Object.create(env);
@@ -367,6 +467,13 @@ function wrapEnv(env) {
     if (!env[name]) continue;
     Object.defineProperty(wrapped, name, {
       value: wrapObjectsBinding(name, env[name]),
+      enumerable: true,
+    });
+  }
+  for (const name of dbBindingNames) {
+    if (!env[name]) continue;
+    Object.defineProperty(wrapped, name, {
+      value: wrapDBBinding(name, env[name]),
       enumerable: true,
     });
   }
@@ -415,10 +522,10 @@ export default {
       throw error;
     }
   },
-};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), objectBindingNamesJSON(objectBindings))
+};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
 }
 
-func serviceWorkerWrapper(script string, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
+func serviceWorkerWrapper(script string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
 	return `function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
   const durationMs = Math.max(1, Date.now() - startedAt);
   const payload = [{
@@ -583,6 +690,7 @@ async function __nanoflareToObjectRequestInit(value, options) {
 }
 
 const __nanoflareObjectBindingNames = ` + objectBindingNamesJSON(objectBindings) + `;
+const __nanoflareDBBindingNames = ` + dbBindingNamesJSON(dbBindings) + `;
 
 function __nanoflareWrapObjectsBinding(bindingName, binding) {
   if (!binding) return binding;
@@ -653,8 +761,66 @@ function __nanoflareWrapObjectsBinding(bindingName, binding) {
   };
 }
 
+async function __nanoflareDBRequest(bindingName, binding, payload) {
+  const response = await binding.fetch(new Request("https://db.local/internal/runtime/db/query", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  }));
+  if (!response.ok) {
+    const detail = (await response.text()).trim();
+    throw new Error(detail ? bindingName + " query failed: " + response.status + " - " + detail : bindingName + " query failed: " + response.status);
+  }
+  return response.json();
+}
+
+function __nanoflarePreparedStatement(bindingName, binding, sql, params = []) {
+  return {
+    __sql: sql,
+    __params: params,
+    bind(...values) { return __nanoflarePreparedStatement(bindingName, binding, sql, values); },
+    async run() {
+      const response = await __nanoflareDBRequest(bindingName, binding, { method: "run", statements: [{ sql, params }] });
+      return response.results?.[0] ?? { success: true, meta: {}, results: [] };
+    },
+    all() { return this.run(); },
+    async raw(options) {
+      const response = await __nanoflareDBRequest(bindingName, binding, { method: "raw", column_names: !!options?.columnNames, statements: [{ sql, params }] });
+      return response.raw ?? [];
+    },
+    async first(columnName) {
+      const response = await __nanoflareDBRequest(bindingName, binding, { method: "first", first_column: columnName || "", statements: [{ sql, params }] });
+      return response.first ?? null;
+    },
+  };
+}
+
+function __nanoflareWrapDBBinding(bindingName, binding) {
+  if (!binding) return binding;
+  return {
+    prepare(sql) { return __nanoflarePreparedStatement(bindingName, binding, String(sql)); },
+    async batch(statements) {
+      const response = await __nanoflareDBRequest(bindingName, binding, {
+        method: "batch",
+        statements: statements.map((statement) => ({ sql: statement.__sql || statement.sql, params: statement.__params || statement.params || [] })),
+      });
+      return response.results ?? [];
+    },
+    async exec(sql) {
+      const response = await __nanoflareDBRequest(bindingName, binding, { method: "exec", statements: [{ sql: String(sql) }] });
+      return response.exec ?? { count: 0, duration: 0 };
+    },
+    withSession() {
+      return { prepare: this.prepare.bind(this), batch: this.batch.bind(this), getBookmark() { return null; } };
+    },
+  };
+}
+
 for (const __nanoflareName of __nanoflareObjectBindingNames) {
   globalThis[__nanoflareName] = __nanoflareWrapObjectsBinding(__nanoflareName, globalThis[__nanoflareName]);
+}
+for (const __nanoflareName of __nanoflareDBBindingNames) {
+  globalThis[__nanoflareName] = __nanoflareWrapDBBinding(__nanoflareName, globalThis[__nanoflareName]);
 }
 ` + "\n" + script + `
 
@@ -688,8 +854,20 @@ func assetServiceName(appID string) string {
 	return "assets-" + appID
 }
 
+func dbServiceName(appID string, index int) string {
+	return fmt.Sprintf("db-%s-%d", appID, index)
+}
+
 func objectServiceName(appID string, index int) string {
 	return fmt.Sprintf("objects-%s-%d", appID, index)
+}
+
+func dbBindingNamesJSON(bindings []nanoflare.DatabaseBinding) string {
+	names := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		names = append(names, quote(binding.Binding))
+	}
+	return "[" + strings.Join(names, ", ") + "]"
 }
 
 func objectBindingNamesJSON(bindings []nanoflare.ObjectStorageBucketBinding) string {

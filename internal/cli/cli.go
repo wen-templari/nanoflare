@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -52,6 +54,7 @@ type Project struct {
 	Vars                 map[string]json.RawMessage             `json:"vars,omitempty"`
 	Files                []string                               `json:"files"`
 	KVNamespaces         []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases            []nanoflare.DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	Assets               ProjectAssets                          `json:"assets,omitempty"`
 	Auth                 ProjectAuth                            `json:"auth,omitempty"`
@@ -81,11 +84,12 @@ type ProjectAuth struct {
 }
 
 type AuthConfig struct {
-	APIURL      string                   `json:"api_url"`
-	Token       string                   `json:"token"`
-	ActiveOrgID string                   `json:"active_org_id"`
-	User        nanoflare.User           `json:"user"`
-	Orgs        []nanoflare.Organization `json:"organizations"`
+	APIURL       string                   `json:"api_url"`
+	Token        string                   `json:"token"`
+	RefreshToken string                   `json:"refresh_token,omitempty"`
+	ActiveOrgID  string                   `json:"active_org_id"`
+	User         nanoflare.User           `json:"user"`
+	Orgs         []nanoflare.Organization `json:"organizations"`
 }
 
 func NewRunner(stdout, stderr io.Writer) *Runner {
@@ -116,6 +120,8 @@ func (r *Runner) Run(args []string) error {
 		return r.deploy(withoutWorkerNoun(args[1:]))
 	case "kv":
 		return r.kv(args[1:])
+	case "db":
+		return r.db(args[1:])
 	case "object-storage":
 		return r.objectStorage(args[1:])
 	case "auth":
@@ -333,6 +339,7 @@ func (r *Runner) deploy(args []string) error {
 		Triggers:             project.Triggers,
 		Vars:                 cloneProjectVars(project.Vars),
 		KVNamespaces:         append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
+		Databases:            append([]nanoflare.DatabaseBinding(nil), project.Databases...),
 		ObjectStorageBuckets: append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
@@ -373,9 +380,17 @@ func (r *Runner) authLogin(args []string) error {
 	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
 	email := flags.String("email", "", "user email")
 	password := flags.String("password", "", "user password")
+	webLogin := flags.Bool("web", false, "use browser login flow")
 	setupOrg := flags.String("setup-org", "", "create first user and organization when setup has not run")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	baseURL := strings.TrimRight(*apiURL, "/")
+	if *webLogin {
+		if strings.TrimSpace(*setupOrg) != "" {
+			return errors.New("--setup-org cannot be used with --web")
+		}
+		return r.authLoginWeb(baseURL)
 	}
 	reader := bufio.NewReader(r.Stdin)
 	if strings.TrimSpace(*email) == "" {
@@ -394,7 +409,6 @@ func (r *Runner) authLogin(args []string) error {
 		}
 		*password = strings.TrimSpace(value)
 	}
-	baseURL := strings.TrimRight(*apiURL, "/")
 	path := baseURL + "/v1/auth/login"
 	var input any = nanoflare.LoginInput{Email: *email, Password: *password}
 	if strings.TrimSpace(*setupOrg) != "" {
@@ -405,15 +419,46 @@ func (r *Runner) authLogin(args []string) error {
 	if err := r.requestNoAuth(http.MethodPost, path, input, &session); err != nil {
 		return err
 	}
-	auth := AuthConfig{
-		APIURL:      baseURL,
-		Token:       session.Token,
-		ActiveOrgID: session.ActiveOrgID,
-		User:        session.User,
-		Orgs:        session.Organizations,
+	auth, err := authConfigFromSession(baseURL, session, "")
+	if err != nil {
+		return err
 	}
-	if auth.ActiveOrgID == "" && len(auth.Orgs) > 0 {
-		auth.ActiveOrgID = auth.Orgs[0].ID
+	if err := writeAuthConfig(auth); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Logged in as %s\n", auth.User.Email)
+	if auth.ActiveOrgID != "" {
+		fmt.Fprintf(r.Stdout, "Using organization %s\n", auth.ActiveOrgID)
+	}
+	return nil
+}
+
+func (r *Runner) authLoginWeb(baseURL string) error {
+	values := url.Values{}
+	values.Set("next", "/cli-login")
+	loginURL := baseURL + "/login?" + values.Encode()
+	fmt.Fprintf(r.Stderr, "Open this URL to continue web login:\n%s\n", loginURL)
+	if err := openBrowserFunc(loginURL); err == nil {
+		fmt.Fprintln(r.Stderr, "Opened browser for web login.")
+	} else {
+		fmt.Fprintf(r.Stderr, "Could not open browser automatically: %v\n", err)
+	}
+	fmt.Fprint(r.Stderr, "CLI code: ")
+	value, err := bufio.NewReader(r.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	code := strings.TrimSpace(value)
+	if code == "" {
+		return errors.New("CLI code is required")
+	}
+	var session nanoflare.AuthSession
+	if err := r.requestNoAuth(http.MethodPost, baseURL+"/v1/auth/cli/session", map[string]string{"code": code}, &session); err != nil {
+		return err
+	}
+	auth, err := authConfigFromSession(baseURL, session, "")
+	if err != nil {
+		return err
 	}
 	if err := writeAuthConfig(auth); err != nil {
 		return err
@@ -534,30 +579,29 @@ func (r *Runner) requestNoAuth(method, url string, input, output any) error {
 }
 
 func (r *Runner) request(method, url string, input, output any) error {
-	var body io.Reader
+	var payload []byte
 	if input != nil {
-		payload, err := json.Marshal(input)
+		var err error
+		payload, err = json.Marshal(input)
 		if err != nil {
 			return err
 		}
-		body = bytes.NewReader(payload)
 	}
-	request, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return err
-	}
-	if input != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	if auth, err := loadAuthConfig(); err == nil && auth.Token != "" {
-		request.Header.Set("Authorization", "Bearer "+auth.Token)
-		if auth.ActiveOrgID != "" {
-			request.Header.Set("X-Nanoflare-Org-ID", auth.ActiveOrgID)
-		}
-	}
-	response, err := r.Client.Do(request)
+	auth, authErr := loadAuthConfig()
+	response, err := r.authenticatedRequest(method, url, payload, input != nil, auth)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, url, err)
+	}
+	if response.StatusCode == http.StatusUnauthorized && authErr == nil && auth.RefreshToken != "" {
+		response.Body.Close()
+		refreshed, err := r.refreshAuthConfig(auth)
+		if err != nil {
+			return fmt.Errorf("refresh auth token: %w", err)
+		}
+		response, err = r.authenticatedRequest(method, url, payload, input != nil, refreshed)
+		if err != nil {
+			return fmt.Errorf("%s %s: %w", method, url, err)
+		}
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -576,6 +620,42 @@ func (r *Runner) request(method, url string, input, output any) error {
 		return fmt.Errorf("decode nanoflared response: %w", err)
 	}
 	return nil
+}
+
+func (r *Runner) authenticatedRequest(method, target string, payload []byte, hasInput bool, auth AuthConfig) (*http.Response, error) {
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequest(method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	if hasInput {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if auth.Token != "" {
+		request.Header.Set("Authorization", "Bearer "+auth.Token)
+		if auth.ActiveOrgID != "" {
+			request.Header.Set("X-Nanoflare-Org-ID", auth.ActiveOrgID)
+		}
+	}
+	return r.Client.Do(request)
+}
+
+func (r *Runner) refreshAuthConfig(auth AuthConfig) (AuthConfig, error) {
+	var session nanoflare.AuthSession
+	if err := r.requestNoAuth(http.MethodPost, strings.TrimRight(auth.APIURL, "/")+"/v1/auth/refresh", map[string]string{"refresh_token": auth.RefreshToken}, &session); err != nil {
+		return AuthConfig{}, err
+	}
+	refreshed, err := authConfigFromSession(auth.APIURL, session, auth.ActiveOrgID)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+	if err := writeAuthConfig(refreshed); err != nil {
+		return AuthConfig{}, err
+	}
+	return refreshed, nil
 }
 
 func loadProject() (string, Project, error) {
@@ -730,6 +810,9 @@ func authConfigPath() (string, error) {
 	if path := strings.TrimSpace(os.Getenv(authStorePathEnv)); path != "" {
 		return path, nil
 	}
+	if dir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); dir != "" {
+		return filepath.Join(dir, "nanoflare", authFilename), nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
@@ -753,6 +836,32 @@ func loadAuthConfig() (AuthConfig, error) {
 	return auth, nil
 }
 
+func authConfigFromSession(apiURL string, session nanoflare.AuthSession, preferredOrgID string) (AuthConfig, error) {
+	if strings.TrimSpace(session.Token) == "" {
+		return AuthConfig{}, errors.New("auth session is missing token")
+	}
+	auth := AuthConfig{
+		APIURL:       apiURL,
+		Token:        session.Token,
+		RefreshToken: session.RefreshToken,
+		ActiveOrgID:  session.ActiveOrgID,
+		User:         session.User,
+		Orgs:         session.Organizations,
+	}
+	if preferredOrgID != "" {
+		for _, org := range auth.Orgs {
+			if org.ID == preferredOrgID {
+				auth.ActiveOrgID = preferredOrgID
+				break
+			}
+		}
+	}
+	if auth.ActiveOrgID == "" && len(auth.Orgs) > 0 {
+		auth.ActiveOrgID = auth.Orgs[0].ID
+	}
+	return auth, nil
+}
+
 func writeAuthConfig(auth AuthConfig) error {
 	path, err := authConfigPath()
 	if err != nil {
@@ -767,6 +876,25 @@ func writeAuthConfig(auth AuthConfig) error {
 	}
 	content = append(content, '\n')
 	return os.WriteFile(path, content, 0o600)
+}
+
+var openBrowserFunc = openBrowser
+
+func openBrowser(target string) error {
+	var command string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		command = "open"
+		args = []string{target}
+	case "windows":
+		command = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", target}
+	default:
+		command = "xdg-open"
+		args = []string{target}
+	}
+	return exec.Command(command, args...).Start()
 }
 
 func projectAPIURL(project Project, override string) string {
@@ -787,6 +915,41 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func sqlFromFlags(command, file string) (string, error) {
+	command = strings.TrimSpace(command)
+	file = strings.TrimSpace(file)
+	if (command == "") == (file == "") {
+		return "", errors.New("exactly one of --command or --file is required")
+	}
+	if command != "" {
+		return command, nil
+	}
+	content, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+func migrationFilename(now time.Time, name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var out strings.Builder
+	for _, char := range name {
+		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' {
+			out.WriteRune(char)
+			continue
+		}
+		if out.Len() > 0 && !strings.HasSuffix(out.String(), "_") {
+			out.WriteByte('_')
+		}
+	}
+	slug := strings.Trim(out.String(), "_")
+	if slug == "" {
+		slug = "migration"
+	}
+	return now.Format("20060102150405") + "_" + slug + ".sql"
 }
 
 func withoutWorkerNoun(args []string) []string {
@@ -908,6 +1071,186 @@ func (r *Runner) kv(args []string) error {
 		r.usage()
 		return fmt.Errorf("unknown kv command %q", args[0])
 	}
+}
+
+func (r *Runner) db(args []string) error {
+	if len(args) == 0 {
+		r.usage()
+		return errors.New("db command is required")
+	}
+	switch args[0] {
+	case "create":
+		return r.dbCreate(args[1:])
+	case "list":
+		return r.dbList(args[1:])
+	case "delete":
+		return r.dbDelete(args[1:])
+	case "execute":
+		return r.dbExecute(args[1:])
+	case "migrations":
+		return r.dbMigrations(args[1:])
+	default:
+		r.usage()
+		return fmt.Errorf("unknown db command %q", args[0])
+	}
+}
+
+func (r *Runner) dbCreate(args []string) error {
+	flags := flag.NewFlagSet("db create", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare db create [flags] <name>")
+	}
+	var database nanoflare.Database
+	if err := r.request(http.MethodPost, strings.TrimRight(*apiURL, "/")+"/v1/db", nanoflare.CreateDatabaseInput{Name: flags.Arg(0)}, &database); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Created database %s\t%s\n", database.ID, database.Name)
+	return nil
+}
+
+func (r *Runner) dbList(args []string) error {
+	flags := flag.NewFlagSet("db list", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: nanoflare db list [flags]")
+	}
+	var databases []nanoflare.Database
+	if err := r.request(http.MethodGet, strings.TrimRight(*apiURL, "/")+"/v1/db", nil, &databases); err != nil {
+		return err
+	}
+	for _, database := range databases {
+		fmt.Fprintf(r.Stdout, "%s\t%s\n", database.ID, database.Name)
+	}
+	return nil
+}
+
+func (r *Runner) dbDelete(args []string) error {
+	flags := flag.NewFlagSet("db delete", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare db delete [flags] <database-id>")
+	}
+	databaseID := strings.TrimSpace(flags.Arg(0))
+	if err := r.request(http.MethodDelete, strings.TrimRight(*apiURL, "/")+"/v1/db/"+url.PathEscape(databaseID), nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Deleted database %s\n", databaseID)
+	return nil
+}
+
+func (r *Runner) dbExecute(args []string) error {
+	flags := flag.NewFlagSet("db execute", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	command := flags.String("command", "", "SQL command to execute")
+	file := flags.String("file", "", "SQL file to execute")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare db execute [flags] <database-id>")
+	}
+	sqlText, err := sqlFromFlags(*command, *file)
+	if err != nil {
+		return err
+	}
+	var response nanoflare.DBQueryResponse
+	endpoint := strings.TrimRight(*apiURL, "/") + "/v1/db/" + url.PathEscape(flags.Arg(0)) + "/execute"
+	if err := r.request(http.MethodPost, endpoint, map[string]string{"sql": sqlText}, &response); err != nil {
+		return err
+	}
+	if response.Exec != nil {
+		fmt.Fprintf(r.Stdout, "Executed %d statement(s) in %.0fms\n", response.Exec.Count, response.Exec.Duration)
+		return nil
+	}
+	_ = json.NewEncoder(r.Stdout).Encode(response)
+	return nil
+}
+
+func (r *Runner) dbMigrations(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: nanoflare db migrations <create|apply>")
+	}
+	switch args[0] {
+	case "create":
+		return r.dbMigrationsCreate(args[1:])
+	case "apply":
+		return r.dbMigrationsApply(args[1:])
+	default:
+		return fmt.Errorf("unknown db migrations command %q", args[0])
+	}
+}
+
+func (r *Runner) dbMigrationsCreate(args []string) error {
+	flags := flag.NewFlagSet("db migrations create", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	pathFlag := flags.String("path", "migrations", "migrations directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare db migrations create [flags] <name>")
+	}
+	if err := os.MkdirAll(*pathFlag, 0o755); err != nil {
+		return err
+	}
+	name := migrationFilename(time.Now().UTC(), flags.Arg(0))
+	fullPath := filepath.Join(*pathFlag, name)
+	if err := os.WriteFile(fullPath, []byte("-- Write your SQL migration here.\n"), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Stdout, "Created migration %s\n", fullPath)
+	return nil
+}
+
+func (r *Runner) dbMigrationsApply(args []string) error {
+	flags := flag.NewFlagSet("db migrations apply", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	pathFlag := flags.String("path", "migrations", "migrations directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: nanoflare db migrations apply [flags] <database-id>")
+	}
+	entries, err := os.ReadDir(*pathFlag)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(*apiURL, "/") + "/v1/db/" + url.PathEscape(flags.Arg(0)) + "/migrations"
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(*pathFlag, entry.Name()))
+		if err != nil {
+			return err
+		}
+		var result nanoflare.DBMigrationResult
+		if err := r.request(http.MethodPost, endpoint, map[string]string{"name": entry.Name(), "sql": string(content)}, &result); err != nil {
+			return err
+		}
+		if result.Applied {
+			fmt.Fprintf(r.Stdout, "Applied %s\n", result.Name)
+		} else {
+			fmt.Fprintf(r.Stdout, "Skipped %s\n", result.Name)
+		}
+	}
+	return nil
 }
 
 func (r *Runner) objectStorage(args []string) error {
@@ -1115,6 +1458,12 @@ func (r *Runner) usage() {
   nanoflare kv namespace create [flags] <name>
   nanoflare kv namespace list [flags]
   nanoflare kv namespace delete [flags] <namespace-id>
+  nanoflare db create [flags] <name>
+  nanoflare db list [flags]
+  nanoflare db delete [flags] <database-id>
+  nanoflare db execute [flags] <database-id>
+  nanoflare db migrations create [flags] <name>
+  nanoflare db migrations apply [flags] <database-id>
   nanoflare object-storage bucket create [flags] <name>
   nanoflare object-storage bucket list [flags]
   nanoflare object-storage bucket delete [flags] <bucket-id>`)

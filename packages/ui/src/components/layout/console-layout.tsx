@@ -1,10 +1,11 @@
 import { ActionIcon, Anchor, AppShell, Badge, Box, Breadcrumbs, Burger, Button, Group, Modal, NavLink as MantineNavLink, Notification, Paper, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
-import { Boxes, Check, ChevronDown, CircleGauge, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
+import { Boxes, Check, ChevronDown, CircleGauge, Database, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
 import { useState } from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { normalizeUsageLevel, usageLevelPaid } from "../../app/org-limits"
 import { useWorkspace } from "../../app/workspace-context"
+import { CreateDatabaseDialog } from "../dialogs/create-database-dialog"
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
 import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog"
 import { CreateWorkerDialog } from "../dialogs/create-worker-dialog"
@@ -13,6 +14,7 @@ const navItems = [
   { href: "/", match: "/", label: "Overview", icon: CircleGauge },
   { href: "/workers", match: "/workers", label: "Workers", icon: Waypoints },
   { href: "/kv", match: "/kv", label: "KV", icon: KeyRound },
+  { href: "/databases", match: "/databases", label: "Databases", icon: Database },
   { href: "/object-storage", match: "/object-storage", label: "Object storage", icon: DatabaseZap },
   { href: "/settings", match: "/settings", label: "Settings", icon: Settings },
 ]
@@ -29,6 +31,8 @@ export function ConsoleLayout() {
     setWorkers,
     namespaces,
     setNamespaces,
+    databases,
+    setDatabases,
     objectStorageBuckets,
     setObjectStorageBuckets,
     apiConnected,
@@ -39,11 +43,13 @@ export function ConsoleLayout() {
     logout,
     workerDialogOpen,
     namespaceDialogOpen,
+    databaseDialogOpen,
     objectStorageBucketDialogOpen,
     openWorkerDialog,
     closeWorkerDialog,
     openNamespaceDialog,
     closeNamespaceDialog,
+    closeDatabaseDialog,
     closeObjectStorageBucketDialog,
     toast,
     notify,
@@ -53,7 +59,7 @@ export function ConsoleLayout() {
   const [orgSaving, setOrgSaving] = useState(false)
   const [orgError, setOrgError] = useState("")
 
-  const breadcrumbs = getBreadcrumbs(location.pathname, { workers, namespaces, objectStorageBuckets })
+  const breadcrumbs = getBreadcrumbs(location.pathname, { workers, namespaces, databases, objectStorageBuckets })
   const hasOrg = Boolean(activeOrgID)
   const activeOrg = organizations.find((org) => org.id === activeOrgID)
   const activeUsageLevel = normalizeUsageLevel(activeOrg?.usage_level)
@@ -233,6 +239,7 @@ export function ConsoleLayout() {
 
       <CreateWorkerDialog open={workerDialogOpen} onClose={closeWorkerDialog} workers={workers} setWorkers={(nextWorkers) => setWorkers(nextWorkers)} notify={notify} apiConnected={apiConnected} />
       <CreateKVNamespaceDialog open={namespaceDialogOpen} onClose={closeNamespaceDialog} namespaces={namespaces} setNamespaces={setNamespaces} notify={notify} apiConnected={apiConnected} />
+      <CreateDatabaseDialog open={databaseDialogOpen} onClose={closeDatabaseDialog} databases={databases} setDatabases={setDatabases} notify={notify} apiConnected={apiConnected} />
       <CreateObjectStorageBucketDialog open={objectStorageBucketDialogOpen} onClose={closeObjectStorageBucketDialog} buckets={objectStorageBuckets} setBuckets={setObjectStorageBuckets} notify={notify} apiConnected={apiConnected} />
 
       {toast && (
@@ -362,6 +369,7 @@ function getBreadcrumbs(
   pathname: string,
   workspace: {
     objectStorageBuckets: { id: string; name: string }[]
+    databases: { id: string; name: string }[]
     namespaces: { id: string; name: string }[]
     workers: { id: string; name: string }[]
   },
@@ -378,6 +386,11 @@ function getBreadcrumbs(
   if (section === "kv") {
     const namespace = workspace.namespaces.find((item) => item.id === id)
     return id ? [{ href: "/kv", label: "KV" }, { label: namespace?.name ?? id }] : [{ label: "KV" }]
+  }
+
+  if (section === "databases") {
+    const database = workspace.databases.find((item) => item.id === id)
+    return id ? [{ href: "/databases", label: "Databases" }, { label: database?.name ?? id }] : [{ label: "Databases" }]
   }
 
   if (section === "object-storage") {

@@ -8,10 +8,10 @@
   "files": [
     "dist/worker.js"
   ],
-  "kv_namespaces": [
+  "db": [
     {
-      "binding": "GALLERY_KV",
-      "id": "2b9a69a068fbcf0c980c6876c791a5102d8b88554ae2431e"
+      "binding": "GALLERY_DB",
+      "database_id": "d2926c6ca2e61cc49b6f110664f3ca72275a6798518f2c4c"
     }
   ],
   "object_storage_buckets": [

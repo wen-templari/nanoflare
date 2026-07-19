@@ -36,6 +36,10 @@ func main() {
 		addr                = flag.String("addr", ":8080", "HTTP listen address")
 		runtimeAddr         = flag.String("runtime-addr", "127.0.0.1:8081", "private runtime KV API listen address")
 		configDir           = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
+		dbDir               = flag.String("db-dir", "", "directory for nanoflare SQLite databases; defaults to <config-dir>/db")
+		litestreamEnabled   = flag.Bool("litestream-enabled", false, "enable Litestream restore and replication for SQLite databases")
+		litestreamBin       = flag.String("litestream-bin", "litestream", "path to the litestream executable")
+		litestreamConfig    = flag.String("litestream-config", "", "optional Litestream config file")
 		traefikFile         = flag.String("traefik-file", "", "optional Traefik dynamic configuration file fallback")
 		authURL             = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
 		workerHost          = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
@@ -72,6 +76,9 @@ func main() {
 	}
 	if err := os.Chmod(*configDir, 0o700); err != nil {
 		log.Fatal(err)
+	}
+	if *dbDir == "" {
+		*dbDir = filepath.Join(*configDir, "db")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -160,6 +167,18 @@ func main() {
 	}
 
 	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
+	litestream := database.NewLitestreamSupervisor(*litestreamEnabled, *litestreamBin, *litestreamConfig)
+	dbRuntime, err := database.NewSQLiteManager(*dbDir, litestream)
+	if err != nil {
+		log.Fatal(err)
+	}
+	service.SetDBExecutor(dbRuntime)
+	if litestream.Enabled() {
+		if err := litestream.Start(context.Background()); err != nil {
+			log.Fatal(err)
+		}
+		log.Print("using Litestream for SQLite backup replication")
+	}
 	if *baseHostname != "" {
 		if err := service.SetBaseHostname(*baseHostname); err != nil {
 			log.Fatal(err)
@@ -241,6 +260,7 @@ func envOrDefault(name, fallback string) string {
 func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry) *http.ServeMux {
 	runtimeMux := http.NewServeMux()
 	runtimeKV := api.NewRuntimeKVServer(service)
+	runtimeDB := api.NewRuntimeDBServer(service)
 	runtimeAssets := api.NewRuntimeAssetServer(service)
 	runtimeDurations := api.NewRuntimeDurationServer(durationTelemetry)
 	runtimeMux.Handle("/internal/runtime/objects/", server)
@@ -248,6 +268,10 @@ func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelem
 	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Nanoflare-Binding") == "assets" {
 			runtimeAssets.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("X-Nanoflare-Binding") == "db" {
+			runtimeDB.ServeHTTP(w, r)
 			return
 		}
 		runtimeKV.ServeHTTP(w, r)

@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useAuth } from "./auth-context";
 import { fetchJSON } from "./api";
-import type { KVNamespace, ObjectStorageBucket, Worker, WorkerDetailData, WorkerTraffic, WorkspaceContextValue } from "./types";
-import { sortNamespaces, sortObjectStorageBuckets } from "./utils";
+import type { Database, KVNamespace, ObjectStorageBucket, Worker, WorkerDetailData, WorkerTraffic, WorkspaceContextValue } from "./types";
+import { sortDatabases, sortNamespaces, sortObjectStorageBuckets } from "./utils";
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
@@ -10,9 +10,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [namespaces, setNamespaces] = useState<KVNamespace[]>([]);
+  const [databases, setDatabases] = useState<Database[]>([]);
   const [objectStorageBuckets, setObjectStorageBuckets] = useState<ObjectStorageBucket[]>([]);
   const [workerDialogOpen, setWorkerDialogOpen] = useState(false);
   const [namespaceDialogOpen, setNamespaceDialogOpen] = useState(false);
+  const [databaseDialogOpen, setDatabaseDialogOpen] = useState(false);
   const [objectStorageBucketDialogOpen, setObjectStorageBucketDialogOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [apiConnected, setApiConnected] = useState(false);
@@ -23,9 +25,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     async function refreshWorkspace() {
       try {
         if (!auth.activeOrgID) return;
-        const [apps, kvNamespaces, buckets] = await Promise.all([
+        const [apps, kvNamespaces, dbs, buckets] = await Promise.all([
           fetchJSON<Worker[] | null>("/v1/apps"),
           fetchJSON<KVNamespace[] | null>("/v1/kv/namespaces"),
+          fetchJSON<Database[] | null>("/v1/db"),
           fetchJSON<ObjectStorageBucket[] | null>("/v1/object-storage-buckets"),
         ]);
         if (cancelled) return;
@@ -47,12 +50,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         setWorkers(nextWorkers);
         setNamespaces(sortNamespaces(kvNamespaces ?? []));
+        setDatabases(sortDatabases(dbs ?? []));
         setObjectStorageBuckets(sortObjectStorageBuckets(buckets ?? []));
       } catch {
         if (cancelled) return;
         setApiConnected(false);
         setWorkers([]);
         setNamespaces([]);
+        setDatabases([]);
         setObjectStorageBuckets([]);
       }
     }
@@ -78,6 +83,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setWorkers,
         namespaces,
         setNamespaces,
+        databases,
+        setDatabases,
         objectStorageBuckets,
         setObjectStorageBuckets,
         apiConnected,
@@ -88,11 +95,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         logout: auth.logout,
         workerDialogOpen,
         namespaceDialogOpen,
+        databaseDialogOpen,
         objectStorageBucketDialogOpen,
         openWorkerDialog: () => setWorkerDialogOpen(true),
         closeWorkerDialog: () => setWorkerDialogOpen(false),
         openNamespaceDialog: () => setNamespaceDialogOpen(true),
         closeNamespaceDialog: () => setNamespaceDialogOpen(false),
+        openDatabaseDialog: () => setDatabaseDialogOpen(true),
+        closeDatabaseDialog: () => setDatabaseDialogOpen(false),
         openObjectStorageBucketDialog: () => setObjectStorageBucketDialogOpen(true),
         closeObjectStorageBucketDialog: () => setObjectStorageBucketDialogOpen(false),
         toast,

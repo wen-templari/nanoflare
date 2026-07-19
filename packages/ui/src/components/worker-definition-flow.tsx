@@ -13,15 +13,17 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react"
-import { Clock3, DatabaseZap, FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react"
+import { Clock3, Database, DatabaseZap, FolderOpen, Globe2, KeyRound, ShieldCheck, Waypoints } from "lucide-react"
 import { createContext, useContext, useEffect, useMemo, useRef } from "react"
-import type { KVNamespace, Worker, WorkerDeployment } from "../app/types"
+import type { Database as DatabaseResource, KVNamespace, Worker, WorkerDeployment } from "../app/types"
 import { cn } from "../lib/utils"
 
 type WorkerDefinitionFlowProps = {
   deployment?: WorkerDeployment
+  databases: DatabaseResource[]
   namespaces: KVNamespace[]
   onOpenBucket: (bucketID: string) => void
+  onOpenDatabase: (databaseID: string) => void
   onOpenNamespace: (namespaceID: string) => void
   worker: Worker
 }
@@ -36,9 +38,10 @@ type DefinitionNodeData = {
 type BindingItem = {
   binding: string
   bucketID?: string
+  databaseID?: string
   namespaceID?: string
   subtitle: string
-  type: "asset" | "kv" | "object"
+  type: "asset" | "db" | "kv" | "object"
 }
 
 type BindingsNodeData = {
@@ -55,6 +58,7 @@ const nodeTypes = {
 }
 
 const NamespaceNavigationContext = createContext<((namespaceID: string) => void) | null>(null)
+const DatabaseNavigationContext = createContext<((databaseID: string) => void) | null>(null)
 const BucketNavigationContext = createContext<((bucketID: string) => void) | null>(null)
 
 const getLayoutedElements = (nodes: FlowNode[], edges: Edge[], direction: "LR" | "TB") => {
@@ -86,20 +90,22 @@ const getLayoutedElements = (nodes: FlowNode[], edges: Edge[], direction: "LR" |
 export function WorkerDefinitionFlow(props: WorkerDefinitionFlowProps) {
   return (
     <NamespaceNavigationContext.Provider value={props.onOpenNamespace}>
-      <BucketNavigationContext.Provider value={props.onOpenBucket}>
-        <ReactFlowProvider>
-          <LayoutedWorkerDefinitionFlow {...props} />
-        </ReactFlowProvider>
-      </BucketNavigationContext.Provider>
+      <DatabaseNavigationContext.Provider value={props.onOpenDatabase}>
+        <BucketNavigationContext.Provider value={props.onOpenBucket}>
+          <ReactFlowProvider>
+            <LayoutedWorkerDefinitionFlow {...props} />
+          </ReactFlowProvider>
+        </BucketNavigationContext.Provider>
+      </DatabaseNavigationContext.Provider>
     </NamespaceNavigationContext.Provider>
   )
 }
 
-function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: WorkerDefinitionFlowProps) {
+function LayoutedWorkerDefinitionFlow({ databases, deployment, namespaces, worker }: WorkerDefinitionFlowProps) {
   const { fitView } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const containerRef = useRef<HTMLDivElement>(null)
-  const initialGraph = useMemo(() => buildGraph(worker, deployment, namespaces), [deployment, namespaces, worker])
+  const initialGraph = useMemo(() => buildGraph(worker, deployment, namespaces, databases), [databases, deployment, namespaces, worker])
   const graphKey = useMemo(
     () => JSON.stringify({
       bindings: deployment?.bindings ?? worker.bindings ?? [],
@@ -167,8 +173,9 @@ function LayoutedWorkerDefinitionFlow({ deployment, namespaces, worker }: Worker
   )
 }
 
-function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deployment"], namespaces: KVNamespace[]) {
+function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deployment"], namespaces: KVNamespace[], databases: DatabaseResource[]) {
   const namespaceByID = new Map(namespaces.map((namespace) => [namespace.id, namespace]))
+  const databaseByID = new Map(databases.map((database) => [database.id, database]))
   const protectedRoutes = worker.auth?.protected_routes ?? []
   const crons = deployment?.triggers?.crons ?? []
   const bindings = deployment?.bindings ?? worker.bindings ?? []
@@ -186,6 +193,14 @@ function buildGraph(worker: Worker, deployment: WorkerDefinitionFlowProps["deplo
         bucketID: binding.bucket_id,
         subtitle: binding.bucket_name ?? binding.bucket_id ?? "bucket",
         type: "object" as const,
+      }
+    }
+    if (binding.kind === "db") {
+      return {
+        binding: binding.binding,
+        databaseID: binding.database_id,
+        subtitle: binding.database_name ?? databaseByID.get(binding.database_id ?? "")?.name ?? binding.database_id ?? "database",
+        type: "db" as const,
       }
     }
     return {
@@ -334,11 +349,11 @@ function BindingsNode({ data }: NodeProps<Node<BindingsNodeData>>) {
 
       <div className="divide-y divide-gray-200">
         {data.items.length ? data.items.map((item) => (
-          <BindingRow key={`${item.type}-${item.binding}-${item.namespaceID ?? item.bucketID ?? "asset"}`} item={item} />
+          <BindingRow key={`${item.type}-${item.binding}-${item.namespaceID ?? item.databaseID ?? item.bucketID ?? "asset"}`} item={item} />
         )) : (
           <div className="px-5 py-4 text-sm">
             <p className="text-gray-600">No bindings attached</p>
-            <p className="mt-2 font-mono text-xs text-gray-500">Deploy assets, KV namespaces, or object buckets to populate this section.</p>
+            <p className="mt-2 font-mono text-xs text-gray-500">Deploy assets, KV namespaces, databases, or object buckets to populate this section.</p>
           </div>
         )}
       </div>
@@ -348,15 +363,17 @@ function BindingsNode({ data }: NodeProps<Node<BindingsNodeData>>) {
 
 function BindingRow({ item }: { item: BindingItem }) {
   const openNamespace = useContext(NamespaceNavigationContext)
+  const openDatabase = useContext(DatabaseNavigationContext)
   const openBucket = useContext(BucketNavigationContext)
   const isKV = item.type === "kv"
+  const isDB = item.type === "db"
   const isObject = item.type === "object"
-  const label = isKV ? "KV" : isObject ? "Object storage" : "Assets"
+  const label = isKV ? "KV" : isDB ? "Database" : isObject ? "Object storage" : "Assets"
 
   return (
     <div className="pointer-events-auto px-5 py-3">
       <div className="mb-2 flex items-center gap-2">
-        {isKV ? <KeyRound className="size-4 text-green-700" /> : isObject ? <DatabaseZap className="size-4 text-blue-700" /> : <FolderOpen className="size-4 text-yellow-700" />}
+        {isKV ? <KeyRound className="size-4 text-green-700" /> : isDB ? <Database className="size-4 text-cyan-700" /> : isObject ? <DatabaseZap className="size-4 text-blue-700" /> : <FolderOpen className="size-4 text-yellow-700" />}
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
       </div>
       <div className="flex items-center gap-2 font-semibold text-gray-900">
@@ -379,6 +396,26 @@ function BindingRow({ item }: { item: BindingItem }) {
               openNamespace?.(item.namespaceID!)
             }}
             className="nodrag nopan pointer-events-auto relative z-10 min-w-0 flex-1 truncate rounded text-left text-green-700 underline underline-offset-4 transition hover:text-green-900"
+          >
+            {item.subtitle}
+          </button>
+        ) : isDB && item.databaseID ? (
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              openDatabase?.(item.databaseID!)
+            }}
+            className="nodrag nopan pointer-events-auto relative z-10 min-w-0 flex-1 truncate rounded text-left text-cyan-700 underline underline-offset-4 transition hover:text-cyan-900"
           >
             {item.subtitle}
           </button>

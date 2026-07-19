@@ -176,14 +176,14 @@ export function App() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="max-w-3xl">
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                React + Vite + KV + object storage
+                React + Vite + db + object storage
               </p>
               <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">
                 Gallery
               </h1>
               <p className="mt-4 max-w-2xl text-base text-slate-600">
                 The gallery interface is bundled by Vite, image bytes live in object storage, and
-                the gallery index is stored in KV. The Worker keeps <code>/api/*</code> dynamic while
+                gallery metadata is stored in db. The Worker keeps <code>/api/*</code> dynamic while
                 the rest of the app ships as static assets.
               </p>
             </div>

@@ -242,6 +242,99 @@ func TestControlOIDCSessionRejectsReusedAndExpiredCodes(t *testing.T) {
 	}
 }
 
+func TestControlOIDCCallbackCanRedirectToCLICompletionPage(t *testing.T) {
+	store := nanoflare.NewStore()
+	controlAuth := nanoflare.NewControlAuthService(store, "test-secret")
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
+	server.SetControlOIDC(fakeControlOIDC{
+		enabled: true,
+		issuer:  "https://issuer.example.com",
+		result:  AuthResult{Valid: true, Subject: "subject-123", Email: "person@example.com"},
+		next:    "/v1/auth/oidc/cli",
+	})
+
+	callbackRequest := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/callback?state=abc&code=xyz", nil)
+	callbackRecorder := httptest.NewRecorder()
+	server.ServeHTTP(callbackRecorder, callbackRequest)
+	if callbackRecorder.Code != http.StatusFound {
+		t.Fatalf("callback status = %d body = %q", callbackRecorder.Code, callbackRecorder.Body.String())
+	}
+	location, err := url.Parse(callbackRecorder.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location.Path != "/v1/auth/oidc/cli" || location.Query().Get("oidc_code") == "" {
+		t.Fatalf("callback location = %q", callbackRecorder.Header().Get("Location"))
+	}
+
+	pageRequest := httptest.NewRequest(http.MethodGet, callbackRecorder.Header().Get("Location"), nil)
+	pageRecorder := httptest.NewRecorder()
+	server.ServeHTTP(pageRecorder, pageRequest)
+	if pageRecorder.Code != http.StatusOK || !strings.Contains(pageRecorder.Body.String(), "Copy this one-time code") {
+		t.Fatalf("cli page status = %d body = %q", pageRecorder.Code, pageRecorder.Body.String())
+	}
+}
+
+func TestControlCLIWebLoginCodeExchangesForSession(t *testing.T) {
+	store := nanoflare.NewStore()
+	controlAuth := nanoflare.NewControlAuthService(store, "test-secret")
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
+
+	signupBody := bytes.NewBufferString(`{"email":"person@example.com","password":"secret","organization_name":"Acme"}`)
+	signupRequest := httptest.NewRequest(http.MethodPost, "/v1/setup/signup", signupBody)
+	signupRequest.Header.Set("Content-Type", "application/json")
+	signupRecorder := httptest.NewRecorder()
+	server.ServeHTTP(signupRecorder, signupRequest)
+	if signupRecorder.Code != http.StatusCreated {
+		t.Fatalf("signup status = %d body = %q", signupRecorder.Code, signupRecorder.Body.String())
+	}
+	var browserSession nanoflare.AuthSession
+	if err := json.Unmarshal(signupRecorder.Body.Bytes(), &browserSession); err != nil {
+		t.Fatal(err)
+	}
+
+	codeRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/cli/code", nil)
+	codeRequest.Header.Set("Authorization", "Bearer "+browserSession.Token)
+	codeRequest.Header.Set("X-Nanoflare-Org-ID", browserSession.ActiveOrgID)
+	codeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(codeRecorder, codeRequest)
+	if codeRecorder.Code != http.StatusCreated {
+		t.Fatalf("code status = %d body = %q", codeRecorder.Code, codeRecorder.Body.String())
+	}
+	var codeBody struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(codeRecorder.Body.Bytes(), &codeBody); err != nil {
+		t.Fatal(err)
+	}
+	if codeBody.Code == "" {
+		t.Fatalf("missing cli code")
+	}
+
+	sessionRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/cli/session", bytes.NewBufferString(`{"code":"`+codeBody.Code+`"}`))
+	sessionRequest.Header.Set("Content-Type", "application/json")
+	sessionRecorder := httptest.NewRecorder()
+	server.ServeHTTP(sessionRecorder, sessionRequest)
+	if sessionRecorder.Code != http.StatusOK {
+		t.Fatalf("session status = %d body = %q", sessionRecorder.Code, sessionRecorder.Body.String())
+	}
+	var cliSession nanoflare.AuthSession
+	if err := json.Unmarshal(sessionRecorder.Body.Bytes(), &cliSession); err != nil {
+		t.Fatal(err)
+	}
+	if cliSession.Token == "" || cliSession.User.Email != "person@example.com" || cliSession.ActiveOrgID != browserSession.ActiveOrgID {
+		t.Fatalf("cli session = %#v", cliSession)
+	}
+
+	reuseRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/cli/session", bytes.NewBufferString(`{"code":"`+codeBody.Code+`"}`))
+	reuseRequest.Header.Set("Content-Type", "application/json")
+	reuseRecorder := httptest.NewRecorder()
+	server.ServeHTTP(reuseRecorder, reuseRequest)
+	if reuseRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("reuse status = %d body = %q", reuseRecorder.Code, reuseRecorder.Body.String())
+	}
+}
+
 func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})

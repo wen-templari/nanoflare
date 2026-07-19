@@ -35,6 +35,7 @@ type Deployment struct {
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	BundleSize           int64                        `json:"-"`
@@ -70,6 +71,11 @@ type CreateKVNamespaceInput struct {
 	OAuthClientID string `json:"-"`
 }
 
+type CreateDatabaseInput struct {
+	OrgID string `json:"-"`
+	Name  string `json:"name"`
+}
+
 type UpdateKVNamespaceInput struct {
 	Name string `json:"name"`
 }
@@ -98,6 +104,7 @@ type DeployInput struct {
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 }
@@ -112,6 +119,7 @@ type WorkerDeployment struct {
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	Bindings             []Binding                    `json:"bindings,omitempty"`
@@ -145,6 +153,8 @@ type Binding struct {
 	Binding       string `json:"binding"`
 	NamespaceID   string `json:"namespace_id,omitempty"`
 	NamespaceName string `json:"namespace_name,omitempty"`
+	DatabaseID    string `json:"database_id,omitempty"`
+	DatabaseName  string `json:"database_name,omitempty"`
 	BucketID      string `json:"bucket_id,omitempty"`
 	BucketName    string `json:"bucket_name,omitempty"`
 	AssetCount    int    `json:"asset_count,omitempty"`
@@ -160,6 +170,14 @@ type SecretRecord struct {
 	Secret
 	Nonce      []byte `json:"-"`
 	Ciphertext []byte `json:"-"`
+}
+
+type ControlRefreshToken struct {
+	TokenHash string
+	UserID    string
+	ExpiresAt time.Time
+	RevokedAt *time.Time
+	CreatedAt time.Time
 }
 
 type PutSecretInput struct {
@@ -198,6 +216,11 @@ type KVBinding struct {
 	PreviewID string `json:"preview_id,omitempty"`
 }
 
+type DatabaseBinding struct {
+	Binding    string `json:"binding"`
+	DatabaseID string `json:"database_id"`
+}
+
 type ObjectStorageBucketBinding struct {
 	Binding  string `json:"binding"`
 	BucketID string `json:"bucket_id"`
@@ -227,6 +250,13 @@ type KVNamespace struct {
 	ExternalID    string    `json:"external_id,omitempty"`
 	OAuthClientID string    `json:"oauth_client_id,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+type Database struct {
+	ID        string    `json:"id"`
+	OrgID     string    `json:"org_id,omitempty"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ObjectStorageBucket struct {

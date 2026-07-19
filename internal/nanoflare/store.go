@@ -16,6 +16,10 @@ var (
 	ErrKVNamespaceNotFound         = errors.New("kv namespace not found")
 	ErrKVNamespaceInUse            = errors.New("kv namespace is still referenced by a deployment")
 	ErrKVNamespaceNotBound         = errors.New("kv namespace is not bound by the app's active deployment")
+	ErrDatabaseExists              = errors.New("database already exists")
+	ErrDatabaseNotFound            = errors.New("database not found")
+	ErrDatabaseInUse               = errors.New("database is still referenced by a deployment")
+	ErrDatabaseNotBound            = errors.New("database is not bound by the app's active deployment")
 	ErrObjectStorageBucketExists   = errors.New("object storage bucket already exists")
 	ErrObjectStorageBucketNotFound = errors.New("object storage bucket not found")
 	ErrObjectStorageBucketInUse    = errors.New("object storage bucket is still referenced by a deployment")
@@ -25,6 +29,7 @@ var (
 	ErrUserNotFound                = errors.New("user not found")
 	ErrOIDCIdentityExists          = errors.New("oidc identity already exists")
 	ErrOIDCIdentityNotFound        = errors.New("oidc identity not found")
+	ErrControlRefreshTokenNotFound = errors.New("control refresh token not found")
 	ErrOrganizationExists          = errors.New("organization already exists")
 	ErrOrganizationNotFound        = errors.New("organization not found")
 	ErrMembershipNotFound          = errors.New("user is not a member of the organization")
@@ -32,9 +37,13 @@ var (
 
 type Repository interface {
 	CreateUser(User) error
+	UserByID(string) (User, error)
 	UserByEmail(string) (User, error)
 	UserByOIDCIdentity(issuer, subject string) (User, error)
 	CreateOIDCIdentity(UserOIDCIdentity) error
+	CreateControlRefreshToken(ControlRefreshToken) error
+	ControlRefreshToken(string) (ControlRefreshToken, error)
+	UpdateControlRefreshToken(ControlRefreshToken) error
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
 	GetOrganization(string) (Organization, error)
@@ -80,6 +89,12 @@ type Repository interface {
 	GetKVNamespace(string) (KVNamespace, error)
 	UpdateKVNamespace(KVNamespace) error
 	DeleteKVNamespace(string) error
+	CreateDatabase(Database) error
+	CountDatabasesByOrg(string) (int, error)
+	ListDatabases() ([]Database, error)
+	ListDatabasesByOrg(string) ([]Database, error)
+	GetDatabase(string) (Database, error)
+	DeleteDatabase(string) error
 	CreateObjectStorageBucket(ObjectStorageBucket) error
 	CountObjectStorageBucketsByOrg(string) (int, error)
 	ListObjectStorageBuckets() ([]ObjectStorageBucket, error)
@@ -118,6 +133,7 @@ type Store struct {
 	users           map[string]User
 	usersByEmail    map[string]string
 	oidcIdentities  map[string]UserOIDCIdentity
+	controlRefresh  map[string]ControlRefreshToken
 	organizations   map[string]Organization
 	memberships     map[string]map[string]OrganizationMembership
 	invites         map[string]OrganizationInvite
@@ -127,6 +143,7 @@ type Store struct {
 	oauthRefresh    map[string]string
 	apps            map[string]App
 	kvNamespaces    map[string]KVNamespace
+	databases       map[string]Database
 	objectBuckets   map[string]ObjectStorageBucket
 	secrets         map[string]map[string]SecretRecord
 	deployments     map[string][]Deployment
@@ -142,6 +159,7 @@ func NewStore() *Store {
 		users:           make(map[string]User),
 		usersByEmail:    make(map[string]string),
 		oidcIdentities:  make(map[string]UserOIDCIdentity),
+		controlRefresh:  make(map[string]ControlRefreshToken),
 		organizations:   make(map[string]Organization),
 		memberships:     make(map[string]map[string]OrganizationMembership),
 		invites:         make(map[string]OrganizationInvite),
@@ -151,6 +169,7 @@ func NewStore() *Store {
 		oauthRefresh:    make(map[string]string),
 		apps:            make(map[string]App),
 		kvNamespaces:    make(map[string]KVNamespace),
+		databases:       make(map[string]Database),
 		objectBuckets:   make(map[string]ObjectStorageBucket),
 		secrets:         make(map[string]map[string]SecretRecord),
 		deployments:     make(map[string][]Deployment),
@@ -186,6 +205,16 @@ func (s *Store) UserByEmail(email string) (User, error) {
 	return s.users[id], nil
 }
 
+func (s *Store) UserByID(userID string) (User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	user, exists := s.users[userID]
+	if !exists {
+		return User{}, ErrUserNotFound
+	}
+	return user, nil
+}
+
 func (s *Store) UserByOIDCIdentity(issuer, subject string) (User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -211,6 +240,37 @@ func (s *Store) CreateOIDCIdentity(identity UserOIDCIdentity) error {
 		return ErrOIDCIdentityExists
 	}
 	s.oidcIdentities[key] = identity
+	return nil
+}
+
+func (s *Store) CreateControlRefreshToken(token ControlRefreshToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.controlRefresh[token.TokenHash] = token
+	return nil
+}
+
+func (s *Store) ControlRefreshToken(tokenHash string) (ControlRefreshToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	token, exists := s.controlRefresh[tokenHash]
+	if !exists {
+		return ControlRefreshToken{}, ErrControlRefreshTokenNotFound
+	}
+	return token, nil
+}
+
+func (s *Store) UpdateControlRefreshToken(token ControlRefreshToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, exists := s.controlRefresh[token.TokenHash]
+	if !exists {
+		return ErrControlRefreshTokenNotFound
+	}
+	if token.RevokedAt != nil && existing.RevokedAt != nil {
+		return ErrControlRefreshTokenNotFound
+	}
+	s.controlRefresh[token.TokenHash] = token
 	return nil
 }
 
@@ -842,6 +902,80 @@ func (s *Store) DeleteKVNamespace(namespaceID string) error {
 	delete(s.kvNamespaces, namespaceID)
 	delete(s.kv, namespaceID)
 	delete(s.kvMetrics, namespaceID)
+	return nil
+}
+
+func (s *Store) CreateDatabase(database Database) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.databases[database.ID]; exists {
+		return ErrDatabaseExists
+	}
+	for _, existing := range s.databases {
+		if existing.Name == database.Name && existing.OrgID == database.OrgID {
+			return ErrDatabaseExists
+		}
+	}
+	s.databases[database.ID] = database
+	return nil
+}
+
+func (s *Store) CountDatabasesByOrg(orgID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, database := range s.databases {
+		if database.OrgID == orgID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *Store) ListDatabases() ([]Database, error) {
+	return s.ListDatabasesByOrg("")
+}
+
+func (s *Store) ListDatabasesByOrg(orgID string) ([]Database, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	databases := make([]Database, 0, len(s.databases))
+	for _, database := range s.databases {
+		if orgID != "" && database.OrgID != orgID {
+			continue
+		}
+		databases = append(databases, database)
+	}
+	sort.Slice(databases, func(i, j int) bool { return databases[i].Name < databases[j].Name })
+	return databases, nil
+}
+
+func (s *Store) GetDatabase(databaseID string) (Database, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	database, ok := s.databases[databaseID]
+	if !ok {
+		return Database{}, ErrDatabaseNotFound
+	}
+	return database, nil
+}
+
+func (s *Store) DeleteDatabase(databaseID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.databases[databaseID]; !ok {
+		return ErrDatabaseNotFound
+	}
+	for _, deployments := range s.deployments {
+		for _, deployment := range deployments {
+			for _, binding := range deployment.Databases {
+				if binding.DatabaseID == databaseID {
+					return ErrDatabaseInUse
+				}
+			}
+		}
+	}
+	delete(s.databases, databaseID)
 	return nil
 }
 

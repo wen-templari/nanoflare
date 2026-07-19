@@ -23,6 +23,7 @@ type Server struct {
 	controlOIDC      ControlOIDCAuthenticator
 	controlOIDCMu    sync.Mutex
 	controlOIDCCodes map[string]controlOIDCCode
+	controlCLICodes  map[string]controlCLICode
 	oauth            *nanoflare.OAuthService
 	runtime          RuntimeEnsurer
 	mux              *http.ServeMux
@@ -62,6 +63,12 @@ type AuthResult struct {
 type controlOIDCCode struct {
 	Result    AuthResult
 	ExpiresAt time.Time
+}
+
+type controlCLICode struct {
+	UserID      string
+	ActiveOrgID string
+	ExpiresAt   time.Time
 }
 
 var errAuthDisabled = errors.New("oidc authentication is not configured")
@@ -132,6 +139,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /metrics", s.prometheusMetrics)
 	s.registerAppRoutes()
 	s.registerKVRoutes()
+	s.registerDBRoutes()
 	s.registerObjectRoutes()
 	s.registerAuthRoutes()
 	if s.controlAuth != nil {

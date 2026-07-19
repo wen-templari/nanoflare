@@ -60,7 +60,7 @@ export function WorkerDetailPage() {
 
 function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; bindings?: WorkerDeployment["bindings"]; created_at: string }; notify: (text: string) => void; apiConnected: boolean }) {
   const navigate = useNavigate()
-  const { namespaces } = useWorkspace()
+  const { databases, namespaces } = useWorkspace()
   const [tab, setTab] = useState<WorkerDetailTab>("overview")
   const [detail, setDetail] = useState<WorkerDetailData>()
   const [files, setFiles] = useState<WorkerFile[]>([])
@@ -146,7 +146,7 @@ function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: s
             value={tab}
           />
         </div>
-        {tab === "overview" && <WorkerOverview worker={detail?.app ?? worker} deployment={detail?.deployment} namespaces={namespaces} onOpenNamespace={(namespaceID) => navigate(`/kv/${namespaceID}`)} onOpenBucket={(bucketID) => navigate(`/object-storage/${bucketID}`)} onOpenDeployments={() => setTab("deployments")} recentDeployments={recentDeployments} traffic={traffic} />}
+        {tab === "overview" && <WorkerOverview worker={detail?.app ?? worker} deployment={detail?.deployment} databases={databases} namespaces={namespaces} onOpenNamespace={(namespaceID) => navigate(`/kv/${namespaceID}`)} onOpenDatabase={(databaseID) => navigate(`/databases/${databaseID}`)} onOpenBucket={(bucketID) => navigate(`/object-storage/${bucketID}`)} onOpenDeployments={() => setTab("deployments")} recentDeployments={recentDeployments} traffic={traffic} />}
         {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
         {tab === "files" && <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />}
         {tab === "output" && <WorkerOutput lines={output} />}
@@ -158,8 +158,10 @@ function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: s
 
 function WorkerOverview({
   deployment,
+  databases,
   namespaces,
   onOpenNamespace,
+  onOpenDatabase,
   onOpenBucket,
   onOpenDeployments,
   recentDeployments,
@@ -167,8 +169,10 @@ function WorkerOverview({
   worker,
 }: {
   deployment?: WorkerDeployment
+  databases: { id: string; name: string; created_at: string }[]
   namespaces: { id: string; name: string; created_at: string }[]
   onOpenNamespace: (namespaceID: string) => void
+  onOpenDatabase: (databaseID: string) => void
   onOpenBucket: (bucketID: string) => void
   onOpenDeployments: () => void
   recentDeployments: ConsoleDeployment[]
@@ -184,7 +188,7 @@ function WorkerOverview({
     <div className="space-y-6">
       <section>
         <Suspense fallback={<div className="h-[420px] animate-pulse rounded-xl border border-gray-200 bg-white" />}>
-          <WorkerDefinitionFlow worker={worker} deployment={deployment} namespaces={namespaces} onOpenNamespace={onOpenNamespace} onOpenBucket={onOpenBucket} />
+          <WorkerDefinitionFlow worker={worker} deployment={deployment} databases={databases} namespaces={namespaces} onOpenNamespace={onOpenNamespace} onOpenDatabase={onOpenDatabase} onOpenBucket={onOpenBucket} />
         </Suspense>
       </section>
 

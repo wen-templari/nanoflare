@@ -10,8 +10,8 @@ const (
 )
 
 var (
-	viewerScopes = []string{"apps:read", "kv:read", "objects:read"}
-	memberScopes = []string{"apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"}
+	viewerScopes = []string{"apps:read", "kv:read", "db:read", "objects:read"}
+	memberScopes = []string{"apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write"}
 	adminScopes  = append(append([]string{}, memberScopes...), "orgs:read", "members:read", "members:write")
 	ownerScopes  = append(append([]string{}, adminScopes...), "orgs:write", "members:owner")
 )
