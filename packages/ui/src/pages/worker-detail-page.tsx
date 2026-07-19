@@ -1,4 +1,4 @@
-import { Alert, Card, Group, SegmentedControl, SimpleGrid, Text, ThemeIcon, Title } from "@mantine/core"
+import { Alert, Anchor, Card, Group, SegmentedControl, SimpleGrid, Text, ThemeIcon, Title } from "@mantine/core"
 import { lazy, Suspense, useEffect, useState } from "react"
 import {
   Activity, AlertTriangle, Archive, FileCode2, FileJson, Folder,
@@ -182,6 +182,17 @@ function WorkerOverview({
       <Card padding="md" radius="md" withBorder>
         <Group justify="space-between" gap="md">
           <div className="min-w-0">
+            <Text c="dimmed" fw={700} size="xs" tt="uppercase">Hostname</Text>
+            <Anchor
+              className="mt-1 block max-w-full truncate font-mono text-[11px] font-bold"
+              href={hostnameHref(worker.hostname)}
+              target="_blank"
+              title={worker.hostname}
+            >
+              {worker.hostname}
+            </Anchor>
+          </div>
+          <div className="min-w-0">
             <Text c="dimmed" fw={700} size="xs" tt="uppercase">Active deployment</Text>
             <button
               type="button"
@@ -361,6 +372,10 @@ function formatMilliseconds(value: number) {
 
 function shortDeploymentID(id: string) {
   return id.length > 10 ? `${id.slice(0, 10)}...` : id
+}
+
+function hostnameHref(hostname: string) {
+  return /^https?:\/\//i.test(hostname) ? hostname : `https://${hostname}`
 }
 
 function WorkerDeploymentsTable({ deployments }: { deployments: ConsoleDeployment[] }) {

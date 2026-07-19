@@ -125,13 +125,15 @@ export function ConsoleLayout() {
         <Group h="100%" px="lg" justify="space-between">
           <Group>
             <Burger opened={opened} onClick={toggle} hiddenFrom="md" size="sm" />
-            <Breadcrumbs>
-              {breadcrumbs.map((item, index) => (
-                item.href && index < breadcrumbs.length - 1
-                  ? <Anchor c="gray.5" component={Link} key={item.href} size="sm" to={item.href}>{item.label}</Anchor>
-                  : <Text c="gray.9" fw={700} key={`${item.label}-${index}`} size="sm">{item.label}</Text>
-              ))}
-            </Breadcrumbs>
+            {breadcrumbs.length > 1 && (
+              <Breadcrumbs>
+                {breadcrumbs.map((item, index) => (
+                  item.href && index < breadcrumbs.length - 1
+                    ? <Anchor c="gray.5" component={Link} key={item.href} size="sm" to={item.href}>{item.label}</Anchor>
+                    : <Text c="gray.9" fw={700} key={`${item.label}-${index}`} size="sm">{item.label}</Text>
+                ))}
+              </Breadcrumbs>
+            )}
           </Group>
           <Group gap="sm">
             <Select

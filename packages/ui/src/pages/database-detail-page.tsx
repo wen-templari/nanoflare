@@ -273,8 +273,8 @@ function DatabaseDetailContent({
           </div>
         </>
       ) : tab === "query" ? (
-        <Panel flush>
-          <div className="flex h-[calc(100dvh-310px)] min-h-0 flex-col overflow-hidden bg-white">
+        <Card withBorder padding={0} radius="lg" className="overflow-hidden">
+          <div className="flex h-[calc(100dvh-164px)] min-h-[520px] flex-col overflow-hidden bg-white">
             <div className="min-h-0 flex-1 bg-[#f8faf9]">
               <div className="h-full overflow-auto">
                 <div className={queryRuns.length ? "space-y-4 p-5" : "flex min-h-full items-center justify-center p-5"}>
@@ -307,7 +307,7 @@ function DatabaseDetailContent({
               <Button disabled={querying} onClick={() => void runQuery()}><Play className="size-3.5" />Run</Button>
             </div>
           </div>
-        </Panel>
+        </Card>
       ) : (
         <div className="space-y-6">
           <Panel title="Basic info" eyebrow="Database">
@@ -326,9 +326,12 @@ function DatabaseDetailContent({
               ))}
             </div>
           </Panel>
-          <Panel title="Delete database" eyebrow="Danger zone">
+          <Panel title="Danger zone">
             <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-              <Text c="dimmed" size="sm">Permanently remove this database and its stored data. Databases with active worker bindings must be unbound first.</Text>
+              <div>
+                <Text fw={700} size="sm">Delete database</Text>
+                <Text c="dimmed" mt={4} size="sm">Permanently remove this database and its stored data. Databases with active worker bindings must be unbound first.</Text>
+              </div>
               <Button disabled={bindings.length > 0} onClick={() => void deleteDatabase()} variant="ghost"><Trash2 className="size-4" />Delete database</Button>
             </div>
           </Panel>

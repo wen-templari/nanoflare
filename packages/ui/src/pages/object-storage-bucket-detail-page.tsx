@@ -311,9 +311,12 @@ function ObjectStorageBucketDetailContent({
           </div>
         </section>
 
-        <Panel title="Delete bucket" eyebrow="Danger zone">
+        <Panel title="Danger zone">
           <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-            <Text c="dimmed" size="sm">Permanently remove this bucket and its objects. Worker bindings should be updated before deleting it.</Text>
+            <div>
+              <Text fw={700} size="sm">Delete bucket</Text>
+              <Text c="dimmed" mt={4} size="sm">Permanently remove this bucket and its objects. Worker bindings should be updated before deleting it.</Text>
+            </div>
             <Button variant="ghost" onClick={() => void deleteBucket()} disabled={deleting || saving}><Trash2 className="size-3.5" />Delete bucket</Button>
           </div>
         </Panel>

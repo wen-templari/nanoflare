@@ -208,9 +208,12 @@ export function OAuthClientDetailPage() {
                   <Button variant="outline" onClick={openEdit}><SquarePen className="size-4" />Edit</Button>
                 </div>
               </Panel>
-              <Panel title="Delete client" eyebrow="Danger zone">
+              <Panel title="Danger zone">
                 <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-                  <Text c="dimmed" size="sm">Permanently remove this OAuth client so integrations can no longer authorize through it.</Text>
+                  <div>
+                    <Text fw={700} size="sm">Delete client</Text>
+                    <Text c="dimmed" mt={4} size="sm">Permanently remove this OAuth client so integrations can no longer authorize through it.</Text>
+                  </div>
                   <Button variant="danger" onClick={deleteClient}><Trash2 className="size-4" />Delete client</Button>
                 </div>
               </Panel>
