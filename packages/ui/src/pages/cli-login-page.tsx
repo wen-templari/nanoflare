@@ -1,15 +1,20 @@
 import { Alert, Box, Button, Code, Group, Loader, Paper, Stack, Text, ThemeIcon, Title } from "@mantine/core";
-import { Check, Copy, Terminal } from "lucide-react";
+import { Check, Copy, LoaderCircle, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { apiFetch, errorText } from "../app/api";
 import { useAuth } from "../app/auth-context";
 
 export function CLILoginPage() {
   const auth = useAuth();
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const callbackURL = params.get("callback_url") || "";
+  const state = params.get("state") || "";
   const [code, setCode] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const [sentToCLI, setSentToCLI] = useState(false);
 
   useEffect(() => {
     if (!auth.ready || !auth.signedIn || code || error) return;
@@ -29,8 +34,30 @@ export function CLILoginPage() {
     };
   }, [auth.ready, auth.signedIn, code, error]);
 
+  useEffect(() => {
+    if (!code || !callbackURL || !state || sentToCLI) return;
+    let callback: URL;
+    try {
+      callback = new URL(callbackURL);
+    } catch {
+      setError("CLI callback URL is invalid.");
+      return;
+    }
+    if (!isLoopbackCallback(callback)) {
+      setError("CLI callback URL must use localhost or 127.0.0.1.");
+      return;
+    }
+    callback.searchParams.set("code", code);
+    callback.searchParams.set("state", state);
+    setSentToCLI(true);
+    window.location.assign(callback.toString());
+  }, [callbackURL, code, sentToCLI, state]);
+
   if (!auth.ready) return null;
-  if (!auth.signedIn) return <Navigate to="/login?next=/cli-login" replace />;
+  if (!auth.signedIn) {
+    const next = `${location.pathname}${location.search}`;
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+  }
 
   async function copyCode() {
     if (!code) return;
@@ -62,7 +89,13 @@ export function CLILoginPage() {
                     <Text>Creating login code...</Text>
                   </Group>
                 )}
-                {code && (
+                {code && callbackURL && sentToCLI && (
+                  <Group gap="sm">
+                    <LoaderCircle className="animate-spin" size={16} />
+                    <Text>Returning to Nanoflare CLI...</Text>
+                  </Group>
+                )}
+                {code && !callbackURL && (
                   <>
                     <Text c="dimmed" size="sm">Copy this one-time code back into your terminal.</Text>
                     <Code block fz="lg" p="md">{code}</Code>
@@ -78,4 +111,9 @@ export function CLILoginPage() {
       </Stack>
     </Box>
   );
+}
+
+function isLoopbackCallback(callback: URL) {
+  if (callback.protocol !== "http:" && callback.protocol !== "https:") return false;
+  return callback.hostname === "127.0.0.1" || callback.hostname === "localhost" || callback.hostname === "::1" || callback.hostname === "[::1]";
 }

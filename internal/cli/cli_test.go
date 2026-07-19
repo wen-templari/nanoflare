@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -416,6 +417,36 @@ func TestAuthLoginWebUsesConsoleLoginFlow(t *testing.T) {
 	originalOpenBrowser := openBrowserFunc
 	openBrowserFunc = func(target string) error {
 		openedURL = target
+		go func() {
+			loginURL, err := url.Parse(target)
+			if err != nil {
+				t.Errorf("parse opened URL: %v", err)
+				return
+			}
+			nextURL, err := url.Parse(loginURL.Query().Get("next"))
+			if err != nil {
+				t.Errorf("parse next URL: %v", err)
+				return
+			}
+			callbackURL, err := url.Parse(nextURL.Query().Get("callback_url"))
+			if err != nil {
+				t.Errorf("parse callback URL: %v", err)
+				return
+			}
+			query := callbackURL.Query()
+			query.Set("code", "cli-code")
+			query.Set("state", nextURL.Query().Get("state"))
+			callbackURL.RawQuery = query.Encode()
+			response, err := http.Get(callbackURL.String())
+			if err != nil {
+				t.Errorf("call callback URL: %v", err)
+				return
+			}
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				t.Errorf("callback status = %d", response.StatusCode)
+			}
+		}()
 		return nil
 	}
 	t.Cleanup(func() {
@@ -448,17 +479,27 @@ func TestAuthLoginWebUsesConsoleLoginFlow(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	runner := NewRunner(&stdout, &stderr)
-	runner.Stdin = strings.NewReader("cli-code\n")
 	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL, "--web"}); err != nil {
 		t.Fatal(err)
 	}
-	if openedURL != server.URL+"/login?next=%2Fcli-login" {
+	loginURL, err := url.Parse(openedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loginURL.Scheme+"://"+loginURL.Host != server.URL || loginURL.Path != "/login" {
 		t.Fatalf("opened URL = %q", openedURL)
+	}
+	nextURL, err := url.Parse(loginURL.Query().Get("next"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nextURL.Path != "/cli-login" || nextURL.Query().Get("callback_url") == "" || nextURL.Query().Get("state") == "" {
+		t.Fatalf("next URL = %q", loginURL.Query().Get("next"))
 	}
 	if got := stdout.String(); !strings.Contains(got, "Logged in as user@example.com") || !strings.Contains(got, "Using organization org-123") {
 		t.Fatalf("stdout = %q", got)
 	}
-	if got := stderr.String(); !strings.Contains(got, "Open this URL to continue web login:\n"+server.URL+"/login?next=%2Fcli-login") || !strings.Contains(got, "Opened browser for web login.") || !strings.HasSuffix(got, "CLI code: ") {
+	if got := stderr.String(); !strings.Contains(got, "Open this URL to continue web login:\n"+openedURL) || !strings.Contains(got, "Opened browser for web login.") || !strings.Contains(got, "Waiting for browser login to complete...") {
 		t.Fatalf("stderr = %q", got)
 	}
 	if _, err := os.Stat(authPath); err != nil {

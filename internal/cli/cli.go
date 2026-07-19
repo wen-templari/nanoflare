@@ -3,6 +3,10 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -475,8 +480,17 @@ func (r *Runner) authLoginPAT(baseURL string) error {
 }
 
 func (r *Runner) authLoginWeb(baseURL string) error {
+	callback, err := startWebLoginCallback()
+	if err != nil {
+		return fmt.Errorf("start local login callback: %w", err)
+	}
+	defer callback.Close()
+
+	next := url.Values{}
+	next.Set("callback_url", callback.URL)
+	next.Set("state", callback.State)
 	values := url.Values{}
-	values.Set("next", "/cli-login")
+	values.Set("next", "/cli-login?"+next.Encode())
 	loginURL := baseURL + "/login?" + values.Encode()
 	fmt.Fprintf(r.Stderr, "Open this URL to continue web login:\n%s\n", loginURL)
 	if err := openBrowserFunc(loginURL); err == nil {
@@ -484,14 +498,10 @@ func (r *Runner) authLoginWeb(baseURL string) error {
 	} else {
 		fmt.Fprintf(r.Stderr, "Could not open browser automatically: %v\n", err)
 	}
-	fmt.Fprint(r.Stderr, "CLI code: ")
-	value, err := bufio.NewReader(r.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	fmt.Fprintln(r.Stderr, "Waiting for browser login to complete...")
+	code, err := callback.Wait(5 * time.Minute)
+	if err != nil {
 		return err
-	}
-	code := strings.TrimSpace(value)
-	if code == "" {
-		return errors.New("CLI code is required")
 	}
 	var session nanoflare.AuthSession
 	if err := r.requestNoAuth(http.MethodPost, baseURL+"/v1/auth/cli/session", map[string]string{"code": code}, &session); err != nil {
@@ -507,6 +517,115 @@ func (r *Runner) authLoginWeb(baseURL string) error {
 	fmt.Fprintf(r.Stdout, "Logged in as %s\n", auth.User.Email)
 	if auth.ActiveOrgID != "" {
 		fmt.Fprintf(r.Stdout, "Using organization %s\n", auth.ActiveOrgID)
+	}
+	return nil
+}
+
+type webLoginCallback struct {
+	URL    string
+	State  string
+	server *http.Server
+	done   chan webLoginResult
+}
+
+type webLoginResult struct {
+	code string
+	err  error
+}
+
+func startWebLoginCallback() (*webLoginCallback, error) {
+	state, err := randomWebLoginState()
+	if err != nil {
+		return nil, err
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	callback := &webLoginCallback{
+		URL:   "http://" + listener.Addr().String() + "/cli-login-callback",
+		State: state,
+		done:  make(chan webLoginResult, 1),
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cli-login-callback", callback.handle)
+	callback.server = &http.Server{Handler: mux}
+	go func() {
+		if err := callback.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			callback.deliver(webLoginResult{err: err})
+		}
+	}()
+	return callback, nil
+}
+
+func (c *webLoginCallback) handle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path != "/cli-login-callback" {
+		http.NotFound(w, r)
+		return
+	}
+	if subtleCompare(r.URL.Query().Get("state"), c.State) != nil {
+		http.Error(w, "login state did not match", http.StatusBadRequest)
+		return
+	}
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if code == "" {
+		http.Error(w, "code is required", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Nanoflare CLI Login</title><style>body{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:3rem;line-height:1.5;color:#111827}</style></head><body><h1>Nanoflare CLI login complete</h1><p>You can close this tab and return to your terminal.</p></body></html>`)
+	c.deliver(webLoginResult{code: code})
+}
+
+func (c *webLoginCallback) deliver(result webLoginResult) {
+	select {
+	case c.done <- result:
+	default:
+	}
+}
+
+func (c *webLoginCallback) Wait(timeout time.Duration) (string, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result := <-c.done:
+		if result.err != nil {
+			return "", result.err
+		}
+		return result.code, nil
+	case <-timer.C:
+		return "", errors.New("timed out waiting for browser login")
+	}
+}
+
+func (c *webLoginCallback) Close() {
+	if c.server == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = c.server.Shutdown(ctx)
+}
+
+func randomWebLoginState() (string, error) {
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func subtleCompare(left, right string) error {
+	if len(left) != len(right) {
+		return errors.New("values differ")
+	}
+	if subtle.ConstantTimeCompare([]byte(left), []byte(right)) != 1 {
+		return errors.New("values differ")
 	}
 	return nil
 }
