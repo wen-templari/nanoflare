@@ -43,7 +43,55 @@ func (p *Postgres) Close() error {
 
 func (p *Postgres) migrate(ctx context.Context) error {
 	_, err := p.db.ExecContext(ctx, `
-CREATE TABLE IF NOT EXISTS apps (
+DO $$
+BEGIN
+	IF to_regclass('apps') IS NOT NULL AND to_regclass('workers') IS NULL THEN
+		ALTER TABLE apps RENAME TO workers;
+	END IF;
+	IF to_regclass('app_secrets') IS NOT NULL AND to_regclass('worker_secrets') IS NULL THEN
+		ALTER TABLE app_secrets RENAME TO worker_secrets;
+	END IF;
+	IF EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema()
+			AND table_name = 'deployments'
+			AND column_name = 'app_id'
+	) AND NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema()
+			AND table_name = 'deployments'
+			AND column_name = 'worker_id'
+	) THEN
+		ALTER TABLE deployments RENAME COLUMN app_id TO worker_id;
+	END IF;
+	IF EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema()
+			AND table_name = 'worker_secrets'
+			AND column_name = 'app_id'
+	) AND NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema()
+			AND table_name = 'worker_secrets'
+			AND column_name = 'worker_id'
+	) THEN
+		ALTER TABLE worker_secrets RENAME COLUMN app_id TO worker_id;
+	END IF;
+	IF EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema()
+			AND table_name = 'runtime_kv'
+			AND column_name = 'app_id'
+	) AND NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema()
+			AND table_name = 'runtime_kv'
+			AND column_name = 'worker_id'
+	) THEN
+		ALTER TABLE runtime_kv RENAME COLUMN app_id TO worker_id;
+	END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS workers (
 	id text PRIMARY KEY,
 	org_id text NOT NULL DEFAULT '',
 	name text NOT NULL,
@@ -151,7 +199,7 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 );
 CREATE TABLE IF NOT EXISTS deployments (
 	id text PRIMARY KEY,
-	app_id text NOT NULL REFERENCES apps(id),
+	worker_id text NOT NULL REFERENCES workers(id),
 	commit_hash text NOT NULL DEFAULT '',
 	commit_message text NOT NULL DEFAULT '',
 	created_by text NOT NULL DEFAULT '',
@@ -195,23 +243,24 @@ CREATE TABLE IF NOT EXISTS object_storage_buckets (
 	oauth_client_id text NOT NULL DEFAULT '',
 	created_at timestamptz NOT NULL
 );
-CREATE TABLE IF NOT EXISTS app_secrets (
-	app_id text NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS worker_secrets (
+	worker_id text NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
 	name text NOT NULL,
 	nonce bytea NOT NULL,
 	ciphertext bytea NOT NULL,
 	created_at timestamptz NOT NULL,
 	updated_at timestamptz NOT NULL,
-	PRIMARY KEY (app_id, name)
+	PRIMARY KEY (worker_id, name)
 );
 DROP INDEX IF EXISTS deployments_active_app_idx;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS created_by text NOT NULL DEFAULT '';
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
+DROP INDEX IF EXISTS deployments_active_worker_idx;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS created_by text NOT NULL DEFAULT '';
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS runtime_token text;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS usage_level text NOT NULL DEFAULT 'default';
 UPDATE organizations SET usage_level = 'default' WHERE usage_level = '';
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS owner_org_id text NOT NULL DEFAULT '';
@@ -234,7 +283,7 @@ SET scopes = (
 	FROM jsonb_array_elements_text(scopes || '["db:write"]'::jsonb) AS scope
 )
 WHERE scopes ? 'kv:write' AND NOT scopes ? 'db:write';
-UPDATE apps SET name = hostname WHERE name = '';
+UPDATE workers SET name = hostname WHERE name = '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS assets jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS entrypoint text NOT NULL DEFAULT '';
@@ -252,6 +301,7 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS commit_hash text NOT NULL DEFAU
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS commit_message text NOT NULL DEFAULT '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS created_by text NOT NULL DEFAULT '';
 DROP INDEX IF EXISTS deployments_active_app_idx;
+DROP INDEX IF EXISTS deployments_active_worker_idx;
 UPDATE deployments SET traffic_percent = 100 WHERE active AND traffic_percent = 0;
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
@@ -347,15 +397,16 @@ ALTER TABLE object_storage_buckets DROP CONSTRAINT IF EXISTS object_storage_buck
 CREATE UNIQUE INDEX IF NOT EXISTS kv_namespaces_org_name_idx ON kv_namespaces(org_id, name);
 CREATE UNIQUE INDEX IF NOT EXISTS databases_org_name_idx ON databases(org_id, name);
 CREATE UNIQUE INDEX IF NOT EXISTS object_storage_buckets_org_name_idx ON object_storage_buckets(org_id, name);
-ALTER TABLE apps ALTER COLUMN runtime_token SET NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS apps_runtime_token_idx ON apps(runtime_token);
+ALTER TABLE workers ALTER COLUMN runtime_token SET NOT NULL;
+DROP INDEX IF EXISTS apps_runtime_token_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS workers_runtime_token_idx ON workers(runtime_token);
 ALTER TABLE deployments DROP COLUMN IF EXISTS bundle_path;
 ALTER TABLE deployments DROP COLUMN IF EXISTS capability_token;`)
 	return err
 }
 
 func (p *Postgres) migrateKVNamespaces(ctx context.Context) error {
-	hasAppID, err := p.columnExists(ctx, "runtime_kv", "app_id")
+	hasAppID, err := p.columnExists(ctx, "runtime_kv", "worker_id")
 	if err != nil {
 		return err
 	}
@@ -376,7 +427,7 @@ func (p *Postgres) migrateKVNamespaces(ctx context.Context) error {
 			return err
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM apps ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM workers ORDER BY id`)
 	if err != nil {
 		return err
 	}
@@ -404,7 +455,7 @@ ON CONFLICT (id) DO NOTHING`,
 			if _, err := tx.ExecContext(ctx, `
 UPDATE runtime_kv
 SET kv_namespace_id = $1
-WHERE app_id = $2 AND (kv_namespace_id IS NULL OR kv_namespace_id = '')`,
+WHERE worker_id = $2 AND (kv_namespace_id IS NULL OR kv_namespace_id = '')`,
 				legacyKVNamespaceID(appID), appID); err != nil {
 				return err
 			}
@@ -437,7 +488,7 @@ END $$;`); err != nil {
 		return err
 	}
 	if hasAppID {
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE runtime_kv DROP COLUMN app_id`); err != nil {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE runtime_kv DROP COLUMN worker_id`); err != nil {
 			return err
 		}
 	}
@@ -445,7 +496,7 @@ END $$;`); err != nil {
 }
 
 func (p *Postgres) migrateRuntimeTokens(ctx context.Context) error {
-	rows, err := p.db.QueryContext(ctx, `SELECT id FROM apps WHERE runtime_token IS NULL OR runtime_token = ''`)
+	rows, err := p.db.QueryContext(ctx, `SELECT id FROM workers WHERE runtime_token IS NULL OR runtime_token = ''`)
 	if err != nil {
 		return err
 	}
@@ -466,7 +517,7 @@ func (p *Postgres) migrateRuntimeTokens(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if _, err := p.db.ExecContext(ctx, `UPDATE apps SET runtime_token = $1 WHERE id = $2`, token, id); err != nil {
+		if _, err := p.db.ExecContext(ctx, `UPDATE workers SET runtime_token = $1 WHERE id = $2`, token, id); err != nil {
 			return err
 		}
 	}
@@ -1191,7 +1242,7 @@ FROM oauth_tokens WHERE `+where, value).
 }
 
 func (p *Postgres) CreateApp(app nanoflare.App) error {
-	_, err := p.db.Exec(`INSERT INTO apps (id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+	_, err := p.db.Exec(`INSERT INTO workers (id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.ExternalID, app.OAuthClientID, app.CreatedBy, app.RuntimeToken, app.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrAppExists
@@ -1201,7 +1252,7 @@ func (p *Postgres) CreateApp(app nanoflare.App) error {
 
 func (p *Postgres) CountAppsByOrg(orgID string) (int, error) {
 	var count int
-	err := p.db.QueryRow(`SELECT count(*) FROM apps WHERE org_id = $1`, orgID).Scan(&count)
+	err := p.db.QueryRow(`SELECT count(*) FROM workers WHERE org_id = $1`, orgID).Scan(&count)
 	return count, err
 }
 
@@ -1511,7 +1562,7 @@ func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 }
 
 func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
-	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM apps`
+	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM workers`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -1523,7 +1574,7 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	apps := make([]nanoflare.App, 0)
+	workers := make([]nanoflare.App, 0)
 	for rows.Next() {
 		var app nanoflare.App
 		var auth []byte
@@ -1533,15 +1584,15 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 		if err := json.Unmarshal(auth, &app.Auth); err != nil {
 			return nil, err
 		}
-		apps = append(apps, app)
+		workers = append(workers, app)
 	}
-	return apps, rows.Err()
+	return workers, rows.Err()
 }
 
 func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
 	var app nanoflare.App
 	var auth []byte
-	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM apps WHERE id = $1`, appID).
+	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM workers WHERE id = $1`, appID).
 		Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.App{}, nanoflare.ErrAppNotFound
@@ -1556,7 +1607,7 @@ func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
 }
 
 func (p *Postgres) UpdateApp(app nanoflare.App) error {
-	result, err := p.db.Exec(`UPDATE apps SET name = $2, hostname = $3, auth = $4 WHERE id = $1`,
+	result, err := p.db.Exec(`UPDATE workers SET name = $2, hostname = $3, auth = $4 WHERE id = $1`,
 		app.ID, app.Name, app.Hostname, mustJSON(app.Auth))
 	if isUniqueViolation(err) {
 		return nanoflare.ErrAppExists
@@ -1580,10 +1631,10 @@ func (p *Postgres) DeleteApp(appID string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM deployments WHERE app_id = $1`, appID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM deployments WHERE worker_id = $1`, appID); err != nil {
 		return err
 	}
-	result, err := tx.Exec(`DELETE FROM apps WHERE id = $1`, appID)
+	result, err := tx.Exec(`DELETE FROM workers WHERE id = $1`, appID)
 	if err != nil {
 		return err
 	}
@@ -1601,7 +1652,7 @@ func (p *Postgres) ListSecrets(appID string) ([]nanoflare.SecretRecord, error) {
 	if _, err := p.getApp(appID); err != nil {
 		return nil, err
 	}
-	rows, err := p.db.Query(`SELECT name, nonce, ciphertext, created_at, updated_at FROM app_secrets WHERE app_id = $1 ORDER BY name`, appID)
+	rows, err := p.db.Query(`SELECT name, nonce, ciphertext, created_at, updated_at FROM worker_secrets WHERE worker_id = $1 ORDER BY name`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -1619,9 +1670,9 @@ func (p *Postgres) ListSecrets(appID string) ([]nanoflare.SecretRecord, error) {
 
 func (p *Postgres) PutSecret(appID string, secret nanoflare.SecretRecord) error {
 	_, err := p.db.Exec(`
-INSERT INTO app_secrets (app_id, name, nonce, ciphertext, created_at, updated_at)
+INSERT INTO worker_secrets (worker_id, name, nonce, ciphertext, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (app_id, name)
+ON CONFLICT (worker_id, name)
 DO UPDATE SET nonce = EXCLUDED.nonce, ciphertext = EXCLUDED.ciphertext, updated_at = EXCLUDED.updated_at`,
 		appID, secret.Name, secret.Nonce, secret.Ciphertext, secret.CreatedAt, secret.UpdatedAt)
 	if isForeignKeyViolation(err) {
@@ -1631,7 +1682,7 @@ DO UPDATE SET nonce = EXCLUDED.nonce, ciphertext = EXCLUDED.ciphertext, updated_
 }
 
 func (p *Postgres) DeleteSecret(appID, name string) error {
-	result, err := p.db.Exec(`DELETE FROM app_secrets WHERE app_id = $1 AND name = $2`, appID, name)
+	result, err := p.db.Exec(`DELETE FROM worker_secrets WHERE worker_id = $1 AND name = $2`, appID, name)
 	if err != nil {
 		return err
 	}
@@ -1735,14 +1786,14 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE app_id = $1 AND active`, deployment.AppID)
+	result, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE worker_id = $1 AND active`, deployment.AppID)
 	if err != nil {
 		return err
 	}
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, app_id, commit_hash, commit_message, created_by, files, assets, entrypoint, format, compatibility_date, triggers, vars, kv_namespaces, db, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
+	(id, worker_id, commit_hash, commit_message, created_by, files, assets, entrypoint, format, compatibility_date, triggers, vars, kv_namespaces, db, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, true, 100)`,
 		deployment.ID, deployment.AppID, deployment.CommitHash, deployment.CommitMessage, deployment.CreatedBy, files, assets, deployment.Entrypoint, deployment.Format,
 		deployment.CompatibilityDate, mustJSON(deployment.Triggers), mustJSON(deployment.Vars), mustJSON(deployment.KVNamespaces), mustJSON(deployment.Databases), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
@@ -1768,14 +1819,14 @@ func (p *Postgres) SetActiveTraffic(appID string, traffic []nanoflare.Deployment
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE app_id = $1 AND active`, appID); err != nil {
+	if _, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE worker_id = $1 AND active`, appID); err != nil {
 		return err
 	}
 	if len(traffic) == 0 {
 		return tx.Commit()
 	}
 	for _, item := range traffic {
-		result, err := tx.Exec(`UPDATE deployments SET active = true, traffic_percent = $3 WHERE app_id = $1 AND id = $2`, appID, item.ID, item.TrafficPercent)
+		result, err := tx.Exec(`UPDATE deployments SET active = true, traffic_percent = $3 WHERE worker_id = $1 AND id = $2`, appID, item.ID, item.TrafficPercent)
 		if err != nil {
 			return err
 		}
@@ -1798,9 +1849,9 @@ func (p *Postgres) DeleteDeployment(id string) error {
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
-	d.id, d.app_id, d.commit_hash, d.commit_message, d.created_by, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
+	d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
 FROM deployments d
-JOIN apps a ON a.id = d.app_id
+JOIN workers a ON a.id = d.worker_id
 WHERE d.traffic_percent > 0
 ORDER BY a.id, d.created_at DESC`)
 	if err != nil {
@@ -1856,9 +1907,9 @@ ORDER BY a.id, d.created_at DESC`)
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
 	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
-		d.id, d.app_id, d.commit_hash, d.commit_message, d.created_by, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
+		d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
 	FROM deployments d
-	JOIN apps a ON a.id = d.app_id
+	JOIN workers a ON a.id = d.worker_id
 	ORDER BY d.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -1910,7 +1961,7 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 
 func (p *Postgres) AppIDForCapability(capability string) (string, error) {
 	var appID string
-	err := p.db.QueryRow(`SELECT id FROM apps WHERE runtime_token = $1`, capability).Scan(&appID)
+	err := p.db.QueryRow(`SELECT id FROM workers WHERE runtime_token = $1`, capability).Scan(&appID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nanoflare.ErrInvalidCapability
 	}
