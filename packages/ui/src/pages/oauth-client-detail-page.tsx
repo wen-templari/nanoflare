@@ -10,7 +10,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Panel } from "../components/shared/primitives";
 
-const oauthScopes = ["apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"];
+const oauthScopes = ["workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"];
 const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] };
 
 export function OAuthClientDetailPage() {

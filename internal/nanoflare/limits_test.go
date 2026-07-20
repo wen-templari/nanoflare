@@ -64,7 +64,7 @@ func TestOAuthClientOrgLimits(t *testing.T) {
 	input := CreateOAuthClientInput{
 		Name:         "External App",
 		RedirectURIs: []string{"https://external.example.com/callback"},
-		Scopes:       []string{"apps:write"},
+		Scopes:       []string{"workers:write"},
 	}
 	input.OwnerOrgID = "org-default"
 	if _, err := oauth.CreateClient(input); !errors.Is(err, ErrUsageLimitExceeded) {

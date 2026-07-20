@@ -29,7 +29,7 @@ func TestUpdateAppPersistsProtectedRoutes(t *testing.T) {
 	app := createApp(t, server, "Secure", "secure.example.com")
 
 	body := bytes.NewBufferString(`{"auth":{"protected_routes":["/admin/*","/reports"]}}`)
-	request := httptest.NewRequest(http.MethodPatch, "/v1/apps/"+app.ID, body)
+	request := httptest.NewRequest(http.MethodPatch, "/v1/workers/"+app.ID, body)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -453,7 +453,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	}
 
 	createBody := bytes.NewBufferString(`{"name":"Control App","hostname":"control.example.com"}`)
-	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
 	createRecorder := httptest.NewRecorder()
@@ -463,7 +463,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	}
 
 	createBody = bytes.NewBufferString(`{"name":"Control App","hostname":"control.example.com"}`)
-	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
 	createRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
@@ -484,7 +484,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 		`{"name":"Generated App","hostname":"generated.example.com"}`,
 		`{"name":"Third App","hostname":"third.example.com"}`,
 	} {
-		createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(body))
+		createRequest = httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(body))
 		createRequest.Header.Set("Content-Type", "application/json")
 		createRequest.Header.Set("Authorization", "Bearer "+session.Token)
 		createRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
@@ -496,7 +496,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	}
 
 	createBody = bytes.NewBufferString(`{"name":"Fourth App","hostname":"fourth.example.com"}`)
-	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
 	createRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
@@ -506,7 +506,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 		t.Fatalf("default org limit status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
 	}
 
-	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+session.Token)
 	listRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
 	listRecorder := httptest.NewRecorder()
@@ -572,7 +572,7 @@ func TestOpenSignupAndCreateOrganization(t *testing.T) {
 		t.Fatalf("second owned org status = %d body = %q", secondCreateRecorder.Code, secondCreateRecorder.Body.String())
 	}
 
-	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+first.Token)
 	listRequest.Header.Set("X-Nanoflare-Org-ID", org.ID)
 	listRecorder := httptest.NewRecorder()
@@ -636,7 +636,7 @@ func TestInvitesGrantScopedOrgAccess(t *testing.T) {
 	}
 
 	createBody := bytes.NewBufferString(`{"name":"Viewer App","hostname":"viewer.example.com"}`)
-	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+viewer.Token)
 	createRequest.Header.Set("X-Nanoflare-Org-ID", owner.ActiveOrgID)
@@ -646,7 +646,7 @@ func TestInvitesGrantScopedOrgAccess(t *testing.T) {
 		t.Fatalf("viewer create status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
 	}
 
-	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+viewer.Token)
 	listRequest.Header.Set("X-Nanoflare-Org-ID", owner.ActiveOrgID)
 	listRecorder := httptest.NewRecorder()
@@ -706,12 +706,12 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-resources")
-	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"apps:read", "apps:write", "kv:write"})
+	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"workers:read", "workers:write", "kv:write"})
 	assertOAuthClientInfo(t, server, client.ClientID)
-	token := authorizeOAuthClient(t, server, session.Token, paidOrgID, client, []string{"apps:write", "kv:write"})
+	token := authorizeOAuthClient(t, server, session.Token, paidOrgID, client, []string{"workers:write", "kv:write"})
 
 	createBody := bytes.NewBufferString(`{"name":"External App","hostname":"external.example.com","external_id":"ext-app-1"}`)
-	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	createRequest.Header.Set("X-Nanoflare-Org-ID", "ignored-org")
@@ -728,7 +728,7 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 		t.Fatalf("oauth app metadata = %#v, session org = %q client = %q", app, paidOrgID, client.ClientID)
 	}
 
-	readRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	readRequest := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	readRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	readRecorder := httptest.NewRecorder()
 	server.ServeHTTP(readRecorder, readRequest)
@@ -784,7 +784,7 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	}
 
 	createBody = bytes.NewBufferString(`{"name":"Revoked App","hostname":"revoked.example.com"}`)
-	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+refreshed.AccessToken)
 	createRecorder = httptest.NewRecorder()
@@ -802,7 +802,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
-	defaultClientBody := bytes.NewBufferString(`{"name":"Default External Platform","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["apps:write"]}`)
+	defaultClientBody := bytes.NewBufferString(`{"name":"Default External Platform","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["workers:write"]}`)
 	defaultClientRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients", defaultClientBody)
 	defaultClientRequest.Header.Set("Content-Type", "application/json")
 	defaultClientRequest.Header.Set("Authorization", "Bearer "+session.Token)
@@ -813,7 +813,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 		t.Fatalf("default org oauth client status = %d body = %q", defaultClientRecorder.Code, defaultClientRecorder.Body.String())
 	}
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-owner")
-	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"apps:write", "kv:write"})
+	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"workers:write", "kv:write"})
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/clients", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+session.Token)
@@ -839,7 +839,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	crossOrgToken := authorizeOAuthClient(t, server, session.Token, otherOrg.ID, client, []string{"apps:write"})
+	crossOrgToken := authorizeOAuthClient(t, server, session.Token, otherOrg.ID, client, []string{"workers:write"})
 	if crossOrgToken.AccessToken == "" {
 		t.Fatalf("cross org token = %#v", crossOrgToken)
 	}
@@ -860,7 +860,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 		t.Fatalf("client connections = %#v", clientConnections)
 	}
 
-	updateBody := bytes.NewBufferString(`{"name":"Wrong Org","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["apps:write"]}`)
+	updateBody := bytes.NewBufferString(`{"name":"Wrong Org","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["workers:write"]}`)
 	updateRequest := httptest.NewRequest(http.MethodPatch, "/v1/oauth/clients/"+client.ClientID, updateBody)
 	updateRequest.Header.Set("Content-Type", "application/json")
 	updateRequest.Header.Set("Authorization", "Bearer "+session.Token)
@@ -871,7 +871,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 		t.Fatalf("cross-org update status = %d body = %q", updateRecorder.Code, updateRecorder.Body.String())
 	}
 
-	updateBody = bytes.NewBufferString(`{"name":"Updated External Platform","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["apps:write"]}`)
+	updateBody = bytes.NewBufferString(`{"name":"Updated External Platform","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["workers:write"]}`)
 	updateRequest = httptest.NewRequest(http.MethodPatch, "/v1/oauth/clients/"+client.ClientID, updateBody)
 	updateRequest.Header.Set("Content-Type", "application/json")
 	updateRequest.Header.Set("Authorization", "Bearer "+session.Token)
@@ -885,7 +885,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 	if err := json.Unmarshal(updateRecorder.Body.Bytes(), &updated); err != nil {
 		t.Fatal(err)
 	}
-	if updated.Name != "Updated External Platform" || len(updated.Scopes) != 1 || updated.Scopes[0] != "apps:write" {
+	if updated.Name != "Updated External Platform" || len(updated.Scopes) != 1 || updated.Scopes[0] != "workers:write" {
 		t.Fatalf("updated client = %#v", updated)
 	}
 }
@@ -899,8 +899,8 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-secret")
-	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"apps:write"})
-	token := authorizeOAuthClient(t, server, session.Token, paidOrgID, client, []string{"apps:write"})
+	client := createOAuthClient(t, server, session.Token, paidOrgID, []string{"workers:write"})
+	token := authorizeOAuthClient(t, server, session.Token, paidOrgID, client, []string{"workers:write"})
 
 	rotateRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/clients/"+client.ClientID+"/secret", nil)
 	rotateRequest.Header.Set("Authorization", "Bearer "+session.Token)
@@ -947,7 +947,7 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 	}
 
 	createBody := bytes.NewBufferString(`{"name":"Disabled Client App","hostname":"disabled-client.example.com"}`)
-	createRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	createRecorder := httptest.NewRecorder()
@@ -956,7 +956,7 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 		t.Fatalf("disabled client token status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
 	}
 
-	assertOAuthInfoRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?client_id="+url.QueryEscape(client.ClientID)+"&redirect_uri="+url.QueryEscape("https://external.example.com/oauth/callback")+"&scope=apps:write", nil)
+	assertOAuthInfoRequest := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?client_id="+url.QueryEscape(client.ClientID)+"&redirect_uri="+url.QueryEscape("https://external.example.com/oauth/callback")+"&scope=workers:write", nil)
 	assertOAuthInfoRequest.Header.Set("Accept", "application/json")
 	assertOAuthInfoRecorder := httptest.NewRecorder()
 	server.ServeHTTP(assertOAuthInfoRecorder, assertOAuthInfoRequest)
@@ -986,9 +986,9 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 		t.Fatalf("restored client should not revive revoked token: status = %d body = %q", createRecorder.Code, createRecorder.Body.String())
 	}
 
-	restoredToken := authorizeOAuthClient(t, server, session.Token, paidOrgID, oauthClientFixture{ClientID: client.ClientID, ClientSecret: rotated.ClientSecret}, []string{"apps:write"})
+	restoredToken := authorizeOAuthClient(t, server, session.Token, paidOrgID, oauthClientFixture{ClientID: client.ClientID, ClientSecret: rotated.ClientSecret}, []string{"workers:write"})
 	createBody = bytes.NewBufferString(`{"name":"Restored Client App","hostname":"restored-client.example.com"}`)
-	createRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", createBody)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+restoredToken.AccessToken)
 	createRecorder = httptest.NewRecorder()
@@ -1007,7 +1007,7 @@ func TestPersonalAccessTokenAPIsAndAuth(t *testing.T) {
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-pat")
 
-	createBody := bytes.NewBufferString(`{"name":"Deploy automation","scope_type":"org","org_id":"` + paidOrgID + `","scopes":["apps:read","apps:write"]}`)
+	createBody := bytes.NewBufferString(`{"name":"Deploy automation","scope_type":"org","org_id":"` + paidOrgID + `","scopes":["workers:read","workers:write"]}`)
 	createRequest := httptest.NewRequest(http.MethodPost, "/v1/pats", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
@@ -1036,7 +1036,7 @@ func TestPersonalAccessTokenAPIsAndAuth(t *testing.T) {
 	}
 
 	appBody := bytes.NewBufferString(`{"name":"PAT App","hostname":"pat.example.com"}`)
-	appRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", appBody)
+	appRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", appBody)
 	appRequest.Header.Set("Content-Type", "application/json")
 	appRequest.Header.Set("Authorization", "Bearer "+created.Token)
 	appRequest.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
@@ -1069,7 +1069,7 @@ func TestPersonalAccessTokenAPIsAndAuth(t *testing.T) {
 		t.Fatalf("delete pat status = %d body = %q", deleteRecorder.Code, deleteRecorder.Body.String())
 	}
 
-	appRequest = httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(`{"name":"Revoked","hostname":"revoked.example.com"}`))
+	appRequest = httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(`{"name":"Revoked","hostname":"revoked.example.com"}`))
 	appRequest.Header.Set("Content-Type", "application/json")
 	appRequest.Header.Set("Authorization", "Bearer "+created.Token)
 	appRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
@@ -1089,7 +1089,7 @@ func TestUserScopedPersonalAccessTokenUsesOrgHeader(t *testing.T) {
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-user-pat")
 
-	createBody := bytes.NewBufferString(`{"name":"Multi org","scope_type":"user","scopes":["apps:read"]}`)
+	createBody := bytes.NewBufferString(`{"name":"Multi org","scope_type":"user","scopes":["workers:read"]}`)
 	createRequest := httptest.NewRequest(http.MethodPost, "/v1/pats", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+session.Token)
@@ -1103,7 +1103,7 @@ func TestUserScopedPersonalAccessTokenUsesOrgHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	listRequest := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+created.Token)
 	listRecorder := httptest.NewRecorder()
 	server.ServeHTTP(listRecorder, listRequest)
@@ -1111,7 +1111,7 @@ func TestUserScopedPersonalAccessTokenUsesOrgHeader(t *testing.T) {
 		t.Fatalf("missing org pat status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
 	}
 
-	listRequest = httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	listRequest = httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+created.Token)
 	listRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
 	listRecorder = httptest.NewRecorder()
@@ -1120,7 +1120,7 @@ func TestUserScopedPersonalAccessTokenUsesOrgHeader(t *testing.T) {
 		t.Fatalf("list with user pat status = %d body = %q", listRecorder.Code, listRecorder.Body.String())
 	}
 
-	createAppRequest := httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(`{"name":"No Write","hostname":"no-write.example.com"}`))
+	createAppRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(`{"name":"No Write","hostname":"no-write.example.com"}`))
 	createAppRequest.Header.Set("Content-Type", "application/json")
 	createAppRequest.Header.Set("Authorization", "Bearer "+created.Token)
 	createAppRequest.Header.Set("X-Nanoflare-Org-ID", paidOrgID)
@@ -1207,7 +1207,7 @@ func assertOAuthClientInfo(t *testing.T, server http.Handler, clientID string) {
 	t.Helper()
 	path := "/v1/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
 		"&redirect_uri=" + url.QueryEscape("https://external.example.com/oauth/callback") +
-		"&scope=" + url.QueryEscape("apps:write kv:write")
+		"&scope=" + url.QueryEscape("workers:write kv:write")
 	request := httptest.NewRequest(http.MethodGet, path, nil)
 	request.Header.Set("Accept", "application/json")
 	recorder := httptest.NewRecorder()

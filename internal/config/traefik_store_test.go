@@ -20,7 +20,7 @@ func TestTraefikStorePublishesGeneratedConfiguration(t *testing.T) {
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
 		`- web`,
 		`- websecure`,
-		`prefix: "/internal/http/apps/hello-app"`,
+		`prefix: "/internal/http/workers/hello-app"`,
 		`url: "http://nanoflared"`,
 	} {
 		if !strings.Contains(config, expected) {

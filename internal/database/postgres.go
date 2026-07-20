@@ -270,7 +270,67 @@ ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS scope_type text NOT 
 ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS scopes jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS last_used_at timestamptz;
 UPDATE user_organizations SET role = 'owner' WHERE role = '';
-UPDATE user_organizations SET scopes = '["apps:read","apps:write","deployments:write","secrets:write","kv:read","kv:write","objects:read","objects:write","orgs:read","members:read","members:write","orgs:write","members:owner"]'::jsonb WHERE scopes = '[]'::jsonb;
+UPDATE user_organizations SET scopes = '["workers:read","workers:write","deployments:write","secrets:write","kv:read","kv:write","objects:read","objects:write","orgs:read","members:read","members:write","orgs:write","members:owner"]'::jsonb WHERE scopes = '[]'::jsonb;
+UPDATE user_organizations
+SET scopes = (
+	SELECT jsonb_agg(DISTINCT CASE scope
+		WHEN 'apps:read' THEN 'workers:read'
+		WHEN 'apps:write' THEN 'workers:write'
+		ELSE scope
+	END)
+	FROM jsonb_array_elements_text(scopes) AS scope
+)
+WHERE scopes ? 'apps:read' OR scopes ? 'apps:write';
+UPDATE personal_access_tokens
+SET scopes = (
+	SELECT jsonb_agg(DISTINCT CASE scope
+		WHEN 'apps:read' THEN 'workers:read'
+		WHEN 'apps:write' THEN 'workers:write'
+		ELSE scope
+	END)
+	FROM jsonb_array_elements_text(scopes) AS scope
+)
+WHERE scopes ? 'apps:read' OR scopes ? 'apps:write';
+UPDATE organization_invites
+SET scopes = (
+	SELECT jsonb_agg(DISTINCT CASE scope
+		WHEN 'apps:read' THEN 'workers:read'
+		WHEN 'apps:write' THEN 'workers:write'
+		ELSE scope
+	END)
+	FROM jsonb_array_elements_text(scopes) AS scope
+)
+WHERE scopes ? 'apps:read' OR scopes ? 'apps:write';
+UPDATE oauth_clients
+SET scopes = (
+	SELECT jsonb_agg(DISTINCT CASE scope
+		WHEN 'apps:read' THEN 'workers:read'
+		WHEN 'apps:write' THEN 'workers:write'
+		ELSE scope
+	END)
+	FROM jsonb_array_elements_text(scopes) AS scope
+)
+WHERE scopes ? 'apps:read' OR scopes ? 'apps:write';
+UPDATE oauth_authorization_codes
+SET scopes = (
+	SELECT jsonb_agg(DISTINCT CASE scope
+		WHEN 'apps:read' THEN 'workers:read'
+		WHEN 'apps:write' THEN 'workers:write'
+		ELSE scope
+	END)
+	FROM jsonb_array_elements_text(scopes) AS scope
+)
+WHERE scopes ? 'apps:read' OR scopes ? 'apps:write';
+UPDATE oauth_tokens
+SET scopes = (
+	SELECT jsonb_agg(DISTINCT CASE scope
+		WHEN 'apps:read' THEN 'workers:read'
+		WHEN 'apps:write' THEN 'workers:write'
+		ELSE scope
+	END)
+	FROM jsonb_array_elements_text(scopes) AS scope
+)
+WHERE scopes ? 'apps:read' OR scopes ? 'apps:write';
 UPDATE user_organizations
 SET scopes = (
 	SELECT jsonb_agg(DISTINCT scope)

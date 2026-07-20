@@ -15,17 +15,17 @@ func (s *Server) registerKVRoutes() {
 	s.mux.HandleFunc("PATCH /v1/kv/namespaces/{namespaceID}", s.updateKVNamespace)
 	s.mux.HandleFunc("DELETE /v1/kv/namespaces/{namespaceID}", s.deleteKVNamespace)
 	s.mux.HandleFunc("GET /v1/kv/namespaces/{namespaceID}/metrics", s.kvNamespaceMetrics)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/namespaces/{namespaceID}", s.workerKVList)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVGet)
-	s.mux.HandleFunc("PUT /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVPut)
-	s.mux.HandleFunc("DELETE /v1/apps/{appID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVDelete)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/kv/namespaces/{namespaceID}", s.workerKVList)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVGet)
+	s.mux.HandleFunc("PUT /v1/workers/{workerID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVPut)
+	s.mux.HandleFunc("DELETE /v1/workers/{workerID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVDelete)
 }
 
 func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "kv:read") {
 		return
 	}
-	keys, err := s.service.WorkerKVListForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"))
+	keys, err := s.service.WorkerKVListForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -46,7 +46,7 @@ func (s *Server) workerKVGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	value, ok, err := s.service.WorkerKVGetForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"), key)
+	value, ok, err := s.service.WorkerKVGetForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("namespaceID"), key)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -79,7 +79,7 @@ func (s *Server) workerKVPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, errors.New("KV value exceeds 25 MiB limit"))
 		return
 	}
-	if err := s.service.WorkerKVPutForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"), key, value); err != nil {
+	if err := s.service.WorkerKVPutForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("namespaceID"), key, value); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -95,7 +95,7 @@ func (s *Server) workerKVDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.WorkerKVDeleteForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("namespaceID"), key); err != nil {
+	if err := s.service.WorkerKVDeleteForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("namespaceID"), key); err != nil {
 		writeWorkerError(w, err)
 		return
 	}

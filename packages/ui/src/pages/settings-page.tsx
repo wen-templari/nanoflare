@@ -11,8 +11,8 @@ import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
 import { PageHeading, Panel } from "../components/shared/primitives"
 
-const oauthScopes = ["apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"]
-const controlScopes = ["apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner"]
+const oauthScopes = ["workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"]
+const controlScopes = ["workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner"]
 const roleOptions = ["viewer", "member", "admin", "owner"]
 const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] }
 const emptyPATForm = { name: "", scopeType: "org", scopes: [] as string[], expiresIn: "never" }

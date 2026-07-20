@@ -8,7 +8,7 @@ const nanoflareUIURL = (process.env.NANOFLARE_UI_URL || "http://127.0.0.1:5173")
 const port = Number(process.env.EXTERNAL_APP_PORT || 8787);
 const externalOrigin = (process.env.EXTERNAL_APP_ORIGIN || `http://127.0.0.1:${port}`).replace(/\/+$/, "");
 const redirectURI = `${externalOrigin}/oauth/callback`;
-const scopes = (process.env.EXTERNAL_APP_SCOPES || "apps:write kv:write")
+const scopes = (process.env.EXTERNAL_APP_SCOPES || "workers:write kv:write")
   .split(/[,\s]+/)
   .map((scope) => scope.trim())
   .filter(Boolean);
@@ -106,7 +106,7 @@ async function provisionWorker(form) {
   const suffix = Date.now();
   const hostname = `external-${suffix}.example.com`;
   const externalID = `external-worker-${suffix}`;
-  const response = await nf("POST", "/v1/apps", {
+  const response = await nf("POST", "/v1/workers", {
     name,
     hostname,
     external_id: externalID,

@@ -26,7 +26,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       try {
         if (!auth.activeOrgID) return;
         const [apps, kvNamespaces, dbs, buckets] = await Promise.all([
-          fetchJSON<Worker[] | null>("/v1/apps"),
+          fetchJSON<Worker[] | null>("/v1/workers"),
           fetchJSON<KVNamespace[] | null>("/v1/kv/namespaces"),
           fetchJSON<Database[] | null>("/v1/db"),
           fetchJSON<ObjectStorageBucket[] | null>("/v1/object-storage-buckets"),
@@ -35,8 +35,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setApiConnected(true);
         const nextWorkers = await Promise.all((apps ?? []).map(async (app) => {
           const [detail, traffic] = await Promise.all([
-            fetchJSON<WorkerDetailData>(`/v1/apps/${app.id}`).catch(() => undefined),
-            fetchJSON<WorkerTraffic>(`/v1/apps/${app.id}/traffic`).catch(() => undefined),
+            fetchJSON<WorkerDetailData>(`/v1/workers/${app.id}`).catch(() => undefined),
+            fetchJSON<WorkerTraffic>(`/v1/workers/${app.id}/traffic`).catch(() => undefined),
           ]);
 
           return {

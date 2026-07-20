@@ -184,12 +184,14 @@ cd ./hello-worker
 `nanoflare init` writes a starter `worker.js` and a `nanoflare.json` project file.
 Pass `--hostname` for an explicit DNS hostname, or omit it to let `nanoflared`
 generate one from the worker name and configured base hostname. `nanoflare
-create` registers the worker and saves its generated app ID and final hostname
+create` registers the worker and saves its generated worker ID and final hostname
 locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 `--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
 `http://127.0.0.1:8080`. CLI authentication is stored at
 `~/.config/nanoflare/auth.json` by default; set `NANOFLARE_AUTH_STORE` to an
 alternate file path when you need a different auth store location.
+Use `nanoflare deployment output` from a registered project to print captured
+worker output, or pass a worker ID with `nanoflare deployment output <worker-id>`.
 
 The browser console can also use an external OIDC provider for login. Configure
 the console-specific settings on `nanoflared`:
@@ -226,7 +228,7 @@ curl -X POST http://127.0.0.1:8080/v1/oauth/clients \
   -d '{
     "name": "External Platform",
     "redirect_uris": ["https://external.example.com/oauth/callback"],
-    "scopes": ["apps:read", "apps:write", "deployments:write", "kv:write"]
+    "scopes": ["workers:read", "workers:write", "deployments:write", "kv:write"]
   }'
 ```
 
@@ -243,7 +245,7 @@ curl -X POST http://127.0.0.1:8080/v1/oauth/authorize \
   -d '{
     "client_id": "CLIENT_ID",
     "redirect_uri": "https://external.example.com/oauth/callback",
-    "scopes": ["apps:write", "deployments:write"],
+    "scopes": ["workers:write", "deployments:write"],
     "org_id": "NANOFLARE_ORG_ID",
     "state": "opaque-state"
   }'
@@ -267,7 +269,7 @@ Use the returned access token with existing `/v1` resource APIs. Nanoflare
 derives the organization from the OAuth token and enforces the granted scopes:
 
 ```sh
-curl -X POST http://127.0.0.1:8080/v1/apps \
+curl -X POST http://127.0.0.1:8080/v1/workers \
   -H "Authorization: Bearer $NANOFLARE_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Managed Worker","hostname":"managed.example.com","external_id":"external-worker-123"}'
@@ -476,10 +478,10 @@ proxy.
 Worker drill-down data is served by `nanoflared`:
 
 ```text
-GET /v1/apps/{appID}
-GET /v1/apps/{appID}/files
-GET /v1/apps/{appID}/output
-GET /v1/apps/{appID}/traffic
+GET /v1/workers/{workerID}
+GET /v1/workers/{workerID}/files
+GET /v1/workers/{workerID}/output
+GET /v1/workers/{workerID}/traffic
 ```
 
 The file viewer exposes the active deployed bundle, output contains the captured
@@ -501,5 +503,5 @@ private ingress and restricted egress. Running the runner on the same host is an
 integration step, not a hardened sandbox.
 
 Runtime APIs use stable app-scoped capability tokens injected into private
-`workerd` configuration. An application never chooses its own app ID when
+`workerd` configuration. An application never chooses its own worker ID when
 reading or writing KV data.

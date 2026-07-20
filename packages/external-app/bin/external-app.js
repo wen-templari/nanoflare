@@ -7,7 +7,7 @@ const organizationName = process.env.NANOFLARE_ORG_NAME || "External App Test";
 const redirectURI = process.env.EXTERNAL_APP_REDIRECT_URI || "https://external.example.com/oauth/callback";
 const workerHostname = process.env.EXTERNAL_WORKER_HOSTNAME || `external-${Date.now()}.example.com`;
 
-const defaultScopes = ["apps:write", "kv:write"];
+const defaultScopes = ["workers:write", "kv:write"];
 const requestedScopes = (process.env.EXTERNAL_APP_SCOPES || defaultScopes.join(" "))
   .split(/[,\s]+/)
   .map((scope) => scope.trim())
@@ -35,7 +35,7 @@ async function main() {
   console.log(`External metadata: external_id=${app.external_id} oauth_client_id=${app.oauth_client_id}`);
 
   await expectMissingReadScope(token.access_token);
-  console.log("Confirmed apps:read is required for listing apps");
+  console.log("Confirmed workers:read is required for listing workers");
 
   const refreshed = await refreshToken(client, token.refresh_token);
   console.log("Refreshed token and rotated refresh token");
@@ -74,7 +74,7 @@ async function createOAuthClient(token, orgID) {
     body: {
       name: "External Platform Smoke Test",
       redirect_uris: [redirectURI],
-      scopes: ["apps:read", "apps:write", "deployments:write", "kv:read", "kv:write", "objects:read", "objects:write", "secrets:write"],
+      scopes: ["workers:read", "workers:write", "deployments:write", "kv:read", "kv:write", "objects:read", "objects:write", "secrets:write"],
     },
     wantStatus: 201,
   });
@@ -111,7 +111,7 @@ async function exchangeAuthorizationCode(client, code) {
 }
 
 async function createManagedWorker(accessToken) {
-  const response = await request("POST", "/v1/apps", {
+  const response = await request("POST", "/v1/workers", {
     token: accessToken,
     body: {
       name: "External Managed Worker",
@@ -124,9 +124,9 @@ async function createManagedWorker(accessToken) {
 }
 
 async function expectMissingReadScope(accessToken) {
-  await request("GET", "/v1/apps", {
+  await request("GET", "/v1/workers", {
     token: accessToken,
-    wantStatus: requestedScopes.includes("apps:read") ? 200 : 403,
+    wantStatus: requestedScopes.includes("workers:read") ? 200 : 403,
   });
 }
 
@@ -151,7 +151,7 @@ async function revokeToken(token) {
 }
 
 async function expectRevokedToken(accessToken) {
-  await request("POST", "/v1/apps", {
+  await request("POST", "/v1/workers", {
     token: accessToken,
     body: {
       name: "Should Not Be Created",

@@ -84,7 +84,7 @@ function ObjectStorageBucketDetailContent({
     };
   }, [apiConnected, bucket.id]);
 
-  const basePath = accessorWorkerID ? `/v1/apps/${accessorWorkerID}/object-storage-buckets/${encodeURIComponent(bucket.id)}` : "";
+  const basePath = accessorWorkerID ? `/v1/workers/${accessorWorkerID}/object-storage-buckets/${encodeURIComponent(bucket.id)}` : "";
   const filteredObjects = objects.filter((item) => item.key.toLowerCase().includes(deferredSearch.trim().toLowerCase()));
 
   useEffect(() => {

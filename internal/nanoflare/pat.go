@@ -188,7 +188,7 @@ func (s *ControlAuthService) SessionForPersonalAccessToken(tokenValue string) (A
 }
 
 func AllowedControlScopes() []string {
-	return []string{"apps:read", "apps:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner"}
+	return []string{"workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner"}
 }
 
 func normalizePATScopes(values []string) []string {

@@ -67,7 +67,7 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
 
 	var detail nanoflare.WorkerDetail
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment == nil || detail.Deployment.Entrypoint != "worker.js" || detail.Deployment.BundleSize != int64(len(bundle)) {
 		t.Fatalf("unexpected worker detail: %#v", detail)
 	}
@@ -76,19 +76,19 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	}
 
 	var files []nanoflare.WorkerFile
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 1 || files[0].Name != "worker.js" || files[0].Content != bundle {
 		t.Fatalf("unexpected worker files: %#v", files)
 	}
 
 	var output []nanoflare.WorkerOutputLine
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/output", http.StatusOK, &output)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/output", http.StatusOK, &output)
 	if len(output) != 1 || output[0].Message != "runtime ready" {
 		t.Fatalf("unexpected worker output: %#v", output)
 	}
 
 	var traffic nanoflare.WorkerTraffic
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/traffic", http.StatusOK, &traffic)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/traffic", http.StatusOK, &traffic)
 	if !traffic.Available || traffic.RequestsPerSecond != 4.25 || len(traffic.Traffic) != 2 {
 		t.Fatalf("unexpected worker traffic: %#v", traffic)
 	}
@@ -97,7 +97,7 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	}
 
 	var apps []nanoflare.App
-	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &apps)
+	requestJSON(t, server, http.MethodGet, "/v1/workers", http.StatusOK, &apps)
 	if len(apps) != 1 || apps[0].ID != app.ID {
 		t.Fatalf("unexpected app list: %#v", apps)
 	}
@@ -119,16 +119,16 @@ func TestSecretAPIsReturnMetadataOnly(t *testing.T) {
 	server := NewServer(service)
 	app := createApp(t, server, "Console App", "console.example.com")
 
-	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/secrets/DB_URL", []byte(`{"value":"postgres://secret"}`), http.StatusNoContent, nil)
+	requestJSONBytes(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/secrets/DB_URL", []byte(`{"value":"postgres://secret"}`), http.StatusNoContent, nil)
 
 	var secrets []nanoflare.Secret
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/secrets", http.StatusOK, &secrets)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/secrets", http.StatusOK, &secrets)
 	if len(secrets) != 1 || secrets[0].Name != "DB_URL" {
 		t.Fatalf("unexpected secrets: %#v", secrets)
 	}
 
 	var detail nanoflare.WorkerDetail
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID, http.StatusOK, &detail)
 	if len(detail.Secrets) != 1 || detail.Secrets[0].Name != "DB_URL" {
 		t.Fatalf("unexpected worker detail secrets: %#v", detail.Secrets)
 	}
@@ -150,20 +150,20 @@ func TestWorkerConsoleKV(t *testing.T) {
 	deployWithKV(t, server, appOne.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceOne.ID}})
 	deployWithKV(t, server, appTwo.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceTwo.ID}})
 
-	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNoContent)
-	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/count", []byte("42"), http.StatusNoContent)
-	if got := workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusOK); string(got) != "blue" {
+	workerKVRequest(t, server, http.MethodPut, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNoContent)
+	workerKVRequest(t, server, http.MethodPut, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/count", []byte("42"), http.StatusNoContent)
+	if got := workerKVRequest(t, server, http.MethodGet, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusOK); string(got) != "blue" {
 		t.Fatalf("got %q, want app-one value", got)
 	}
 	var keys []nanoflare.WorkerKVKey
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID, http.StatusOK, &keys)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID, http.StatusOK, &keys)
 	if len(keys) != 2 || keys[0].Key != "color" || keys[0].Size != 4 || keys[1].Key != "count" || keys[1].Size != 2 {
 		t.Fatalf("unexpected KV keys: %#v", keys)
 	}
-	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appTwo.ID+"/kv/namespaces/"+namespaceTwo.ID+"/color", nil, http.StatusNotFound)
-	workerKVRequest(t, server, http.MethodDelete, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNoContent)
-	workerKVRequest(t, server, http.MethodGet, "/v1/apps/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNotFound)
-	workerKVRequest(t, server, http.MethodPut, "/v1/apps/missing/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNotFound)
+	workerKVRequest(t, server, http.MethodGet, "/v1/workers/"+appTwo.ID+"/kv/namespaces/"+namespaceTwo.ID+"/color", nil, http.StatusNotFound)
+	workerKVRequest(t, server, http.MethodDelete, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNoContent)
+	workerKVRequest(t, server, http.MethodGet, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNotFound)
+	workerKVRequest(t, server, http.MethodPut, "/v1/workers/missing/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNotFound)
 	var metrics nanoflare.KVNamespaceMetrics
 	requestJSON(t, server, http.MethodGet, "/v1/kv/namespaces/"+namespaceOne.ID+"/metrics", http.StatusOK, &metrics)
 	if !metrics.Available || metrics.Reads != 0 || metrics.Writes != 0 {
@@ -197,7 +197,7 @@ func TestConsoleKVWriteOverOrgStorageLimitReturns402(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	workerKVRequest(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/kv/namespaces/"+namespace.ID+"/over", []byte("x"), http.StatusPaymentRequired)
+	workerKVRequest(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/kv/namespaces/"+namespace.ID+"/over", []byte("x"), http.StatusPaymentRequired)
 }
 
 func TestRuntimeKVWriteOverOrgStorageLimitReturns402(t *testing.T) {
@@ -389,7 +389,7 @@ func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
 	server := NewServer(service)
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"name":"Hello Worker"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/workers", strings.NewReader(`{"name":"Hello Worker"}`))
 	request.Header.Set("Content-Type", "application/json")
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -417,13 +417,13 @@ func TestDeleteAppRemovesWorker(t *testing.T) {
 	deploy(t, server, app.ID)
 
 	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/v1/apps/"+app.ID, nil))
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/v1/workers/"+app.ID, nil))
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("delete app status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 
-	requestJSON(t, server, http.MethodGet, "/v1/apps", http.StatusOK, &[]nanoflare.App{})
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusNotFound, &map[string]string{})
+	requestJSON(t, server, http.MethodGet, "/v1/workers", http.StatusOK, &[]nanoflare.App{})
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID, http.StatusNotFound, &map[string]string{})
 }
 
 func TestWorkerConsoleAPIsWithObjectBackedDeployment(t *testing.T) {
@@ -442,13 +442,13 @@ func TestWorkerConsoleAPIsWithObjectBackedDeployment(t *testing.T) {
 	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
 
 	var detail nanoflare.WorkerDetail
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment == nil || detail.Deployment.BundleSize != int64(len(bundle)) {
 		t.Fatalf("unexpected object-backed worker detail: %#v", detail)
 	}
 
 	var files []nanoflare.WorkerFile
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 1 || files[0].Content != bundle {
 		t.Fatalf("unexpected object-backed worker files: %#v", files)
 	}
@@ -475,16 +475,16 @@ func TestWorkerConsoleAPIsForRegisteredWorkerWithoutDeployment(t *testing.T) {
 	app := createApp(t, server, "Draft App", "draft.example.com")
 
 	var detail nanoflare.WorkerDetail
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment != nil {
 		t.Fatalf("unexpected deployment: %#v", detail.Deployment)
 	}
 	var files []nanoflare.WorkerFile
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/files", http.StatusOK, &files)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/files", http.StatusOK, &files)
 	if len(files) != 0 {
 		t.Fatalf("unexpected files: %#v", files)
 	}
-	requestJSON(t, server, http.MethodGet, "/v1/apps/missing", http.StatusNotFound, &map[string]string{})
+	requestJSON(t, server, http.MethodGet, "/v1/workers/missing", http.StatusNotFound, &map[string]string{})
 }
 
 func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
@@ -501,7 +501,7 @@ func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
 	second := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "second.js", Content: "second"}}, "")
 
 	var deployments []nanoflare.ConsoleDeployment
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID+"/deployments", http.StatusOK, &deployments)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/deployments", http.StatusOK, &deployments)
 	if len(deployments) != 2 {
 		t.Fatalf("deployments = %#v, want two records", deployments)
 	}
@@ -512,7 +512,7 @@ func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
 	if states[first.ID] != "inactive" || states[second.ID] != "active" {
 		t.Fatalf("deployment states = %#v, want first inactive and second active", states)
 	}
-	requestJSON(t, server, http.MethodGet, "/v1/apps/missing/deployments", http.StatusNotFound, &map[string]string{})
+	requestJSON(t, server, http.MethodGet, "/v1/workers/missing/deployments", http.StatusNotFound, &map[string]string{})
 }
 
 func TestSetWorkerDeploymentTraffic(t *testing.T) {
@@ -530,7 +530,7 @@ func TestSetWorkerDeploymentTraffic(t *testing.T) {
 
 	body := []byte(`{"deployments":[{"id":"` + first.ID + `","traffic_percent":10},{"id":"` + second.ID + `","traffic_percent":90}]}`)
 	var deployments []nanoflare.ConsoleDeployment
-	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", body, http.StatusOK, &deployments)
+	requestJSONBytes(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/deployments/traffic", body, http.StatusOK, &deployments)
 	traffic := map[string]int{}
 	for _, deployment := range deployments {
 		traffic[deployment.ID] = deployment.TrafficPercent
@@ -540,14 +540,14 @@ func TestSetWorkerDeploymentTraffic(t *testing.T) {
 	}
 
 	var detail nanoflare.WorkerDetail
-	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID, http.StatusOK, &detail)
 	if detail.Deployment == nil || detail.Deployment.ID != second.ID || detail.Deployment.TrafficPercent != 90 {
 		t.Fatalf("detail deployment = %#v, want highest traffic deployment", detail.Deployment)
 	}
 
-	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"`+first.ID+`","traffic_percent":50}]}`), http.StatusBadRequest, &map[string]string{})
-	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"`+first.ID+`","traffic_percent":50},{"id":"`+first.ID+`","traffic_percent":50}]}`), http.StatusBadRequest, &map[string]string{})
-	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"missing","traffic_percent":100}]}`), http.StatusBadRequest, &map[string]string{})
+	requestJSONBytes(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"`+first.ID+`","traffic_percent":50}]}`), http.StatusBadRequest, &map[string]string{})
+	requestJSONBytes(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"`+first.ID+`","traffic_percent":50},{"id":"`+first.ID+`","traffic_percent":50}]}`), http.StatusBadRequest, &map[string]string{})
+	requestJSONBytes(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"missing","traffic_percent":100}]}`), http.StatusBadRequest, &map[string]string{})
 }
 
 func TestTraefikConfigRequiresToken(t *testing.T) {
@@ -594,7 +594,7 @@ func TestAppGatewayServesAttachedAsset(t *testing.T) {
 		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("<h1>Site</h1>")}},
 	)
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Site</h1>" {
 		t.Fatalf("gateway status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -815,7 +815,7 @@ func TestConsoleObjectWriteOverOrgStorageLimitReturns402(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	request := httptest.NewRequest(http.MethodPut, "/v1/apps/"+app.ID+"/object-storage-buckets/"+bucket.ID+"/over.txt", bytes.NewReader([]byte("x")))
+	request := httptest.NewRequest(http.MethodPut, "/v1/workers/"+app.ID+"/object-storage-buckets/"+bucket.ID+"/over.txt", bytes.NewReader([]byte("x")))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusPaymentRequired {
@@ -901,7 +901,7 @@ func TestGatewayFallsBackToWorkerWhenAssetMissing(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/missing", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/missing", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
 		t.Fatalf("gateway fallback status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -928,7 +928,7 @@ func TestGatewayRunWorkerFirstTrueProxiesBeforeAssets(t *testing.T) {
 	workerPort := startTestWorker(t, "worker")
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
 		t.Fatalf("gateway status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -956,10 +956,10 @@ func TestGatewayUsesStickyDeploymentCookie(t *testing.T) {
 		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("second")}},
 	)
 	body := []byte(`{"deployments":[{"id":"` + first.ID + `","traffic_percent":50},{"id":"` + second.ID + `","traffic_percent":50}]}`)
-	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", body, http.StatusOK, &[]nanoflare.ConsoleDeployment{})
+	requestJSONBytes(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/deployments/traffic", body, http.StatusOK, &[]nanoflare.ConsoleDeployment{})
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/", nil)
 	request.AddCookie(&http.Cookie{Name: "nf_deployment_" + app.ID, Value: first.ID})
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "first" {
@@ -989,7 +989,7 @@ func TestGatewayAssetHitDoesNotEnsureLazyRuntime(t *testing.T) {
 	)
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Site</h1>" {
 		t.Fatalf("gateway asset status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -1018,7 +1018,7 @@ func TestGatewayAssetMissEnsuresLazyRuntime(t *testing.T) {
 	)
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/missing", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/missing", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
 		t.Fatalf("gateway worker status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -1051,14 +1051,14 @@ func TestGatewayRunWorkerFirstRoutesOnlyMatchingPaths(t *testing.T) {
 	workerPort := startTestWorker(t, "worker")
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Site</h1>" {
 		t.Fatalf("gateway asset status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
 
 	recorder = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/api/visits", nil)
+	request = httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/api/visits", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
 		t.Fatalf("gateway worker status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -1091,7 +1091,7 @@ func TestGatewayRunWorkerFirstNegativeRouteServesAsset(t *testing.T) {
 	workerPort := startTestWorker(t, "worker")
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/"+strconv.Itoa(workerPort)+"/api/docs/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/api/docs/", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<h1>Docs</h1>" {
 		t.Fatalf("gateway status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -1124,7 +1124,7 @@ func createApp(t *testing.T, server http.Handler, name, hostname string) nanofla
 	t.Helper()
 	body := `{"name":"` + name + `","hostname":"` + hostname + `"}`
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/apps", bytes.NewBufferString(body))
+	request := httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -1173,7 +1173,7 @@ func deployWithKV(t *testing.T, server http.Handler, appID string, kvNamespaces 
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/apps/"+appID+"/deployments", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/v1/workers/"+appID+"/deployments", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -1193,7 +1193,7 @@ func deployContent(t *testing.T, server http.Handler, appID string, files []nano
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/apps/"+appID+"/deployments", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/v1/workers/"+appID+"/deployments", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -1226,7 +1226,7 @@ func deployWithAssetsConfig(t *testing.T, server http.Handler, appID string, fil
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/apps/"+appID+"/deployments", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/v1/workers/"+appID+"/deployments", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {

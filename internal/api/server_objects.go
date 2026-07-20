@@ -25,10 +25,10 @@ func (s *Server) registerObjectRoutes() {
 	s.mux.HandleFunc("PATCH /v1/object-storage-buckets/{bucketID}", s.updateObjectStorageBucket)
 	s.mux.HandleFunc("DELETE /v1/object-storage-buckets/{bucketID}", s.deleteObjectStorageBucket)
 	s.mux.HandleFunc("GET /v1/object-storage-buckets/{bucketID}/metrics", s.objectStorageBucketMetrics)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/object-storage-buckets/{bucketID}", s.workerObjectList)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectGet)
-	s.mux.HandleFunc("PUT /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectPut)
-	s.mux.HandleFunc("DELETE /v1/apps/{appID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectDelete)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/object-storage-buckets/{bucketID}", s.workerObjectList)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectGet)
+	s.mux.HandleFunc("PUT /v1/workers/{workerID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectPut)
+	s.mux.HandleFunc("DELETE /v1/workers/{workerID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectDelete)
 	s.mux.HandleFunc("GET /internal/runtime/objects/{key...}", s.runtimeObjectGet)
 	s.mux.HandleFunc("HEAD /internal/runtime/objects/{key...}", s.runtimeObjectHead)
 	s.mux.HandleFunc("PUT /internal/runtime/objects/{key...}", s.runtimeObjectPut)
@@ -42,7 +42,7 @@ func (s *Server) workerObjectList(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "objects:read") {
 		return
 	}
-	objects, err := s.service.WorkerObjectListForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"))
+	objects, err := s.service.WorkerObjectListForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("bucketID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -59,7 +59,7 @@ func (s *Server) workerObjectGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.WorkerObjectGetForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"), key)
+	object, ok, err := s.service.WorkerObjectGetForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("bucketID"), key)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -88,7 +88,7 @@ func (s *Server) workerObjectPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, err := s.service.WorkerObjectPutForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"), key, r.Header.Get("Content-Type"), body)
+	object, err := s.service.WorkerObjectPutForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("bucketID"), key, r.Header.Get("Content-Type"), body)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -105,7 +105,7 @@ func (s *Server) workerObjectDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.WorkerObjectDeleteForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("bucketID"), key); err != nil {
+	if err := s.service.WorkerObjectDeleteForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("bucketID"), key); err != nil {
 		writeWorkerError(w, err)
 		return
 	}

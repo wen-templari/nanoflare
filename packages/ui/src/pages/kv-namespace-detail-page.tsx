@@ -85,7 +85,7 @@ function KVNamespaceDetailContent({
   }, [apiConnected, namespace.id]);
 
   const activeWorker = accessorWorkers.find((worker) => worker.id === accessorWorkerID);
-  const namespaceBase = activeWorker ? `/v1/apps/${activeWorker.id}/kv/namespaces/${encodeURIComponent(namespace.id)}` : "";
+  const namespaceBase = activeWorker ? `/v1/workers/${activeWorker.id}/kv/namespaces/${encodeURIComponent(namespace.id)}` : "";
   const filteredKeys = keys.filter(({ key }) => key.toLowerCase().includes(deferredSearch.trim().toLowerCase()));
 
   useEffect(() => {

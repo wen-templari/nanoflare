@@ -28,7 +28,7 @@ func TestPersonalAccessTokenLifecycle(t *testing.T) {
 		Name:      "Deploy key",
 		ScopeType: PATScopeTypeOrg,
 		OrgID:     org.ID,
-		Scopes:    []string{"apps:read", "deployments:write"},
+		Scopes:    []string{"workers:read", "deployments:write"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestPersonalAccessTokenRejectsExcessScopes(t *testing.T) {
 		Name:      "Too broad",
 		ScopeType: PATScopeTypeOrg,
 		OrgID:     org.ID,
-		Scopes:    []string{"apps:write"},
+		Scopes:    []string{"workers:write"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "exceed") {
 		t.Fatalf("error = %v", err)
@@ -104,7 +104,7 @@ func TestPersonalAccessTokenUserScopeUsesLiveMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := auth.CreatePersonalAccessToken(session.User.ID, CreatePersonalAccessTokenInput{Name: "Multi org", ScopeType: PATScopeTypeUser, Scopes: []string{"apps:read", "apps:write"}})
+	created, err := auth.CreatePersonalAccessToken(session.User.ID, CreatePersonalAccessTokenInput{Name: "Multi org", ScopeType: PATScopeTypeUser, Scopes: []string{"workers:read", "workers:write"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestPersonalAccessTokenUserScopeUsesLiveMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if HasScope(access.Scopes, "apps:write") || !HasScope(access.Scopes, "apps:read") {
+	if HasScope(access.Scopes, "workers:write") || !HasScope(access.Scopes, "workers:read") {
 		t.Fatalf("access scopes = %#v", access.Scopes)
 	}
 	if _, err := auth.ValidatePersonalAccessToken(created.Token, ""); err == nil || !errors.Is(err, ErrMembershipNotFound) && !strings.Contains(err.Error(), "X-Nanoflare-Org-ID") {

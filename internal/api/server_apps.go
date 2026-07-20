@@ -12,28 +12,28 @@ import (
 )
 
 func (s *Server) registerAppRoutes() {
-	s.mux.HandleFunc("GET /v1/apps", s.listApps)
-	s.mux.HandleFunc("POST /v1/apps", s.createApp)
-	s.mux.HandleFunc("PATCH /v1/apps/{appID}", s.updateApp)
-	s.mux.HandleFunc("DELETE /v1/apps/{appID}", s.deleteApp)
-	s.mux.HandleFunc("GET /v1/apps/{appID}", s.workerDetail)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/files", s.workerFiles)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/output", s.workerOutput)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/traffic", s.workerTraffic)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/deployments", s.workerDeployments)
-	s.mux.HandleFunc("PUT /v1/apps/{appID}/deployments/traffic", s.setWorkerDeploymentTraffic)
-	s.mux.HandleFunc("POST /v1/apps/{appID}/deployments", s.deploy)
-	s.mux.HandleFunc("GET /v1/apps/{appID}/secrets", s.listSecrets)
-	s.mux.HandleFunc("PUT /v1/apps/{appID}/secrets/{name}", s.putSecret)
-	s.mux.HandleFunc("DELETE /v1/apps/{appID}/secrets/{name}", s.deleteSecret)
-	s.mux.HandleFunc("/internal/http/apps/", s.appGateway)
+	s.mux.HandleFunc("GET /v1/workers", s.listApps)
+	s.mux.HandleFunc("POST /v1/workers", s.createApp)
+	s.mux.HandleFunc("PATCH /v1/workers/{workerID}", s.updateApp)
+	s.mux.HandleFunc("DELETE /v1/workers/{workerID}", s.deleteApp)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}", s.workerDetail)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/files", s.workerFiles)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/output", s.workerOutput)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/traffic", s.workerTraffic)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/deployments", s.workerDeployments)
+	s.mux.HandleFunc("PUT /v1/workers/{workerID}/deployments/traffic", s.setWorkerDeploymentTraffic)
+	s.mux.HandleFunc("POST /v1/workers/{workerID}/deployments", s.deploy)
+	s.mux.HandleFunc("GET /v1/workers/{workerID}/secrets", s.listSecrets)
+	s.mux.HandleFunc("PUT /v1/workers/{workerID}/secrets/{name}", s.putSecret)
+	s.mux.HandleFunc("DELETE /v1/workers/{workerID}/secrets/{name}", s.deleteSecret)
+	s.mux.HandleFunc("/internal/http/workers/", s.appGateway)
 }
 
 func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:read") {
+	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
-	deployments, err := s.service.WorkerDeploymentsForOrg(controlOrgID(r), r.PathValue("appID"))
+	deployments, err := s.service.WorkerDeploymentsForOrg(controlOrgID(r), r.PathValue("workerID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -54,7 +54,7 @@ func (s *Server) setWorkerDeploymentTraffic(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	deployments, err := s.service.SetDeploymentTrafficForOrg(controlOrgID(r), r.PathValue("appID"), input.Deployments)
+	deployments, err := s.service.SetDeploymentTrafficForOrg(controlOrgID(r), r.PathValue("workerID"), input.Deployments)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
@@ -67,10 +67,10 @@ func (s *Server) setWorkerDeploymentTraffic(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:read") {
+	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
-	detail, err := s.service.WorkerDetailForOrg(controlOrgID(r), r.PathValue("appID"))
+	detail, err := s.service.WorkerDetailForOrg(controlOrgID(r), r.PathValue("workerID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -79,10 +79,10 @@ func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerFiles(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:read") {
+	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
-	files, err := s.service.WorkerFilesForOrg(controlOrgID(r), r.PathValue("appID"))
+	files, err := s.service.WorkerFilesForOrg(controlOrgID(r), r.PathValue("workerID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -91,10 +91,10 @@ func (s *Server) workerFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:read") {
+	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
-	output, err := s.service.WorkerOutputForOrg(controlOrgID(r), r.PathValue("appID"))
+	output, err := s.service.WorkerOutputForOrg(controlOrgID(r), r.PathValue("workerID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -103,10 +103,10 @@ func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:read") {
+	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
-	traffic, err := s.service.WorkerTrafficForOrg(controlOrgID(r), r.PathValue("appID"))
+	traffic, err := s.service.WorkerTrafficForOrg(controlOrgID(r), r.PathValue("workerID"))
 	if err != nil {
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			writeWorkerError(w, err)
@@ -119,7 +119,7 @@ func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:read") {
+	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
 	apps, err := s.service.ListAppsForOrg(controlOrgID(r))
@@ -131,7 +131,7 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:write") {
+	if !s.requireScope(w, r, "workers:write") {
 		return
 	}
 	var input nanoflare.CreateAppInput
@@ -160,7 +160,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:write") {
+	if !s.requireScope(w, r, "workers:write") {
 		return
 	}
 	var input nanoflare.UpdateAppInput
@@ -168,7 +168,7 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	app, err := s.service.UpdateAppForOrg(controlOrgID(r), r.PathValue("appID"), input)
+	app, err := s.service.UpdateAppForOrg(controlOrgID(r), r.PathValue("workerID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
@@ -184,10 +184,10 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, "apps:write") {
+	if !s.requireScope(w, r, "workers:write") {
 		return
 	}
-	if err := s.service.DeleteAppForOrg(controlOrgID(r), r.PathValue("appID")); err != nil {
+	if err := s.service.DeleteAppForOrg(controlOrgID(r), r.PathValue("workerID")); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -204,7 +204,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.CreatedBy = controlActor(r)
-	deployment, err := s.service.DeployForOrg(controlOrgID(r), r.PathValue("appID"), input)
+	deployment, err := s.service.DeployForOrg(controlOrgID(r), r.PathValue("workerID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
@@ -220,7 +220,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "secrets:write") {
 		return
 	}
-	secrets, err := s.service.ListSecretsForOrg(controlOrgID(r), r.PathValue("appID"))
+	secrets, err := s.service.ListSecretsForOrg(controlOrgID(r), r.PathValue("workerID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -237,7 +237,7 @@ func (s *Server) putSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.PutSecretForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("name"), input.Value); err != nil {
+	if err := s.service.PutSecretForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("name"), input.Value); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -248,7 +248,7 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "secrets:write") {
 		return
 	}
-	if err := s.service.DeleteSecretForOrg(controlOrgID(r), r.PathValue("appID"), r.PathValue("name")); err != nil {
+	if err := s.service.DeleteSecretForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("name")); err != nil {
 		writeWorkerError(w, err)
 		return
 	}
@@ -338,7 +338,7 @@ func stickyDeploymentCookieName(appID string) string {
 }
 
 func appGatewayPath(requestPath string) (string, int, string, bool) {
-	const prefix = "/internal/http/apps/"
+	const prefix = "/internal/http/workers/"
 	if !strings.HasPrefix(requestPath, prefix) {
 		return "", 0, "", false
 	}

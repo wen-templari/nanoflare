@@ -8,5 +8,5 @@
 
 ## Workers
 
-- add deployment meta (commit hash, commit message)
+- add deployment history
 - support deployment to different env

@@ -86,11 +86,11 @@ function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: s
       }
 
       const [nextDetail, nextFiles, nextDeployments, nextOutput, nextTraffic] = await Promise.all([
-        fetchJSON<WorkerDetailData>(`/v1/apps/${worker.id}`).catch(() => undefined),
-        fetchJSON<WorkerFile[]>(`/v1/apps/${worker.id}/files`).catch(() => []),
-        fetchJSON<ConsoleDeployment[]>(`/v1/apps/${worker.id}/deployments`).catch(() => []),
-        fetchJSON<WorkerOutputLine[]>(`/v1/apps/${worker.id}/output`).catch(() => []),
-        fetchJSON<WorkerTraffic>(`/v1/apps/${worker.id}/traffic`).catch(() => emptyTraffic),
+        fetchJSON<WorkerDetailData>(`/v1/workers/${worker.id}`).catch(() => undefined),
+        fetchJSON<WorkerFile[]>(`/v1/workers/${worker.id}/files`).catch(() => []),
+        fetchJSON<ConsoleDeployment[]>(`/v1/workers/${worker.id}/deployments`).catch(() => []),
+        fetchJSON<WorkerOutputLine[]>(`/v1/workers/${worker.id}/output`).catch(() => []),
+        fetchJSON<WorkerTraffic>(`/v1/workers/${worker.id}/traffic`).catch(() => emptyTraffic),
       ])
       if (cancelled) return
       setDetail(nextDetail)
@@ -294,7 +294,7 @@ function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: Worke
 
   const app = detail?.app ?? worker
   const deployment = detail?.deployment
-  const appID = app.id
+  const workerID = app.id
   const rows = [
     ["Worker ID", app.id],
     ["Name", app.name],
@@ -318,7 +318,7 @@ function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: Worke
     setSaving(true)
     try {
       const protected_routes = protectedRoutes.split("\n").map((route) => route.trim()).filter(Boolean)
-      const response = await apiFetch(`/v1/apps/${appID}`, {
+      const response = await apiFetch(`/v1/workers/${workerID}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ auth: { protected_routes } }),
@@ -379,7 +379,7 @@ function WorkerDeployments({ deployments, notify, onSaved, traffic, workerID }: 
     }
     setSaving(true)
     try {
-      const response = await apiFetch(`/v1/apps/${workerID}/deployments/traffic`, {
+      const response = await apiFetch(`/v1/workers/${workerID}/deployments/traffic`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deployments: next }),

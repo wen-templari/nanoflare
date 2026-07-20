@@ -31,7 +31,7 @@ curl -s -X POST http://127.0.0.1:8080/v1/oauth/clients \
   -d '{
     "name": "External App UI",
     "redirect_uris": ["http://127.0.0.1:8787/oauth/callback"],
-    "scopes": ["apps:read", "apps:write", "deployments:write", "kv:read", "kv:write"]
+    "scopes": ["workers:read", "workers:write", "deployments:write", "kv:read", "kv:write"]
   }'
 ```
 
@@ -84,7 +84,7 @@ NANOFLARE_PASSWORD=secret
 NANOFLARE_ORG_NAME="External App Test"
 EXTERNAL_APP_CLIENT_ID=...
 EXTERNAL_APP_CLIENT_SECRET=...
-EXTERNAL_APP_SCOPES="apps:write kv:write"
+EXTERNAL_APP_SCOPES="workers:write kv:write"
 EXTERNAL_APP_PORT=8787
 EXTERNAL_APP_ORIGIN=http://127.0.0.1:8787
 NANOFLARE_UI_URL=http://127.0.0.1:5173

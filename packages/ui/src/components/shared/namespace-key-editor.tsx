@@ -27,7 +27,7 @@ export function NamespaceKeyEditor({
   const [value, setValue] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const namespaceBase = namespaceID ? `/v1/apps/${workerID}/kv/namespaces/${encodeURIComponent(namespaceID)}` : "";
+  const namespaceBase = namespaceID ? `/v1/workers/${workerID}/kv/namespaces/${encodeURIComponent(namespaceID)}` : "";
   const path = key.trim() && namespaceBase ? `${namespaceBase}/${encodeURIComponent(key.trim())}` : "";
 
   useEffect(() => {

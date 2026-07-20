@@ -123,6 +123,8 @@ func (r *Runner) Run(args []string) error {
 		return r.delete(withoutWorkerNoun(args[1:]))
 	case "deploy":
 		return r.deploy(withoutWorkerNoun(args[1:]))
+	case "deployment":
+		return r.deployment(args[1:])
 	case "kv":
 		return r.kv(args[1:])
 	case "db":
@@ -219,7 +221,7 @@ func (r *Runner) create(args []string) error {
 	}
 	baseURL := projectAPIURL(project, *apiURL)
 	var app nanoflare.App
-	if err := r.request(http.MethodPost, baseURL+"/v1/apps", nanoflare.CreateAppInput{
+	if err := r.request(http.MethodPost, baseURL+"/v1/workers", nanoflare.CreateAppInput{
 		Name:     project.Name,
 		Hostname: project.Hostname,
 		Auth:     nanoflare.AuthConfig{ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...)},
@@ -246,7 +248,7 @@ func (r *Runner) list(args []string) error {
 		return errors.New("usage: nanoflare list [worker] [flags]")
 	}
 	var apps []nanoflare.App
-	if err := r.request(http.MethodGet, strings.TrimRight(*apiURL, "/")+"/v1/apps", nil, &apps); err != nil {
+	if err := r.request(http.MethodGet, strings.TrimRight(*apiURL, "/")+"/v1/workers", nil, &apps); err != nil {
 		return err
 	}
 	for _, app := range apps {
@@ -263,7 +265,7 @@ func (r *Runner) delete(args []string) error {
 		return err
 	}
 	if flags.NArg() > 1 {
-		return errors.New("usage: nanoflare delete [worker] [app-id] [flags]")
+		return errors.New("usage: nanoflare delete [worker] [worker-id] [flags]")
 	}
 	appID := ""
 	var projectPath string
@@ -282,7 +284,7 @@ func (r *Runner) delete(args []string) error {
 		appID = project.AppID
 	}
 	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodDelete, baseURL+"/v1/apps/"+appID, nil, nil); err != nil {
+	if err := r.request(http.MethodDelete, baseURL+"/v1/workers/"+appID, nil, nil); err != nil {
 		return err
 	}
 	if projectPath != "" && project.AppID == appID {
@@ -319,7 +321,7 @@ func (r *Runner) deploy(args []string) error {
 		date = *compatibilityDate
 	}
 	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodPatch, baseURL+"/v1/apps/"+project.AppID, nanoflare.UpdateAppInput{
+	if err := r.request(http.MethodPatch, baseURL+"/v1/workers/"+project.AppID, nanoflare.UpdateAppInput{
 		Auth: &nanoflare.AuthConfig{
 			ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...),
 		},
@@ -336,7 +338,7 @@ func (r *Runner) deploy(args []string) error {
 	}
 	commitHash, commitMessage := deploymentGitMetadata(filepath.Dir(projectPath))
 	var deployment nanoflare.Deployment
-	if err := r.request(http.MethodPost, baseURL+"/v1/apps/"+project.AppID+"/deployments", nanoflare.DeployInput{
+	if err := r.request(http.MethodPost, baseURL+"/v1/workers/"+project.AppID+"/deployments", nanoflare.DeployInput{
 		CommitHash:           commitHash,
 		CommitMessage:        commitMessage,
 		Files:                files,
@@ -381,6 +383,57 @@ func gitOutput(dir string, args ...string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(string(output)), true
+}
+
+func (r *Runner) deployment(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: nanoflare deployment <output>")
+	}
+	switch args[0] {
+	case "output":
+		return r.deploymentOutput(args[1:])
+	default:
+		return fmt.Errorf("unknown deployment command %q", args[0])
+	}
+}
+
+func (r *Runner) deploymentOutput(args []string) error {
+	flags := flag.NewFlagSet("deployment output", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	apiURL := flags.String("api-url", "", "nanoflared base URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 1 {
+		return errors.New("usage: nanoflare deployment output [worker-id] [flags]")
+	}
+	var project Project
+	appID := ""
+	if flags.NArg() == 1 {
+		appID = strings.TrimSpace(flags.Arg(0))
+	} else {
+		var err error
+		_, project, err = loadProject()
+		if err != nil {
+			return err
+		}
+		if project.AppID == "" {
+			return errors.New("worker is not registered; run `nanoflare create` first")
+		}
+		appID = project.AppID
+	}
+	if appID == "" {
+		return errors.New("app id is required")
+	}
+	baseURL := projectAPIURL(project, *apiURL)
+	var output []nanoflare.WorkerOutputLine
+	if err := r.request(http.MethodGet, baseURL+"/v1/workers/"+appID+"/output", nil, &output); err != nil {
+		return err
+	}
+	for _, line := range output {
+		fmt.Fprintf(r.Stdout, "%s\t%s\t%s\n", line.Timestamp.UTC().Format(time.RFC3339), line.Level, line.Message)
+	}
+	return nil
 }
 
 func (r *Runner) auth(args []string) error {
@@ -1172,7 +1225,7 @@ func (r *Runner) secretPut(args []string) error {
 		return errors.New("secret value is required")
 	}
 	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodPut, baseURL+"/v1/apps/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nanoflare.PutSecretInput{Value: secretValue}, nil); err != nil {
+	if err := r.request(http.MethodPut, baseURL+"/v1/workers/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nanoflare.PutSecretInput{Value: secretValue}, nil); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.Stdout, "Updated secret %s\n", flags.Arg(0))
@@ -1198,7 +1251,7 @@ func (r *Runner) secretList(args []string) error {
 	}
 	var secrets []nanoflare.Secret
 	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodGet, baseURL+"/v1/apps/"+project.AppID+"/secrets", nil, &secrets); err != nil {
+	if err := r.request(http.MethodGet, baseURL+"/v1/workers/"+project.AppID+"/secrets", nil, &secrets); err != nil {
 		return err
 	}
 	for _, secret := range secrets {
@@ -1225,7 +1278,7 @@ func (r *Runner) secretDelete(args []string) error {
 		return errors.New("worker is not registered; run `nanoflare create` first")
 	}
 	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodDelete, baseURL+"/v1/apps/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nil, nil); err != nil {
+	if err := r.request(http.MethodDelete, baseURL+"/v1/workers/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nil, nil); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.Stdout, "Deleted secret %s\n", flags.Arg(0))
@@ -1636,8 +1689,9 @@ func (r *Runner) usage() {
   nanoflare init [flags] [directory]
   nanoflare create [worker] [flags]
   nanoflare list [worker] [flags]
-  nanoflare delete [worker] [app-id] [flags]
+  nanoflare delete [worker] [worker-id] [flags]
   nanoflare deploy [worker] [flags]
+  nanoflare deployment output [worker-id] [flags]
   nanoflare auth login [flags]
   nanoflare auth orgs
   nanoflare auth use-org <org-id>

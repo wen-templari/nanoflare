@@ -70,17 +70,17 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	var deployed nanoflare.DeployInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/apps":
+		case "/v1/workers":
 			decodeRequest(t, r, &created)
 			writeJSON(t, w, http.StatusCreated, nanoflare.App{ID: "app-123", Hostname: created.Hostname})
-		case "/v1/apps/app-123":
+		case "/v1/workers/app-123":
 			if r.Method != http.MethodPatch {
 				http.NotFound(w, r)
 				return
 			}
 			decodeRequest(t, r, &updated)
 			w.WriteHeader(http.StatusOK)
-		case "/v1/apps/app-123/deployments":
+		case "/v1/workers/app-123/deployments":
 			decodeRequest(t, r, &deployed)
 			writeJSON(t, w, http.StatusCreated, nanoflare.Deployment{ID: "deployment-456"})
 		default:
@@ -176,9 +176,9 @@ func TestSecretListAndDelete(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/app-123/secrets":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers/app-123/secrets":
 			writeJSON(t, w, http.StatusOK, []nanoflare.Secret{{Name: "DB_URL", UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}})
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/app-123/secrets/DB_URL":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/workers/app-123/secrets/DB_URL":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
@@ -218,7 +218,7 @@ func TestSecretPutUsesValueArgument(t *testing.T) {
 	var payload nanoflare.PutSecretInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/app-123/secrets/DB_URL":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/workers/app-123/secrets/DB_URL":
 			decodeRequest(t, r, &payload)
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -254,7 +254,7 @@ func TestCreateDoesNotPersistGeneratedHostname(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	var created nanoflare.CreateAppInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/workers" {
 			http.NotFound(w, r)
 			return
 		}
@@ -287,6 +287,42 @@ func TestCreateDoesNotPersistGeneratedHostname(t *testing.T) {
 	}
 	if bytes.Contains(content, []byte(`"hostname"`)) {
 		t.Fatalf("project file unexpectedly contains hostname:\n%s", content)
+	}
+}
+
+func TestDeploymentOutputUsesProjectWorker(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers/app-123/output":
+			writeJSON(t, w, http.StatusOK, []nanoflare.WorkerOutputLine{
+				{Timestamp: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC), Level: "info", Message: "runtime ready"},
+				{Timestamp: time.Date(2026, 5, 31, 12, 1, 0, 0, time.UTC), Level: "error", Message: "boom"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	writeProjectFile(t, Project{
+		Name:              "Hello",
+		Hostname:          "hello.example.com",
+		AppID:             "app-123",
+		APIURL:            server.URL,
+		Entrypoint:        "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+	})
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"deployment", "output"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "2026-05-31T12:00:00Z\tinfo\truntime ready\n2026-05-31T12:01:00Z\terror\tboom\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 
@@ -329,8 +365,9 @@ func TestHelpIncludesCommandUsage(t *testing.T) {
 		"nanoflare init [flags] [directory]",
 		"nanoflare create [worker] [flags]",
 		"nanoflare list [worker] [flags]",
-		"nanoflare delete [worker] [app-id] [flags]",
+		"nanoflare delete [worker] [worker-id] [flags]",
 		"nanoflare deploy [worker] [flags]",
+		"nanoflare deployment output [worker-id] [flags]",
 		"nanoflare auth login [flags]",
 		"nanoflare auth orgs",
 		"nanoflare auth use-org <org-id>",
@@ -690,7 +727,7 @@ func TestRequestRefreshesAuthTokenAndRetries(t *testing.T) {
 	appRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
 			appRequests++
 			if appRequests == 1 {
 				writeJSON(t, w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
@@ -760,7 +797,7 @@ func TestRequestRefreshesAuthTokenAndRetries(t *testing.T) {
 func TestListWorkers(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/workers" {
 			http.NotFound(w, r)
 			return
 		}
@@ -784,7 +821,7 @@ func TestListWorkers(t *testing.T) {
 func TestDeleteRegisteredWorkerClearsLocalAppID(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/app-123" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/workers/app-123" {
 			http.NotFound(w, r)
 			return
 		}
@@ -819,7 +856,7 @@ func TestDeleteRegisteredWorkerClearsLocalAppID(t *testing.T) {
 func TestDeleteWorkerByID(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/app-789" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/workers/app-789" {
 			http.NotFound(w, r)
 			return
 		}

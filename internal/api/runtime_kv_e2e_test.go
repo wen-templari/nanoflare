@@ -150,7 +150,7 @@ func TestLazyRuntimeGatewayEndToEnd(t *testing.T) {
 	server := api.NewServerWithRuntime(service, nil, "", nil, nil, manager)
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/", nil)
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "lazy" {
 		t.Fatalf("lazy gateway status = %d body = %q", recorder.Code, recorder.Body.String())
