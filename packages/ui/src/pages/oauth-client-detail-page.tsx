@@ -226,13 +226,23 @@ export function OAuthClientDetailPage() {
 
       <Modal opened={formOpen} onClose={() => setFormOpen(false)} title="Edit OAuth client" size="lg">
         <Stack>
-          <TextInput label="Name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.currentTarget.value }))} />
+          <TextInput
+            label="Name"
+            value={form.name}
+            onChange={(event) => {
+              const name = event.currentTarget.value;
+              setForm((current) => ({ ...current, name }));
+            }}
+          />
           <Textarea
             autosize
             label="Redirect URIs"
             minRows={3}
             value={form.redirectURIs}
-            onChange={(event) => setForm((current) => ({ ...current, redirectURIs: event.currentTarget.value }))}
+            onChange={(event) => {
+              const redirectURIs = event.currentTarget.value;
+              setForm((current) => ({ ...current, redirectURIs }));
+            }}
           />
           <MultiSelect
             data={oauthScopes}
