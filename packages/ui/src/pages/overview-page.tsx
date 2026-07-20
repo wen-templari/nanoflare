@@ -2,12 +2,15 @@ import { Card, Group, SimpleGrid, Stack, Text, ThemeIcon, Title, UnstyledButton 
 import { Archive, ArrowUpRight, CloudUpload, Code2, DatabaseZap, KeyRound, Waypoints } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import { useAuth } from "../app/auth-context";
 import { useWorkspace } from "../app/workspace-context";
 import { Event, PageHeading, Panel } from "../components/shared/primitives";
 
 export function OverviewPage() {
   const navigate = useNavigate();
+  const { userEmail } = useAuth();
   const { workers, namespaces, objectStorageBuckets } = useWorkspace();
+  const userName = displayNameFromEmail(userEmail);
   const kvBindings = workers.reduce((count, worker) => count + (worker.bindings?.filter((binding) => binding.kind === "kv").length ?? 0), 0);
   const objectBindings = workers.reduce((count, worker) => count + (worker.bindings?.filter((binding) => binding.kind === "object_storage_bucket").length ?? 0), 0);
   const stats = [
@@ -18,7 +21,7 @@ export function OverviewPage() {
 
   return (
     <>
-      <PageHeading eyebrow="Sunday, 31 May" title="Good afternoon, Clas." copy="Your private runtime is steady. Here is the shape of your workspace today." />
+      <PageHeading eyebrow="Sunday, 31 May" title={`Good afternoon, ${userName}.`} copy="Your private runtime is steady. Here is the shape of your workspace today." />
       <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
         {stats.map(({ label, value, note, icon: Icon, href }, index) => (
           <UnstyledButton key={label} onClick={() => navigate(href)} style={{ animationDelay: `${index * 80}ms` }}>
@@ -50,6 +53,13 @@ export function OverviewPage() {
       </div>
     </>
   );
+}
+
+function displayNameFromEmail(email: string) {
+  const localPart = email.split("@", 1)[0].trim();
+  const firstName = localPart.split(/[._+-]/, 1)[0];
+
+  return firstName ? firstName.charAt(0).toUpperCase() + firstName.slice(1) : "there";
 }
 
 const runtimeActivity = [35, 44, 37, 58, 65, 52, 76, 68, 88, 72, 82, 96, 77, 64, 73, 56, 61, 49, 66, 72, 60, 52, 44, 59].map((requests, hour) => ({
