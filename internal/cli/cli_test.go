@@ -374,7 +374,14 @@ func TestAuthCommandsUseAuthStoreOverride(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/pat/session":
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["token"] != "pat-token" {
+				t.Fatalf("pat token = %q", input["token"])
+			}
 			writeJSON(t, w, http.StatusOK, nanoflare.AuthSession{
 				Token:       "session-token",
 				ActiveOrgID: "org-123",
@@ -391,7 +398,7 @@ func TestAuthCommandsUseAuthStoreOverride(t *testing.T) {
 
 	var stdout bytes.Buffer
 	runner := NewRunner(&stdout, io.Discard)
-	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL, "--email", "user@example.com", "--password", "secret"}); err != nil {
+	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL, "--pat-token", "pat-token"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(authPath); err != nil {
@@ -568,11 +575,109 @@ func TestAuthLoginPATUsesPersonalAccessTokenSession(t *testing.T) {
 	}
 }
 
+func TestAuthLoginPATAcceptsTokenArgument(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/pat/session":
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["token"] != "argument-pat-token" {
+				t.Fatalf("pat token = %q", input["token"])
+			}
+			writeJSON(t, w, http.StatusOK, nanoflare.AuthSession{
+				Token:       "server-echo-is-ignored",
+				ActiveOrgID: "org-123",
+				User:        nanoflare.User{ID: "user-123", Email: "user@example.com"},
+				Organizations: []nanoflare.Organization{
+					{ID: "org-123", Name: "Example Org"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL, "--pat", "argument-pat-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stderr.String(), "Personal access token:") {
+		t.Fatalf("stderr unexpectedly prompted for token: %q", stderr.String())
+	}
+	auth, err := loadAuthConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.Token != "argument-pat-token" {
+		t.Fatalf("auth token = %q", auth.Token)
+	}
+}
+
+func TestAuthLoginPromptsForMethod(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/pat/session":
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["token"] != "prompt-pat-token" {
+				t.Fatalf("pat token = %q", input["token"])
+			}
+			writeJSON(t, w, http.StatusOK, nanoflare.AuthSession{
+				Token:       "server-echo-is-ignored",
+				ActiveOrgID: "org-123",
+				User:        nanoflare.User{ID: "user-123", Email: "user@example.com"},
+				Organizations: []nanoflare.Organization{
+					{ID: "org-123", Name: "Example Org"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	runner.Stdin = strings.NewReader("pat\nprompt-pat-token\n")
+	if err := runner.Run([]string{"auth", "login", "--api-url", server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); got != "Login method (web/pat) [web]: Personal access token: " {
+		t.Fatalf("stderr = %q", got)
+	}
+	if got := stdout.String(); !strings.Contains(got, "Logged in as user@example.com") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestAuthLoginOIDCFlagIsRemoved(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := NewRunner(&stdout, &stderr)
 	err := runner.Run([]string{"auth", "login", "--oidc"})
 	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -oidc") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestAuthLoginEmailPasswordFlagsAreRemoved(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	err := runner.Run([]string{"auth", "login", "--email", "user@example.com", "--password", "secret"})
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -email") {
 		t.Fatalf("error = %v", err)
 	}
 }

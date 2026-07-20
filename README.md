@@ -206,9 +206,12 @@ NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN=true
 Register `https://console.example.com/v1/auth/oidc/callback` as the OIDC client
 redirect URI. These settings may point at the same identity provider as
 protected worker-route OIDC, but they are intentionally separate so enabling
-worker auth does not automatically enable console registration and login. CLI
-login can use email and password, or `nanoflare auth login --web` for the
-web console flow.
+worker auth does not automatically enable console registration and login.
+`nanoflare auth login` prompts for the web console flow or a personal access
+token. Use `nanoflare auth login --web` to skip the prompt, or
+`nanoflare auth login --pat <token>` /
+`nanoflare auth login --pat-token <token>` for non-interactive personal access
+token login.
 
 External platforms can integrate through Nanoflare's OAuth control-plane flow.
 First create an OAuth client while signed in as a Nanoflare control-plane user.

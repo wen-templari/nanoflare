@@ -407,78 +407,85 @@ func (r *Runner) authLogin(args []string) error {
 	flags := flag.NewFlagSet("auth login", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
-	email := flags.String("email", "", "user email")
-	password := flags.String("password", "", "user password")
 	webLogin := flags.Bool("web", false, "use browser login flow")
 	patLogin := flags.Bool("pat", false, "use personal access token login flow")
-	setupOrg := flags.String("setup-org", "", "create first user and organization when setup has not run")
+	patToken := flags.String("pat-token", "", "personal access token for non-interactive login")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	baseURL := strings.TrimRight(*apiURL, "/")
-	if *patLogin {
-		if strings.TrimSpace(*setupOrg) != "" {
-			return errors.New("--setup-org cannot be used with --pat")
-		}
-		if *webLogin {
-			return errors.New("--web cannot be used with --pat")
-		}
-		return r.authLoginPAT(baseURL)
+	if flags.NArg() > 1 {
+		return errors.New("usage: nanoflare auth login [--web | --pat [token] | --pat-token token]")
 	}
-	if *webLogin {
-		if strings.TrimSpace(*setupOrg) != "" {
-			return errors.New("--setup-org cannot be used with --web")
+	baseURL := strings.TrimRight(*apiURL, "/")
+	token := strings.TrimSpace(*patToken)
+	if flags.NArg() == 1 {
+		if !*patLogin && token == "" {
+			return errors.New("personal access token argument requires --pat")
 		}
-		return r.authLoginWeb(baseURL)
+		if token != "" {
+			return errors.New("pass the personal access token either as an argument or with --pat-token, not both")
+		}
+		token = strings.TrimSpace(flags.Arg(0))
+		*patLogin = true
+	}
+	if *webLogin && (*patLogin || token != "") {
+		return errors.New("--web cannot be used with --pat or --pat-token")
+	}
+	if token != "" {
+		*patLogin = true
 	}
 	reader := bufio.NewReader(r.Stdin)
-	if strings.TrimSpace(*email) == "" {
-		fmt.Fprint(r.Stderr, "Email: ")
-		value, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
+	if !*webLogin && !*patLogin {
+		method, err := r.promptAuthLoginMethod(reader)
+		if err != nil {
 			return err
 		}
-		*email = strings.TrimSpace(value)
-	}
-	if strings.TrimSpace(*password) == "" {
-		fmt.Fprint(r.Stderr, "Password: ")
-		value, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
+		switch method {
+		case "web":
+			*webLogin = true
+		case "pat":
+			*patLogin = true
+		default:
+			return fmt.Errorf("unknown login method %q", method)
 		}
-		*password = strings.TrimSpace(value)
 	}
-	path := baseURL + "/v1/auth/login"
-	var input any = nanoflare.LoginInput{Email: *email, Password: *password}
-	if strings.TrimSpace(*setupOrg) != "" {
-		path = baseURL + "/v1/setup/signup"
-		input = nanoflare.SignupInput{Email: *email, Password: *password, OrganizationName: *setupOrg}
+	if *webLogin {
+		return r.authLoginWeb(baseURL)
 	}
-	var session nanoflare.AuthSession
-	if err := r.requestNoAuth(http.MethodPost, path, input, &session); err != nil {
-		return err
-	}
-	auth, err := authConfigFromSession(baseURL, session, "")
-	if err != nil {
-		return err
-	}
-	if err := writeAuthConfig(auth); err != nil {
-		return err
-	}
-	fmt.Fprintf(r.Stdout, "Logged in as %s\n", auth.User.Email)
-	if auth.ActiveOrgID != "" {
-		fmt.Fprintf(r.Stdout, "Using organization %s\n", auth.ActiveOrgID)
-	}
-	return nil
+	return r.authLoginPAT(baseURL, token, reader)
 }
 
-func (r *Runner) authLoginPAT(baseURL string) error {
-	fmt.Fprint(r.Stderr, "Personal access token: ")
-	value, err := bufio.NewReader(r.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return err
+func (r *Runner) promptAuthLoginMethod(reader *bufio.Reader) (string, error) {
+	for {
+		fmt.Fprint(r.Stderr, "Login method (web/pat) [web]: ")
+		value, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		method := strings.ToLower(strings.TrimSpace(value))
+		if method == "" {
+			return "web", nil
+		}
+		if method == "web" || method == "pat" {
+			return method, nil
+		}
+		fmt.Fprintln(r.Stderr, "Choose web or pat.")
+		if errors.Is(err, io.EOF) {
+			return "", errors.New("login method must be web or pat")
+		}
 	}
-	token := strings.TrimSpace(value)
+}
+
+func (r *Runner) authLoginPAT(baseURL string, token string, reader *bufio.Reader) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		fmt.Fprint(r.Stderr, "Personal access token: ")
+		value, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		token = strings.TrimSpace(value)
+	}
 	if token == "" {
 		return errors.New("personal access token is required")
 	}
