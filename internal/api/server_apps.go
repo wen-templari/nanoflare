@@ -143,6 +143,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	if access, ok := controlOAuthAccess(r); ok {
 		input.OAuthClientID = access.ClientID
 	}
+	input.CreatedBy = controlActor(r)
 	app, err := s.service.CreateApp(input)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -202,6 +203,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	input.CreatedBy = controlActor(r)
 	deployment, err := s.service.DeployForOrg(controlOrgID(r), r.PathValue("appID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -259,7 +261,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeployment(appID, requestPath, routingKey(r))
+	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeploymentWithPreference(appID, requestPath, stickyDeploymentID(r, appID))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -268,6 +270,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		writeWorkerError(w, nanoflare.ErrAppNotFound)
 		return
 	}
+	setStickyDeploymentCookie(w, appID, active.Deployment.ID)
 	if !runWorkerFirst {
 		response, handled, err := s.service.PublicAssetForDeployment(active, requestPath)
 		if err != nil {
@@ -312,12 +315,26 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 	writeWorkerResponse(w, workerResponse)
 }
 
-func routingKey(r *http.Request) string {
-	forwardedFor := r.Header.Get("X-Forwarded-For")
-	if forwardedFor == "" {
-		forwardedFor = r.RemoteAddr
+func stickyDeploymentID(r *http.Request, appID string) string {
+	cookie, err := r.Cookie(stickyDeploymentCookieName(appID))
+	if err != nil {
+		return ""
 	}
-	return r.Method + "\n" + r.Host + "\n" + r.URL.EscapedPath() + "\n" + r.URL.RawQuery + "\n" + forwardedFor + "\n" + r.Header.Get("User-Agent")
+	return strings.TrimSpace(cookie.Value)
+}
+
+func setStickyDeploymentCookie(w http.ResponseWriter, appID, deploymentID string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     stickyDeploymentCookieName(appID),
+		Value:    deploymentID,
+		Path:     "/",
+		MaxAge:   86400,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func stickyDeploymentCookieName(appID string) string {
+	return "nf_deployment_" + appID
 }
 
 func appGatewayPath(requestPath string) (string, int, string, bool) {

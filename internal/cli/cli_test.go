@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,6 +118,12 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	if err := os.WriteFile(filepath.Join("public", "logo.svg"), []byte("<svg />"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	runGit(t, ".", "init")
+	runGit(t, ".", "config", "user.email", "test@example.com")
+	runGit(t, ".", "config", "user.name", "Nanoflare Test")
+	runGit(t, ".", "add", projectFilename, "worker.js", filepath.Join("public", "logo.svg"))
+	runGit(t, ".", "commit", "-m", "Deploy hello worker")
+	commitHash := strings.TrimSpace(runGit(t, ".", "rev-parse", "HEAD"))
 
 	runner := NewRunner(io.Discard, io.Discard)
 	if err := runner.Run([]string{"create", "worker"}); err != nil {
@@ -144,6 +151,9 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if deployed.Entrypoint != "worker.js" || deployed.CompatibilityDate != "2025-12-10" {
 		t.Fatalf("deploy payload = %#v", deployed)
+	}
+	if deployed.CommitHash != commitHash || deployed.CommitMessage != "Deploy hello worker" {
+		t.Fatalf("deploy git metadata = hash %q message %q, want hash %q message %q", deployed.CommitHash, deployed.CommitMessage, commitHash, "Deploy hello worker")
 	}
 	if len(deployed.Triggers.Crons) != 1 || deployed.Triggers.Crons[0] != "*/5 * * * *" {
 		t.Fatalf("deploy triggers = %#v", deployed.Triggers)
@@ -899,6 +909,17 @@ func decodeRequest(t *testing.T, request *http.Request, target any) {
 	if err := json.NewDecoder(request.Body).Decode(target); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return string(output)
 }
 
 func writeJSON(t *testing.T, writer http.ResponseWriter, status int, value any) {

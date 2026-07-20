@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"mime"
 	"net"
 	"path"
@@ -99,6 +98,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	input.Hostname = strings.TrimSpace(strings.ToLower(input.Hostname))
 	input.ExternalID = strings.TrimSpace(input.ExternalID)
 	input.OAuthClientID = strings.TrimSpace(input.OAuthClientID)
+	input.CreatedBy = strings.TrimSpace(input.CreatedBy)
 	if input.Name == "" {
 		return App{}, errors.New("name is required")
 	}
@@ -142,7 +142,7 @@ func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 		if err != nil {
 			return App{}, err
 		}
-		app := App{ID: appID, OrgID: input.OrgID, Name: input.Name, Hostname: hostname, Auth: auth, ExternalID: input.ExternalID, OAuthClientID: input.OAuthClientID, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
+		app := App{ID: appID, OrgID: input.OrgID, Name: input.Name, Hostname: hostname, Auth: auth, ExternalID: input.ExternalID, OAuthClientID: input.OAuthClientID, CreatedBy: input.CreatedBy, RuntimeToken: runtimeToken, CreatedAt: time.Now().UTC()}
 		if err := s.store.CreateApp(app); err != nil {
 			if generated && errors.Is(err, ErrAppExists) {
 				lastErr = err
@@ -684,6 +684,9 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 	}
 	detail.Deployment = &WorkerDeployment{
 		ID:                   active.Deployment.ID,
+		CommitHash:           active.Deployment.CommitHash,
+		CommitMessage:        active.Deployment.CommitMessage,
+		CreatedBy:            active.Deployment.CreatedBy,
 		Entrypoint:           active.Deployment.Entrypoint,
 		Format:               active.Deployment.Format,
 		BundleSize:           active.Deployment.BundleSize,
@@ -732,6 +735,9 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			AppID:             record.App.ID,
 			AppName:           record.App.Name,
 			Hostname:          record.App.Hostname,
+			CommitHash:        record.Deployment.CommitHash,
+			CommitMessage:     record.Deployment.CommitMessage,
+			CreatedBy:         record.Deployment.CreatedBy,
 			Entrypoint:        record.Deployment.Entrypoint,
 			Format:            record.Deployment.Format,
 			BundleSize:        record.Deployment.BundleSize,
@@ -952,6 +958,9 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	deployment := Deployment{
 		ID:                   deploymentID,
 		AppID:                appID,
+		CommitHash:           strings.TrimSpace(input.CommitHash),
+		CommitMessage:        strings.TrimSpace(input.CommitMessage),
+		CreatedBy:            strings.TrimSpace(input.CreatedBy),
 		Files:                files,
 		Assets:               assets,
 		Entrypoint:           entrypoint,
@@ -1418,9 +1427,20 @@ func activeForAppDeployments(active []ActiveDeployment, appID string) []ActiveDe
 	return deployments
 }
 
-func selectWeightedDeployment(active []ActiveDeployment, key string) *ActiveDeployment {
+func selectWeightedDeployment(active []ActiveDeployment) *ActiveDeployment {
+	return selectWeightedDeploymentWithPreference(active, "")
+}
+
+func selectWeightedDeploymentWithPreference(active []ActiveDeployment, preferredDeploymentID string) *ActiveDeployment {
 	if len(active) == 0 {
 		return nil
+	}
+	if preferredDeploymentID != "" {
+		for i := range active {
+			if active[i].Deployment.ID == preferredDeploymentID && active[i].TrafficPercent > 0 {
+				return &active[i]
+			}
+		}
 	}
 	total := 0
 	for _, item := range active {
@@ -1429,9 +1449,7 @@ func selectWeightedDeployment(active []ActiveDeployment, key string) *ActiveDepl
 	if total <= 0 {
 		return nil
 	}
-	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(key))
-	target := int(hash.Sum32() % uint32(total))
+	target := cryptoRandomInt(total)
 	for i := range active {
 		target -= active[i].TrafficPercent
 		if target < 0 {
@@ -1439,6 +1457,21 @@ func selectWeightedDeployment(active []ActiveDeployment, key string) *ActiveDepl
 		}
 	}
 	return &active[len(active)-1]
+}
+
+func cryptoRandomInt(max int) int {
+	if max <= 1 {
+		return 0
+	}
+	bytes := make([]byte, 8)
+	if _, err := rand.Read(bytes); err != nil {
+		return int(time.Now().UnixNano() % int64(max))
+	}
+	var value uint64
+	for _, item := range bytes {
+		value = (value << 8) | uint64(item)
+	}
+	return int(value % uint64(max))
 }
 
 func validateDeploymentTraffic(traffic []DeploymentTraffic) error {
@@ -2440,7 +2473,11 @@ func (s *Service) WorkerPort(appID, requestPath string) (int, bool, error) {
 	return active.Deployment.Port, shouldRunWorkerFirst(active.Deployment.AssetConfig.RunWorkerFirst, requestPath), nil
 }
 
-func (s *Service) WorkerRuntimeDeployment(appID, requestPath, routingKey string) (ActiveDeployment, bool, bool, error) {
+func (s *Service) WorkerRuntimeDeployment(appID, requestPath string) (ActiveDeployment, bool, bool, error) {
+	return s.WorkerRuntimeDeploymentWithPreference(appID, requestPath, "")
+}
+
+func (s *Service) WorkerRuntimeDeploymentWithPreference(appID, requestPath, preferredDeploymentID string) (ActiveDeployment, bool, bool, error) {
 	if _, _, err := s.worker(appID); err != nil {
 		return ActiveDeployment{}, false, false, err
 	}
@@ -2448,7 +2485,7 @@ func (s *Service) WorkerRuntimeDeployment(appID, requestPath, routingKey string)
 	if err != nil {
 		return ActiveDeployment{}, false, false, err
 	}
-	selected := selectWeightedDeployment(activeForAppDeployments(active, appID), routingKey)
+	selected := selectWeightedDeploymentWithPreference(activeForAppDeployments(active, appID), strings.TrimSpace(preferredDeploymentID))
 	if selected == nil {
 		return ActiveDeployment{}, false, false, nil
 	}

@@ -935,6 +935,41 @@ func TestGatewayRunWorkerFirstTrueProxiesBeforeAssets(t *testing.T) {
 	}
 }
 
+func TestGatewayUsesStickyDeploymentCookie(t *testing.T) {
+	dir := t.TempDir()
+	store := newAPIObjectBackedRepo()
+	objects := newAPIObjectStore()
+	service := nanoflare.NewServiceWithObjects(store, config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	), objects)
+	server := NewServer(service)
+	app := createApp(t, server, "Assets", "assets.example.com")
+	first := deployWithAssets(t, server, app.ID,
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("first"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("first")}},
+	)
+	second := deployWithAssets(t, server, app.ID,
+		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("second"); } }`}},
+		[]nanoflare.AssetFile{{Path: "index.html", ContentType: "text/html; charset=utf-8", Data: []byte("second")}},
+	)
+	body := []byte(`{"deployments":[{"id":"` + first.ID + `","traffic_percent":50},{"id":"` + second.ID + `","traffic_percent":50}]}`)
+	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", body, http.StatusOK, &[]nanoflare.ConsoleDeployment{})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/apps/"+app.ID+"/", nil)
+	request.AddCookie(&http.Cookie{Name: "nf_deployment_" + app.ID, Value: first.ID})
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "first" {
+		t.Fatalf("gateway sticky response status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+	if cookies := recorder.Result().Cookies(); len(cookies) == 0 || cookies[0].Value != first.ID {
+		t.Fatalf("sticky cookie not refreshed: %#v", cookies)
+	}
+}
+
 func TestGatewayAssetHitDoesNotEnsureLazyRuntime(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()

@@ -29,6 +29,21 @@ type DeleteResponse = {
   id: string
 }
 
+type Theme = "light" | "dark"
+
+const THEME_STORAGE_KEY = "gallery-app-theme"
+
+function getInitialTheme(): Theme {
+  if (typeof window === "undefined") return "light"
+
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+  if (storedTheme === "light" || storedTheme === "dark") {
+    return storedTheme
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+}
+
 export function App() {
   const [items, setItems] = useState<GalleryItem[]>([])
   const [status, setStatus] = useState("Loading gallery...")
@@ -36,7 +51,14 @@ export function App() {
   const [selectedItem, setSelectedItem] = useState<GalleryItem | null>(null)
   const [previewingId, setPreviewingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [theme, setTheme] = useState<Theme>(getInitialTheme)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+  }, [theme])
 
   useEffect(() => {
     let active = true
@@ -160,7 +182,7 @@ export function App() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
+    <main className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
       <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 lg:px-8">
         <input
           ref={fileInputRef}
@@ -175,30 +197,53 @@ export function App() {
         <section>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="max-w-3xl">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-sky-700">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
                 React + Vite + db + object storage
               </p>
-              <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">
+              <h1 className="text-4xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-5xl">
                 Gallery
               </h1>
-              <p className="mt-4 max-w-2xl text-base text-slate-600">
+              <p className="mt-4 max-w-2xl text-base text-slate-600 dark:text-slate-300">
                 The gallery interface is bundled by Vite, image bytes live in object storage, and
                 gallery metadata is stored in db. The Worker keeps <code>/api/*</code> dynamic while
                 the rest of the app ships as static assets.
               </p>
             </div>
 
-            <button
-              type="button"
-              disabled={isUploading}
-              onClick={() => fileInputRef.current?.click()}
-              className="shrink-0 rounded-lg bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70"
-            >
-              {isUploading ? "Uploading..." : "Upload image"}
-            </button>
+            <div className="flex shrink-0 flex-col gap-3 sm:items-end">
+              <div
+                className="grid grid-cols-2 rounded-lg border border-slate-200 bg-white p-1 text-sm font-semibold shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                aria-label="Color theme"
+              >
+                {(["light", "dark"] as const).map((option) => (
+                  <button
+                    type="button"
+                    key={option}
+                    onClick={() => setTheme(option)}
+                    className={`rounded-md px-3 py-2 transition-colors ${
+                      theme === option
+                        ? "bg-slate-900 text-white shadow-sm dark:bg-sky-400 dark:text-slate-950"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    }`}
+                    aria-pressed={theme === option}
+                  >
+                    {option === "light" ? "Light" : "Dark"}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                disabled={isUploading}
+                onClick={() => fileInputRef.current?.click()}
+                className="shrink-0 rounded-lg bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70 dark:bg-sky-400 dark:text-slate-950 dark:hover:bg-sky-300"
+              >
+                {isUploading ? "Uploading..." : "Upload image"}
+              </button>
+            </div>
           </div>
 
-          <div className="mt-4 min-h-6 text-sm text-slate-500" aria-live="polite">
+          <div className="mt-4 min-h-6 text-sm text-slate-500 dark:text-slate-400" aria-live="polite">
             {status}
           </div>
         </section>
@@ -208,7 +253,7 @@ export function App() {
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {items.map((item) => (
                 <article
-                  className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+                  className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900"
                   key={item.id}
                 >
                   <button
@@ -221,7 +266,7 @@ export function App() {
                       src={`/api/gallery/${item.id}`}
                       alt={item.filename}
                       loading="lazy"
-                      className="block aspect-square w-full bg-slate-100 object-cover"
+                      className="block aspect-square w-full bg-slate-100 object-cover dark:bg-slate-800"
                     />
                     <span className="sr-only">
                       {previewingId === item.id ? `Opening ${item.filename}` : `Preview ${item.filename}`}
@@ -229,13 +274,13 @@ export function App() {
                   </button>
                   <div className="flex justify-between px-4 pb-4 pt-4">
                     <div className="flex flex-col space-y-1">
-                      <strong className="truncate text-sm font-semibold text-slate-900">{item.filename}</strong>
-                      <span className="text-sm text-slate-500">
+                      <strong className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{item.filename}</strong>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">
                         {formatBytes(item.size)} • {new Date(item.uploadedAt).toLocaleString()}
                       </span>
                     </div>
                     <div>
-                      <span className="text-sm text-slate-500">{formatPreviews(item.previewCount)}</span>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">{formatPreviews(item.previewCount)}</span>
                     </div>
                   </div>
                   {/* <div className="flex gap-2 px-4 pb-4">
@@ -260,7 +305,7 @@ export function App() {
               ))}
             </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
               No images yet. Upload one above.
             </div>
           )}
@@ -269,40 +314,40 @@ export function App() {
 
       {selectedItem ? (
         <div
-          className="fixed inset-0 z-20 grid place-items-center bg-slate-950/60 p-4"
+          className="fixed inset-0 z-20 grid place-items-center bg-slate-950/60 p-4 dark:bg-slate-950/80"
           role="dialog"
           aria-modal="true"
           aria-labelledby="preview-title"
         >
-          <div className="relative grid w-full max-w-7xl grid-cols-1 gap-6 rounded-2xl bg-white p-4 shadow-2xl md:grid-cols-[minmax(0,1.8fr)_minmax(240px,0.55fr)] md:p-5">
+          <div className="relative grid w-full max-w-7xl grid-cols-1 gap-6 rounded-2xl bg-white p-4 shadow-2xl transition-colors dark:bg-slate-900 md:grid-cols-[minmax(0,1.8fr)_minmax(240px,0.55fr)] md:p-5">
             <button
               type="button"
-              className="absolute right-4 top-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              className="absolute right-4 top-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white"
               onClick={() => setSelectedItem(null)}
               aria-label="Close preview"
             >
               Close
             </button>
             <img
-              className="h-auto max-h-[82vh] w-full rounded-xl bg-slate-100 object-contain"
+              className="h-auto max-h-[82vh] w-full rounded-xl bg-slate-100 object-contain dark:bg-slate-950"
               src={`/api/gallery/${selectedItem.id}`}
               alt={selectedItem.filename}
             />
             <div className="min-w-0 flex flex-col justify-end gap-3">
               <h2
                 id="preview-title"
-                className="max-w-full overflow-hidden text-pretty break-words text-lg font-semibold text-slate-900 sm:text-xl"
+                className="max-w-full overflow-hidden text-pretty break-words text-lg font-semibold text-slate-900 dark:text-slate-100 sm:text-xl"
               >
                 {selectedItem.filename}
               </h2>
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
                 {formatBytes(selectedItem.size)} • {new Date(selectedItem.uploadedAt).toLocaleString()}
               </p>
-              <p className="text-sm text-slate-500">{formatPreviews(selectedItem.previewCount)}</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{formatPreviews(selectedItem.previewCount)}</p>
               <div className="mt-2">
                 <button
                   type="button"
-                  className="rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:cursor-wait disabled:opacity-70"
+                  className="rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:cursor-wait disabled:opacity-70 dark:bg-red-950/40 dark:text-red-200 dark:hover:bg-red-950/70"
                   onClick={() => void handleDelete(selectedItem)}
                   disabled={deletingId === selectedItem.id}
                 >

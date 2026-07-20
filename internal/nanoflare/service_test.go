@@ -13,11 +13,14 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 	objects := newMemoryObjectStore()
 	service := NewServiceWithObjects(store, &recordingWriter{}, objects)
 
-	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com", CreatedBy: "dev@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	deployment, err := service.Deploy(app.ID, DeployInput{
+		CommitHash:        "0123456789abcdef",
+		CommitMessage:     "Ship metadata",
+		CreatedBy:         "deploy@example.com",
 		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
 		CompatibilityDate: "2025-12-10",
 	})
@@ -38,6 +41,23 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 	}
 	if len(files) != 1 || files[0].Content != "export default {}" {
 		t.Fatalf("worker files = %#v", files)
+	}
+	detail, err := service.WorkerDetail(app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.App.CreatedBy != "dev@example.com" {
+		t.Fatalf("worker created by = %q", detail.App.CreatedBy)
+	}
+	if detail.Deployment == nil || detail.Deployment.CommitHash != "0123456789abcdef" || detail.Deployment.CommitMessage != "Ship metadata" || detail.Deployment.CreatedBy != "deploy@example.com" {
+		t.Fatalf("worker deployment metadata = %#v", detail.Deployment)
+	}
+	consoleDeployments, err := service.WorkerDeployments(app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consoleDeployments) != 1 || consoleDeployments[0].CommitHash != "0123456789abcdef" || consoleDeployments[0].CommitMessage != "Ship metadata" || consoleDeployments[0].CreatedBy != "deploy@example.com" {
+		t.Fatalf("console deployment metadata = %#v", consoleDeployments)
 	}
 
 	active, err := service.ActiveDeployments()

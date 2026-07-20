@@ -57,7 +57,7 @@ export function WorkerDetailPage() {
   return <WorkerDetailContent worker={worker} notify={notify} apiConnected={apiConnected} />
 }
 
-function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; bindings?: WorkerDeployment["bindings"]; created_at: string }; notify: (text: string) => void; apiConnected: boolean }) {
+function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; bindings?: WorkerDeployment["bindings"]; created_at: string; created_by?: string }; notify: (text: string) => void; apiConnected: boolean }) {
   const navigate = useNavigate()
   const { databases, namespaces } = useWorkspace()
   const [tab, setTab] = useState<WorkerDetailTab>("overview")
@@ -284,7 +284,7 @@ function WorkerFileViewer({ files, selectedFile, onSelect }: { files: WorkerFile
   )
 }
 
-function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: WorkerDetailData; worker: { id: string; name: string; hostname: string; created_at: string }; apiConnected: boolean; notify: (text: string) => void }) {
+function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: WorkerDetailData; worker: { id: string; name: string; hostname: string; created_at: string; created_by?: string }; apiConnected: boolean; notify: (text: string) => void }) {
   const [protectedRoutes, setProtectedRoutes] = useState((detail?.app.auth?.protected_routes ?? []).join("\n"))
   const [saving, setSaving] = useState(false)
 
@@ -299,8 +299,10 @@ function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: Worke
     ["Worker ID", app.id],
     ["Name", app.name],
     ["Hostname", app.hostname],
+    ["Worker created by", app.created_by ?? "-"],
     ["Created", new Date(app.created_at).toLocaleString()],
     ["Deployment", deployment?.id ?? "awaiting deploy"],
+    ["Deployment created by", deployment?.created_by ?? "-"],
     ["Commit", deployment?.commit_hash ? shortCommitHash(deployment.commit_hash) : "-"],
     ["Commit message", deployment?.commit_message ?? "-"],
     ["Compatibility date", deployment?.compatibility_date ?? "-"],
@@ -568,7 +570,7 @@ function WorkerDeploymentsTable({ activeCount, deployments, draft, onRollback, o
       <td className="relative w-28 px-5 py-4">
         {percent > 0 && <span className="absolute left-2 top-4 h-7 w-1 rounded-full bg-[#1677ff]" />}
         <DeploymentID id={deployment.id} />
-        {deployment.commit_hash && <div className="mt-1 pl-5 font-mono text-[10px] text-[#8a8a8a]">{shortCommitHash(deployment.commit_hash)}</div>}
+        {/* {deployment.commit_hash && <div className="mt-1 pl-5 font-mono text-[10px] text-[#8a8a8a]">{shortCommitHash(deployment.commit_hash)}</div>} */}
       </td>
       <td className="w-8 py-4">
         <MantineTooltip label="Copy version ID">
@@ -578,7 +580,7 @@ function WorkerDeploymentsTable({ activeCount, deployments, draft, onRollback, o
         </MantineTooltip>
       </td>
       <td className="max-w-[360px] truncate px-2 py-4 italic text-[#727272]" title={deployment.commit_message || undefined}>{deployment.commit_message || "Manually deployed"}</td>
-      <td className="px-4 py-4 text-right text-[#242424]">Nanoflare <span className="text-[#777]">by local</span></td>
+      <td className="px-4 py-4 text-right text-[#242424]"><span className="text-[#777]">{deployment.created_by || "local"}</span></td>
       <td className="w-24 px-2 py-4 text-[#333]">{formatAge(deployment.created_at)}</td>
       <td className="w-12 px-4 py-4 text-right">
         {showMenu && <Menu position="bottom-end" shadow="md" width={180}>

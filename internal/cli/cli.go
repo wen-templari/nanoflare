@@ -307,7 +307,7 @@ func (r *Runner) deploy(args []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("usage: nanoflare deploy [worker] [flags]")
 	}
-	_, project, err := loadProject()
+	projectPath, project, err := loadProject()
 	if err != nil {
 		return err
 	}
@@ -334,8 +334,11 @@ func (r *Runner) deploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	commitHash, commitMessage := deploymentGitMetadata(filepath.Dir(projectPath))
 	var deployment nanoflare.Deployment
 	if err := r.request(http.MethodPost, baseURL+"/v1/apps/"+project.AppID+"/deployments", nanoflare.DeployInput{
+		CommitHash:           commitHash,
+		CommitMessage:        commitMessage,
 		Files:                files,
 		Assets:               assets,
 		Entrypoint:           project.Entrypoint,
@@ -357,6 +360,27 @@ func (r *Runner) deploy(args []string) error {
 	}
 	fmt.Fprintf(r.Stdout, "Deployed worker %s as deployment %s\n", project.AppID, deployment.ID)
 	return nil
+}
+
+func deploymentGitMetadata(dir string) (string, string) {
+	commitHash, ok := gitOutput(dir, "rev-parse", "HEAD")
+	if !ok {
+		return "", ""
+	}
+	commitMessage, _ := gitOutput(dir, "log", "-1", "--pretty=%B")
+	return commitHash, commitMessage
+}
+
+func gitOutput(dir string, args ...string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "git", args...)
+	command.Dir = dir
+	output, err := command.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(output)), true
 }
 
 func (r *Runner) auth(args []string) error {

@@ -29,6 +29,7 @@ export type Worker = {
   name: string;
   hostname: string;
   created_at: string;
+  created_by?: string;
   auth?: WorkerAuth;
   status?: "live" | "draft";
   requests?: string;
@@ -40,6 +41,9 @@ export type WorkerDetailTab = "overview" | "deployments" | "files" | "output" | 
 
 export type WorkerDeployment = {
   id: string;
+  commit_hash?: string;
+  commit_message?: string;
+  created_by?: string;
   entrypoint: string;
   bundle_size: number;
   asset_count?: number;
@@ -63,6 +67,9 @@ export type ConsoleDeployment = {
   app_id: string;
   app_name: string;
   hostname: string;
+  commit_hash?: string;
+  commit_message?: string;
+  created_by?: string;
   entrypoint: string;
   bundle_size: number;
   compatibility_date: string;

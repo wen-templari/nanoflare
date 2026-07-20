@@ -120,6 +120,19 @@ func controlPATAccess(r *http.Request) (nanoflare.PATAccess, bool) {
 	return value, ok
 }
 
+func controlActor(r *http.Request) string {
+	if user := controlUser(r); strings.TrimSpace(user.Email) != "" {
+		return strings.TrimSpace(user.Email)
+	}
+	if user := controlUser(r); strings.TrimSpace(user.ID) != "" {
+		return strings.TrimSpace(user.ID)
+	}
+	if access, ok := controlOAuthAccess(r); ok {
+		return strings.TrimSpace(access.UserID)
+	}
+	return ""
+}
+
 func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope string) bool {
 	if s.controlAuth == nil {
 		return true

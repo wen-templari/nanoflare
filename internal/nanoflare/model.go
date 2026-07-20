@@ -15,6 +15,7 @@ type App struct {
 	Auth          AuthConfig        `json:"auth,omitempty"`
 	ExternalID    string            `json:"external_id,omitempty"`
 	OAuthClientID string            `json:"oauth_client_id,omitempty"`
+	CreatedBy     string            `json:"created_by,omitempty"`
 	RuntimeToken  string            `json:"-"`
 	SecretValues  map[string]string `json:"-"`
 	CreatedAt     time.Time         `json:"created_at"`
@@ -27,6 +28,9 @@ type AuthConfig struct {
 type Deployment struct {
 	ID                   string                       `json:"id"`
 	AppID                string                       `json:"app_id"`
+	CommitHash           string                       `json:"commit_hash,omitempty"`
+	CommitMessage        string                       `json:"commit_message,omitempty"`
+	CreatedBy            string                       `json:"created_by,omitempty"`
 	Files                []WorkerFile                 `json:"files"`
 	Assets               []AssetFile                  `json:"assets,omitempty"`
 	Entrypoint           string                       `json:"entrypoint"`
@@ -69,6 +73,7 @@ type CreateAppInput struct {
 	Auth          AuthConfig `json:"auth,omitempty"`
 	ExternalID    string     `json:"external_id,omitempty"`
 	OAuthClientID string     `json:"-"`
+	CreatedBy     string     `json:"-"`
 }
 
 type CreateKVNamespaceInput struct {
@@ -103,6 +108,9 @@ type UpdateAppInput struct {
 }
 
 type DeployInput struct {
+	CommitHash           string                       `json:"commit_hash,omitempty"`
+	CommitMessage        string                       `json:"commit_message,omitempty"`
+	CreatedBy            string                       `json:"-"`
 	Files                []WorkerFile                 `json:"files"`
 	Assets               []AssetFile                  `json:"assets,omitempty"`
 	Entrypoint           string                       `json:"entrypoint,omitempty"`
@@ -118,6 +126,9 @@ type DeployInput struct {
 
 type WorkerDeployment struct {
 	ID                   string                       `json:"id"`
+	CommitHash           string                       `json:"commit_hash,omitempty"`
+	CommitMessage        string                       `json:"commit_message,omitempty"`
+	CreatedBy            string                       `json:"created_by,omitempty"`
 	Entrypoint           string                       `json:"entrypoint"`
 	Format               string                       `json:"format"`
 	BundleSize           int64                        `json:"bundle_size"`
@@ -146,6 +157,9 @@ type ConsoleDeployment struct {
 	AppID             string        `json:"app_id"`
 	AppName           string        `json:"app_name"`
 	Hostname          string        `json:"hostname"`
+	CommitHash        string        `json:"commit_hash,omitempty"`
+	CommitMessage     string        `json:"commit_message,omitempty"`
+	CreatedBy         string        `json:"created_by,omitempty"`
 	Entrypoint        string        `json:"entrypoint"`
 	Format            string        `json:"format"`
 	BundleSize        int64         `json:"bundle_size"`

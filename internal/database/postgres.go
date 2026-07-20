@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS apps (
 	auth jsonb NOT NULL DEFAULT '{}'::jsonb,
 	external_id text NOT NULL DEFAULT '',
 	oauth_client_id text NOT NULL DEFAULT '',
+	created_by text NOT NULL DEFAULT '',
 	runtime_token text,
 	created_at timestamptz NOT NULL
 );
@@ -151,6 +152,9 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 CREATE TABLE IF NOT EXISTS deployments (
 	id text PRIMARY KEY,
 	app_id text NOT NULL REFERENCES apps(id),
+	commit_hash text NOT NULL DEFAULT '',
+	commit_message text NOT NULL DEFAULT '',
+	created_by text NOT NULL DEFAULT '',
 	files jsonb NOT NULL,
 	assets jsonb NOT NULL DEFAULT '[]',
 	entrypoint text NOT NULL,
@@ -206,6 +210,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS created_by text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_token text;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS usage_level text NOT NULL DEFAULT 'default';
 UPDATE organizations SET usage_level = 'default' WHERE usage_level = '';
@@ -243,6 +248,9 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEF
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS traffic_percent integer NOT NULL DEFAULT 0;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS commit_hash text NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS commit_message text NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS created_by text NOT NULL DEFAULT '';
 DROP INDEX IF EXISTS deployments_active_app_idx;
 UPDATE deployments SET traffic_percent = 100 WHERE active AND traffic_percent = 0;
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
@@ -1183,8 +1191,8 @@ FROM oauth_tokens WHERE `+where, value).
 }
 
 func (p *Postgres) CreateApp(app nanoflare.App) error {
-	_, err := p.db.Exec(`INSERT INTO apps (id, org_id, name, hostname, auth, external_id, oauth_client_id, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.ExternalID, app.OAuthClientID, app.RuntimeToken, app.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO apps (id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.ExternalID, app.OAuthClientID, app.CreatedBy, app.RuntimeToken, app.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrAppExists
 	}
@@ -1503,7 +1511,7 @@ func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 }
 
 func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
-	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, runtime_token, created_at FROM apps`
+	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM apps`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -1519,7 +1527,7 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 	for rows.Next() {
 		var app nanoflare.App
 		var auth []byte
-		if err := rows.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.RuntimeToken, &app.CreatedAt); err != nil {
+		if err := rows.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &app.Auth); err != nil {
@@ -1533,8 +1541,8 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
 	var app nanoflare.App
 	var auth []byte
-	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, runtime_token, created_at FROM apps WHERE id = $1`, appID).
-		Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.RuntimeToken, &app.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM apps WHERE id = $1`, appID).
+		Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.App{}, nanoflare.ErrAppNotFound
 	}
@@ -1734,9 +1742,9 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, app_id, files, assets, entrypoint, format, compatibility_date, triggers, vars, kv_namespaces, db, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, true, 100)`,
-		deployment.ID, deployment.AppID, files, assets, deployment.Entrypoint, deployment.Format,
+	(id, app_id, commit_hash, commit_message, created_by, files, assets, entrypoint, format, compatibility_date, triggers, vars, kv_namespaces, db, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, true, 100)`,
+		deployment.ID, deployment.AppID, deployment.CommitHash, deployment.CommitMessage, deployment.CreatedBy, files, assets, deployment.Entrypoint, deployment.Format,
 		deployment.CompatibilityDate, mustJSON(deployment.Triggers), mustJSON(deployment.Vars), mustJSON(deployment.KVNamespaces), mustJSON(deployment.Databases), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
 		return nanoflare.ErrAppNotFound
@@ -1789,8 +1797,8 @@ func (p *Postgres) DeleteDeployment(id string) error {
 
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
-SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.runtime_token, a.created_at,
-	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
+SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
+	d.id, d.app_id, d.commit_hash, d.commit_message, d.created_by, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
 WHERE d.traffic_percent > 0
@@ -1804,8 +1812,8 @@ ORDER BY a.id, d.created_at DESC`)
 		var item nanoflare.ActiveDeployment
 		var files, assets, triggers, vars, kvNamespaces, databases, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.RuntimeToken, &item.App.CreatedAt,
-			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.CommitHash, &item.Deployment.CommitMessage, &item.Deployment.CreatedBy, &files, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.TrafficPercent,
@@ -1847,8 +1855,8 @@ ORDER BY a.id, d.created_at DESC`)
 
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
-	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.runtime_token, a.created_at,
-		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
+	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
+		d.id, d.app_id, d.commit_hash, d.commit_message, d.created_by, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
 	ORDER BY d.created_at DESC`)
@@ -1861,8 +1869,8 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 		var item nanoflare.DeploymentRecord
 		var assets, triggers, vars, kvNamespaces, databases, objectStorageBuckets, assetConfig, auth []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.RuntimeToken, &item.App.CreatedAt,
-			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.CommitHash, &item.Deployment.CommitMessage, &item.Deployment.CreatedBy, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.Active, &item.TrafficPercent,
