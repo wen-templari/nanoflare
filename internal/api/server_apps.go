@@ -21,6 +21,7 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("GET /v1/apps/{appID}/output", s.workerOutput)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/traffic", s.workerTraffic)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/deployments", s.workerDeployments)
+	s.mux.HandleFunc("PUT /v1/apps/{appID}/deployments/traffic", s.setWorkerDeploymentTraffic)
 	s.mux.HandleFunc("POST /v1/apps/{appID}/deployments", s.deploy)
 	s.mux.HandleFunc("GET /v1/apps/{appID}/secrets", s.listSecrets)
 	s.mux.HandleFunc("PUT /v1/apps/{appID}/secrets/{name}", s.putSecret)
@@ -35,6 +36,31 @@ func (s *Server) workerDeployments(w http.ResponseWriter, r *http.Request) {
 	deployments, err := s.service.WorkerDeploymentsForOrg(controlOrgID(r), r.PathValue("appID"))
 	if err != nil {
 		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deployments)
+}
+
+type deploymentTrafficRequest struct {
+	Deployments []nanoflare.DeploymentTraffic `json:"deployments"`
+}
+
+func (s *Server) setWorkerDeploymentTraffic(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "deployments:write") {
+		return
+	}
+	var input deploymentTrafficRequest
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	deployments, err := s.service.SetDeploymentTrafficForOrg(controlOrgID(r), r.PathValue("appID"), input.Deployments)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrAppNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, deployments)
@@ -233,7 +259,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeployment(appID, requestPath)
+	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeployment(appID, requestPath, routingKey(r))
 	if err != nil {
 		writeWorkerError(w, err)
 		return
@@ -243,7 +269,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !runWorkerFirst {
-		response, handled, err := s.service.PublicAsset(appID, requestPath)
+		response, handled, err := s.service.PublicAssetForDeployment(active, requestPath)
 		if err != nil {
 			writeWorkerError(w, err)
 			return
@@ -284,6 +310,14 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	defer workerResponse.Body.Close()
 	writeWorkerResponse(w, workerResponse)
+}
+
+func routingKey(r *http.Request) string {
+	forwardedFor := r.Header.Get("X-Forwarded-For")
+	if forwardedFor == "" {
+		forwardedFor = r.RemoteAddr
+	}
+	return r.Method + "\n" + r.Host + "\n" + r.URL.EscapedPath() + "\n" + r.URL.RawQuery + "\n" + forwardedFor + "\n" + r.Header.Get("User-Agent")
 }
 
 func appGatewayPath(requestPath string) (string, int, string, bool) {

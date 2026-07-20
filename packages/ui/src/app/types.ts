@@ -52,6 +52,7 @@ export type WorkerDeployment = {
   db?: WorkerDatabaseBinding[];
   object_storage_buckets?: WorkerObjectStorageBucketBinding[];
   bindings?: WorkerBinding[];
+  traffic_percent: number;
 };
 
 export type WorkerSecret = { name: string; created_at: string; updated_at: string };
@@ -67,6 +68,7 @@ export type ConsoleDeployment = {
   compatibility_date: string;
   triggers?: WorkerTriggerConfig;
   state: "active" | "inactive";
+  traffic_percent: number;
   created_at: string;
 };
 

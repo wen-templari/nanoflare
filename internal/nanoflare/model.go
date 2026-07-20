@@ -45,14 +45,21 @@ type Deployment struct {
 }
 
 type ActiveDeployment struct {
-	App        App        `json:"app"`
-	Deployment Deployment `json:"deployment"`
+	App            App        `json:"app"`
+	Deployment     Deployment `json:"deployment"`
+	TrafficPercent int        `json:"traffic_percent"`
 }
 
 type DeploymentRecord struct {
-	App        App
-	Deployment Deployment
-	Active     bool
+	App            App
+	Deployment     Deployment
+	Active         bool
+	TrafficPercent int
+}
+
+type DeploymentTraffic struct {
+	ID             string `json:"id"`
+	TrafficPercent int    `json:"traffic_percent"`
 }
 
 type CreateAppInput struct {
@@ -124,6 +131,7 @@ type WorkerDeployment struct {
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	Bindings             []Binding                    `json:"bindings,omitempty"`
 	Port                 int                          `json:"port"`
+	TrafficPercent       int                          `json:"traffic_percent"`
 	CreatedAt            time.Time                    `json:"created_at"`
 }
 
@@ -145,6 +153,7 @@ type ConsoleDeployment struct {
 	CompatibilityDate string        `json:"compatibility_date"`
 	Triggers          TriggerConfig `json:"triggers,omitempty"`
 	State             string        `json:"state"`
+	TrafficPercent    int           `json:"traffic_percent"`
 	CreatedAt         time.Time     `json:"created_at"`
 }
 

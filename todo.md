@@ -6,6 +6,7 @@
 ## Bindings 
 - queue
 
-## Access control
+## Workers
 
-- improve cli login -web flow
+- add deployment meta (commit hash, commit message)
+- support deployment to different env

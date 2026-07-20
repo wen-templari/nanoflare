@@ -515,6 +515,41 @@ func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
 	requestJSON(t, server, http.MethodGet, "/v1/apps/missing/deployments", http.StatusNotFound, &map[string]string{})
 }
 
+func TestSetWorkerDeploymentTraffic(t *testing.T) {
+	dir := t.TempDir()
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServer(service)
+	app := createApp(t, server, "Ledger App", "ledger.example.com")
+	first := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "first.js", Content: "first"}}, "")
+	second := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "second.js", Content: "second"}}, "")
+
+	body := []byte(`{"deployments":[{"id":"` + first.ID + `","traffic_percent":10},{"id":"` + second.ID + `","traffic_percent":90}]}`)
+	var deployments []nanoflare.ConsoleDeployment
+	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", body, http.StatusOK, &deployments)
+	traffic := map[string]int{}
+	for _, deployment := range deployments {
+		traffic[deployment.ID] = deployment.TrafficPercent
+	}
+	if traffic[first.ID] != 10 || traffic[second.ID] != 90 {
+		t.Fatalf("traffic = %#v, want 10/90", traffic)
+	}
+
+	var detail nanoflare.WorkerDetail
+	requestJSON(t, server, http.MethodGet, "/v1/apps/"+app.ID, http.StatusOK, &detail)
+	if detail.Deployment == nil || detail.Deployment.ID != second.ID || detail.Deployment.TrafficPercent != 90 {
+		t.Fatalf("detail deployment = %#v, want highest traffic deployment", detail.Deployment)
+	}
+
+	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"`+first.ID+`","traffic_percent":50}]}`), http.StatusBadRequest, &map[string]string{})
+	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"`+first.ID+`","traffic_percent":50},{"id":"`+first.ID+`","traffic_percent":50}]}`), http.StatusBadRequest, &map[string]string{})
+	requestJSONBytes(t, server, http.MethodPut, "/v1/apps/"+app.ID+"/deployments/traffic", []byte(`{"deployments":[{"id":"missing","traffic_percent":100}]}`), http.StatusBadRequest, &map[string]string{})
+}
+
 func TestTraefikConfigRequiresToken(t *testing.T) {
 	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(t.TempDir(), "workerd.capnp"),

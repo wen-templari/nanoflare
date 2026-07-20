@@ -29,7 +29,7 @@ func (s *RuntimeAssetServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestPath == "" {
 		requestPath = "/"
 	}
-	response, err := s.service.AssetFetch(bearerToken(r), requestPath)
+	response, err := s.service.AssetFetch(bearerToken(r), strings.TrimSpace(r.Header.Get("X-Nanoflare-Deployment-ID")), requestPath)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return

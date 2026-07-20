@@ -117,6 +117,7 @@ type Repository interface {
 	Activate(Deployment) error
 	DeleteDeployment(id string) error
 	SetActive(appID, deploymentID string) error
+	SetActiveTraffic(appID string, traffic []DeploymentTraffic) error
 	ActiveDeployments() ([]ActiveDeployment, error)
 	ListDeployments() ([]DeploymentRecord, error)
 	AppIDForCapability(string) (string, error)
@@ -158,7 +159,7 @@ type Store struct {
 	objectBuckets   map[string]ObjectStorageBucket
 	secrets         map[string]map[string]SecretRecord
 	deployments     map[string][]Deployment
-	active          map[string]string
+	active          map[string]map[string]int
 	capabilityToApp map[string]string
 	kv              map[string]map[string][]byte
 	kvMetrics       map[string]KVNamespaceMetrics
@@ -187,7 +188,7 @@ func NewStore() *Store {
 		objectBuckets:   make(map[string]ObjectStorageBucket),
 		secrets:         make(map[string]map[string]SecretRecord),
 		deployments:     make(map[string][]Deployment),
-		active:          make(map[string]string),
+		active:          make(map[string]map[string]int),
 		capabilityToApp: make(map[string]string),
 		kv:              make(map[string]map[string][]byte),
 		kvMetrics:       make(map[string]KVNamespaceMetrics),
@@ -1332,27 +1333,43 @@ func (s *Store) Activate(deployment Deployment) error {
 		return ErrAppNotFound
 	}
 	s.deployments[deployment.AppID] = append(s.deployments[deployment.AppID], deployment)
-	s.active[deployment.AppID] = deployment.ID
+	s.active[deployment.AppID] = map[string]int{deployment.ID: 100}
 	return nil
 }
 
 func (s *Store) SetActive(appID, deploymentID string) error {
+	if deploymentID == "" {
+		return s.SetActiveTraffic(appID, nil)
+	}
+	return s.SetActiveTraffic(appID, []DeploymentTraffic{{ID: deploymentID, TrafficPercent: 100}})
+}
+
+func (s *Store) SetActiveTraffic(appID string, traffic []DeploymentTraffic) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.apps[appID]; !exists {
 		return ErrAppNotFound
 	}
-	for _, deployment := range s.deployments[appID] {
-		if deployment.ID == deploymentID {
-			s.active[appID] = deployment.ID
-			return nil
-		}
-	}
-	if deploymentID == "" {
+	if len(traffic) == 0 {
 		delete(s.active, appID)
 		return nil
 	}
-	return errors.New("deployment not found")
+	next := make(map[string]int, len(traffic))
+	for _, item := range traffic {
+		found := false
+		for _, deployment := range s.deployments[appID] {
+			if deployment.ID == item.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.New("deployment not found")
+		}
+		next[item.ID] = item.TrafficPercent
+	}
+	s.active[appID] = next
+	return nil
 }
 
 func (s *Store) DeleteDeployment(id string) error {
@@ -1364,8 +1381,11 @@ func (s *Store) DeleteDeployment(id string) error {
 				continue
 			}
 			s.deployments[appID] = append(deployments[:i], deployments[i+1:]...)
-			if s.active[appID] == id {
-				delete(s.active, appID)
+			if active, ok := s.active[appID]; ok {
+				delete(active, id)
+				if len(active) == 0 {
+					delete(s.active, appID)
+				}
 			}
 			return nil
 		}
@@ -1377,15 +1397,20 @@ func (s *Store) ActiveDeployments() ([]ActiveDeployment, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	active := make([]ActiveDeployment, 0, len(s.active))
-	for appID, deploymentID := range s.active {
+	for appID, traffic := range s.active {
 		for _, deployment := range s.deployments[appID] {
-			if deployment.ID == deploymentID {
-				active = append(active, ActiveDeployment{App: s.apps[appID], Deployment: deployment})
-				break
+			percent := traffic[deployment.ID]
+			if percent > 0 {
+				active = append(active, ActiveDeployment{App: s.apps[appID], Deployment: deployment, TrafficPercent: percent})
 			}
 		}
 	}
-	sort.Slice(active, func(i, j int) bool { return active[i].App.ID < active[j].App.ID })
+	sort.Slice(active, func(i, j int) bool {
+		if active[i].App.ID != active[j].App.ID {
+			return active[i].App.ID < active[j].App.ID
+		}
+		return active[i].Deployment.CreatedAt.After(active[j].Deployment.CreatedAt)
+	})
 	return active, nil
 }
 
@@ -1395,10 +1420,12 @@ func (s *Store) ListDeployments() ([]DeploymentRecord, error) {
 	var records []DeploymentRecord
 	for appID, deployments := range s.deployments {
 		for _, deployment := range deployments {
+			percent := s.active[appID][deployment.ID]
 			records = append(records, DeploymentRecord{
-				App:        s.apps[appID],
-				Deployment: deployment,
-				Active:     deployment.ID == s.active[appID],
+				App:            s.apps[appID],
+				Deployment:     deployment,
+				Active:         percent > 0,
+				TrafficPercent: percent,
 			})
 		}
 	}

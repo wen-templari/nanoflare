@@ -34,10 +34,12 @@ type LazyManager struct {
 	scheduler     *cronRunner
 	generation    int
 	workers       map[string]*lazyWorker
+	activeKeys    map[string]bool
 	closed        bool
 }
 
 type lazyWorker struct {
+	key          string
 	appID        string
 	deploymentID string
 	configPath   string
@@ -70,6 +72,7 @@ func NewLazyManager(writer ConfigWriter, launcher Launcher, configDir, portHost 
 		idleTimeout:   idleTimeout,
 		output:        output,
 		workers:       make(map[string]*lazyWorker),
+		activeKeys:    make(map[string]bool),
 	}
 }
 
@@ -80,6 +83,7 @@ func (m *LazyManager) Write(active []nanoflare.ActiveDeployment) error {
 		return errors.New("runtime manager is closed")
 	}
 	stale := m.staleWorkersLocked(active)
+	m.activeKeys = activeWorkerKeys(active)
 	previousScheduler := m.scheduler
 	m.scheduler = nil
 	m.mu.Unlock()
@@ -134,7 +138,7 @@ func (m *LazyManager) Ensure(ctx context.Context, active nanoflare.ActiveDeploym
 			m.mu.Unlock()
 			return EnsuredWorker{}, worker.startErr
 		}
-		current := m.workers[active.App.ID]
+		current := m.workers[worker.key]
 		if current != worker {
 			m.mu.Unlock()
 			continue
@@ -160,6 +164,7 @@ func (m *LazyManager) Close() error {
 		workers = append(workers, worker)
 	}
 	m.workers = make(map[string]*lazyWorker)
+	m.activeKeys = make(map[string]bool)
 	m.mu.Unlock()
 	if scheduler != nil {
 		scheduler.Stop()
@@ -179,20 +184,30 @@ func (m *LazyManager) worker(active nanoflare.ActiveDeployment) (*lazyWorker, bo
 	if m.closed {
 		return nil, false, errors.New("runtime manager is closed")
 	}
-	if current := m.workers[active.App.ID]; current != nil {
+	key := workerKey(active)
+	if current := m.workers[key]; current != nil {
 		if current.deploymentID == active.Deployment.ID {
 			return current, false, nil
 		}
-		delete(m.workers, active.App.ID)
+		delete(m.workers, key)
 		go m.stopWorker(current)
 	}
+	if !m.activeKeys[key] {
+		for currentKey, current := range m.workers {
+			if current.appID == active.App.ID {
+				delete(m.workers, currentKey)
+				go m.stopWorker(current)
+			}
+		}
+	}
 	worker := &lazyWorker{
+		key:          key,
 		appID:        active.App.ID,
 		deploymentID: active.Deployment.ID,
 		starting:     true,
 		ready:        make(chan struct{}),
 	}
-	m.workers[active.App.ID] = worker
+	m.workers[key] = worker
 	return worker, true, nil
 }
 
@@ -205,7 +220,7 @@ func (m *LazyManager) start(worker *lazyWorker, active nanoflare.ActiveDeploymen
 	routed := generation[0]
 	m.mu.Lock()
 	m.generation++
-	configPath := filepath.Join(m.configDir, fmt.Sprintf("workerd-lazy-%06d-%s.capnp", m.generation, active.App.ID))
+	configPath := filepath.Join(m.configDir, fmt.Sprintf("workerd-lazy-%06d-%s-%s.capnp", m.generation, active.App.ID, active.Deployment.ID))
 	m.mu.Unlock()
 	if err := m.writer.WriteWorkerd(configPath, generation); err != nil {
 		m.failStart(worker, err)
@@ -234,7 +249,7 @@ func (m *LazyManager) start(worker *lazyWorker, active nanoflare.ActiveDeploymen
 		return
 	}
 	m.mu.Lock()
-	if m.closed || m.workers[worker.appID] != worker {
+	if m.closed || m.workers[worker.key] != worker {
 		m.mu.Unlock()
 		_ = m.stopWorker(&lazyWorker{configPath: configPath, process: process})
 		m.failStart(worker, errors.New("runtime manager is closed"))
@@ -252,7 +267,7 @@ func (m *LazyManager) start(worker *lazyWorker, active nanoflare.ActiveDeploymen
 func (m *LazyManager) ensureStillCurrent(worker *lazyWorker) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed || m.workers[worker.appID] != worker {
+	if m.closed || m.workers[worker.key] != worker {
 		return errors.New("runtime manager is closed")
 	}
 	return nil
@@ -263,8 +278,8 @@ func (m *LazyManager) failStart(worker *lazyWorker, err error) {
 	worker.startErr = err
 	worker.starting = false
 	close(worker.ready)
-	if m.workers[worker.appID] == worker {
-		delete(m.workers, worker.appID)
+	if m.workers[worker.key] == worker {
+		delete(m.workers, worker.key)
 	}
 	m.mu.Unlock()
 }
@@ -275,16 +290,16 @@ func (m *LazyManager) release(worker *lazyWorker) {
 	if worker.refs > 0 {
 		worker.refs--
 	}
-	if m.closed || m.workers[worker.appID] != worker || worker.refs != 0 {
+	if m.closed || m.workers[worker.key] != worker || worker.refs != 0 {
 		return
 	}
 	worker.idleTimer = time.AfterFunc(m.idleTimeout, func() {
 		m.mu.Lock()
-		if m.closed || m.workers[worker.appID] != worker || worker.refs != 0 {
+		if m.closed || m.workers[worker.key] != worker || worker.refs != 0 {
 			m.mu.Unlock()
 			return
 		}
-		delete(m.workers, worker.appID)
+		delete(m.workers, worker.key)
 		m.mu.Unlock()
 		if err := m.stopWorker(worker); err != nil {
 			log.Printf("stop idle workerd worker %s: %v", worker.appID, err)
@@ -295,8 +310,8 @@ func (m *LazyManager) release(worker *lazyWorker) {
 func (m *LazyManager) watchLazy(worker *lazyWorker) {
 	err := <-worker.process.Done()
 	m.mu.Lock()
-	if m.workers[worker.appID] == worker {
-		delete(m.workers, worker.appID)
+	if m.workers[worker.key] == worker {
+		delete(m.workers, worker.key)
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -325,16 +340,28 @@ func (m *LazyManager) stopWorker(worker *lazyWorker) error {
 func (m *LazyManager) staleWorkersLocked(active []nanoflare.ActiveDeployment) []*lazyWorker {
 	wanted := make(map[string]string, len(active))
 	for _, item := range active {
-		wanted[item.App.ID] = item.Deployment.ID
+		wanted[workerKey(item)] = item.Deployment.ID
 	}
 	var stale []*lazyWorker
-	for appID, worker := range m.workers {
-		if wanted[appID] != worker.deploymentID {
-			delete(m.workers, appID)
+	for key, worker := range m.workers {
+		if wanted[key] != worker.deploymentID {
+			delete(m.workers, key)
 			stale = append(stale, worker)
 		}
 	}
 	return stale
+}
+
+func workerKey(active nanoflare.ActiveDeployment) string {
+	return active.App.ID + ":" + active.Deployment.ID
+}
+
+func activeWorkerKeys(active []nanoflare.ActiveDeployment) map[string]bool {
+	keys := make(map[string]bool, len(active))
+	for _, item := range active {
+		keys[workerKey(item)] = true
+	}
+	return keys
 }
 
 func (m *LazyManager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]nanoflare.ActiveDeployment, error) {

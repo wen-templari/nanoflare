@@ -85,32 +85,32 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
 	out.WriteString(durationTelemetryServices(runtimeAddr))
 	for _, item := range active {
-		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(item.App.ID), workerName(item.App.ID))
+		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(deploymentServiceName(item)), workerName(deploymentServiceName(item)))
 	}
 	for _, item := range active {
 		for index, binding := range item.Deployment.KVNamespaces {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-KV-Namespace-ID\", value = %s)]))),\n",
-				quote(kvServiceName(item.App.ID, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.ID))
+				quote(kvServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.ID))
 		}
 		for index, binding := range item.Deployment.Databases {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"db\"), (name = \"X-Nanoflare-Database-ID\", value = %s)]))),\n",
-				quote(dbServiceName(item.App.ID, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.DatabaseID))
+				quote(dbServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.DatabaseID))
 		}
-		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\")]))),\n",
-			quote(assetServiceName(item.App.ID)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken))
+		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\"), (name = \"X-Nanoflare-Deployment-ID\", value = %s)]))),\n",
+			quote(assetServiceName(item)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(item.Deployment.ID))
 		for index, binding := range item.Deployment.ObjectStorageBuckets {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Object-Bucket-ID\", value = %s)]))),\n",
-				quote(objectServiceName(item.App.ID, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.BucketID))
+				quote(objectServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.BucketID))
 		}
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, address = %s, http = (), service = %s),\n",
-			quote(item.App.ID), quote(fmt.Sprintf("*:%d", item.Deployment.Port)), quote(item.App.ID))
+			quote(deploymentServiceName(item)), quote(fmt.Sprintf("*:%d", item.Deployment.Port)), quote(deploymentServiceName(item)))
 	}
 	out.WriteString("  ]\n);\n")
 	for _, item := range active {
-		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(item.App.ID))
+		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(deploymentServiceName(item)))
 		writeWorkerSource(&out, item.Deployment)
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(workerBindings(item), ", "))
@@ -156,14 +156,14 @@ func workerBindings(item nanoflare.ActiveDeployment) []string {
 		bindings = append(bindings, fmt.Sprintf("(name = %s, text = %s)", quote(name), quote(value)))
 	}
 	for index, binding := range item.Deployment.KVNamespaces {
-		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", quote(binding.Binding), quote(kvServiceName(item.App.ID, index))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", quote(binding.Binding), quote(kvServiceName(item, index))))
 	}
 	for index, binding := range item.Deployment.Databases {
-		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(dbServiceName(item.App.ID, index))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(dbServiceName(item, index))))
 	}
-	bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item.App.ID))))
+	bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item))))
 	for index, binding := range item.Deployment.ObjectStorageBuckets {
-		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(objectServiceName(item.App.ID, index))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(objectServiceName(item, index))))
 	}
 	return bindings
 }
@@ -846,20 +846,27 @@ func deploymentFormat(deployment nanoflare.Deployment) string {
 	return "modules"
 }
 
-func kvServiceName(appID string, index int) string {
-	return fmt.Sprintf("kv-%s-%d", appID, index)
+func deploymentServiceName(item nanoflare.ActiveDeployment) string {
+	if item.Deployment.ID == "" {
+		return item.App.ID
+	}
+	return item.App.ID + "-" + item.Deployment.ID
 }
 
-func assetServiceName(appID string) string {
-	return "assets-" + appID
+func kvServiceName(item nanoflare.ActiveDeployment, index int) string {
+	return fmt.Sprintf("kv-%s-%d", deploymentServiceName(item), index)
 }
 
-func dbServiceName(appID string, index int) string {
-	return fmt.Sprintf("db-%s-%d", appID, index)
+func assetServiceName(item nanoflare.ActiveDeployment) string {
+	return "assets-" + deploymentServiceName(item)
 }
 
-func objectServiceName(appID string, index int) string {
-	return fmt.Sprintf("objects-%s-%d", appID, index)
+func dbServiceName(item nanoflare.ActiveDeployment, index int) string {
+	return fmt.Sprintf("db-%s-%d", deploymentServiceName(item), index)
+}
+
+func objectServiceName(item nanoflare.ActiveDeployment, index int) string {
+	return fmt.Sprintf("objects-%s-%d", deploymentServiceName(item), index)
 }
 
 func dbBindingNamesJSON(bindings []nanoflare.DatabaseBinding) string {
@@ -906,7 +913,8 @@ func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost 
 	out.WriteString("http:\n  middlewares:\n    nanoflare-auth:\n      forwardAuth:\n")
 	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Nanoflare-User-JWT\n          - X-Nanoflare-User-Email\n", yamlQuote(authURL))
 	backendBase := nanoflaredGatewayBase(authURL)
-	for _, item := range active {
+	apps := uniqueActiveApps(active)
+	for _, item := range apps {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s-prefix:\n      addPrefix:\n        prefix: %s\n",
 			name, yamlQuote(fmt.Sprintf("/internal/http/apps/%s", item.App.ID)))
@@ -916,7 +924,7 @@ func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost 
 		fmt.Fprintf(&out, "    nanoflare_auth_callback:\n      rule: %s\n      priority: 1000\n      entryPoints:\n        - web\n        - websecure\n      service: nanoflare_auth_callback\n      tls: {}\n",
 			yamlQuote("Host(`"+authHost+"`) && PathPrefix(`/internal/auth/`)"))
 	}
-	for _, item := range active {
+	for _, item := range apps {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      priority: 1\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - %s-prefix\n      service: %s\n      tls: {}\n",
 			name, yamlQuote("Host(`"+item.App.Hostname+"`)"), name, name)
@@ -929,12 +937,25 @@ func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost 
 	if authHost != "" {
 		fmt.Fprintf(&out, "    nanoflare_auth_callback:\n      loadBalancer:\n        servers:\n          - url: %s\n", yamlQuote(backendBase))
 	}
-	for _, item := range active {
+	for _, item := range apps {
 		name := identifier(item.App.ID)
 		fmt.Fprintf(&out, "    %s:\n      loadBalancer:\n        servers:\n          - url: %s\n",
 			name, yamlQuote(backendBase))
 	}
 	return out.String()
+}
+
+func uniqueActiveApps(active []nanoflare.ActiveDeployment) []nanoflare.ActiveDeployment {
+	seen := make(map[string]bool, len(active))
+	apps := make([]nanoflare.ActiveDeployment, 0, len(active))
+	for _, item := range active {
+		if seen[item.App.ID] {
+			continue
+		}
+		seen[item.App.ID] = true
+		apps = append(apps, item)
+	}
+	return apps
 }
 
 func protectedRouteRule(hostname, route string) string {

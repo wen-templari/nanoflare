@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"mime"
 	"net"
 	"path"
@@ -696,6 +697,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		AssetConfig:          active.Deployment.AssetConfig,
 		Bindings:             s.deploymentBindings(active.Deployment),
 		Port:                 active.Deployment.Port,
+		TrafficPercent:       active.TrafficPercent,
 		CreatedAt:            active.Deployment.CreatedAt,
 	}
 	return detail, nil
@@ -737,10 +739,48 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			CompatibilityDate: record.Deployment.CompatibilityDate,
 			Triggers:          record.Deployment.Triggers,
 			State:             state,
+			TrafficPercent:    record.TrafficPercent,
 			CreatedAt:         record.Deployment.CreatedAt,
 		})
 	}
 	return deployments, nil
+}
+
+func (s *Service) SetDeploymentTrafficForOrg(orgID, appID string, traffic []DeploymentTraffic) ([]ConsoleDeployment, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return nil, err
+	}
+	return s.SetDeploymentTraffic(appID, traffic)
+}
+
+func (s *Service) SetDeploymentTraffic(appID string, traffic []DeploymentTraffic) ([]ConsoleDeployment, error) {
+	if err := validateDeploymentTraffic(traffic); err != nil {
+		return nil, err
+	}
+	for i := range traffic {
+		traffic[i].ID = strings.TrimSpace(traffic[i].ID)
+	}
+	if _, _, err := s.worker(appID); err != nil {
+		return nil, err
+	}
+	previous, err := s.activeDeployments()
+	if err != nil {
+		return nil, err
+	}
+	previousTraffic := activeTrafficForApp(previous, appID)
+	if err := s.store.SetActiveTraffic(appID, traffic); err != nil {
+		return nil, err
+	}
+	active, err := s.activeDeployments()
+	if err != nil {
+		_ = s.store.SetActiveTraffic(appID, previousTraffic)
+		return nil, err
+	}
+	if err := s.writer.Write(active); err != nil {
+		_ = s.store.SetActiveTraffic(appID, previousTraffic)
+		return nil, fmt.Errorf("write generated config: %w", err)
+	}
+	return s.WorkerDeployments(appID)
 }
 
 func (s *Service) WorkerDeploymentsForOrg(orgID, appID string) ([]ConsoleDeployment, error) {
@@ -954,20 +994,20 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		s.cleanupDeploymentObject(deployment)
 		return Deployment{}, err
 	}
-	previousID := activeDeploymentID(activeBefore, appID)
+	previousTraffic := activeTrafficForApp(activeBefore, appID)
 	if err := s.store.Activate(deployment); err != nil {
 		s.cleanupDeploymentObject(deployment)
 		return Deployment{}, err
 	}
 	active, err := s.activeDeployments()
 	if err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousID, deployment); rollbackErr != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, deployment); rollbackErr != nil {
 			return Deployment{}, fmt.Errorf("list active deployments: %w; rollback active deployment: %v", err, rollbackErr)
 		}
 		return Deployment{}, err
 	}
 	if err := s.writer.Write(active); err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousID, deployment); rollbackErr != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, deployment); rollbackErr != nil {
 			return Deployment{}, fmt.Errorf("write generated config: %w; rollback active deployment: %v", err, rollbackErr)
 		}
 		return Deployment{}, fmt.Errorf("write generated config: %w", err)
@@ -1343,20 +1383,86 @@ func detectAssetContentType(assetPath string) string {
 	return "application/octet-stream"
 }
 
-func activeDeploymentID(active []ActiveDeployment, appID string) string {
+func activeTrafficForApp(active []ActiveDeployment, appID string) []DeploymentTraffic {
+	var traffic []DeploymentTraffic
 	for _, item := range active {
-		if item.App.ID == appID {
-			return item.Deployment.ID
+		if item.App.ID == appID && item.TrafficPercent > 0 {
+			traffic = append(traffic, DeploymentTraffic{ID: item.Deployment.ID, TrafficPercent: item.TrafficPercent})
 		}
 	}
-	return ""
+	return traffic
 }
 
 func activeForApp(active []ActiveDeployment, appID string) *ActiveDeployment {
+	var best *ActiveDeployment
 	for i := range active {
-		if active[i].App.ID == appID {
+		if active[i].App.ID != appID {
+			continue
+		}
+		if best == nil ||
+			active[i].TrafficPercent > best.TrafficPercent ||
+			(active[i].TrafficPercent == best.TrafficPercent && active[i].Deployment.CreatedAt.After(best.Deployment.CreatedAt)) {
+			best = &active[i]
+		}
+	}
+	return best
+}
+
+func activeForAppDeployments(active []ActiveDeployment, appID string) []ActiveDeployment {
+	var deployments []ActiveDeployment
+	for _, item := range active {
+		if item.App.ID == appID && item.TrafficPercent > 0 {
+			deployments = append(deployments, item)
+		}
+	}
+	return deployments
+}
+
+func selectWeightedDeployment(active []ActiveDeployment, key string) *ActiveDeployment {
+	if len(active) == 0 {
+		return nil
+	}
+	total := 0
+	for _, item := range active {
+		total += item.TrafficPercent
+	}
+	if total <= 0 {
+		return nil
+	}
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(key))
+	target := int(hash.Sum32() % uint32(total))
+	for i := range active {
+		target -= active[i].TrafficPercent
+		if target < 0 {
 			return &active[i]
 		}
+	}
+	return &active[len(active)-1]
+}
+
+func validateDeploymentTraffic(traffic []DeploymentTraffic) error {
+	if len(traffic) == 0 {
+		return errors.New("deployments are required")
+	}
+	seen := make(map[string]bool, len(traffic))
+	total := 0
+	for _, item := range traffic {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			return errors.New("deployment id is required")
+		}
+		if seen[id] {
+			return errors.New("deployment ids must be unique")
+		}
+		seen[id] = true
+		if item.TrafficPercent < 1 || item.TrafficPercent > 100 {
+			return errors.New("traffic_percent must be between 1 and 100")
+		}
+		total += item.TrafficPercent
+	}
+	if total != 100 {
+		return errors.New("traffic_percent values must sum to 100")
 	}
 	return nil
 }
@@ -1467,19 +1573,19 @@ func (s *Service) rolloutSecretsIfActive(appID string) error {
 	next.ObjectStorageBuckets = append([]ObjectStorageBucketBinding(nil), current.Deployment.ObjectStorageBuckets...)
 	next.Assets = append([]AssetFile(nil), current.Deployment.Assets...)
 	next.Files = append([]WorkerFile(nil), current.Deployment.Files...)
-	previousID := current.Deployment.ID
+	previousTraffic := activeTrafficForApp(active, appID)
 	if err := s.store.Activate(next); err != nil {
 		return err
 	}
 	updated, err := s.activeDeployments()
 	if err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousID, next); rollbackErr != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, next); rollbackErr != nil {
 			return fmt.Errorf("list active deployments: %w; rollback active deployment: %v", err, rollbackErr)
 		}
 		return err
 	}
 	if err := s.writer.Write(updated); err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousID, next); rollbackErr != nil {
+		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, next); rollbackErr != nil {
 			return fmt.Errorf("write generated config: %w; rollback active deployment: %v", err, rollbackErr)
 		}
 		return fmt.Errorf("write generated config: %w", err)
@@ -1506,8 +1612,8 @@ func (s *Service) cleanupDeploymentAssets(deployment Deployment) {
 	}
 }
 
-func (s *Service) rollbackDeployment(appID, previousID string, deployment Deployment) error {
-	if err := s.store.SetActive(appID, previousID); err != nil {
+func (s *Service) rollbackDeployment(appID string, previousTraffic []DeploymentTraffic, deployment Deployment) error {
+	if err := s.store.SetActiveTraffic(appID, previousTraffic); err != nil {
 		return err
 	}
 	if err := s.store.DeleteDeployment(deployment.ID); err != nil {
@@ -2282,21 +2388,41 @@ func (s *Service) ensureCapabilityBindsObjectStorageBucket(appID, bucketID strin
 	return ErrObjectStorageBucketNotBound
 }
 
-func (s *Service) AssetFetch(capability, assetPath string) (AssetResponse, error) {
+func (s *Service) AssetFetch(capability, deploymentID, assetPath string) (AssetResponse, error) {
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return AssetResponse{}, err
 	}
-	return s.assetResponse(appID, assetPath)
+	if strings.TrimSpace(deploymentID) == "" {
+		return s.assetResponse(appID, assetPath)
+	}
+	active, err := s.activeDeployments()
+	if err != nil {
+		return AssetResponse{}, err
+	}
+	for _, item := range active {
+		if item.App.ID == appID && item.Deployment.ID == deploymentID {
+			return s.assetResponseForDeployment(item.Deployment, appID, assetPath)
+		}
+	}
+	return AssetResponse{}, ErrAppNotFound
 }
 
 func (s *Service) PublicAsset(appID, requestPath string) (AssetResponse, bool, error) {
 	if _, active, err := s.worker(appID); err != nil {
 		return AssetResponse{}, false, err
-	} else if active == nil || len(active.Deployment.Assets) == 0 {
+	} else if active == nil {
+		return AssetResponse{}, false, nil
+	} else {
+		return s.PublicAssetForDeployment(*active, requestPath)
+	}
+}
+
+func (s *Service) PublicAssetForDeployment(active ActiveDeployment, requestPath string) (AssetResponse, bool, error) {
+	if len(active.Deployment.Assets) == 0 {
 		return AssetResponse{}, false, nil
 	}
-	response, err := s.assetResponse(appID, requestPath)
+	response, err := s.assetResponseForDeployment(active.Deployment, active.App.ID, requestPath)
 	if err != nil {
 		return AssetResponse{}, false, err
 	}
@@ -2314,15 +2440,19 @@ func (s *Service) WorkerPort(appID, requestPath string) (int, bool, error) {
 	return active.Deployment.Port, shouldRunWorkerFirst(active.Deployment.AssetConfig.RunWorkerFirst, requestPath), nil
 }
 
-func (s *Service) WorkerRuntimeDeployment(appID, requestPath string) (ActiveDeployment, bool, bool, error) {
-	_, active, err := s.worker(appID)
+func (s *Service) WorkerRuntimeDeployment(appID, requestPath, routingKey string) (ActiveDeployment, bool, bool, error) {
+	if _, _, err := s.worker(appID); err != nil {
+		return ActiveDeployment{}, false, false, err
+	}
+	active, err := s.activeDeployments()
 	if err != nil {
 		return ActiveDeployment{}, false, false, err
 	}
-	if active == nil {
+	selected := selectWeightedDeployment(activeForAppDeployments(active, appID), routingKey)
+	if selected == nil {
 		return ActiveDeployment{}, false, false, nil
 	}
-	return *active, shouldRunWorkerFirst(active.Deployment.AssetConfig.RunWorkerFirst, requestPath), true, nil
+	return *selected, shouldRunWorkerFirst(selected.Deployment.AssetConfig.RunWorkerFirst, requestPath), true, nil
 }
 
 func shouldRunWorkerFirst(runWorkerFirst RunWorkerFirst, requestPath string) bool {
@@ -2371,10 +2501,17 @@ func (s *Service) assetResponse(appID, requestPath string) (AssetResponse, error
 	if active == nil {
 		return AssetResponse{}, ErrAppNotFound
 	}
-	if len(active.Deployment.Assets) == 0 {
+	return s.assetResponseForDeployment(active.Deployment, appID, requestPath)
+}
+
+func (s *Service) assetResponseForDeployment(deployment Deployment, appID, requestPath string) (AssetResponse, error) {
+	if s.objects == nil {
+		return AssetResponse{}, errors.New("object storage is not configured")
+	}
+	if len(deployment.Assets) == 0 {
 		return AssetResponse{StatusCode: 404}, nil
 	}
-	resolved, status, ok := resolveAsset(active.Deployment, requestPath)
+	resolved, status, ok := resolveAsset(deployment, requestPath)
 	if !ok {
 		return AssetResponse{StatusCode: 404}, nil
 	}

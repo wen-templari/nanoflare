@@ -166,7 +166,8 @@ CREATE TABLE IF NOT EXISTS deployments (
 	object_key text NOT NULL DEFAULT '',
 	port integer NOT NULL,
 	created_at timestamptz NOT NULL,
-	active boolean NOT NULL DEFAULT false
+	active boolean NOT NULL DEFAULT false,
+	traffic_percent integer NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS kv_namespaces (
 	id text PRIMARY KEY,
@@ -199,8 +200,7 @@ CREATE TABLE IF NOT EXISTS app_secrets (
 	updated_at timestamptz NOT NULL,
 	PRIMARY KEY (app_id, name)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS deployments_active_app_idx
-	ON deployments(app_id) WHERE active;
+DROP INDEX IF EXISTS deployments_active_app_idx;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS auth jsonb NOT NULL DEFAULT '{}'::jsonb;
@@ -242,6 +242,9 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_storage_bucket jsonb NOT
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS traffic_percent integer NOT NULL DEFAULT 0;
+DROP INDEX IF EXISTS deployments_active_app_idx;
+UPDATE deployments SET traffic_percent = 100 WHERE active AND traffic_percent = 0;
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
@@ -1724,15 +1727,15 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`UPDATE deployments SET active = false WHERE app_id = $1 AND active`, deployment.AppID)
+	result, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE app_id = $1 AND active`, deployment.AppID)
 	if err != nil {
 		return err
 	}
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, app_id, files, assets, entrypoint, format, compatibility_date, triggers, vars, kv_namespaces, db, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, true)`,
+	(id, app_id, files, assets, entrypoint, format, compatibility_date, triggers, vars, kv_namespaces, db, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, true, 100)`,
 		deployment.ID, deployment.AppID, files, assets, deployment.Entrypoint, deployment.Format,
 		deployment.CompatibilityDate, mustJSON(deployment.Triggers), mustJSON(deployment.Vars), mustJSON(deployment.KVNamespaces), mustJSON(deployment.Databases), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
@@ -1745,27 +1748,36 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 }
 
 func (p *Postgres) SetActive(appID, deploymentID string) error {
+	if deploymentID == "" {
+		return p.SetActiveTraffic(appID, nil)
+	}
+	return p.SetActiveTraffic(appID, []nanoflare.DeploymentTraffic{{ID: deploymentID, TrafficPercent: 100}})
+}
+
+func (p *Postgres) SetActiveTraffic(appID string, traffic []nanoflare.DeploymentTraffic) error {
 	tx, err := p.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE deployments SET active = false WHERE app_id = $1 AND active`, appID); err != nil {
+	if _, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE app_id = $1 AND active`, appID); err != nil {
 		return err
 	}
-	if deploymentID == "" {
+	if len(traffic) == 0 {
 		return tx.Commit()
 	}
-	result, err := tx.Exec(`UPDATE deployments SET active = true WHERE app_id = $1 AND id = $2`, appID, deploymentID)
-	if err != nil {
-		return err
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if updated == 0 {
-		return errors.New("deployment not found")
+	for _, item := range traffic {
+		result, err := tx.Exec(`UPDATE deployments SET active = true, traffic_percent = $3 WHERE app_id = $1 AND id = $2`, appID, item.ID, item.TrafficPercent)
+		if err != nil {
+			return err
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if updated == 0 {
+			return errors.New("deployment not found")
+		}
 	}
 	return tx.Commit()
 }
@@ -1778,11 +1790,11 @@ func (p *Postgres) DeleteDeployment(id string) error {
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.runtime_token, a.created_at,
-	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at
+	d.id, d.app_id, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
 FROM deployments d
 JOIN apps a ON a.id = d.app_id
-WHERE d.active
-ORDER BY a.id`)
+WHERE d.traffic_percent > 0
+ORDER BY a.id, d.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1796,7 +1808,7 @@ ORDER BY a.id`)
 			&item.Deployment.ID, &item.Deployment.AppID, &files, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
-			&item.Deployment.CreatedAt,
+			&item.Deployment.CreatedAt, &item.TrafficPercent,
 		)
 		if err != nil {
 			return nil, err
@@ -1836,7 +1848,7 @@ ORDER BY a.id`)
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
 	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.runtime_token, a.created_at,
-		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active
+		d.id, d.app_id, d.assets, d.entrypoint, d.format, d.compatibility_date, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
 	FROM deployments d
 	JOIN apps a ON a.id = d.app_id
 	ORDER BY d.created_at DESC`)
@@ -1853,7 +1865,7 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 			&item.Deployment.ID, &item.Deployment.AppID, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
-			&item.Deployment.CreatedAt, &item.Active,
+			&item.Deployment.CreatedAt, &item.Active, &item.TrafficPercent,
 		)
 		if err != nil {
 			return nil, err
@@ -1882,6 +1894,7 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {
 			return nil, err
 		}
+		item.Active = item.TrafficPercent > 0
 		records = append(records, item)
 	}
 	return records, rows.Err()

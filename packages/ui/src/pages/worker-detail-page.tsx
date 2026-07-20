@@ -1,12 +1,12 @@
-import { Alert, Anchor, Card, Group, SegmentedControl, SimpleGrid, Text, ThemeIcon, Title } from "@mantine/core"
-import { lazy, Suspense, useEffect, useState } from "react"
+import { Alert, Anchor, Card, Group, Menu, Modal, SegmentedControl, SimpleGrid, Text, ThemeIcon, Title, Tooltip as MantineTooltip } from "@mantine/core"
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react"
 import {
-  Activity, AlertTriangle, Archive, FileCode2, FileJson, Folder,
-  Gauge, GitBranch, Save, SlidersHorizontal, Terminal, TimerReset,
+  Activity, AlertTriangle, Archive, ArrowDown, Copy, FileCode2, FileJson, Folder,
+  Gauge, GitBranch, MoreHorizontal, RefreshCw, Save, SlidersHorizontal, Terminal, TimerReset,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router-dom"
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
-import { apiFetch, fetchJSON } from "../app/api"
+import { Area, AreaChart, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts"
+import { apiFetch, errorText, fetchJSON } from "../app/api"
 import { useWorkspace } from "../app/workspace-context"
 import type {
   ConsoleDeployment, WorkerDeployment, WorkerDetailData, WorkerDetailTab, WorkerFile,
@@ -14,7 +14,6 @@ import type {
 } from "../app/types"
 import { formatBytes } from "../app/utils"
 import { EmptyMetrics, Panel, StatusCodeMix, WorkerDetailEmpty } from "../components/shared/primitives"
-import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
 import { cn } from "../lib/utils"
 
@@ -140,7 +139,7 @@ function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: s
           />
         </div>
         {tab === "overview" && <WorkerOverview worker={detail?.app ?? worker} deployment={detail?.deployment} databases={databases} namespaces={namespaces} onOpenNamespace={(namespaceID) => navigate(`/kv/${namespaceID}`)} onOpenDatabase={(databaseID) => navigate(`/databases/${databaseID}`)} onOpenBucket={(bucketID) => navigate(`/object-storage/${bucketID}`)} onOpenDeployments={() => setTab("deployments")} recentDeployments={recentDeployments} traffic={traffic} />}
-        {tab === "deployments" && <WorkerDeployments deployments={deployments} />}
+        {tab === "deployments" && <WorkerDeployments deployments={deployments} notify={notify} onSaved={setDeployments} traffic={traffic} workerID={worker.id} />}
         {tab === "files" && <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />}
         {tab === "output" && <WorkerOutput lines={output} />}
         {tab === "settings" && <WorkerConfig detail={detail} worker={worker} apiConnected={apiConnected} notify={notify} />}
@@ -302,6 +301,8 @@ function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: Worke
     ["Hostname", app.hostname],
     ["Created", new Date(app.created_at).toLocaleString()],
     ["Deployment", deployment?.id ?? "awaiting deploy"],
+    ["Commit", deployment?.commit_hash ? shortCommitHash(deployment.commit_hash) : "-"],
+    ["Commit message", deployment?.commit_message ?? "-"],
     ["Compatibility date", deployment?.compatibility_date ?? "-"],
     ["Entrypoint", deployment?.entrypoint ?? "-"],
     ["Deployed", deployment ? new Date(deployment.created_at).toLocaleString() : "-"],
@@ -336,9 +337,184 @@ function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: Worke
   return <div className=""><div className="overflow-hidden rounded-lg border border-[#e2ddd2]">{rows.map(([label, value]) => <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"><span className="font-mono text-[10px]   text-[#93978f]">{label}</span><span className="break-all font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span></div>)}</div>{!deployment && <WorkerDetailEmpty icon={<SlidersHorizontal />} title="No runtime config" copy="Deploy this worker to generate its active workerd configuration." />}<div className="mt-5 overflow-hidden rounded-lg border border-[#e2ddd2] bg-white/50"><div className="border-b border-[#e8e3d9] px-4 py-3"><p className="font-mono text-[10px]   text-[#7f857e]">Cron triggers</p></div>{crons.length ? <table className="w-full text-left"><thead><tr className="border-b border-[#e8e3d9] font-mono text-[9px] text-[#989b95]"><th className="px-4 py-3">Schedule</th><th className="pr-4">Timezone</th></tr></thead><tbody>{crons.map((cron) => <tr key={cron} className="border-b border-[#ece7dc] text-xs last:border-0"><td className="px-4 py-3 font-mono text-[10px] font-bold text-[#4f5a55]">{cron}</td><td className="pr-4 py-3 font-mono text-[10px] text-[#7f857e]">UTC</td></tr>)}</tbody></table> : <p className="px-4 py-4 text-xs text-[#6f766f]">No cron triggers configured.</p>}</div><div className="mt-5 overflow-hidden rounded-lg border border-[#e2ddd2] bg-white/50"><div className="border-b border-[#e8e3d9] px-4 py-3"><p className="font-mono text-[10px]   text-[#7f857e]">Environment vars</p></div>{vars.length ? <table className="w-full text-left"><thead><tr className="border-b border-[#e8e3d9] font-mono text-[9px] text-[#989b95]"><th className="px-4 py-3">Name</th><th className="pr-4">Value</th></tr></thead><tbody>{vars.map(([name, value]) => <tr key={name} className="border-b border-[#ece7dc] align-top text-xs last:border-0"><td className="px-4 py-3 font-mono text-[10px] font-bold text-[#4f5a55]">{name}</td><td className="pr-4 py-3"><pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#5f6863]"><code>{JSON.stringify(value)}</code></pre></td></tr>)}</tbody></table> : <p className="px-4 py-4 text-xs text-[#6f766f]">No deployment vars configured.</p>}</div><div className="mt-5 overflow-hidden rounded-lg border border-[#e2ddd2] bg-white/50"><div className="border-b border-[#e8e3d9] px-4 py-3"><p className="font-mono text-[10px]   text-[#7f857e]">Secrets</p></div>{secrets.length ? <table className="w-full text-left"><thead><tr className="border-b border-[#e8e3d9] font-mono text-[9px] text-[#989b95]"><th className="px-4 py-3">Name</th><th className="pr-4">Updated</th></tr></thead><tbody>{secrets.map((secret) => <tr key={secret.name} className="border-b border-[#ece7dc] text-xs last:border-0"><td className="px-4 py-3 font-mono text-[10px] font-bold text-[#4f5a55]">{secret.name}</td><td className="pr-4 py-3 font-mono text-[10px] text-[#7f857e]">{new Date(secret.updated_at).toLocaleString()}</td></tr>)}</tbody></table> : <p className="px-4 py-4 text-xs text-[#6f766f]">No secrets configured.</p>}</div><div className="mt-5 rounded-lg border border-[#e2ddd2] bg-white/50 p-4"><div className="mb-2 flex items-center justify-between"><p className="font-mono text-[10px]   text-[#7f857e]">Protected routes</p><Button type="button" onClick={() => void saveRoutes()} disabled={saving}><Save className="size-3.5" />Save routes</Button></div><p className="mb-3 text-xs text-[#6f766f]">One absolute path per line. Example: <span className="font-mono">/admin/*</span></p><textarea value={protectedRoutes} onChange={(event) => setProtectedRoutes(event.target.value)} spellCheck={false} className="min-h-40 w-full rounded-md border border-[#d6d0c3] bg-[#fdfbf6] p-3 font-mono text-[11px] leading-6 text-[#35413e] outline-none" placeholder="/admin/*&#10;/api/private/*" /></div></div>
 }
 
-function WorkerDeployments({ deployments }: { deployments: ConsoleDeployment[] }) {
+function WorkerDeployments({ deployments, notify, onSaved, traffic, workerID }: { deployments: ConsoleDeployment[]; notify: (text: string) => void; onSaved: (deployments: ConsoleDeployment[]) => void; traffic: WorkerTraffic; workerID: string }) {
+  const sorted = [...deployments].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+  const [draft, setDraft] = useState<Record<string, number>>({})
+  const [saving, setSaving] = useState(false)
+  const [splitOpen, setSplitOpen] = useState(false)
+  const [splitTargetID, setSplitTargetID] = useState<string>()
+
+  useEffect(() => {
+    setDraft(Object.fromEntries(sorted.map((deployment) => [deployment.id, deployment.traffic_percent || 0])))
+  }, [deployments])
+
   if (!deployments.length) return <WorkerDetailEmpty icon={<Archive />} title="No deployment history" copy="This worker has no recorded revisions yet." />
-  return <div className="min-h-[510px] overflow-x-auto"><WorkerDeploymentsTable deployments={[...deployments].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())} /></div>
+
+  const active = sorted.filter((deployment) => (draft[deployment.id] ?? deployment.traffic_percent ?? 0) > 0)
+  const current = active[0] ?? sorted[0]
+  const activeRows = active.length ? active : current ? [current] : []
+  const firstInactive = sorted.find((deployment) => deployment.id !== current?.id && (draft[deployment.id] ?? deployment.traffic_percent ?? 0) <= 0)
+  const splitTarget = sorted.find((deployment) => deployment.id === splitTargetID && deployment.id !== current?.id) ?? firstInactive
+  const splitRows = [splitTarget, current].filter((deployment): deployment is ConsoleDeployment => !!deployment)
+  const total = Object.values(draft).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0)
+  const valid = total === 100 && Object.values(draft).some((value) => value > 0)
+
+  function openSplit(deployment?: ConsoleDeployment) {
+    const target = deployment && deployment.id !== current?.id ? deployment : firstInactive
+    if (!target) {
+      notify("No inactive deployment available to split traffic.")
+      return
+    }
+    setSplitTargetID(target.id)
+    setSplitOpen(true)
+  }
+
+  async function saveDeploymentTraffic(next: { id: string; traffic_percent: number }[], successMessage: string) {
+    const totalPercent = next.reduce((sum, deployment) => sum + deployment.traffic_percent, 0)
+    if (totalPercent !== 100 || next.length === 0) {
+      notify("Traffic percentages must total 100%.")
+      return
+    }
+    setSaving(true)
+    try {
+      const response = await apiFetch(`/v1/apps/${workerID}/deployments/traffic`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deployments: next }),
+      })
+      if (!response.ok) throw new Error(await errorText(response, "Could not save traffic split"))
+      const updated = await response.json() as ConsoleDeployment[]
+      onSaved(updated)
+      notify(successMessage)
+      setSplitOpen(false)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not save traffic split")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveTraffic() {
+    const next = sorted
+      .map((deployment) => ({ id: deployment.id, traffic_percent: Math.trunc(draft[deployment.id] || 0) }))
+      .filter((deployment) => deployment.traffic_percent > 0)
+    if (!valid) {
+      notify("Traffic percentages must total 100%.")
+      return
+    }
+    await saveDeploymentTraffic(next, "Traffic split updated.")
+  }
+
+  async function rollbackDeployment(deployment: ConsoleDeployment) {
+    await saveDeploymentTraffic([{ id: deployment.id, traffic_percent: 100 }], "Deployment rolled back.")
+  }
+
+  return (
+    <div className="mx-auto min-h-[510px] max-w-[1200px] space-y-7">
+      <section className="overflow-hidden rounded-lg border border-[#dedede] bg-white">
+        <div className="border-b border-[#e6e6e6] bg-[#fafafa] px-4 py-2 text-sm text-[#666]">Active deployment</div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[920px] text-left">
+            <thead className="text-sm font-medium text-[#242424]">
+              <tr>
+                <th className="px-4 py-3">Version ID</th>
+                <th className="px-4 py-3">Deployed</th>
+                <th className="px-4 py-3">Traffic %</th>
+                <th className="px-4 py-3">Requests/sec</th>
+                <th className="px-4 py-3">Error Rate</th>
+                <th className="px-4 py-3">Median CPU Time</th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeRows.map((deployment) => (
+                <tr key={deployment.id} className="text-sm text-[#333]">
+                  <td className="px-4 py-3"><DeploymentID id={deployment.id} /></td>
+                  <td className="px-4 py-3"><span className="">{formatAge(deployment.created_at)}</span></td>
+                  <td className="px-4 py-3">
+                    <div className="flex min-w-48 items-center gap-3">
+                      <span>{draft[deployment.id] ?? deployment.traffic_percent}%</span>
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e6eefc]">
+                        <div className="h-full rounded-full bg-[#2f78ff]" style={{ width: `${draft[deployment.id] ?? deployment.traffic_percent}%` }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-[#666]">{traffic.available ? `${traffic.requests_per_second.toFixed(2)} req/sec` : "0 req/sec"}</td>
+                  <td className="px-4 py-3">{traffic.available ? `${traffic.error_rate.toFixed(2)}%` : "0%"}</td>
+                  <td className="px-4 py-3 text-[#666]">{traffic.duration_ms_avg ? formatMilliseconds(traffic.duration_ms_avg) : "0 ms"}</td>
+                  <td className="px-4 py-3">
+                    <MiniInlineChart values={traffic.traffic} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-[#2f2f2f]">Version History</h3>
+            </div>
+          </div>
+          <MantineTooltip label="Refresh deployments">
+            <button className="grid size-9 place-items-center rounded-lg border border-[#dedede] bg-white text-[#333] shadow-sm transition hover:bg-[#f7f7f7]" type="button" onClick={() => notify("Deployments refresh automatically.")} aria-label="Refresh deployments">
+              <RefreshCw className="size-4" />
+            </button>
+          </MantineTooltip>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-[#dedede] bg-white">
+          <WorkerDeploymentsTable activeCount={active.length} deployments={sorted} draft={draft} onRollback={(deployment) => void rollbackDeployment(deployment)} onSplit={openSplit} />
+        </div>
+        <div className="mt-6 flex items-center justify-between text-sm text-[#5f5f5f]">
+          <span>Showing 1-{sorted.length} of {sorted.length}</span>
+          <div className="flex overflow-hidden rounded-lg border border-[#e9e9e9] bg-white text-[#222]">
+            <button className="h-9 w-11 text-[#d2d2d2]" disabled type="button">‹‹</button>
+            <button className="h-9 w-11 border-l border-[#ececec] text-[#d2d2d2]" disabled type="button">‹</button>
+            <span className="grid h-9 w-12 place-items-center border-l border-[#ececec]">1</span>
+            <button className="h-9 w-11 border-l border-[#ececec] text-[#d2d2d2]" disabled type="button">›</button>
+            <button className="h-9 w-11 border-l border-[#ececec] text-[#d2d2d2]" disabled type="button">››</button>
+          </div>
+        </div>
+      </section>
+
+      <Modal opened={splitOpen} onClose={() => setSplitOpen(false)} title={<span className="text-2xl font-semibold text-[#202020]">Split deployment across versions</span>} centered size="800px">
+        <div className="space-y-5 pt-2">
+          {current && (
+            <SplitSection title="Current deployed version">
+              <SplitDeploymentRow deployment={current} percent={draft[current.id] ?? current.traffic_percent} readOnly />
+            </SplitSection>
+          )}
+          <div className="grid place-items-center text-[#98a2b3]">
+            <ArrowDown className="size-5" />
+          </div>
+          <SplitSection title="New deployment">
+            {splitRows.map((deployment) => (
+              <SplitDeploymentRow
+                key={deployment.id}
+                deployment={deployment}
+                percent={draft[deployment.id] ?? deployment.traffic_percent ?? 0}
+                readOnly={deployment.id !== splitTarget?.id}
+                onChange={(value) => setDraft((currentDraft) => {
+                  const clamped = Math.max(0, Math.min(100, value))
+                  if (deployment.id === splitTarget?.id && current?.id) {
+                    return { ...currentDraft, [deployment.id]: clamped, [current.id]: 100 - clamped }
+                  }
+                  return { ...currentDraft, [deployment.id]: clamped }
+                })}
+              />
+            ))}
+          </SplitSection>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button type="button" variant="outline" onClick={() => setSplitOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={() => void saveTraffic()} disabled={saving || !valid}>Deploy</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
 }
 
 function WorkerOutput({ lines }: { lines: WorkerOutputLine[] }) {
@@ -354,7 +530,7 @@ function MiniTrafficChart({ values }: { values: number[] }) {
         <AreaChart data={data}>
           <XAxis axisLine={false} dataKey="minute" interval="preserveStartEnd" tickLine={false} />
           <YAxis hide />
-          <Tooltip cursor={{ stroke: "var(--mantine-color-blue-4)" }} formatter={(value) => [`${Number(value).toFixed(1)} requests`, "Traffic"]} />
+          <ChartTooltip cursor={{ stroke: "var(--mantine-color-blue-4)" }} formatter={(value) => [`${Number(value).toFixed(1)} requests`, "Traffic"]} />
           <Area dataKey="value" fill="var(--mantine-color-blue-1)" stroke="var(--mantine-color-blue-6)" strokeWidth={2} type="monotone" />
         </AreaChart>
       </ResponsiveContainer>
@@ -371,14 +547,95 @@ function formatMilliseconds(value: number) {
 }
 
 function shortDeploymentID(id: string) {
-  return id.length > 10 ? `${id.slice(0, 10)}...` : id
+  return id.length > 10 ? `${id.slice(0, 10)}` : id
+}
+
+function shortCommitHash(hash: string) {
+  return hash.length > 12 ? hash.slice(0, 12) : hash
 }
 
 function hostnameHref(hostname: string) {
   return /^https?:\/\//i.test(hostname) ? hostname : `https://${hostname}`
 }
 
-function WorkerDeploymentsTable({ deployments }: { deployments: ConsoleDeployment[] }) {
+function WorkerDeploymentsTable({ activeCount, deployments, draft, onRollback, onSplit }: { activeCount?: number; deployments: ConsoleDeployment[]; draft?: Record<string, number>; onRollback?: (deployment: ConsoleDeployment) => void; onSplit?: (deployment: ConsoleDeployment) => void }) {
   if (!deployments.length) return <div className="px-5 py-12"><WorkerDetailEmpty icon={<Archive />} title="No deployment history" copy="This worker has no recorded revisions yet." /></div>
-  return <table className="w-full min-w-[700px] text-left"><thead><tr className="border-b border-[#e3ded3] font-mono text-[9px]   text-[#989b95]"><th className="px-5 py-3">State</th><th>Deployment</th><th>Entrypoint</th><th>Bundle</th><th>Compatibility</th><th className="pr-5">Created</th></tr></thead><tbody>{deployments.map((deployment) => <tr key={deployment.id} className="border-b border-[#ece7dc] text-xs transition last:border-0 hover:bg-white/70"><td className="px-5 py-4"><Badge tone={deployment.state === "active" ? "green" : "orange"}>{deployment.state}</Badge></td><td className="max-w-52 truncate font-mono text-[10px] text-[#727a74]" title={deployment.id}>{deployment.id}</td><td className="font-mono text-[10px] text-[#727a74]">{deployment.entrypoint}</td><td className="font-mono text-[10px] text-[#727a74]">{formatBytes(deployment.bundle_size)}</td><td className="font-mono text-[10px] text-[#727a74]">{deployment.compatibility_date}</td><td className="pr-5 text-[#7d837d]">{new Date(deployment.created_at).toLocaleString()}</td></tr>)}</tbody></table>
+  return <table className="w-full min-w-[860px] text-left"><tbody>{deployments.map((deployment) => {
+    const percent = draft?.[deployment.id] ?? deployment.traffic_percent ?? 0
+    const isInactive = percent <= 0
+    const showMenu = !!onSplit && (isInactive || (activeCount ?? 0) > 1)
+    return <tr key={deployment.id} className="group border-b border-[#e6e6e6] text-sm transition last:border-0 hover:bg-[#fafafa]">
+      <td className="relative w-28 px-5 py-4">
+        {percent > 0 && <span className="absolute left-2 top-4 h-7 w-1 rounded-full bg-[#1677ff]" />}
+        <DeploymentID id={deployment.id} />
+        {deployment.commit_hash && <div className="mt-1 pl-5 font-mono text-[10px] text-[#8a8a8a]">{shortCommitHash(deployment.commit_hash)}</div>}
+      </td>
+      <td className="w-8 py-4">
+        <MantineTooltip label="Copy version ID">
+          <button className="text-[#777] opacity-80 transition hover:text-[#1f1f1f] group-hover:opacity-100" type="button" onClick={() => void navigator.clipboard?.writeText(deployment.id)} aria-label="Copy version ID">
+            <Copy className="size-3.5" />
+          </button>
+        </MantineTooltip>
+      </td>
+      <td className="max-w-[360px] truncate px-2 py-4 italic text-[#727272]" title={deployment.commit_message || undefined}>{deployment.commit_message || "Manually deployed"}</td>
+      <td className="px-4 py-4 text-right text-[#242424]">Nanoflare <span className="text-[#777]">by local</span></td>
+      <td className="w-24 px-2 py-4 text-[#333]">{formatAge(deployment.created_at)}</td>
+      <td className="w-12 px-4 py-4 text-right">
+        {showMenu && <Menu position="bottom-end" shadow="md" width={180}>
+          <Menu.Target>
+            <button className="inline-grid size-7 place-items-center rounded-md text-[#2e2e2e] hover:bg-[#f1f1f1]" type="button" aria-label="Deployment actions">
+              <MoreHorizontal className="size-4" />
+            </button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item onClick={() => onSplit?.(deployment)}>Split versions</Menu.Item>
+            {isInactive && <Menu.Item onClick={() => onRollback?.(deployment)}>Rollback</Menu.Item>}
+          </Menu.Dropdown>
+        </Menu>}
+      </td>
+    </tr>
+  })}</tbody></table>
+}
+
+function DeploymentID({ id }: { id: string }) {
+  return <span className="inline-flex items-center gap-2 font-mono text-[12px] text-[#727272]">{shortDeploymentID(id)}</span>
+}
+
+function SplitSection({ children, title }: { children: ReactNode; title: string }) {
+  return <section className="overflow-hidden rounded-lg border border-[#dedede]"><div className="bg-[#fafafa] px-4 py-2 text-sm text-[#666]">{title}</div><div className="divide-y divide-[#eeeeee]">{children}</div></section>
+}
+
+function SplitDeploymentRow({ deployment, onChange, percent, readOnly }: { deployment: ConsoleDeployment; onChange?: (value: number) => void; percent: number; readOnly?: boolean }) {
+  return (
+    <div className="grid min-h-14 grid-cols-[minmax(100px,1fr)_minmax(160px,1.5fr)_minmax(150px,1fr)_96px] items-center gap-3 px-4 py-3 text-sm">
+      <div>
+        <div className="flex items-center gap-2"><DeploymentID id={deployment.id} /><Copy className="size-3.5 text-[#888]" /></div>
+        {deployment.commit_hash && <div className="mt-1 pl-5 font-mono text-[10px] text-[#8a8a8a]">{shortCommitHash(deployment.commit_hash)}</div>}
+      </div>
+      {/* <div className="truncate italic text-[#727272]" title={deployment.commit_message || undefined}>{deployment.commit_message || "Manually deployed"}</div>
+      <div className="text-right text-[#242424]">Nanoflare <span className="text-[#777]">by local</span> <span className="ml-2 text-[#777]">{formatAge(deployment.created_at)}</span></div> */}
+      <div className="flex items-center justify-end gap-1">
+        {readOnly ? <span className="font-semibold text-[#242424]">{percent}%</span> : <input className="h-9 w-14 rounded-lg border border-[#dedede] bg-white text-center text-sm outline-none focus:border-[#2f78ff]" max={100} min={0} type="number" value={percent} onChange={(event) => onChange?.(Number(event.target.value) || 0)} />}
+        {!readOnly && <span className="text-[#555]">%</span>}
+      </div>
+    </div>
+  )
+}
+
+function MiniInlineChart({ values }: { values: number[] }) {
+  if (!values.length) return <div className="relative h-7 w-56 overflow-hidden rounded"><div className="absolute inset-x-0 top-3 border-t border-[#dedede]" /><span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#dedede] bg-[#fafafa] px-3 py-1 text-xs text-[#777]">No data</span></div>
+  const max = Math.max(...values, 1)
+  const points = values.map((value, index) => `${(index / Math.max(values.length - 1, 1)) * 220},${26 - (value / max) * 20}`).join(" ")
+  return <svg className="h-7 w-56" viewBox="0 0 220 28" aria-hidden="true"><polyline fill="none" points={points} stroke="#b8c3d8" strokeWidth="1.5" /></svg>
+}
+
+function formatAge(value: string) {
+  const diffMs = Math.max(0, Date.now() - new Date(value).getTime())
+  const minutes = Math.floor(diffMs / 60000)
+  if (minutes < 1) return "just now"
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
 }
