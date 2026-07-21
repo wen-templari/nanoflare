@@ -18,11 +18,12 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 		t.Fatal(err)
 	}
 	deployment, err := service.Deploy(app.ID, DeployInput{
-		CommitHash:        "0123456789abcdef",
-		CommitMessage:     "Ship metadata",
-		CreatedBy:         "deploy@example.com",
-		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
-		CompatibilityDate: "2025-12-10",
+		CommitHash:         "0123456789abcdef",
+		CommitMessage:      "Ship metadata",
+		CreatedBy:          "deploy@example.com",
+		Files:              []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate:  "2025-12-10",
+		CompatibilityFlags: []string{" nodejs_compat ", ""},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +52,9 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 	}
 	if detail.Deployment == nil || detail.Deployment.CommitHash != "0123456789abcdef" || detail.Deployment.CommitMessage != "Ship metadata" || detail.Deployment.CreatedBy != "deploy@example.com" {
 		t.Fatalf("worker deployment metadata = %#v", detail.Deployment)
+	}
+	if len(detail.Deployment.CompatibilityFlags) != 1 || detail.Deployment.CompatibilityFlags[0] != "nodejs_compat" {
+		t.Fatalf("worker deployment compatibility flags = %#v", detail.Deployment.CompatibilityFlags)
 	}
 	consoleDeployments, err := service.WorkerDeployments(app.ID)
 	if err != nil {

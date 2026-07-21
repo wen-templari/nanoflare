@@ -159,6 +159,9 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(workerBindings(item), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
+		if len(item.Deployment.CompatibilityFlags) > 0 {
+			fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(item.Deployment.CompatibilityFlags))
+		}
 		out.WriteString(");\n")
 	}
 	return out.String()

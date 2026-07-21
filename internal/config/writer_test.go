@@ -12,11 +12,12 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
 		Deployment: nanoflare.Deployment{
-			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
-			Entrypoint:        "worker.js",
-			CompatibilityDate: "2025-12-10",
-			KVNamespaces:      []nanoflare.KVBinding{{Binding: "KV", ID: "kvns-1"}},
-			Port:              9001,
+			Files:              []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", () => {});`}},
+			Entrypoint:         "worker.js",
+			CompatibilityDate:  "2025-12-10",
+			CompatibilityFlags: []string{"nodejs_compat"},
+			KVNamespaces:       []nanoflare.KVBinding{{Binding: "KV", ID: "kvns-1"}},
+			Port:               9001,
 		},
 	}})
 	for _, expected := range []string{
@@ -37,6 +38,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`globalThis.__NANOFLARE_DURATION_COLLECTOR.fetch(\"http://nanoflare.internal/internal/runtime/durations\"`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
+		`compatibilityFlags = ["nodejs_compat"]`,
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, config)

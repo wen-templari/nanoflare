@@ -36,6 +36,7 @@ type Deployment struct {
 	Entrypoint           string                       `json:"entrypoint"`
 	Format               string                       `json:"format"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	CompatibilityFlags   []string                     `json:"compatibility_flags,omitempty"`
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
@@ -116,6 +117,7 @@ type DeployInput struct {
 	Entrypoint           string                       `json:"entrypoint,omitempty"`
 	Format               string                       `json:"format,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	CompatibilityFlags   []string                     `json:"compatibility_flags,omitempty"`
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
@@ -134,6 +136,7 @@ type WorkerDeployment struct {
 	BundleSize           int64                        `json:"bundle_size"`
 	AssetCount           int                          `json:"asset_count,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
+	CompatibilityFlags   []string                     `json:"compatibility_flags,omitempty"`
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
@@ -153,22 +156,23 @@ type WorkerDetail struct {
 }
 
 type ConsoleDeployment struct {
-	ID                string        `json:"id"`
-	AppID             string        `json:"app_id"`
-	AppName           string        `json:"app_name"`
-	Hostname          string        `json:"hostname"`
-	CommitHash        string        `json:"commit_hash,omitempty"`
-	CommitMessage     string        `json:"commit_message,omitempty"`
-	CreatedBy         string        `json:"created_by,omitempty"`
-	Entrypoint        string        `json:"entrypoint"`
-	Format            string        `json:"format"`
-	BundleSize        int64         `json:"bundle_size"`
-	AssetCount        int           `json:"asset_count,omitempty"`
-	CompatibilityDate string        `json:"compatibility_date"`
-	Triggers          TriggerConfig `json:"triggers,omitempty"`
-	State             string        `json:"state"`
-	TrafficPercent    int           `json:"traffic_percent"`
-	CreatedAt         time.Time     `json:"created_at"`
+	ID                 string        `json:"id"`
+	AppID              string        `json:"app_id"`
+	AppName            string        `json:"app_name"`
+	Hostname           string        `json:"hostname"`
+	CommitHash         string        `json:"commit_hash,omitempty"`
+	CommitMessage      string        `json:"commit_message,omitempty"`
+	CreatedBy          string        `json:"created_by,omitempty"`
+	Entrypoint         string        `json:"entrypoint"`
+	Format             string        `json:"format"`
+	BundleSize         int64         `json:"bundle_size"`
+	AssetCount         int           `json:"asset_count,omitempty"`
+	CompatibilityDate  string        `json:"compatibility_date"`
+	CompatibilityFlags []string      `json:"compatibility_flags,omitempty"`
+	Triggers           TriggerConfig `json:"triggers,omitempty"`
+	State              string        `json:"state"`
+	TrafficPercent     int           `json:"traffic_percent"`
+	CreatedAt          time.Time     `json:"created_at"`
 }
 
 type Binding struct {

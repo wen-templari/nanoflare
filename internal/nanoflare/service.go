@@ -692,6 +692,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		BundleSize:           active.Deployment.BundleSize,
 		AssetCount:           len(active.Deployment.Assets),
 		CompatibilityDate:    active.Deployment.CompatibilityDate,
+		CompatibilityFlags:   append([]string(nil), active.Deployment.CompatibilityFlags...),
 		Triggers:             active.Deployment.Triggers,
 		Vars:                 cloneVars(active.Deployment.Vars),
 		KVNamespaces:         append([]KVBinding(nil), active.Deployment.KVNamespaces...),
@@ -731,22 +732,23 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			state = "active"
 		}
 		deployments = append(deployments, ConsoleDeployment{
-			ID:                record.Deployment.ID,
-			AppID:             record.App.ID,
-			AppName:           record.App.Name,
-			Hostname:          record.App.Hostname,
-			CommitHash:        record.Deployment.CommitHash,
-			CommitMessage:     record.Deployment.CommitMessage,
-			CreatedBy:         record.Deployment.CreatedBy,
-			Entrypoint:        record.Deployment.Entrypoint,
-			Format:            record.Deployment.Format,
-			BundleSize:        record.Deployment.BundleSize,
-			AssetCount:        len(record.Deployment.Assets),
-			CompatibilityDate: record.Deployment.CompatibilityDate,
-			Triggers:          record.Deployment.Triggers,
-			State:             state,
-			TrafficPercent:    record.TrafficPercent,
-			CreatedAt:         record.Deployment.CreatedAt,
+			ID:                 record.Deployment.ID,
+			AppID:              record.App.ID,
+			AppName:            record.App.Name,
+			Hostname:           record.App.Hostname,
+			CommitHash:         record.Deployment.CommitHash,
+			CommitMessage:      record.Deployment.CommitMessage,
+			CreatedBy:          record.Deployment.CreatedBy,
+			Entrypoint:         record.Deployment.Entrypoint,
+			Format:             record.Deployment.Format,
+			BundleSize:         record.Deployment.BundleSize,
+			AssetCount:         len(record.Deployment.Assets),
+			CompatibilityDate:  record.Deployment.CompatibilityDate,
+			CompatibilityFlags: append([]string(nil), record.Deployment.CompatibilityFlags...),
+			Triggers:           record.Deployment.Triggers,
+			State:              state,
+			TrafficPercent:     record.TrafficPercent,
+			CreatedAt:          record.Deployment.CreatedAt,
 		})
 	}
 	return deployments, nil
@@ -947,6 +949,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if _, err := time.Parse("2006-01-02", input.CompatibilityDate); err != nil {
 		return Deployment{}, errors.New("compatibility_date must use YYYY-MM-DD")
 	}
+	compatibilityFlags := normalizeCompatibilityFlags(input.CompatibilityFlags)
 	port, err := s.store.NextPort()
 	if err != nil {
 		return Deployment{}, err
@@ -966,6 +969,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Entrypoint:           entrypoint,
 		Format:               format,
 		CompatibilityDate:    input.CompatibilityDate,
+		CompatibilityFlags:   compatibilityFlags,
 		Triggers:             triggers,
 		Vars:                 vars,
 		KVNamespaces:         kvNamespaces,
@@ -1500,6 +1504,20 @@ func validateDeploymentTraffic(traffic []DeploymentTraffic) error {
 	return nil
 }
 
+func normalizeCompatibilityFlags(flags []string) []string {
+	normalized := make([]string, 0, len(flags))
+	for _, flag := range flags {
+		flag = strings.TrimSpace(flag)
+		if flag != "" {
+			normalized = append(normalized, flag)
+		}
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
 func cloneVars(vars map[string]json.RawMessage) map[string]json.RawMessage {
 	if len(vars) == 0 {
 		return nil
@@ -1603,6 +1621,7 @@ func (s *Service) rolloutSecretsIfActive(appID string) error {
 	next.CreatedAt = time.Now().UTC()
 	next.Vars = cloneVars(current.Deployment.Vars)
 	next.KVNamespaces = append([]KVBinding(nil), current.Deployment.KVNamespaces...)
+	next.CompatibilityFlags = append([]string(nil), current.Deployment.CompatibilityFlags...)
 	next.ObjectStorageBuckets = append([]ObjectStorageBucketBinding(nil), current.Deployment.ObjectStorageBuckets...)
 	next.Assets = append([]AssetFile(nil), current.Deployment.Assets...)
 	next.Files = append([]WorkerFile(nil), current.Deployment.Files...)

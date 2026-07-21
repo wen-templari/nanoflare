@@ -55,6 +55,7 @@ type Project struct {
 	Entrypoint           string                                 `json:"entrypoint"`
 	Format               string                                 `json:"format,omitempty"`
 	CompatibilityDate    string                                 `json:"compatibility_date"`
+	CompatibilityFlags   []string                               `json:"compatibility_flags,omitempty"`
 	Triggers             nanoflare.TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage             `json:"vars,omitempty"`
 	Files                []string                               `json:"files"`
@@ -346,6 +347,7 @@ func (r *Runner) deploy(args []string) error {
 		Entrypoint:           project.Entrypoint,
 		Format:               project.Format,
 		CompatibilityDate:    date,
+		CompatibilityFlags:   append([]string(nil), project.CompatibilityFlags...),
 		Triggers:             project.Triggers,
 		Vars:                 cloneProjectVars(project.Vars),
 		KVNamespaces:         append([]nanoflare.KVBinding(nil), project.KVNamespaces...),

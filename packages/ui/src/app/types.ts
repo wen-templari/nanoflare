@@ -49,6 +49,7 @@ export type WorkerDeployment = {
   asset_count?: number;
   asset_config?: WorkerAssetConfig;
   compatibility_date: string;
+  compatibility_flags?: string[];
   triggers?: WorkerTriggerConfig;
   vars?: Record<string, unknown>;
   created_at: string;
@@ -73,6 +74,7 @@ export type ConsoleDeployment = {
   entrypoint: string;
   bundle_size: number;
   compatibility_date: string;
+  compatibility_flags?: string[];
   triggers?: WorkerTriggerConfig;
   state: "active" | "inactive";
   traffic_percent: number;

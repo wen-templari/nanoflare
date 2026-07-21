@@ -306,6 +306,7 @@ function WorkerConfig({ detail, worker, apiConnected, notify }: { detail?: Worke
     ["Commit", deployment?.commit_hash ? shortCommitHash(deployment.commit_hash) : "-"],
     ["Commit message", deployment?.commit_message ?? "-"],
     ["Compatibility date", deployment?.compatibility_date ?? "-"],
+    ["Compatibility flags", deployment?.compatibility_flags?.join(", ") || "-"],
     ["Entrypoint", deployment?.entrypoint ?? "-"],
     ["Deployed", deployment ? new Date(deployment.created_at).toLocaleString() : "-"],
   ]

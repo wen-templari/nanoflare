@@ -90,12 +90,13 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	defer server.Close()
 
 	writeProjectFile(t, Project{
-		Name:              "Hello",
-		Hostname:          "hello.example.com",
-		APIURL:            server.URL,
-		Entrypoint:        "worker.js",
-		CompatibilityDate: "2025-12-10",
-		Triggers:          nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}},
+		Name:               "Hello",
+		Hostname:           "hello.example.com",
+		APIURL:             server.URL,
+		Entrypoint:         "worker.js",
+		CompatibilityDate:  "2025-12-10",
+		CompatibilityFlags: []string{"nodejs_compat"},
+		Triggers:           nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}},
 		Vars: map[string]json.RawMessage{
 			"API_HOST": json.RawMessage(`"example.com"`),
 		},
@@ -151,6 +152,9 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if deployed.Entrypoint != "worker.js" || deployed.CompatibilityDate != "2025-12-10" {
 		t.Fatalf("deploy payload = %#v", deployed)
+	}
+	if len(deployed.CompatibilityFlags) != 1 || deployed.CompatibilityFlags[0] != "nodejs_compat" {
+		t.Fatalf("deploy compatibility flags = %#v", deployed.CompatibilityFlags)
 	}
 	if deployed.CommitHash != commitHash || deployed.CommitMessage != "Deploy hello worker" {
 		t.Fatalf("deploy git metadata = hash %q message %q, want hash %q message %q", deployed.CommitHash, deployed.CommitMessage, commitHash, "Deploy hello worker")
