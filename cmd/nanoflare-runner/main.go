@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ func main() {
 		addr                 = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
 		configDir            = flag.String("config-dir", "./var/runner", "directory for generated runtime configuration")
 		workerd              = flag.String("workerd", "workerd", "path to the workerd executable")
+		workerdNetworkAllow  = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
 		portHost             = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart            = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 		nanoflareRuntimeAddr = flag.String("nanoflare-runtime-addr", "127.0.0.1:8081", "nanoflared private runtime KV API address reachable from workerd")
@@ -46,6 +48,7 @@ func main() {
 		"",
 	)
 	writer.SetNanoflareRuntimeAddr(*nanoflareRuntimeAddr)
+	writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
 	manager := runtime.NewManager(
 		writer,
 		runtime.CommandLauncher{Executable: *workerd, Output: output},
@@ -71,4 +74,11 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }

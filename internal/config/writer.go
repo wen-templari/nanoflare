@@ -14,12 +14,13 @@ import (
 )
 
 type Writer struct {
-	workerdPath string
-	traefikPath string
-	authURL     string
-	authHost    string
-	workerHost  string
-	runtimeAddr string
+	workerdPath  string
+	traefikPath  string
+	authURL      string
+	authHost     string
+	workerHost   string
+	runtimeAddr  string
+	networkAllow []string
 }
 
 type TraefikWriter interface {
@@ -27,13 +28,14 @@ type TraefikWriter interface {
 }
 
 type RuntimeWriter struct {
-	workerdPath string
-	traefik     TraefikWriter
-	runtimeAddr string
+	workerdPath  string
+	traefik      TraefikWriter
+	runtimeAddr  string
+	networkAllow []string
 }
 
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
-	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL, workerHost: workerHost, runtimeAddr: "127.0.0.1:8081"}
+	return &Writer{workerdPath: workerdPath, traefikPath: traefikPath, authURL: authURL, workerHost: workerHost, runtimeAddr: "127.0.0.1:8081", networkAllow: DefaultNetworkAllow()}
 }
 
 func (w *Writer) SetAuthHost(host string) {
@@ -41,7 +43,7 @@ func (w *Writer) SetAuthHost(host string) {
 }
 
 func NewRuntimeWriter(workerdPath string, traefik TraefikWriter) *RuntimeWriter {
-	return &RuntimeWriter{workerdPath: workerdPath, traefik: traefik, runtimeAddr: "127.0.0.1:8081"}
+	return &RuntimeWriter{workerdPath: workerdPath, traefik: traefik, runtimeAddr: "127.0.0.1:8081", networkAllow: DefaultNetworkAllow()}
 }
 
 func (w *Writer) SetNanoflareRuntimeAddr(addr string) {
@@ -52,6 +54,33 @@ func (w *RuntimeWriter) SetNanoflareRuntimeAddr(addr string) {
 	w.runtimeAddr = addr
 }
 
+func DefaultNetworkAllow() []string {
+	return []string{"public", "10.0.0.0/8"}
+}
+
+func ParseNetworkAllow(value string) []string {
+	parts := strings.Split(value, ",")
+	allow := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			allow = append(allow, part)
+		}
+	}
+	if len(allow) == 0 {
+		return DefaultNetworkAllow()
+	}
+	return allow
+}
+
+func (w *Writer) SetNetworkAllow(allow []string) {
+	w.networkAllow = normalizedNetworkAllow(allow)
+}
+
+func (w *RuntimeWriter) SetNetworkAllow(allow []string) {
+	w.networkAllow = normalizedNetworkAllow(allow)
+}
+
 func (w *Writer) Write(active []nanoflare.ActiveDeployment) error {
 	if err := w.WriteWorkerd(w.workerdPath, active); err != nil {
 		return err
@@ -60,7 +89,7 @@ func (w *Writer) Write(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *Writer) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	return writeAtomic(path, []byte(WorkerdWithRuntimeAddr(active, w.runtimeAddr)))
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow})))
 }
 
 func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
@@ -68,7 +97,7 @@ func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *RuntimeWriter) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	return writeAtomic(path, []byte(WorkerdWithRuntimeAddr(active, w.runtimeAddr)))
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow})))
 }
 
 func (w *RuntimeWriter) WriteTraefik(active []nanoflare.ActiveDeployment) error {
@@ -80,9 +109,24 @@ func Workerd(active []nanoflare.ActiveDeployment) string {
 }
 
 func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr string) string {
+	return WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: runtimeAddr})
+}
+
+type WorkerdOptions struct {
+	RuntimeAddr  string
+	NetworkAllow []string
+}
+
+func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOptions) string {
+	runtimeAddr := strings.TrimSpace(options.RuntimeAddr)
+	if runtimeAddr == "" {
+		runtimeAddr = "127.0.0.1:8081"
+	}
+	networkAllow := normalizedNetworkAllow(options.NetworkAllow)
 	var out strings.Builder
 	out.WriteString("using Workerd = import \"/workerd/workerd.capnp\";\n\n")
 	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
+	fmt.Fprintf(&out, "    (name = \"internet\", network = (allow = [%s], tlsOptions = (trustBrowserCas = true))),\n", quotedList(networkAllow))
 	out.WriteString(durationTelemetryServices(runtimeAddr))
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(deploymentServiceName(item)), workerName(deploymentServiceName(item)))
@@ -118,6 +162,28 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 		out.WriteString(");\n")
 	}
 	return out.String()
+}
+
+func normalizedNetworkAllow(allow []string) []string {
+	normalized := make([]string, 0, len(allow))
+	for _, item := range allow {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			normalized = append(normalized, item)
+		}
+	}
+	if len(normalized) == 0 {
+		return DefaultNetworkAllow()
+	}
+	return normalized
+}
+
+func quotedList(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, quote(value))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 func durationTelemetryServices(runtimeAddr string) string {

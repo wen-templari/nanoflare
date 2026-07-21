@@ -46,6 +46,7 @@ func main() {
 		workerHost          = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
 		baseHostname        = flag.String("base-hostname", os.Getenv("NANOFLARE_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
 		workerd             = flag.String("workerd", "workerd", "path to the workerd executable")
+		workerdNetworkAllow = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
 		portHost            = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart           = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 		idleTimeout         = flag.Duration("runtime-idle-timeout", 30*time.Second, "idle duration before a lazy worker runtime is stopped")
@@ -147,6 +148,7 @@ func main() {
 	}
 	writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
 	writer.SetNanoflareRuntimeAddr(*runtimeAddr)
+	writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
 	manager := runtime.NewLazyManager(
 		writer,
 		runtime.CommandLauncher{Executable: *workerd, Output: output},

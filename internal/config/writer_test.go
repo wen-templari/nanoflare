@@ -20,6 +20,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		},
 	}})
 	for _, expected := range []string{
+		`(name = "internet", network = (allow = ["public", "10.0.0.0/8"], tlsOptions = (trustBrowserCas = true)))`,
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`(name = "nanoflare-duration-collector", external = (address = "127.0.0.1:8081"))`,
 		`address = "*:9001"`,
@@ -60,6 +61,13 @@ func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
 	}
 	if strings.Contains(config, `(name = "ASSETS", service = "assets-hello-app")`) {
 		t.Fatalf("config unexpectedly contains default asset binding:\n%s", config)
+	}
+}
+
+func TestWorkerdUsesCustomNetworkAllowList(t *testing.T) {
+	config := WorkerdWithOptions(nil, WorkerdOptions{NetworkAllow: ParseNetworkAllow("public, local, 192.168.0.0/16")})
+	if !strings.Contains(config, `(name = "internet", network = (allow = ["public", "local", "192.168.0.0/16"], tlsOptions = (trustBrowserCas = true)))`) {
+		t.Fatalf("config does not contain custom network allow list:\n%s", config)
 	}
 }
 

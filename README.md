@@ -127,6 +127,19 @@ go run ./cmd/nanoflared \
 binary is not on `PATH`. Its `-config-dir` stores private `workerd`
 configuration files; Traefik does not mount this directory.
 
+By default, Worker global `fetch()` can reach public internet addresses and
+services in `10.0.0.0/8`:
+
+```sh
+NANOFLARE_WORKERD_NETWORK_ALLOW=public,10.0.0.0/8
+```
+
+Use `public,local,10.0.0.0/8` when Workers also need local-machine addresses
+such as `127.0.0.1`, or `public,private` when Workers should reach all private
+network ranges, including `10.0.0.0/8`, `172.16.0.0/12`, and
+`192.168.0.0/16`. The same value can be passed with
+`-workerd-network-allow`.
+
 For a split control plane, start `nanoflare-runner` separately and point
 `nanoflared` at its authenticated control API:
 
