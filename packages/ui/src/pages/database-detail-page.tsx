@@ -5,6 +5,7 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { DatabaseMetrics, DatabaseMetricsTimeseries, MetricPoint } from "../app/types";
+import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortDatabases } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
@@ -47,6 +48,7 @@ const slashCommands = [
 ];
 
 const tablesSQL = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;";
+const databaseDetailTabs = ["overview", "query", "settings"] as const;
 
 function helpQueryRun(): QueryRun {
   return {
@@ -66,9 +68,10 @@ function helpQueryRun(): QueryRun {
 export function DatabaseDetailPage() {
   const navigate = useNavigate();
   const { databaseId } = useParams();
-  const { databases } = useWorkspace();
+  const { databases, workspaceReady } = useWorkspace();
   const database = databases.find((item) => item.id === databaseId);
 
+  if (!workspaceReady) return null;
   if (!database) return <Navigate to="/databases" replace />;
 
   return <DatabaseDetailContent database={database} onBack={() => navigate("/databases")} />;
@@ -82,7 +85,7 @@ function DatabaseDetailContent({
   onBack: () => void;
 }) {
   const { apiConnected, notify, setDatabases, workers } = useWorkspace();
-  const [tab, setTab] = useState<"overview" | "query" | "settings">("overview");
+  const [tab, setTab] = useQueryTab<(typeof databaseDetailTabs)[number]>(databaseDetailTabs, "overview");
   const [sql, setSQL] = useState("");
   const [querying, setQuerying] = useState(false);
   const [queryRuns, setQueryRuns] = useState<QueryRun[]>(() => [helpQueryRun()]);

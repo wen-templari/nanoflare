@@ -7,6 +7,7 @@ import {
 import { Navigate, useNavigate, useParams } from "react-router-dom"
 import { Area, AreaChart, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts"
 import { apiFetch, errorText, fetchJSON } from "../app/api"
+import { useQueryTab } from "../app/use-query-tab"
 import { useWorkspace } from "../app/workspace-context"
 import type {
   ConsoleDeployment, WorkerDeployment, WorkerDetailData, WorkerDetailTab, WorkerFile,
@@ -46,12 +47,14 @@ function normalizeTraffic(input?: Partial<WorkerTraffic> | null): WorkerTraffic 
 const WorkerDefinitionFlow = lazy(() =>
   import("../components/worker-definition-flow").then((module) => ({ default: module.WorkerDefinitionFlow })),
 )
+const workerDetailTabs = ["overview", "deployments", "files", "output", "settings"] as const
 
 export function WorkerDetailPage() {
   const { workerId } = useParams()
-  const { workers, notify, apiConnected } = useWorkspace()
+  const { workers, notify, apiConnected, workspaceReady } = useWorkspace()
   const worker = workers.find((item) => item.id === workerId)
 
+  if (!workspaceReady) return null
   if (!worker) return <Navigate to="/workers" replace />
 
   return <WorkerDetailContent worker={worker} notify={notify} apiConnected={apiConnected} />
@@ -60,7 +63,7 @@ export function WorkerDetailPage() {
 function WorkerDetailContent({ worker, notify, apiConnected }: { worker: { id: string; name: string; hostname: string; bindings?: WorkerDeployment["bindings"]; created_at: string; created_by?: string }; notify: (text: string) => void; apiConnected: boolean }) {
   const navigate = useNavigate()
   const { databases, namespaces } = useWorkspace()
-  const [tab, setTab] = useState<WorkerDetailTab>("overview")
+  const [tab, setTab] = useQueryTab<WorkerDetailTab>(workerDetailTabs, "overview")
   const [detail, setDetail] = useState<WorkerDetailData>()
   const [files, setFiles] = useState<WorkerFile[]>([])
   const [deployments, setDeployments] = useState<ConsoleDeployment[]>([])

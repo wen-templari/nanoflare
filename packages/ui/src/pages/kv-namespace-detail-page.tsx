@@ -4,6 +4,7 @@ import { Archive, BookOpen, Globe2, HardDrive, KeyRound, Pencil, Plus, RefreshCw
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { KVNamespaceMetrics, WorkerKVKey } from "../app/types";
+import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortNamespaces } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { KVKeyDialog } from "../components/dialogs/kv-key-dialog";
@@ -13,12 +14,15 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { cn } from "../lib/utils";
 
+const kvNamespaceDetailTabs = ["overview", "keys", "settings"] as const;
+
 export function KVNamespaceDetailPage() {
   const navigate = useNavigate();
   const { namespaceId } = useParams();
-  const { namespaces } = useWorkspace();
+  const { namespaces, workspaceReady } = useWorkspace();
   const namespace = namespaces.find((item) => item.id === namespaceId);
 
+  if (!workspaceReady) return null;
   if (!namespace) return <Navigate to="/kv" replace />;
 
   return <KVNamespaceDetailContent namespace={namespace} onBack={() => navigate("/kv")} />;
@@ -32,7 +36,7 @@ function KVNamespaceDetailContent({
   onBack: () => void;
 }) {
   const { workers, setNamespaces, notify, apiConnected } = useWorkspace();
-  const [tab, setTab] = useState<"overview" | "keys" | "settings">("overview");
+  const [tab, setTab] = useQueryTab<(typeof kvNamespaceDetailTabs)[number]>(kvNamespaceDetailTabs, "overview");
   const [name, setName] = useState(namespace.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);

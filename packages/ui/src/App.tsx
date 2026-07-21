@@ -1,5 +1,5 @@
 import { MantineProvider, createTheme } from "@mantine/core";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./app/auth-context";
 import { WorkspaceProvider } from "./app/workspace-context";
 import { ConsoleLayout } from "./components/layout/console-layout";
@@ -59,8 +59,12 @@ export function App() {
 
 function ProtectedConsole() {
   const auth = useAuth();
+  const location = useLocation();
   if (!auth.ready) return null;
-  if (!auth.signedIn) return <Navigate to="/login" replace />;
+  if (!auth.signedIn) {
+    const next = `${location.pathname}${location.search}${location.hash}`;
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+  }
   return (
     <WorkspaceProvider>
       <ConsoleLayout />

@@ -4,6 +4,7 @@ import { Archive, ArrowDownToLine, BookOpen, DatabaseZap, FileJson, FileText, Gl
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { ObjectStorageBucketMetrics, ObjectStorageObject } from "../app/types";
+import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
@@ -16,12 +17,15 @@ type ObjectPreview =
   | { kind: "text"; content: string }
   | { kind: "image"; url: string; contentType: string };
 
+const objectStorageBucketDetailTabs = ["overview", "objects", "settings"] as const;
+
 export function ObjectStorageBucketDetailPage() {
   const navigate = useNavigate();
   const { bucketId } = useParams();
-  const { objectStorageBuckets } = useWorkspace();
+  const { objectStorageBuckets, workspaceReady } = useWorkspace();
   const bucket = objectStorageBuckets.find((item) => item.id === bucketId);
 
+  if (!workspaceReady) return null;
   if (!bucket) return <Navigate to="/object-storage" replace />;
 
   return <ObjectStorageBucketDetailContent bucket={bucket} onBack={() => navigate("/object-storage")} />;
@@ -35,7 +39,7 @@ function ObjectStorageBucketDetailContent({
   onBack: () => void;
 }) {
   const { workers, setObjectStorageBuckets, notify, apiConnected } = useWorkspace();
-  const [tab, setTab] = useState<"overview" | "objects" | "settings">("overview");
+  const [tab, setTab] = useQueryTab<(typeof objectStorageBucketDetailTabs)[number]>(objectStorageBucketDetailTabs, "overview");
   const [name, setName] = useState(bucket.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);

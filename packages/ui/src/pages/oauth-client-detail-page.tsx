@@ -5,6 +5,7 @@ import { Check, Copy, PlugZap, Settings, SquarePen, Trash2 } from "lucide-react"
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { OAuthClient, OAuthClientConnection } from "../app/types";
+import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -12,6 +13,7 @@ import { Panel } from "../components/shared/primitives";
 
 const oauthScopes = ["workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"];
 const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] };
+const oauthClientDetailTabs = ["overview", "connections", "settings"] as const;
 
 export function OAuthClientDetailPage() {
   const { clientId = "" } = useParams();
@@ -21,7 +23,7 @@ export function OAuthClientDetailPage() {
   const [connections, setConnections] = useState<OAuthClientConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState<"overview" | "connections" | "settings">("overview");
+  const [tab, setTab] = useQueryTab<(typeof oauthClientDetailTabs)[number]>(oauthClientDetailTabs, "overview");
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");

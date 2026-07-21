@@ -218,6 +218,7 @@ export type WorkspaceContextValue = {
   setDatabases: Dispatch<SetStateAction<Database[]>>;
   objectStorageBuckets: ObjectStorageBucket[];
   setObjectStorageBuckets: Dispatch<SetStateAction<ObjectStorageBucket[]>>;
+  workspaceReady: boolean;
   apiConnected: boolean;
   activeOrgID: string;
   organizations: Organization[];

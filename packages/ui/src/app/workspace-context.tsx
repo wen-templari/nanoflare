@@ -17,14 +17,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [databaseDialogOpen, setDatabaseDialogOpen] = useState(false);
   const [objectStorageBucketDialogOpen, setObjectStorageBucketDialogOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const [apiConnected, setApiConnected] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setWorkspaceReady(false);
 
     async function refreshWorkspace() {
       try {
-        if (!auth.activeOrgID) return;
+        if (!auth.activeOrgID) {
+          if (!cancelled) setWorkspaceReady(true);
+          return;
+        }
         const [apps, kvNamespaces, dbs, buckets] = await Promise.all([
           fetchJSON<Worker[] | null>("/v1/workers"),
           fetchJSON<KVNamespace[] | null>("/v1/kv/namespaces"),
@@ -52,6 +57,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setNamespaces(sortNamespaces(kvNamespaces ?? []));
         setDatabases(sortDatabases(dbs ?? []));
         setObjectStorageBuckets(sortObjectStorageBuckets(buckets ?? []));
+        setWorkspaceReady(true);
       } catch {
         if (cancelled) return;
         setApiConnected(false);
@@ -59,6 +65,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setNamespaces([]);
         setDatabases([]);
         setObjectStorageBuckets([]);
+        setWorkspaceReady(true);
       }
     }
 
@@ -87,6 +94,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setDatabases,
         objectStorageBuckets,
         setObjectStorageBuckets,
+        workspaceReady,
         apiConnected,
         activeOrgID: auth.activeOrgID,
         organizations: auth.organizations,
