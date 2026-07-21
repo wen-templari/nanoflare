@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -23,6 +24,30 @@ func TestMinimalEnvironmentDoesNotForwardNanoflareSecrets(t *testing.T) {
 	want := []string{"TZ=UTC", "PATH=/usr/bin"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("minimalEnvironment() = %#v, want %#v", got, want)
+	}
+}
+
+func TestCommandLauncherScopesSingleDeploymentStartupOutput(t *testing.T) {
+	executable, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("true command is not available")
+	}
+	output := NewOutputBuffer()
+	process, err := CommandLauncher{Executable: executable, Output: output}.Launch("workerd-lazy.capnp", []nanoflare.ActiveDeployment{{
+		App:        nanoflare.App{ID: "app-1"},
+		Deployment: nanoflare.Deployment{ID: "dep-1"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-process.Done()
+
+	lines := output.Output("app-1")
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1: %#v", len(lines), lines)
+	}
+	if lines[0].DeploymentID != "dep-1" || lines[0].Message != "starting workerd generation from workerd-lazy.capnp" {
+		t.Fatalf("unexpected output line: %#v", lines[0])
 	}
 }
 

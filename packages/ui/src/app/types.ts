@@ -82,7 +82,7 @@ export type ConsoleDeployment = {
 };
 
 export type WorkerFile = { name: string; path: string; size: number; content: string };
-export type WorkerOutputLine = { timestamp: string; level: string; message: string };
+export type WorkerOutputLine = { timestamp: string; level: string; message: string; app_id?: string; deployment_id?: string };
 export type WorkerKVKey = { key: string; size: number };
 export type ObjectStorageBucket = { id: string; name: string; created_at: string };
 export type Database = { id: string; name: string; created_at: string };

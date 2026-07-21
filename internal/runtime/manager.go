@@ -350,7 +350,7 @@ type CommandLauncher struct {
 	Output     *OutputBuffer
 }
 
-func (l CommandLauncher) Launch(configPath string, _ []nanoflare.ActiveDeployment) (Process, error) {
+func (l CommandLauncher) Launch(configPath string, active []nanoflare.ActiveDeployment) (Process, error) {
 	command := exec.Command(l.Executable, "serve", configPath)
 	command.Env = minimalEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -359,7 +359,12 @@ func (l CommandLauncher) Launch(configPath string, _ []nanoflare.ActiveDeploymen
 	if l.Output != nil {
 		command.Stdout = io.MultiWriter(os.Stdout, l.Output)
 		command.Stderr = io.MultiWriter(os.Stderr, l.Output)
-		l.Output.Append("info", fmt.Sprintf("starting workerd generation from %s", filepath.Base(configPath)))
+		message := fmt.Sprintf("starting workerd generation from %s", filepath.Base(configPath))
+		if len(active) == 1 {
+			l.Output.AppendActive(active[0], "info", message)
+		} else {
+			l.Output.Append("info", message)
+		}
 	}
 	if err := command.Start(); err != nil {
 		return nil, err

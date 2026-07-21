@@ -406,9 +406,11 @@ func (r *RunWorkerFirst) UnmarshalJSON(data []byte) error {
 }
 
 type WorkerOutputLine struct {
-	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"`
-	Message   string    `json:"message"`
+	Timestamp    time.Time `json:"timestamp"`
+	Level        string    `json:"level"`
+	Message      string    `json:"message"`
+	AppID        string    `json:"app_id,omitempty"`
+	DeploymentID string    `json:"deployment_id,omitempty"`
 }
 
 type WorkerStatusCode struct {

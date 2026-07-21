@@ -63,7 +63,7 @@ func newCronRunner(host string, active []nanoflare.ActiveDeployment, output *Out
 		for _, expression := range item.Deployment.Triggers.Crons {
 			schedule, err := nanoflare.ParseCron(expression)
 			if err != nil {
-				runner.log("error", fmt.Sprintf("skip invalid cron trigger for %s: %v", item.App.ID, err))
+				runner.log(item, "error", fmt.Sprintf("skip invalid cron trigger for %s: %v", item.App.ID, err))
 				continue
 			}
 			runner.jobs = append(runner.jobs, cronJob{
@@ -106,10 +106,10 @@ func (r *cronRunner) runDue(now time.Time) {
 			continue
 		}
 		if err := r.invoke(now, job); err != nil {
-			r.log("error", fmt.Sprintf("cron trigger %q for %s failed: %v", job.cron, job.appID, err))
+			r.log(job.active, "error", fmt.Sprintf("cron trigger %q for %s failed: %v", job.cron, job.appID, err))
 			continue
 		}
-		r.log("info", fmt.Sprintf("cron trigger %q for %s completed", job.cron, job.appID))
+		r.log(job.active, "info", fmt.Sprintf("cron trigger %q for %s completed", job.cron, job.appID))
 	}
 }
 
@@ -149,9 +149,9 @@ func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 	return nil
 }
 
-func (r *cronRunner) log(level, message string) {
+func (r *cronRunner) log(active nanoflare.ActiveDeployment, level, message string) {
 	if r.output != nil {
-		r.output.Append(level, message)
+		r.output.AppendActive(active, level, message)
 		return
 	}
 	fmt.Printf("%s: %s\n", level, message)

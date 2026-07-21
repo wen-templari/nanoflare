@@ -27,6 +27,7 @@ func TestCronRunnerInvokesDueTriggers(t *testing.T) {
 	runner := newCronRunner("127.0.0.1", []nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "app-1"},
 		Deployment: nanoflare.Deployment{
+			ID:       "dep-1",
 			Port:     9001,
 			Triggers: nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *", "1 * * * *"}},
 		},
@@ -38,7 +39,7 @@ func TestCronRunnerInvokesDueTriggers(t *testing.T) {
 	if got, want := client.urls[0], "http://127.0.0.1:9001/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1783771800"; got != want {
 		t.Fatalf("url = %q, want %q", got, want)
 	}
-	if lines := output.Output(""); len(lines) != 1 || lines[0].Level != "info" {
+	if lines := output.Output("app-1"); len(lines) != 1 || lines[0].Level != "info" || lines[0].DeploymentID != "dep-1" {
 		t.Fatalf("output = %#v", lines)
 	}
 }
@@ -47,6 +48,7 @@ func TestCronRunnerLogsFailures(t *testing.T) {
 	runner := newCronRunner("127.0.0.1", []nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "app-1"},
 		Deployment: nanoflare.Deployment{
+			ID:       "dep-1",
 			Port:     9001,
 			Triggers: nanoflare.TriggerConfig{Crons: []string{"* * * * *"}},
 		},
@@ -54,7 +56,7 @@ func TestCronRunnerLogsFailures(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusInternalServerError, Status: "500 Internal Server Error", Body: http.NoBody}, nil
 	}), nil)
 	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
-	if lines := runner.output.Output(""); len(lines) != 1 || lines[0].Level != "error" {
+	if lines := runner.output.Output("app-1"); len(lines) != 1 || lines[0].Level != "error" || lines[0].DeploymentID != "dep-1" {
 		t.Fatalf("output = %#v", lines)
 	}
 }

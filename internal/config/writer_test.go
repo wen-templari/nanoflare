@@ -34,8 +34,10 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`scriptName: globalThis.__NANOFLARE_APP_ID`,
 		`durationMs`,
 		`(name = "__NANOFLARE_APP_ID", text = "hello-app")`,
+		`(name = "__NANOFLARE_DEPLOYMENT_ID", text = "")`,
 		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
 		`globalThis.__NANOFLARE_DURATION_COLLECTOR.fetch(\"http://nanoflare.internal/internal/runtime/durations\"`,
+		`[[nanoflare-output app=`,
 		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
 		`compatibilityFlags = ["nodejs_compat"]`,
@@ -156,6 +158,7 @@ func TestWorkerdModuleWrapperHandlesScheduledRoute(t *testing.T) {
 	for _, expected := range []string{
 		`/cdn-cgi/handler/scheduled`,
 		`userWorker.scheduled(scheduledController(request), wrapEnv(env), ctx)`,
+		`withOutputIdentity(env, async () =>`,
 		`new Response(null, { status: 204 })`,
 		`url.searchParams.get(\"cron\")`,
 		`url.searchParams.get(\"time\")`,
@@ -182,6 +185,8 @@ func TestWorkerdServiceWorkerWrapperHandlesScheduledListeners(t *testing.T) {
 		`const __nanoflareScheduledListeners = [];`,
 		`type === \"scheduled\"`,
 		`__nanoflareRunScheduledListeners(event.request)`,
+		`function __nanoflareWithOutputIdentity(callback)`,
+		`[[nanoflare-output app=`,
 		`/cdn-cgi/handler/scheduled`,
 		`new Response(null, { status: 204 })`,
 	} {

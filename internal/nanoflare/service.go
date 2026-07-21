@@ -823,7 +823,22 @@ func (s *Service) WorkerOutput(appID string) ([]WorkerOutputLine, error) {
 	if s.output == nil {
 		return []WorkerOutputLine{}, nil
 	}
-	return s.output.Output(appID), nil
+	active, err := s.activeDeployments()
+	if err != nil {
+		return nil, err
+	}
+	activeIDs := make(map[string]bool)
+	for _, item := range activeForAppDeployments(active, appID) {
+		activeIDs[item.Deployment.ID] = true
+	}
+	lines := s.output.Output(appID)
+	filtered := make([]WorkerOutputLine, 0, len(lines))
+	for _, line := range lines {
+		if activeIDs[line.DeploymentID] {
+			filtered = append(filtered, line)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Service) WorkerOutputForOrg(orgID, appID string) ([]WorkerOutputLine, error) {

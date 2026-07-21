@@ -56,12 +56,13 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 func TestWorkerConsoleAPIs(t *testing.T) {
 	dir := t.TempDir()
 	bundle := `addEventListener("fetch", () => {});`
+	outputBuffer := runtime.NewOutputBuffer()
 	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(dir, "workerd.capnp"),
 		filepath.Join(dir, "traefik.yml"),
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
-	), nil, fakeOutput{}, fakeTraffic{})
+	), nil, outputBuffer, fakeTraffic{})
 	server := NewServer(service)
 	app := createApp(t, server, "Console App", "console.example.com")
 	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
@@ -74,6 +75,7 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	if detail.Deployment.CompatibilityDate != "2025-12-10" {
 		t.Fatalf("compatibility date = %q", detail.Deployment.CompatibilityDate)
 	}
+	outputBuffer.AppendScoped(app.ID, detail.Deployment.ID, "info", "runtime ready")
 
 	var files []nanoflare.WorkerFile
 	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/files", http.StatusOK, &files)
@@ -1302,13 +1304,13 @@ func requestJSONBytes(t *testing.T, server http.Handler, method, path string, bo
 	}
 }
 
+type fakeTraffic struct{}
+
 type fakeOutput struct{}
 
 func (fakeOutput) Output(string) []nanoflare.WorkerOutputLine {
-	return []nanoflare.WorkerOutputLine{{Timestamp: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC), Level: "info", Message: "runtime ready"}}
+	return nil
 }
-
-type fakeTraffic struct{}
 
 func (fakeTraffic) Traffic(string) (nanoflare.WorkerTraffic, error) {
 	return nanoflare.WorkerTraffic{

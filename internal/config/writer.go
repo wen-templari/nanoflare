@@ -155,7 +155,7 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	out.WriteString("  ]\n);\n")
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(deploymentServiceName(item)))
-		writeWorkerSource(&out, item.Deployment)
+		writeWorkerSource(&out, item)
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(workerBindings(item), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
@@ -197,6 +197,7 @@ func workerBindings(item nanoflare.ActiveDeployment) []string {
 	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.Databases)+len(item.Deployment.ObjectStorageBuckets)+3)
 	bindings = append(bindings,
 		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", quote(item.App.ID)),
+		fmt.Sprintf("(name = \"__NANOFLARE_DEPLOYMENT_ID\", text = %s)", quote(item.Deployment.ID)),
 		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
 	)
 	varNames := make([]string, 0, len(item.Deployment.Vars))
@@ -237,7 +238,8 @@ func workerBindings(item nanoflare.ActiveDeployment) []string {
 	return bindings
 }
 
-func writeWorkerSource(out *strings.Builder, deployment nanoflare.Deployment) {
+func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment) {
+	deployment := item.Deployment
 	if deploymentFormat(deployment) == "service-worker" {
 		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content, deployment.Databases, deployment.ObjectStorageBuckets)))
 		return
@@ -256,6 +258,37 @@ func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.Databa
 const assetBindingName = %s;
 const dbBindingNames = %s;
 const objectBindingNames = %s;
+
+function outputIdentityMarker(env) {
+  const appID = encodeURIComponent(env?.__NANOFLARE_APP_ID || "");
+  const deploymentID = encodeURIComponent(env?.__NANOFLARE_DEPLOYMENT_ID || "");
+  return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
+}
+
+function withOutputIdentity(env, callback) {
+  const marker = outputIdentityMarker(env);
+  const originals = {};
+  const restore = () => {
+    for (const level of Object.keys(originals)) {
+      console[level] = originals[level];
+    }
+  };
+  for (const level of ["debug", "error", "info", "log", "warn"]) {
+    originals[level] = console[level];
+    console[level] = (...args) => originals[level].call(console, marker, ...args);
+  }
+  try {
+    const result = callback();
+    if (result && typeof result.finally === "function") {
+      return result.finally(restore);
+    }
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
 
 function recordRuntimeDuration(env, ctx, startedAt, outcome) {
   const durationMs = Math.max(1, Date.now() - startedAt);
@@ -561,15 +594,17 @@ async function runScheduled(request, env, ctx) {
   if (typeof userWorker.scheduled !== "function") {
     return new Response("scheduled handler not found", { status: 404 });
   }
-  const startedAt = Date.now();
-  try {
-    await userWorker.scheduled(scheduledController(request), wrapEnv(env), ctx);
-    recordRuntimeDuration(env, ctx, startedAt, "ok");
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    recordRuntimeDuration(env, ctx, startedAt, "exception");
-    throw error;
-  }
+  return withOutputIdentity(env, async () => {
+    const startedAt = Date.now();
+    try {
+      await userWorker.scheduled(scheduledController(request), wrapEnv(env), ctx);
+      recordRuntimeDuration(env, ctx, startedAt, "ok");
+      return new Response(null, { status: 204 });
+    } catch (error) {
+      recordRuntimeDuration(env, ctx, startedAt, "exception");
+      throw error;
+    }
+  });
 }
 
 export default {
@@ -578,18 +613,20 @@ export default {
     if (new URL(request.url).pathname === "/cdn-cgi/handler/scheduled") {
       return runScheduled(request, env, ctx);
     }
-    const startedAt = Date.now();
-    try {
-      if (typeof userWorker.fetch !== "function") {
-        return new Response("fetch handler not found", { status: 404 });
+    return withOutputIdentity(env, async () => {
+      const startedAt = Date.now();
+      try {
+        if (typeof userWorker.fetch !== "function") {
+          return new Response("fetch handler not found", { status: 404 });
+        }
+        const response = await userWorker.fetch(request, wrapEnv(env), ctx);
+        recordRuntimeDuration(env, ctx, startedAt, "ok");
+        return response;
+      } catch (error) {
+        recordRuntimeDuration(env, ctx, startedAt, "exception");
+        throw error;
       }
-      const response = await userWorker.fetch(request, wrapEnv(env), ctx);
-      recordRuntimeDuration(env, ctx, startedAt, "ok");
-      return response;
-    } catch (error) {
-      recordRuntimeDuration(env, ctx, startedAt, "exception");
-      throw error;
-    }
+    });
   },
 };`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
 }
@@ -614,6 +651,37 @@ const __nanoflareAddEventListener = globalThis.addEventListener.bind(globalThis)
 const __nanoflareScheduledListeners = [];
 let __nanoflareFetchListenerCount = 0;
 
+function __nanoflareOutputIdentityMarker() {
+  const appID = encodeURIComponent(globalThis.__NANOFLARE_APP_ID || "");
+  const deploymentID = encodeURIComponent(globalThis.__NANOFLARE_DEPLOYMENT_ID || "");
+  return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
+}
+
+function __nanoflareWithOutputIdentity(callback) {
+  const marker = __nanoflareOutputIdentityMarker();
+  const originals = {};
+  const restore = () => {
+    for (const level of Object.keys(originals)) {
+      console[level] = originals[level];
+    }
+  };
+  for (const level of ["debug", "error", "info", "log", "warn"]) {
+    originals[level] = console[level];
+    console[level] = (...args) => originals[level].call(console, marker, ...args);
+  }
+  try {
+    const result = callback();
+    if (result && typeof result.finally === "function") {
+      return result.finally(restore);
+    }
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
+
 function __nanoflareScheduledEvent(request) {
   const url = new URL(request.url);
   const cron = url.searchParams.get("cron") || "* * * * *";
@@ -634,14 +702,16 @@ function __nanoflareScheduledEvent(request) {
 }
 
 async function __nanoflareRunScheduledListeners(request) {
-  const event = __nanoflareScheduledEvent(request);
-  for (const listener of __nanoflareScheduledListeners) {
-    const result = listener(event);
-    if (result && typeof result.then === "function") {
-      event.waitUntil(result);
+  return __nanoflareWithOutputIdentity(async () => {
+    const event = __nanoflareScheduledEvent(request);
+    for (const listener of __nanoflareScheduledListeners) {
+      const result = listener(event);
+      if (result && typeof result.then === "function") {
+        event.waitUntil(result);
+      }
     }
-  }
-  await event.__nanoflareRunWaitUntil();
+    await event.__nanoflareRunWaitUntil();
+  });
 }
 
 globalThis.addEventListener = function(type, listener, options) {
@@ -673,7 +743,7 @@ globalThis.addEventListener = function(type, listener, options) {
         throw error;
       },
     ));
-    const result = listener(event);
+    const result = __nanoflareWithOutputIdentity(() => listener(event));
     if (result && typeof result.then === "function") {
       event.waitUntil(result.catch(() => {}));
     }
