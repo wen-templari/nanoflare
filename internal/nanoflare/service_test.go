@@ -461,6 +461,35 @@ func TestDefaultOrgKVStorageByteLimit(t *testing.T) {
 	}
 }
 
+func TestKVStorageUsageCacheAvoidsRepeatedOrgUsageReads(t *testing.T) {
+	base := NewStore()
+	store := &countingKVUsageRepo{Repository: base}
+	service := NewService(store, &recordingWriter{})
+	if err := store.CreateOrganization(Organization{ID: "org-kv-cache", Name: "KV Cache"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.CreateApp(CreateAppInput{Name: "App", OrgID: "org-kv-cache", Hostname: "kv-cache.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: "kv-cache", OrgID: "org-kv-cache"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.KVPut(app.RuntimeToken, namespace.ID, "key-a", []byte("12345")); err != nil {
+		t.Fatal(err)
+	}
+	if store.kvUsageReads != 1 {
+		t.Fatalf("KVStorageBytesByOrg reads after first write = %d, want 1", store.kvUsageReads)
+	}
+	if err := service.KVPut(app.RuntimeToken, namespace.ID, "key-b", []byte("12345")); err != nil {
+		t.Fatal(err)
+	}
+	if store.kvUsageReads != 1 {
+		t.Fatalf("KVStorageBytesByOrg reads after cached second write = %d, want 1", store.kvUsageReads)
+	}
+}
+
 func TestPaidOrgStorageByteLimitsAreUnlimited(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()
@@ -973,8 +1002,18 @@ type objectBackedRepo struct {
 	*Store
 }
 
+type countingKVUsageRepo struct {
+	Repository
+	kvUsageReads int
+}
+
 func newObjectBackedRepo() *objectBackedRepo {
 	return &objectBackedRepo{Store: NewStore()}
+}
+
+func (r *countingKVUsageRepo) KVStorageBytesByOrg(orgID string) (int64, error) {
+	r.kvUsageReads++
+	return r.Repository.KVStorageBytesByOrg(orgID)
 }
 
 func (r *objectBackedRepo) Activate(deployment Deployment) error {

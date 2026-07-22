@@ -12,7 +12,7 @@ env -u http_proxy -u https_proxy -u all_proxy \
   NO_PROXY=127.0.0.1,localhost
 ```
 
-The single-worker tests show stable behavior for plain Worker fetches, KV reads, static assets, object storage through the Worker binding, mixed app traffic, and control-plane reads/writes. KV writes and KV-heavy mixed traffic produced nonzero failure rates at the tested load.
+The single-worker tests now show stable behavior for plain Worker fetches, KV reads, KV writes, static assets, object storage through the Worker binding, mixed app traffic, and control-plane reads/writes. Earlier KV write and mixed plain/KV runs failed at 25 VUs, but later reruns on Wednesday, July 22, 2026 passed cleanly after restarting the service and after tightening the KV write path.
 
 The multi-worker tests found a clear short-run boundary: 20 VUs passed cleanly, 30 VUs stayed under the 1% failure threshold, and 40 VUs collapsed. Longer multi-worker runs degraded over time and eventually produced `dial tcp 127.0.0.1:8080: connect: can't assign requested address`, indicating local connection/address exhaustion in the internal gateway/runtime-manager path or its client/server connection lifecycle.
 
@@ -31,9 +31,12 @@ The multi-worker tests found a clear short-run boundary: 20 VUs passed cleanly, 
 | Scenario | Load | Duration | Requests | RPS | Failed | Avg | p95 | Max | Result |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | Plain Worker fetch | 50 VUs | 2m | 16,809 | 139.8 | 0.00% | 168.4 ms | 290.0 ms | 422.3 ms | Pass |
-| KV read | 25 VUs | 2m | 8,293 | 69.0 | 0.00% | 170.7 ms | 256.7 ms | 814.2 ms | Pass |
-| KV write | 25 VUs | 2m | 7,592 | 63.2 | 5.01% | 187.2 ms | 308.6 ms | 1030.8 ms | Fail |
-| Mixed plain/KV | 25 VUs | 2m | 8,415 | 70.0 | 4.19% | 167.9 ms | 261.6 ms | 468.6 ms | Fail |
+| KV read (initial run) | 25 VUs | 2m | 8,293 | 69.0 | 0.00% | 170.7 ms | 256.7 ms | 814.2 ms | Pass |
+| KV read (rerun after restart) | 25 VUs | 2m | 8,182 | 68.0 | 0.00% | 173.1 ms | 260.8 ms | 342.0 ms | Pass |
+| KV write (initial run) | 25 VUs | 2m | 7,592 | 63.2 | 5.01% | 187.2 ms | 308.6 ms | 1030.8 ms | Fail |
+| KV write (rerun after restart and KV write-path changes) | 25 VUs | 2m | 8,649 | 71.9 | 0.00% | 163.2 ms | 236.4 ms | 311.8 ms | Pass |
+| Mixed plain/KV (initial run) | 25 VUs | 2m | 8,415 | 70.0 | 4.19% | 167.9 ms | 261.6 ms | 468.6 ms | Fail |
+| Mixed plain/KV (rerun after restart and KV write-path changes) | 25 VUs | 2m | 6,605 | 54.9 | 0.00% | 217.0 ms | 335.0 ms | 400.3 ms | Pass |
 | Static assets | 25 VUs | 2m | 11,789 | 98.2 | 0.75% | 116.9 ms | 149.0 ms | 242.2 ms | Pass |
 | Objects through Worker binding | 25 VUs | 2m | 8,220 | 68.3 | 0.00% | 173.3 ms | 242.1 ms | 302.8 ms | Pass |
 | Mixed app traffic | 25 VUs | 2m | 8,216 | 68.3 | 0.00% | 172.4 ms | 299.0 ms | 496.4 ms | Pass |
@@ -53,11 +56,11 @@ The plain Worker scenario completed 16,809 requests with 0 failures at about 140
 
 The p95 latency was 290 ms. This is acceptable for a local stress baseline but leaves limited headroom before the configured 500 ms p95 threshold.
 
-### 2. KV Reads Are Stable, KV Writes Are Not At 25 VUs
+### 2. KV Reads, Latest KV Writes, And Latest Mixed Plain/KV Traffic Are Stable At 25 VUs
 
-KV reads completed with 0 failures at 25 VUs. KV writes at the same concurrency failed 5.01% of requests. The mixed plain/KV scenario also failed at 4.19%, which is consistent with write pressure being the likely source.
+KV reads completed with 0 failures in both the initial run and the later rerun at 25 VUs. The first KV write run at the same concurrency failed 5.01% of requests, but the latest rerun on Wednesday, July 22, 2026 passed with 0 failures, 8,649 requests, 71.9 requests per second, and p95 latency of 236.4 ms. The mixed plain/KV scenario also changed materially: the first run failed at 4.19%, while the rerun passed with 0 failures.
 
-The next investigation should focus on the runtime KV write path, database writes, connection pooling, and any per-request transaction or connection lifecycle behavior.
+This points to the earlier KV write and mixed-traffic failures being sensitive to process state or the older write path, not an unavoidable 25-VU concurrency limit. After restarting `nanoflared` onto the newer KV write implementation, the live metrics also showed 0 worker-gateway errors, very high connection reuse, and 0 Postgres connection-pool waits during the reruns.
 
 ### 3. Static Assets Are Fastest Of The Main User-Traffic Paths
 
@@ -95,8 +98,8 @@ The corrected port-specific guard showed that `127.0.0.1:8080` did not accumulat
 
 ## Recommended Next Steps
 
-1. Investigate KV write failures first.
-   Focus on runtime KV writes, database transactions, and connection pooling. KV writes failed at 25 VUs while KV reads passed.
+1. Push the KV write boundary higher.
+   KV writes no longer fail at 25 VUs in the latest rerun, so the next useful step is to run `kv_write` at 30 VUs and 40 VUs and identify the new failure point, if any.
 
 2. Investigate connection reuse in the internal gateway path.
    The repeated `can't assign requested address` errors suggest k6 or the gateway path is burning through local ephemeral ports. Confirm whether connections are being reused and whether response bodies are always closed in the Go proxy/client path.
@@ -104,8 +107,8 @@ The corrected port-specific guard showed that `127.0.0.1:8080` did not accumulat
 3. Add k6 options for connection behavior.
    Run comparison tests with explicit connection reuse settings, for example default reuse versus `--no-connection-reuse`, to separate k6 client behavior from server-side connection lifecycle.
 
-4. Add server-side metrics during k6 runs.
-   Record open file descriptors, Go goroutines, active `net/http` connections, Postgres connection pool stats, and workerd process counts over time.
+4. Keep server-side metrics on for comparison runs.
+   Record open file descriptors, Go goroutines, active `net/http` connections, Postgres connection pool stats, and workerd process counts over time. In the latest 25-VU KV write rerun, the Postgres pool reached 23 open idle connections with 0 wait events, which is a useful new baseline.
 
 5. Keep long soaks below the observed cliff.
    Based on these runs, 20 VUs for multi-worker traffic is not safe for long local soaks yet. Use shorter runs or lower VUs until the connection exhaustion issue is understood.
@@ -115,4 +118,4 @@ The corrected port-specific guard showed that `127.0.0.1:8080` did not accumulat
 
 ## Bottom Line
 
-Single-worker app traffic is mostly healthy except for KV writes. Control-plane traffic is healthy when auth and org headers are included. Multi-worker traffic exposes the most serious issue: a sharp failure cliff and longer-run connection/address exhaustion on the local machine. The next engineering focus should be KV write stability and connection lifecycle behavior in the multi-worker internal gateway/runtime path.
+Single-worker app traffic is currently healthy, including the latest `kv_read`, `kv_write`, and mixed plain/KV reruns at 25 VUs. Control-plane traffic is healthy when auth and org headers are included. Multi-worker traffic still exposes the most serious issue: a sharp failure cliff and longer-run connection/address exhaustion on the local machine. The next engineering focus should shift from "KV writes are broken at 25 VUs" to "find the new single-worker KV/mixed limit and continue investigating connection lifecycle behavior in the multi-worker internal gateway/runtime path."

@@ -11,6 +11,7 @@ import (
 	"net"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,6 +45,19 @@ type RepositoryPoolStatsReader interface {
 	PoolStats() RepositoryPoolStats
 }
 
+type kvValueSizer interface {
+	KVValueSize(capability, namespaceID, key string) (int64, bool, error)
+}
+
+type kvWriteOptimizer interface {
+	KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error)
+	KVDeleteWithSizeDelta(capability, namespaceID, key string) (int64, error)
+}
+
+type kvOrgUsageCacheDisabler interface {
+	disableKVOrgUsageCache() bool
+}
+
 type Service struct {
 	store                Repository
 	writer               ConfigWriter
@@ -55,6 +69,9 @@ type Service struct {
 	secrets              *SecretCodec
 	baseHostname         string
 	randomHostnameSuffix func() (string, error)
+	kvOrgUsageCacheMu    sync.Mutex
+	kvOrgUsageCache      map[string]orgKVUsageCacheEntry
+	kvOrgUsageCacheTTL   time.Duration
 }
 
 type AssetResponse struct {
@@ -64,19 +81,46 @@ type AssetResponse struct {
 }
 
 func NewService(store Repository, writer ConfigWriter) *Service {
-	return &Service{store: store, writer: writer, randomHostnameSuffix: randomHostnameSuffix}
+	return &Service{
+		store:                store,
+		writer:               writer,
+		randomHostnameSuffix: randomHostnameSuffix,
+		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
+		kvOrgUsageCacheTTL:   time.Second,
+	}
 }
 
 func NewServiceWithObjects(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
-	return &Service{store: store, writer: writer, objects: objects, randomHostnameSuffix: randomHostnameSuffix}
+	return &Service{
+		store:                store,
+		writer:               writer,
+		objects:              objects,
+		randomHostnameSuffix: randomHostnameSuffix,
+		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
+		kvOrgUsageCacheTTL:   time.Second,
+	}
 }
 
 func NewServiceWithConsole(store Repository, writer ConfigWriter, objects ObjectStore, output WorkerOutputReader, traffic WorkerTrafficReader) *Service {
-	service := &Service{store: store, writer: writer, objects: objects, output: output, traffic: traffic, randomHostnameSuffix: randomHostnameSuffix}
+	service := &Service{
+		store:                store,
+		writer:               writer,
+		objects:              objects,
+		output:               output,
+		traffic:              traffic,
+		randomHostnameSuffix: randomHostnameSuffix,
+		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
+		kvOrgUsageCacheTTL:   time.Second,
+	}
 	if reader, ok := traffic.(DatabaseMetricsTimeseriesReader); ok {
 		service.dbTimeseries = reader
 	}
 	return service
+}
+
+type orgKVUsageCacheEntry struct {
+	size      int64
+	expiresAt time.Time
 }
 
 func (s *Service) SetBaseHostname(hostname string) error {
@@ -1868,33 +1912,65 @@ func (s *Service) KVGet(capability, namespaceID, key string) ([]byte, bool, erro
 }
 
 func (s *Service) KVPut(capability, namespaceID, key string, value []byte) error {
-	oldValue, ok, err := s.store.KVGet(capability, namespaceID, key)
+	oldSize, _, err := s.kvValueSize(capability, namespaceID, key)
 	if err != nil {
 		return err
 	}
-	var oldSize int64
-	if ok {
-		oldSize = int64(len(oldValue))
-	}
-	if err := s.enforceKVStorageBytesLimit(namespaceID, int64(len(value))-oldSize); err != nil {
+	delta := int64(len(value)) - oldSize
+	orgID, err := s.enforceKVStorageBytesLimit(namespaceID, delta)
+	if err != nil {
 		return err
+	}
+	if optimized, ok := s.store.(kvWriteOptimizer); ok {
+		appliedDelta, err := optimized.KVPutWithSizeDelta(capability, namespaceID, key, value)
+		if err != nil {
+			s.invalidateKVOrgUsageCache(orgID)
+			return err
+		}
+		s.adjustKVOrgUsageCache(orgID, appliedDelta)
+		return nil
 	}
 	if err := s.store.KVPut(capability, namespaceID, key, value); err != nil {
+		s.invalidateKVOrgUsageCache(orgID)
 		return err
 	}
-	return s.store.AdjustKVNamespaceSize(namespaceID, int64(len(value))-oldSize)
+	if err := s.store.AdjustKVNamespaceSize(namespaceID, delta); err != nil {
+		s.invalidateKVOrgUsageCache(orgID)
+		return err
+	}
+	s.adjustKVOrgUsageCache(orgID, delta)
+	return nil
 }
 
 func (s *Service) KVDelete(capability, namespaceID, key string) error {
-	oldValue, ok, err := s.store.KVGet(capability, namespaceID, key)
+	oldSize, ok, err := s.kvValueSize(capability, namespaceID, key)
 	if err != nil {
 		return err
 	}
+	orgID, orgErr := s.kvNamespaceOrgID(namespaceID)
+	if orgErr != nil {
+		return orgErr
+	}
+	if optimized, hasOptimizer := s.store.(kvWriteOptimizer); hasOptimizer {
+		delta, err := optimized.KVDeleteWithSizeDelta(capability, namespaceID, key)
+		if err != nil {
+			s.invalidateKVOrgUsageCache(orgID)
+			return err
+		}
+		s.adjustKVOrgUsageCache(orgID, delta)
+		return nil
+	}
 	if err := s.store.KVDelete(capability, namespaceID, key); err != nil {
+		s.invalidateKVOrgUsageCache(orgID)
 		return err
 	}
 	if ok {
-		return s.store.AdjustKVNamespaceSize(namespaceID, -int64(len(oldValue)))
+		delta := -oldSize
+		if err := s.store.AdjustKVNamespaceSize(namespaceID, delta); err != nil {
+			s.invalidateKVOrgUsageCache(orgID)
+			return err
+		}
+		s.adjustKVOrgUsageCache(orgID, delta)
 	}
 	return nil
 }
@@ -2279,34 +2355,34 @@ func (s *Service) enforceObjectStorageBytesLimit(bucketID string, delta int64) e
 	return nil
 }
 
-func (s *Service) enforceKVStorageBytesLimit(namespaceID string, delta int64) error {
+func (s *Service) enforceKVStorageBytesLimit(namespaceID string, delta int64) (string, error) {
 	if delta <= 0 {
-		return nil
+		return "", nil
 	}
 	namespace, err := s.GetKVNamespace(namespaceID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	orgID := strings.TrimSpace(namespace.OrgID)
 	if orgID == "" {
-		return nil
+		return "", nil
 	}
 	org, err := s.store.GetOrganization(orgID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	limit := OrgLimitsForLevel(org.UsageLevel).KVStorageBytes
 	if limit == nil {
-		return nil
+		return orgID, nil
 	}
-	current, err := s.store.KVStorageBytesByOrg(orgID)
+	current, err := s.kvStorageBytesByOrg(orgID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if current+delta > *limit {
-		return usageByteLimitError(org.UsageLevel, "KV storage", *limit)
+		return "", usageByteLimitError(org.UsageLevel, "KV storage", *limit)
 	}
-	return nil
+	return orgID, nil
 }
 
 func (s *Service) RecordRuntimeKVRead(namespaceID string) error {
@@ -2315,6 +2391,81 @@ func (s *Service) RecordRuntimeKVRead(namespaceID string) error {
 
 func (s *Service) RecordRuntimeKVWrite(namespaceID string) error {
 	return s.store.IncrementKVNamespaceWrites(namespaceID)
+}
+
+func (s *Service) kvValueSize(capability, namespaceID, key string) (int64, bool, error) {
+	if sizer, ok := s.store.(kvValueSizer); ok {
+		return sizer.KVValueSize(capability, namespaceID, key)
+	}
+	value, ok, err := s.store.KVGet(capability, namespaceID, key)
+	if err != nil {
+		return 0, false, err
+	}
+	return int64(len(value)), ok, nil
+}
+
+func (s *Service) kvNamespaceOrgID(namespaceID string) (string, error) {
+	namespace, err := s.GetKVNamespace(namespaceID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(namespace.OrgID), nil
+}
+
+func (s *Service) kvStorageBytesByOrg(orgID string) (int64, error) {
+	if s.kvOrgUsageCacheDisabled() || strings.TrimSpace(orgID) == "" {
+		return s.store.KVStorageBytesByOrg(orgID)
+	}
+	now := time.Now()
+	s.kvOrgUsageCacheMu.Lock()
+	entry, ok := s.kvOrgUsageCache[orgID]
+	if ok && now.Before(entry.expiresAt) {
+		size := entry.size
+		s.kvOrgUsageCacheMu.Unlock()
+		return size, nil
+	}
+	s.kvOrgUsageCacheMu.Unlock()
+	size, err := s.store.KVStorageBytesByOrg(orgID)
+	if err != nil {
+		return 0, err
+	}
+	s.kvOrgUsageCacheMu.Lock()
+	s.kvOrgUsageCache[orgID] = orgKVUsageCacheEntry{size: size, expiresAt: now.Add(s.kvOrgUsageCacheTTL)}
+	s.kvOrgUsageCacheMu.Unlock()
+	return size, nil
+}
+
+func (s *Service) adjustKVOrgUsageCache(orgID string, delta int64) {
+	if s.kvOrgUsageCacheDisabled() || strings.TrimSpace(orgID) == "" {
+		return
+	}
+	now := time.Now()
+	s.kvOrgUsageCacheMu.Lock()
+	defer s.kvOrgUsageCacheMu.Unlock()
+	entry, ok := s.kvOrgUsageCache[orgID]
+	if !ok {
+		return
+	}
+	entry.size += delta
+	if entry.size < 0 {
+		entry.size = 0
+	}
+	entry.expiresAt = now.Add(s.kvOrgUsageCacheTTL)
+	s.kvOrgUsageCache[orgID] = entry
+}
+
+func (s *Service) invalidateKVOrgUsageCache(orgID string) {
+	if s.kvOrgUsageCacheDisabled() || strings.TrimSpace(orgID) == "" {
+		return
+	}
+	s.kvOrgUsageCacheMu.Lock()
+	delete(s.kvOrgUsageCache, orgID)
+	s.kvOrgUsageCacheMu.Unlock()
+}
+
+func (s *Service) kvOrgUsageCacheDisabled() bool {
+	disabler, ok := s.store.(kvOrgUsageCacheDisabler)
+	return ok && disabler.disableKVOrgUsageCache()
 }
 
 func (s *Service) RecordRuntimeObjectRead(bucketID string) error {

@@ -2070,6 +2070,21 @@ func (p *Postgres) KVGet(capability, namespaceID, key string) ([]byte, bool, err
 	return value, err == nil, err
 }
 
+func (p *Postgres) KVValueSize(capability, namespaceID, key string) (int64, bool, error) {
+	if _, err := p.AppIDForCapability(capability); err != nil {
+		return 0, false, err
+	}
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return 0, false, err
+	}
+	var size int64
+	err := p.db.QueryRow(`SELECT octet_length(value) FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key).Scan(&size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return size, err == nil, err
+}
+
 func (p *Postgres) KVList(capability, namespaceID string) ([]nanoflare.WorkerKVKey, error) {
 	if _, err := p.AppIDForCapability(capability); err != nil {
 		return nil, err
@@ -2106,6 +2121,45 @@ ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value`, namesp
 	return err
 }
 
+func (p *Postgres) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error) {
+	if _, err := p.AppIDForCapability(capability); err != nil {
+		return 0, err
+	}
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return 0, err
+	}
+	tx, err := p.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var oldSize int64
+	err = tx.QueryRow(`SELECT octet_length(value) FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key).Scan(&oldSize)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		oldSize = 0
+	}
+	if _, err := tx.Exec(`
+INSERT INTO runtime_kv (kv_namespace_id, key, value) VALUES ($1, $2, $3)
+ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value`, namespaceID, key, value); err != nil {
+		return 0, err
+	}
+	delta := int64(len(value)) - oldSize
+	if delta != 0 {
+		if _, err := tx.Exec(`
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size) VALUES ($1, 0, 0, GREATEST($2, 0))
+ON CONFLICT (kv_namespace_id) DO UPDATE SET size = GREATEST(kv_namespace_metrics.size + $2, 0)`, namespaceID, delta); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return delta, nil
+}
+
 func randomToken() (string, error) {
 	value := make([]byte, 24)
 	if _, err := rand.Read(value); err != nil {
@@ -2123,6 +2177,43 @@ func (p *Postgres) KVDelete(capability, namespaceID, key string) error {
 	}
 	_, err := p.db.Exec(`DELETE FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key)
 	return err
+}
+
+func (p *Postgres) KVDeleteWithSizeDelta(capability, namespaceID, key string) (int64, error) {
+	if _, err := p.AppIDForCapability(capability); err != nil {
+		return 0, err
+	}
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return 0, err
+	}
+	tx, err := p.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var oldSize int64
+	err = tx.QueryRow(`SELECT octet_length(value) FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key).Scan(&oldSize)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		oldSize = 0
+	}
+	if _, err := tx.Exec(`DELETE FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key); err != nil {
+		return 0, err
+	}
+	delta := -oldSize
+	if delta != 0 {
+		if _, err := tx.Exec(`
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size) VALUES ($1, 0, 0, GREATEST($2, 0))
+ON CONFLICT (kv_namespace_id) DO UPDATE SET size = GREATEST(kv_namespace_metrics.size + $2, 0)`, namespaceID, delta); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return delta, nil
 }
 
 func (p *Postgres) KVNamespaceMetrics(namespaceID string) (nanoflare.KVNamespaceMetrics, error) {

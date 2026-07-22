@@ -1491,6 +1491,46 @@ func (s *Store) KVPut(capability, namespaceID, key string, value []byte) error {
 	return nil
 }
 
+func (s *Store) KVValueSize(capability, namespaceID, key string) (int64, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.capabilityToApp[capability]; !ok {
+		return 0, false, ErrInvalidCapability
+	}
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return 0, false, ErrKVNamespaceNotFound
+	}
+	value, ok := s.kv[namespaceID][key]
+	if !ok {
+		return 0, false, nil
+	}
+	return int64(len(value)), true, nil
+}
+
+func (s *Store) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.capabilityToApp[capability]; !ok {
+		return 0, ErrInvalidCapability
+	}
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return 0, ErrKVNamespaceNotFound
+	}
+	if s.kv[namespaceID] == nil {
+		s.kv[namespaceID] = make(map[string][]byte)
+	}
+	oldSize := int64(len(s.kv[namespaceID][key]))
+	s.kv[namespaceID][key] = append([]byte(nil), value...)
+	delta := int64(len(value)) - oldSize
+	metrics := s.kvMetrics[namespaceID]
+	metrics.Size += delta
+	if metrics.Size < 0 {
+		metrics.Size = 0
+	}
+	s.kvMetrics[namespaceID] = metrics
+	return delta, nil
+}
+
 func (s *Store) KVDelete(capability, namespaceID, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1502,6 +1542,27 @@ func (s *Store) KVDelete(capability, namespaceID, key string) error {
 	}
 	delete(s.kv[namespaceID], key)
 	return nil
+}
+
+func (s *Store) KVDeleteWithSizeDelta(capability, namespaceID, key string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.capabilityToApp[capability]; !ok {
+		return 0, ErrInvalidCapability
+	}
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return 0, ErrKVNamespaceNotFound
+	}
+	oldSize := int64(len(s.kv[namespaceID][key]))
+	delete(s.kv[namespaceID], key)
+	delta := -oldSize
+	metrics := s.kvMetrics[namespaceID]
+	metrics.Size += delta
+	if metrics.Size < 0 {
+		metrics.Size = 0
+	}
+	s.kvMetrics[namespaceID] = metrics
+	return delta, nil
 }
 
 func (s *Store) KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error) {
@@ -1565,6 +1626,10 @@ func (s *Store) KVStorageBytesByOrg(orgID string) (int64, error) {
 		total += s.kvMetrics[namespaceID].Size
 	}
 	return total, nil
+}
+
+func (s *Store) disableKVOrgUsageCache() bool {
+	return true
 }
 
 func (s *Store) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
