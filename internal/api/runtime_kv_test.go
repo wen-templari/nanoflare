@@ -64,7 +64,7 @@ func TestRuntimeTokenSurvivesRedeployAndIsNotPublic(t *testing.T) {
 	}
 }
 
-func runtimeKVFixture(t *testing.T) (*nanoflare.Store, string, string, http.Handler) {
+func runtimeKVFixture(t testing.TB) (*nanoflare.Store, string, string, http.Handler) {
 	t.Helper()
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, discardWriter{})
@@ -77,6 +77,45 @@ func runtimeKVFixture(t *testing.T) (*nanoflare.Store, string, string, http.Hand
 		t.Fatal(err)
 	}
 	return store, app.RuntimeToken, namespace.ID, NewRuntimeKVServer(service)
+}
+
+func BenchmarkRuntimeKVPut(b *testing.B) {
+	_, token, namespaceID, server := runtimeKVFixture(b)
+	value := []byte("baseline-value")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		runtimeKVRequest(b, server, http.MethodPut, "/key?urlencoded=true", token, namespaceID, value, http.StatusNoContent)
+	}
+}
+
+func BenchmarkRuntimeKVGet(b *testing.B) {
+	_, token, namespaceID, server := runtimeKVFixture(b)
+	runtimeKVRequest(b, server, http.MethodPut, "/key?urlencoded=true", token, namespaceID, []byte("baseline-value"), http.StatusNoContent)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		runtimeKVRequest(b, server, http.MethodGet, "/key?urlencoded=true", token, namespaceID, nil, http.StatusOK)
+	}
+}
+
+func BenchmarkRuntimeKVGetParallel(b *testing.B) {
+	_, token, namespaceID, server := runtimeKVFixture(b)
+	runtimeKVRequest(b, server, http.MethodPut, "/key?urlencoded=true", token, namespaceID, []byte("baseline-value"), http.StatusNoContent)
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/key?urlencoded=true", bytes.NewReader(nil))
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.Header.Set("X-Nanoflare-KV-Namespace-ID", namespaceID)
+			server.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK {
+				panic("runtime KV GET failed: " + recorder.Body.String())
+			}
+		}
+	})
 }
 
 type discardWriter struct{}

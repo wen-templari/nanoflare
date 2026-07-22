@@ -97,3 +97,50 @@ func TestPersistentDurationTelemetrySurvivesRestart(t *testing.T) {
 		t.Fatalf("persisted stats = %#v", stats)
 	}
 }
+
+func BenchmarkDurationTelemetryRecordBatchInMemory(b *testing.B) {
+	telemetry := NewDurationTelemetry()
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	telemetry.now = func() time.Time { return now }
+	events := []DurationTraceEvent{{ScriptName: "alpha", EventTimestamp: float64(now.UnixMilli()), DurationMs: 12}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		telemetry.RecordBatch(events)
+	}
+}
+
+func BenchmarkDurationTelemetryRecordBatchPersistent(b *testing.B) {
+	telemetry, err := NewPersistentDurationTelemetry(filepath.Join(b.TempDir(), "duration-telemetry.json"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	base := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	telemetry.window = 100 * time.Millisecond
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		now := base.Add(time.Duration(i) * time.Millisecond)
+		telemetry.now = func() time.Time { return now }
+		telemetry.RecordBatch([]DurationTraceEvent{{ScriptName: "alpha", EventTimestamp: float64(now.UnixMilli()), DurationMs: 12}})
+	}
+}
+
+func BenchmarkDurationTelemetryStats(b *testing.B) {
+	telemetry := NewDurationTelemetry()
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	telemetry.now = func() time.Time { return now }
+	events := make([]DurationTraceEvent, 1000)
+	for i := range events {
+		events[i] = DurationTraceEvent{ScriptName: "alpha", EventTimestamp: float64(now.Add(-time.Duration(i) * time.Second).UnixMilli()), DurationMs: float64(i%100 + 1)}
+	}
+	telemetry.RecordBatch(events)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = telemetry.Stats("alpha")
+	}
+}

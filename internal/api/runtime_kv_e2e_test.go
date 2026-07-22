@@ -1,10 +1,12 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -155,6 +157,290 @@ func TestLazyRuntimeGatewayEndToEnd(t *testing.T) {
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "lazy" {
 		t.Fatalf("lazy gateway status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
+}
+
+func BenchmarkWorkerdGatewayEndToEnd(b *testing.B) {
+	if os.Getenv("NANOFLARE_BENCH_WORKERD") != "1" {
+		b.Skip("set NANOFLARE_BENCH_WORKERD=1 to run real workerd benchmarks")
+	}
+	workerd, err := exec.LookPath("workerd")
+	if err != nil {
+		b.Skip("workerd is not installed")
+	}
+	previousLogOutput := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(previousLogOutput)
+
+	b.Run("cold_first_request", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+			b.StartTimer()
+			body := fixture.request(b, "/plain")
+			b.StopTimer()
+			if body != "plain" {
+				b.Fatalf("body = %q, want plain", body)
+			}
+			fixture.close()
+		}
+	})
+
+	b.Run("warm_plain_fetch", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		if body := fixture.request(b, "/plain"); body != "plain" {
+			b.Fatalf("warmup body = %q, want plain", body)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if body := fixture.request(b, "/plain"); body != "plain" {
+				b.Fatalf("body = %q, want plain", body)
+			}
+		}
+	})
+
+	b.Run("direct_workerd_plain_fetch", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		ensured := fixture.ensureWorker(b)
+		defer ensured.Release()
+		if body := fixture.directWorkerRequest(b, ensured.Port, "/plain"); body != "plain" {
+			b.Fatalf("warmup body = %q, want plain", body)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if body := fixture.directWorkerRequest(b, ensured.Port, "/plain"); body != "plain" {
+				b.Fatalf("body = %q, want plain", body)
+			}
+		}
+	})
+
+	b.Run("runtime_kv_http_get", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		fixture.runtimeKVRequest(b, http.MethodPut, "/key?urlencoded=true", []byte("value"), http.StatusNoContent)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if body := fixture.runtimeKVRequest(b, http.MethodGet, "/key?urlencoded=true", nil, http.StatusOK); body != "value" {
+				b.Fatalf("body = %q, want value", body)
+			}
+		}
+	})
+
+	b.Run("runtime_kv_http_put", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			fixture.runtimeKVRequest(b, http.MethodPut, "/key?urlencoded=true", []byte("value"), http.StatusNoContent)
+		}
+	})
+
+	b.Run("direct_workerd_kv_get", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		ensured := fixture.ensureWorker(b)
+		defer ensured.Release()
+		if body := fixture.directWorkerRequest(b, ensured.Port, "/kv-put"); body != "stored" {
+			b.Fatalf("warmup body = %q, want stored", body)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if body := fixture.directWorkerRequest(b, ensured.Port, "/kv-get"); body != "value" {
+				b.Fatalf("body = %q, want value", body)
+			}
+		}
+	})
+
+	b.Run("direct_workerd_kv_put", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		ensured := fixture.ensureWorker(b)
+		defer ensured.Release()
+		if body := fixture.directWorkerRequest(b, ensured.Port, "/plain"); body != "plain" {
+			b.Fatalf("warmup body = %q, want plain", body)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if body := fixture.directWorkerRequest(b, ensured.Port, "/kv-put"); body != "stored" {
+				b.Fatalf("body = %q, want stored", body)
+			}
+		}
+	})
+
+	b.Run("gateway_warm_kv_get", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		if body := fixture.request(b, "/kv-put"); body != "stored" {
+			b.Fatalf("warmup body = %q, want stored", body)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if body := fixture.request(b, "/kv-get"); body != "value" {
+				b.Fatalf("body = %q, want value", body)
+			}
+		}
+	})
+
+	b.Run("gateway_warm_kv_put", func(b *testing.B) {
+		fixture := newWorkerdGatewayBenchmarkFixture(b, workerd)
+		defer fixture.close()
+		if body := fixture.request(b, "/plain"); body != "plain" {
+			b.Fatalf("warmup body = %q, want plain", body)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if body := fixture.request(b, "/kv-put"); body != "stored" {
+				b.Fatalf("body = %q, want stored", body)
+			}
+		}
+	})
+}
+
+type workerdGatewayBenchmarkFixture struct {
+	appID         string
+	active        nanoflare.ActiveDeployment
+	namespaceID   string
+	runtimeToken  string
+	server        http.Handler
+	manager       *runtime.LazyManager
+	runtimeServer *httptest.Server
+}
+
+func newWorkerdGatewayBenchmarkFixture(b *testing.B, workerd string) *workerdGatewayBenchmarkFixture {
+	b.Helper()
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, discardWriter{})
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Bench", Hostname: "bench.example.com"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	namespace, err := service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{Name: "bench"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, err := service.Deploy(app.ID, nanoflare.DeployInput{
+		Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: benchmarkGatewayWorker}},
+		Entrypoint:        "worker.js",
+		Format:            "modules",
+		CompatibilityDate: "2025-12-10",
+		KVNamespaces:      []nanoflare.KVBinding{{Binding: "KV", ID: namespace.ID}},
+	}); err != nil {
+		b.Fatal(err)
+	}
+	active, err := service.ActiveDeployments()
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(active) != 1 {
+		b.Fatalf("active deployments = %d, want 1", len(active))
+	}
+
+	runtimeKV := api.NewRuntimeKVServer(service)
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/runtime/durations" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		runtimeKV.ServeHTTP(w, r)
+	}))
+	dir := b.TempDir()
+	writer := config.NewRuntimeWriter(filepath.Join(dir, "workerd.capnp"), discardTraefik{})
+	writer.SetNanoflareRuntimeAddr(strings.TrimPrefix(runtimeServer.URL, "http://"))
+	manager := runtime.NewLazyManager(
+		writer,
+		runtime.CommandLauncher{Executable: workerd},
+		dir,
+		"127.0.0.1",
+		availablePortForBenchmark(b),
+		5*time.Second,
+		5*time.Second,
+		time.Minute,
+	)
+	server := api.NewServerWithRuntime(service, nil, "", nil, nil, manager)
+	return &workerdGatewayBenchmarkFixture{
+		appID:         app.ID,
+		active:        active[0],
+		namespaceID:   namespace.ID,
+		runtimeToken:  app.RuntimeToken,
+		server:        server,
+		manager:       manager,
+		runtimeServer: runtimeServer,
+	}
+}
+
+func (f *workerdGatewayBenchmarkFixture) request(b *testing.B, path string) string {
+	b.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+f.appID+path, nil)
+	f.server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		b.Fatalf("GET %s status = %d body = %s", path, recorder.Code, recorder.Body.String())
+	}
+	return recorder.Body.String()
+}
+
+func (f *workerdGatewayBenchmarkFixture) ensureWorker(b *testing.B) runtime.EnsuredWorker {
+	b.Helper()
+	ensured, err := f.manager.Ensure(context.Background(), f.active)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return ensured
+}
+
+func (f *workerdGatewayBenchmarkFixture) directWorkerRequest(b *testing.B, port int, path string) string {
+	b.Helper()
+	response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, path))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		b.Fatalf("GET %s status = %d body = %s", path, response.StatusCode, body)
+	}
+	return string(body)
+}
+
+func (f *workerdGatewayBenchmarkFixture) runtimeKVRequest(b *testing.B, method, path string, body []byte, wantStatus int) string {
+	b.Helper()
+	request, err := http.NewRequest(method, f.runtimeServer.URL+path, bytes.NewReader(body))
+	if err != nil {
+		b.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+f.runtimeToken)
+	request.Header.Set("X-Nanoflare-KV-Namespace-ID", f.namespaceID)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if response.StatusCode != wantStatus {
+		b.Fatalf("%s %s status = %d body = %s", method, path, response.StatusCode, responseBody)
+	}
+	return string(responseBody)
+}
+
+func (f *workerdGatewayBenchmarkFixture) close() {
+	_ = f.manager.Close()
+	f.runtimeServer.Close()
 }
 
 func TestWorkerdAssetsBindingEndToEnd(t *testing.T) {
@@ -456,6 +742,16 @@ func availablePort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
+func availablePortForBenchmark(b *testing.B) int {
+	b.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
+}
+
 type discardWriter struct{}
 
 func (discardWriter) Write([]nanoflare.ActiveDeployment) error {
@@ -554,7 +850,21 @@ const nativeKVWorker = `export default {
     const missing = await env.KV.get("text");
     return Response.json({ text, json, missing });
   },
-};`
+	};`
+
+const benchmarkGatewayWorker = `export default {
+	  async fetch(request, env) {
+	    const path = new URL(request.url).pathname;
+	    if (path === "/kv-get") {
+	      return new Response(await env.KV.get("key") ?? "");
+	    }
+	    if (path === "/kv-put") {
+	      await env.KV.put("key", "value");
+	      return new Response("stored");
+	    }
+	    return new Response("plain");
+	  },
+	};`
 
 const nativeAssetsWorker = `export default {
   async fetch(_request, env) {

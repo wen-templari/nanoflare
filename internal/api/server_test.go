@@ -1476,7 +1476,7 @@ func runtimeTokens(t *testing.T, store nanoflare.Repository) map[string]string {
 	return tokens
 }
 
-func runtimeKVRequest(t *testing.T, server http.Handler, method, path, token, namespaceID string, body []byte, wantStatus int) []byte {
+func runtimeKVRequest(t testing.TB, server http.Handler, method, path, token, namespaceID string, body []byte, wantStatus int) []byte {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, path, bytes.NewReader(body))

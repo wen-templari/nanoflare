@@ -1,0 +1,21 @@
+{
+  "name": "load-test-worker",
+  "hostname": "load-test.local.nbtca.space",
+  "app_id": "6e3998ebd8bef447d16db9f0d73308aa87e15b47bb9dad15",
+  "api_url": "http://127.0.0.1:8080",
+  "entrypoint": "worker.js",
+  "format": "modules",
+  "compatibility_date": "2025-12-10",
+  "triggers": {},
+  "files": [
+    "worker.js"
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "d9e7d2a4c475eedb08df5f5ed7e6ef164f346232e756364f"
+    }
+  ],
+  "assets": {},
+  "auth": {}
+}

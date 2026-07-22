@@ -25,6 +25,10 @@ func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(time.Hour)
 	store := &Postgres{db: db}
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()

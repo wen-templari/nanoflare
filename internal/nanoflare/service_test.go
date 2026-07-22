@@ -817,6 +817,70 @@ func TestPutSecretRollsActiveDeploymentAndExposesVars(t *testing.T) {
 	}
 }
 
+func BenchmarkServiceKVGet(b *testing.B) {
+	service, token, namespaceID := serviceKVBenchmarkFixture(b)
+	if err := service.KVPut(token, namespaceID, "key", []byte("value")); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		value, ok, err := service.KVGet(token, namespaceID, "key")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !ok || string(value) != "value" {
+			b.Fatalf("KVGet = ok:%v value:%q, want value", ok, value)
+		}
+	}
+}
+
+func BenchmarkServiceKVPut(b *testing.B) {
+	service, token, namespaceID := serviceKVBenchmarkFixture(b)
+	value := []byte("value")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := service.KVPut(token, namespaceID, "key", value); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkServiceKVGetParallel(b *testing.B) {
+	service, token, namespaceID := serviceKVBenchmarkFixture(b)
+	if err := service.KVPut(token, namespaceID, "key", []byte("value")); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			value, ok, err := service.KVGet(token, namespaceID, "key")
+			if err != nil {
+				panic(err)
+			}
+			if !ok || string(value) != "value" {
+				panic("unexpected KV value")
+			}
+		}
+	})
+}
+
+func serviceKVBenchmarkFixture(b *testing.B) (*Service, string, string) {
+	b.Helper()
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Bench", Hostname: "bench.example.com"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	namespace, err := service.CreateKVNamespace(CreateKVNamespaceInput{Name: "bench"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	return service, app.RuntimeToken, namespace.ID
+}
+
 type recordingWriter struct{}
 
 func (w *recordingWriter) Write([]ActiveDeployment) error {
