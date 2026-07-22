@@ -45,6 +45,21 @@ func (p *Postgres) Close() error {
 	return p.db.Close()
 }
 
+func (p *Postgres) PoolStats() nanoflare.RepositoryPoolStats {
+	stats := p.db.Stats()
+	return nanoflare.RepositoryPoolStats{
+		MaxOpenConnections: stats.MaxOpenConnections,
+		OpenConnections:    stats.OpenConnections,
+		InUse:              stats.InUse,
+		Idle:               stats.Idle,
+		WaitCount:          stats.WaitCount,
+		WaitDurationMS:     stats.WaitDuration.Milliseconds(),
+		MaxIdleClosed:      stats.MaxIdleClosed,
+		MaxIdleTimeClosed:  stats.MaxIdleTimeClosed,
+		MaxLifetimeClosed:  stats.MaxLifetimeClosed,
+	}
+}
+
 func (p *Postgres) migrate(ctx context.Context) error {
 	_, err := p.db.ExecContext(ctx, `
 DO $$

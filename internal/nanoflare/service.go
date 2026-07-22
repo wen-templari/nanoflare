@@ -40,6 +40,10 @@ type DatabaseMetricsTimeseriesReader interface {
 	DatabaseMetricsTimeseries(string) (DatabaseMetricsTimeseries, error)
 }
 
+type RepositoryPoolStatsReader interface {
+	PoolStats() RepositoryPoolStats
+}
+
 type Service struct {
 	store                Repository
 	writer               ConfigWriter
@@ -90,6 +94,14 @@ func (s *Service) SetSecretCodec(codec *SecretCodec) {
 
 func (s *Service) SetDBExecutor(db DBExecutor) {
 	s.db = db
+}
+
+func (s *Service) RepositoryPoolStats() (RepositoryPoolStats, bool) {
+	reader, ok := s.store.(RepositoryPoolStatsReader)
+	if !ok {
+		return RepositoryPoolStats{}, false
+	}
+	return reader.PoolStats(), true
 }
 
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {

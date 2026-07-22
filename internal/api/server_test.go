@@ -937,6 +937,36 @@ func TestGatewayRunWorkerFirstTrueProxiesBeforeAssets(t *testing.T) {
 	}
 }
 
+func TestGatewayReusesWorkerConnections(t *testing.T) {
+	dir := t.TempDir()
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServer(service)
+	app := createApp(t, server, "Gateway Reuse", "reuse.example.com")
+	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}}, "")
+	workerPort := startTestWorker(t, "worker")
+
+	for range 5 {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/", nil)
+		server.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK || recorder.Body.String() != "worker" {
+			t.Fatalf("gateway status = %d body = %q", recorder.Code, recorder.Body.String())
+		}
+	}
+
+	if got := server.workerGatewayMetrics.requests.Load(); got != 5 {
+		t.Fatalf("gateway requests = %d, want 5", got)
+	}
+	if got := server.workerGatewayMetrics.reused.Load(); got == 0 {
+		t.Fatal("gateway reused connections = 0, want at least one reused connection")
+	}
+}
+
 func TestGatewayUsesStickyDeploymentCookie(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()

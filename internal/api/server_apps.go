@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
@@ -399,9 +400,27 @@ func (s *Server) workerResponse(r *http.Request, port int, requestPath string) (
 	if err != nil {
 		return nil, err
 	}
+	s.workerGatewayMetrics.requests.Add(1)
+	trace := &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			s.workerGatewayMetrics.connections.Add(1)
+			if info.Reused {
+				s.workerGatewayMetrics.reused.Add(1)
+			}
+			if info.WasIdle {
+				s.workerGatewayMetrics.idle.Add(1)
+			}
+		},
+	}
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 	request.Header = r.Header.Clone()
 	request.Host = r.Host
-	return http.DefaultClient.Do(request)
+	response, err := s.workerClient.Do(request)
+	if err != nil {
+		s.workerGatewayMetrics.errors.Add(1)
+		return nil, err
+	}
+	return response, nil
 }
 
 func writeWorkerResponse(w http.ResponseWriter, response *http.Response) {

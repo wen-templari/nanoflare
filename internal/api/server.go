@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -27,7 +28,17 @@ type Server struct {
 	controlCLICodes        map[string]controlCLICode
 	oauth                  *nanoflare.OAuthService
 	runtime                RuntimeEnsurer
+	workerClient           *http.Client
+	workerGatewayMetrics   workerGatewayMetrics
 	mux                    *http.ServeMux
+}
+
+type workerGatewayMetrics struct {
+	requests    atomic.Int64
+	errors      atomic.Int64
+	connections atomic.Int64
+	reused      atomic.Int64
+	idle        atomic.Int64
 }
 
 type RuntimeEnsurer interface {
@@ -88,27 +99,52 @@ func NewServerWithTraefik(service *nanoflare.Service, traefik TraefikConfigReade
 }
 
 func NewServerWithAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator) *Server {
-	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, mux: http.NewServeMux()}
+	server := newServer(service, traefik, token, auth, nil, nil, nil)
 	server.routes()
 	return server
 }
 
 func NewServerWithControlAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService) *Server {
-	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, controlAuth: controlAuth, mux: http.NewServeMux()}
+	server := newServer(service, traefik, token, auth, controlAuth, nil, nil)
 	server.routes()
 	return server
 }
 
 func NewServerWithRuntime(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer) *Server {
-	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, controlAuth: controlAuth, runtime: runtime, mux: http.NewServeMux()}
+	server := newServer(service, traefik, token, auth, controlAuth, runtime, nil)
 	server.routes()
 	return server
 }
 
 func NewServerWithRuntimeAndOAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, oauth *nanoflare.OAuthService, runtime RuntimeEnsurer) *Server {
-	server := &Server{service: service, traefik: traefik, traefikToken: token, auth: auth, controlAuth: controlAuth, oauth: oauth, runtime: runtime, mux: http.NewServeMux()}
+	server := newServer(service, traefik, token, auth, controlAuth, runtime, oauth)
 	server.routes()
 	return server
+}
+
+func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer, oauth *nanoflare.OAuthService) *Server {
+	return &Server{
+		service:      service,
+		traefik:      traefik,
+		traefikToken: token,
+		auth:         auth,
+		controlAuth:  controlAuth,
+		oauth:        oauth,
+		runtime:      runtime,
+		workerClient: newWorkerGatewayClient(),
+		mux:          http.NewServeMux(),
+	}
+}
+
+func newWorkerGatewayClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 1024
+	transport.MaxIdleConnsPerHost = 128
+	transport.MaxConnsPerHost = 128
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	transport.ExpectContinueTimeout = time.Second
+	return &http.Client{Transport: transport}
 }
 
 func (s *Server) SetControlOIDC(auth ControlOIDCAuthenticator) {
