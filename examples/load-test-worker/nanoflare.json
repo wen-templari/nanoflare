@@ -16,6 +16,21 @@
       "id": "d9e7d2a4c475eedb08df5f5ed7e6ef164f346232e756364f"
     }
   ],
-  "assets": {},
+  "object_storage_buckets": [
+    {
+      "binding": "OBJECTS",
+      "bucket_id": "42f76779eb9e194e32085e7c41ebe4cb5026fae1294fe152"
+    }
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "public",
+    "run_worker_first": [
+      "/plain",
+      "/kv-*",
+      "/object*",
+      "/objects"
+    ]
+  },
   "auth": {}
 }

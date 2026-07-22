@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360" role="img" aria-label="Static load test image">
+  <rect width="640" height="360" fill="#f8fafc"/>
+  <rect x="56" y="56" width="528" height="248" fill="#0f172a"/>
+  <circle cx="196" cy="180" r="72" fill="#22c55e"/>
+  <rect x="304" y="116" width="176" height="128" fill="#e11d48"/>
+  <path d="M96 304 260 188l92 64 92-108 100 160Z" fill="#38bdf8"/>
+</svg>
