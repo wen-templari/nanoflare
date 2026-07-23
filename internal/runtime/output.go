@@ -81,16 +81,9 @@ func (b *OutputBuffer) append(message string) {
 	if appID == "" && b.appendContinuation(message) {
 		return
 	}
-	level := "info"
-	lower := strings.ToLower(message)
-	if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") {
-		level = "error"
-	} else if strings.Contains(lower, "warn") {
-		level = "warn"
-	}
 	b.lines = append(b.lines, nanoflare.WorkerOutputLine{
 		Timestamp:    time.Now().UTC(),
-		Level:        level,
+		Level:        "info",
 		Message:      message,
 		AppID:        appID,
 		DeploymentID: deploymentID,
