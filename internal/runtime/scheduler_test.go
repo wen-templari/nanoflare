@@ -33,6 +33,7 @@ func TestCronRunnerInvokesDueTriggers(t *testing.T) {
 		},
 	}}, output, client, nil)
 	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
+	runner.work.Wait()
 	if len(client.urls) != 1 {
 		t.Fatalf("urls = %#v, want one invocation", client.urls)
 	}
@@ -56,9 +57,46 @@ func TestCronRunnerLogsFailures(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusInternalServerError, Status: "500 Internal Server Error", Body: http.NoBody}, nil
 	}), nil)
 	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
+	runner.work.Wait()
 	if lines := runner.output.Output("app-1"); len(lines) != 1 || lines[0].Level != "error" || lines[0].DeploymentID != "dep-1" {
 		t.Fatalf("output = %#v", lines)
 	}
+}
+
+func TestCronRunnerRunsDueTriggersAsynchronouslyAndWaitsOnStop(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	runner := newCronRunner("127.0.0.1", []nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "app-1"},
+		Deployment: nanoflare.Deployment{
+			ID:       "dep-1",
+			Port:     9001,
+			Triggers: nanoflare.TriggerConfig{Crons: []string{"* * * * *"}},
+		},
+	}}, NewOutputBuffer(), roundTripFunc(func(*http.Request) (*http.Response, error) {
+		close(started)
+		<-release
+		return &http.Response{StatusCode: http.StatusNoContent, Status: "204 No Content", Body: http.NoBody}, nil
+	}), nil)
+	go runner.Run()
+
+	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
+	<-started
+
+	stopped := make(chan struct{})
+	go func() {
+		runner.Stop()
+		close(stopped)
+	}()
+	<-runner.done
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while a cron invocation was still running")
+	default:
+	}
+
+	close(release)
+	<-stopped
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

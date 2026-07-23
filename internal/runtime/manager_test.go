@@ -344,6 +344,7 @@ func TestLazyManagerCronSchedulerEnsuresWorker(t *testing.T) {
 	runner.client = client
 
 	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
+	runner.work.Wait()
 	if launcher.count() != 1 {
 		t.Fatalf("launches = %d, want lazy worker launch", launcher.count())
 	}
