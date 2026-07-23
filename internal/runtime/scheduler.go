@@ -35,6 +35,7 @@ type cronRunner struct {
 	stop   chan struct{}
 	done   chan struct{}
 	once   sync.Once
+	work   sync.WaitGroup
 }
 
 func startCronRunner(host string, active []nanoflare.ActiveDeployment, output *OutputBuffer) *cronRunner {
@@ -42,7 +43,7 @@ func startCronRunner(host string, active []nanoflare.ActiveDeployment, output *O
 }
 
 func startCronRunnerWithEnsure(host string, active []nanoflare.ActiveDeployment, output *OutputBuffer, ensure cronEnsureFunc) *cronRunner {
-	runner := newCronRunner(host, active, output, &http.Client{Timeout: 10 * time.Second}, ensure)
+	runner := newCronRunner(host, active, output, &http.Client{Timeout: 120 * time.Second}, ensure)
 	if len(runner.jobs) == 0 {
 		return nil
 	}
@@ -97,6 +98,7 @@ func (r *cronRunner) Stop() {
 	r.once.Do(func() {
 		close(r.stop)
 		<-r.done
+		r.work.Wait()
 	})
 }
 
@@ -105,16 +107,24 @@ func (r *cronRunner) runDue(now time.Time) {
 		if !job.schedule.Matches(now) {
 			continue
 		}
-		if err := r.invoke(now, job); err != nil {
-			r.log(job.active, "error", fmt.Sprintf("cron trigger %q for %s failed: %v", job.cron, job.appID, err))
-			continue
-		}
-		r.log(job.active, "info", fmt.Sprintf("cron trigger %q for %s completed", job.cron, job.appID))
+		r.work.Add(1)
+		go func() {
+			defer r.work.Done()
+			r.invokeAndLog(now, job)
+		}()
 	}
 }
 
+func (r *cronRunner) invokeAndLog(now time.Time, job cronJob) {
+	if err := r.invoke(now, job); err != nil {
+		r.log(job.active, "error", fmt.Sprintf("cron trigger %q for %s failed: %v", job.cron, job.appID, err))
+		return
+	}
+	r.log(job.active, "info", fmt.Sprintf("cron trigger %q for %s completed", job.cron, job.appID))
+}
+
 func (r *cronRunner) invoke(now time.Time, job cronJob) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	port := job.port
 	if r.ensure != nil {
