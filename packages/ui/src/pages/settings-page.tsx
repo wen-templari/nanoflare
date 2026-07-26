@@ -1,236 +1,579 @@
-import { useEffect, useMemo, useState } from "react"
-import type { ReactNode } from "react"
-import { ActionIcon, Alert, Box, Center, Code, Group, Modal, MultiSelect, Progress, ScrollArea, Select, Stack, Table, Text, TextInput, Textarea, Title, Tooltip } from "@mantine/core"
-import { Check, Copy, Plus, RotateCcw, Settings, SquarePen, Trash2, UserMinus, UserPlus } from "lucide-react"
-import { useNavigate } from "react-router-dom"
-import { apiFetch, errorText, fetchJSON } from "../app/api"
-import { formatBytes, normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits"
-import type { KVNamespaceMetrics, OAuthClient, OAuthClientCreated, ObjectStorageBucketMetrics, OrganizationInvite, OrganizationInviteCreated, OrganizationMember, PersonalAccessToken, PersonalAccessTokenCreated } from "../app/types"
-import { useWorkspace } from "../app/workspace-context"
-import { Badge } from "../components/ui/badge"
-import { Button } from "../components/ui/button"
-import { PageHeading, Panel } from "../components/shared/primitives"
+import { useEffect, useMemo, useState } from "react";
+import type { ChangeEvent, MouseEvent, ReactNode } from "react";
+import {
+  Banner,
+  Button,
+  Dialog,
+  Input,
+  Meter,
+  Select as KumoSelect,
+  Table as KumoTable,
+  Text as KumoText,
+  Textarea as KumoTextarea,
+  Tooltip as KumoTooltip,
+} from "@cloudflare/kumo";
+import {
+  Check,
+  Copy,
+  Plus,
+  RotateCcw,
+  Settings,
+  SquarePen,
+  Trash2,
+  UserMinus,
+  UserPlus,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { apiFetch, errorText, fetchJSON } from "../app/api";
+import {
+  formatBytes,
+  normalizeUsageLevel,
+  orgLimitsForLevel,
+  usageLevelPaid,
+} from "../app/org-limits";
+import type {
+  KVNamespaceMetrics,
+  OAuthClient,
+  OAuthClientCreated,
+  ObjectStorageBucketMetrics,
+  OrganizationInvite,
+  OrganizationInviteCreated,
+  OrganizationMember,
+  PersonalAccessToken,
+  PersonalAccessTokenCreated,
+} from "../app/types";
+import { useWorkspace } from "../app/workspace-context";
+import { Badge } from "../components/ui/badge";
+import { PageHeading, Panel } from "../components/shared/primitives";
 
-const oauthScopes = ["workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"]
-const controlScopes = ["workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner"]
-const roleOptions = ["viewer", "member", "admin", "owner"]
-const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] }
-const emptyPATForm = { name: "", scopeType: "org", scopes: [] as string[], expiresIn: "never" }
+const oauthScopes = [
+  "workers:read",
+  "workers:write",
+  "deployments:write",
+  "secrets:write",
+  "kv:read",
+  "kv:write",
+  "objects:read",
+  "objects:write",
+];
+const controlScopes = [
+  "workers:read",
+  "workers:write",
+  "deployments:write",
+  "secrets:write",
+  "kv:read",
+  "kv:write",
+  "db:read",
+  "db:write",
+  "objects:read",
+  "objects:write",
+  "orgs:read",
+  "orgs:write",
+  "members:read",
+  "members:write",
+  "members:owner",
+];
+const roleOptions = ["viewer", "member", "admin", "owner"];
+const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] };
+const emptyPATForm = { name: "", scopeType: "org", scopes: [] as string[], expiresIn: "never" };
+
+function Alert({
+  children,
+  color,
+  title,
+  ...props
+}: {
+  children: ReactNode;
+  color?: string;
+  title?: string;
+  [key: string]: unknown;
+}) {
+  return (
+    <Banner {...(props as any)} variant={color === "red" ? "error" : "default"}>
+      {title && (
+        <Text as="h2" variant="heading3" size="sm">
+          {title}
+        </Text>
+      )}
+      {children}
+    </Banner>
+  );
+}
+
+function Text({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
+  return <KumoText {...(props as any)}>{children}</KumoText>;
+}
+
+function Tooltip({
+  children,
+  label,
+  ...props
+}: {
+  children: ReactNode;
+  label: ReactNode;
+  [key: string]: unknown;
+}) {
+  return (
+    <KumoTooltip {...(props as any)} content={label}>
+      {children}
+    </KumoTooltip>
+  );
+}
+
+function Box({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
+  return <div {...(props as any)}>{children}</div>;
+}
+
+function Group({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
+  return (
+    <div {...(props as any)} className="flex items-center gap-2">
+      {children}
+    </div>
+  );
+}
+
+function Stack({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
+  return (
+    <div {...(props as any)} className="flex flex-col gap-4">
+      {children}
+    </div>
+  );
+}
+
+function Center({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
+  return (
+    <div {...(props as any)} className="flex items-center justify-center">
+      {children}
+    </div>
+  );
+}
+
+function Code({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
+  return (
+    <code {...(props as any)} className="font-mono text-[0.9em]">
+      {children}
+    </code>
+  );
+}
+
+function ActionIcon({
+  children,
+  color,
+  ...props
+}: {
+  children: ReactNode;
+  color?: string;
+  [key: string]: unknown;
+}) {
+  return (
+    <Button {...(props as any)} shape="square" variant={color === "red" ? "destructive" : "ghost"}>
+      {children}
+    </Button>
+  );
+}
+
+function Modal({
+  opened,
+  onClose,
+  title,
+  children,
+  size,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  size?: "lg" | "xl";
+}) {
+  return (
+    <Dialog.Root open={opened} onOpenChange={(open) => !open && onClose()}>
+      <Dialog size={size} className="p-6">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <Dialog.Title>{title}</Dialog.Title>
+          <Dialog.Close aria-label="Close" />
+        </div>
+        {children}
+      </Dialog>
+    </Dialog.Root>
+  );
+}
+
+function MultiSelect({
+  data,
+  label,
+  value,
+  onChange,
+}: {
+  data: string[];
+  label: string;
+  value: string[];
+  onChange: (value: string[]) => void;
+}) {
+  return (
+    <fieldset className="grid gap-2">
+      <legend className="text-sm font-medium">{label}</legend>
+      <div className="flex flex-wrap gap-x-4 gap-y-2">
+        {data.map((item) => (
+          <label className="flex items-center gap-2 text-sm" key={item}>
+            <input
+              checked={value.includes(item)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked ? [...value, item] : value.filter((scope) => scope !== item),
+                )
+              }
+              type="checkbox"
+            />
+            {item}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function Progress({
+  value,
+  color,
+  ...props
+}: {
+  value: number;
+  color?: string;
+  [key: string]: unknown;
+}) {
+  return (
+    <Meter
+      {...(props as any)}
+      aria-label="Usage"
+      className="mt-1"
+      indicatorClassName={color === "orange" ? "bg-kumo-warning" : undefined}
+      label=""
+      showValue={false}
+      value={value}
+    />
+  );
+}
+
+function ScrollArea({ children }: { children: ReactNode }) {
+  return <div className="overflow-x-auto">{children}</div>;
+}
+
+function Select({
+  data,
+  onChange,
+  ...props
+}: {
+  data: (string | { value: string; label: string })[];
+  onChange?: (value: string | null) => void;
+  [key: string]: unknown;
+}) {
+  return (
+    <KumoSelect
+      {...(props as any)}
+      onValueChange={(value) => onChange?.(typeof value === "string" ? value : null)}
+    >
+      {data.map((item) => {
+        const option = typeof item === "string" ? { value: item, label: item } : item;
+        return (
+          <KumoSelect.Option key={option.value} value={option.value}>
+            {option.label}
+          </KumoSelect.Option>
+        );
+      })}
+    </KumoSelect>
+  );
+}
+
+const Table: any = Object.assign(KumoTable, {
+  Thead: KumoTable.Header,
+  Tbody: KumoTable.Body,
+  Tr: KumoTable.Row,
+  Th: KumoTable.Head,
+  Td: KumoTable.Cell,
+});
+const TextInput = Input;
+const Textarea: any = ({
+  autosize,
+  minRows,
+  ...props
+}: {
+  autosize?: boolean;
+  minRows?: number;
+  [key: string]: unknown;
+}) => <KumoTextarea {...(props as any)} autoResize={autosize} minRows={minRows} />;
+const Title = ({ children, ...props }: { children: ReactNode; [key: string]: unknown }) => (
+  <Text {...(props as any)} as="h3" variant="heading3">
+    {children}
+  </Text>
+);
 
 export function SettingsPage() {
-  const navigate = useNavigate()
-  const { activeOrgID, organizations, workers, namespaces, objectStorageBuckets, notify } = useWorkspace()
-  const [clients, setClients] = useState<OAuthClient[]>([])
-  const [pats, setPats] = useState<PersonalAccessToken[]>([])
-  const [members, setMembers] = useState<OrganizationMember[]>([])
-  const [invites, setInvites] = useState<OrganizationInvite[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [formOpen, setFormOpen] = useState(false)
-  const [editingClient, setEditingClient] = useState<OAuthClient | null>(null)
-  const [form, setForm] = useState(emptyForm)
-  const [oneTimeSecret, setOneTimeSecret] = useState<OAuthClientCreated | null>(null)
-  const [oneTimePAT, setOneTimePAT] = useState<PersonalAccessTokenCreated | null>(null)
-  const [patOpen, setPATOpen] = useState(false)
-  const [patForm, setPATForm] = useState(emptyPATForm)
-  const [inviteOpen, setInviteOpen] = useState(false)
-  const [inviteEmail, setInviteEmail] = useState("")
-  const [inviteRole, setInviteRole] = useState("member")
-  const [inviteCreated, setInviteCreated] = useState<OrganizationInviteCreated | null>(null)
-  const [error, setError] = useState("")
-  const [quotaUsage, setQuotaUsage] = useState({ kvBytes: 0, objectBytes: 0, loading: true })
+  const navigate = useNavigate();
+  const { activeOrgID, organizations, workers, namespaces, objectStorageBuckets, notify } =
+    useWorkspace();
+  const [clients, setClients] = useState<OAuthClient[]>([]);
+  const [pats, setPats] = useState<PersonalAccessToken[]>([]);
+  const [members, setMembers] = useState<OrganizationMember[]>([]);
+  const [invites, setInvites] = useState<OrganizationInvite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState<OAuthClient | null>(null);
+  const [form, setForm] = useState(emptyForm);
+  const [oneTimeSecret, setOneTimeSecret] = useState<OAuthClientCreated | null>(null);
+  const [oneTimePAT, setOneTimePAT] = useState<PersonalAccessTokenCreated | null>(null);
+  const [patOpen, setPATOpen] = useState(false);
+  const [patForm, setPATForm] = useState(emptyPATForm);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
+  const [inviteCreated, setInviteCreated] = useState<OrganizationInviteCreated | null>(null);
+  const [error, setError] = useState("");
+  const [quotaUsage, setQuotaUsage] = useState({ kvBytes: 0, objectBytes: 0, loading: true });
 
   useEffect(() => {
-    void refresh()
-  }, [activeOrgID])
+    void refresh();
+  }, [activeOrgID]);
 
-  const activeOrg = organizations.find((org) => org.id === activeOrgID)
-  const usageLevel = normalizeUsageLevel(activeOrg?.usage_level)
-  const limits = useMemo(() => orgLimitsForLevel(usageLevel), [usageLevel])
-  const canCreateOAuthClient = limits.oauthClients === null || limits.oauthClients > 0
-  const namespaceIDs = useMemo(() => namespaces.map((namespace) => namespace.id).sort().join(","), [namespaces])
-  const bucketIDs = useMemo(() => objectStorageBuckets.map((bucket) => bucket.id).sort().join(","), [objectStorageBuckets])
-  const canReadMembers = activeOrg?.scopes?.includes("members:read")
-  const canWriteMembers = activeOrg?.scopes?.includes("members:write")
-  const canManageOwners = activeOrg?.scopes?.includes("members:owner")
-  const patScopeOptions = patForm.scopeType === "org" ? controlScopes.filter((scope) => activeOrg?.scopes?.includes(scope)) : controlScopes
+  const activeOrg = organizations.find((org) => org.id === activeOrgID);
+  const usageLevel = normalizeUsageLevel(activeOrg?.usage_level);
+  const limits = useMemo(() => orgLimitsForLevel(usageLevel), [usageLevel]);
+  const canCreateOAuthClient = limits.oauthClients === null || limits.oauthClients > 0;
+  const namespaceIDs = useMemo(
+    () =>
+      namespaces
+        .map((namespace) => namespace.id)
+        .sort()
+        .join(","),
+    [namespaces],
+  );
+  const bucketIDs = useMemo(
+    () =>
+      objectStorageBuckets
+        .map((bucket) => bucket.id)
+        .sort()
+        .join(","),
+    [objectStorageBuckets],
+  );
+  const canReadMembers = activeOrg?.scopes?.includes("members:read");
+  const canWriteMembers = activeOrg?.scopes?.includes("members:write");
+  const canManageOwners = activeOrg?.scopes?.includes("members:owner");
+  const patScopeOptions =
+    patForm.scopeType === "org"
+      ? controlScopes.filter((scope) => activeOrg?.scopes?.includes(scope))
+      : controlScopes;
   const pendingInvites = useMemo(() => {
-    const memberEmails = new Set(members.map((member) => member.user_email.toLowerCase()))
-    return invites.filter((invite) => !invite.accepted_at && !invite.revoked_at && !memberEmails.has(invite.email.toLowerCase()))
-  }, [invites, members])
+    const memberEmails = new Set(members.map((member) => member.user_email.toLowerCase()));
+    return invites.filter(
+      (invite) =>
+        !invite.accepted_at && !invite.revoked_at && !memberEmails.has(invite.email.toLowerCase()),
+    );
+  }, [invites, members]);
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
 
     async function loadQuotaUsage() {
       if (!activeOrgID) {
-        setQuotaUsage({ kvBytes: 0, objectBytes: 0, loading: false })
-        return
+        setQuotaUsage({ kvBytes: 0, objectBytes: 0, loading: false });
+        return;
       }
 
-      setQuotaUsage((current) => ({ ...current, loading: true }))
+      setQuotaUsage((current) => ({ ...current, loading: true }));
       const [kvMetrics, bucketMetrics] = await Promise.all([
-        Promise.all(namespaces.map((namespace) => (
-          fetchJSON<KVNamespaceMetrics>(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}/metrics`).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }))
-        ))),
-        Promise.all(objectStorageBuckets.map((bucket) => (
-          fetchJSON<ObjectStorageBucketMetrics>(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}/metrics`).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }))
-        ))),
-      ])
+        Promise.all(
+          namespaces.map((namespace) =>
+            fetchJSON<KVNamespaceMetrics>(
+              `/v1/kv/namespaces/${encodeURIComponent(namespace.id)}/metrics`,
+            ).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 })),
+          ),
+        ),
+        Promise.all(
+          objectStorageBuckets.map((bucket) =>
+            fetchJSON<ObjectStorageBucketMetrics>(
+              `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}/metrics`,
+            ).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 })),
+          ),
+        ),
+      ]);
 
-      if (cancelled) return
+      if (cancelled) return;
       setQuotaUsage({
         kvBytes: kvMetrics.reduce((sum, metrics) => sum + (metrics.size ?? 0), 0),
         objectBytes: bucketMetrics.reduce((sum, metrics) => sum + (metrics.size ?? 0), 0),
         loading: false,
-      })
+      });
     }
 
-    void loadQuotaUsage()
-    const interval = window.setInterval(() => void loadQuotaUsage(), 15000)
+    void loadQuotaUsage();
+    const interval = window.setInterval(() => void loadQuotaUsage(), 15000);
 
     return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [activeOrgID, bucketIDs, namespaceIDs, namespaces, objectStorageBuckets])
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeOrgID, bucketIDs, namespaceIDs, namespaces, objectStorageBuckets]);
 
   async function refresh() {
-    setLoading(true)
+    setLoading(true);
     try {
       const [nextClients, nextPATs, nextMembers, nextInvites] = await Promise.all([
         fetchJSON<OAuthClient[] | null>("/v1/oauth/clients").catch(() => []),
         fetchJSON<PersonalAccessToken[] | null>("/v1/pats").catch(() => []),
-        canReadMembers ? fetchJSON<OrganizationMember[] | null>(`/v1/orgs/${activeOrgID}/members`).catch(() => []) : Promise.resolve([]),
-        canReadMembers ? fetchJSON<OrganizationInvite[] | null>(`/v1/orgs/${activeOrgID}/invites`).catch(() => []) : Promise.resolve([]),
-      ])
-      setClients((nextClients ?? []).filter((client) => !client.disabled))
-      setPats((nextPATs ?? []).filter((token) => !token.revoked_at))
-      setMembers(nextMembers ?? [])
-      setInvites(nextInvites ?? [])
-      setError("")
+        canReadMembers
+          ? fetchJSON<OrganizationMember[] | null>(`/v1/orgs/${activeOrgID}/members`).catch(
+              () => [],
+            )
+          : Promise.resolve([]),
+        canReadMembers
+          ? fetchJSON<OrganizationInvite[] | null>(`/v1/orgs/${activeOrgID}/invites`).catch(
+              () => [],
+            )
+          : Promise.resolve([]),
+      ]);
+      setClients((nextClients ?? []).filter((client) => !client.disabled));
+      setPats((nextPATs ?? []).filter((token) => !token.revoked_at));
+      setMembers(nextMembers ?? []);
+      setInvites(nextInvites ?? []);
+      setError("");
     } catch (err) {
-      setClients([])
-      setPats([])
-      setMembers([])
-      setInvites([])
-      setError(err instanceof Error ? err.message : "Could not load OAuth settings")
+      setClients([]);
+      setPats([]);
+      setMembers([]);
+      setInvites([]);
+      setError(err instanceof Error ? err.message : "Could not load OAuth settings");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   function openCreate() {
-    setEditingClient(null)
-    setForm(emptyForm)
-    setError("")
-    setFormOpen(true)
+    setEditingClient(null);
+    setForm(emptyForm);
+    setError("");
+    setFormOpen(true);
   }
 
   function openEdit(client: OAuthClient) {
-    setEditingClient(client)
-    setForm({ name: client.name, redirectURIs: client.redirect_uris.join("\n"), scopes: client.scopes })
-    setError("")
-    setFormOpen(true)
+    setEditingClient(client);
+    setForm({
+      name: client.name,
+      redirectURIs: client.redirect_uris.join("\n"),
+      scopes: client.scopes,
+    });
+    setError("");
+    setFormOpen(true);
   }
 
   async function submitClient() {
-    setSaving(true)
+    setSaving(true);
     const payload = {
       name: form.name,
-      redirect_uris: form.redirectURIs.split(/\n+/).map((value) => value.trim()).filter(Boolean),
+      redirect_uris: form.redirectURIs
+        .split(/\n+/)
+        .map((value) => value.trim())
+        .filter(Boolean),
       scopes: form.scopes,
-    }
+    };
     try {
-      const response = await apiFetch(editingClient ? `/v1/oauth/clients/${editingClient.client_id}` : "/v1/oauth/clients", {
-        method: editingClient ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-      if (!response.ok) throw new Error(await errorText(response, "Could not save OAuth client"))
-      const saved = await response.json() as OAuthClient | OAuthClientCreated
-      if ("client_secret" in saved) setOneTimeSecret(saved)
-      setFormOpen(false)
-      notify(editingClient ? "OAuth client updated" : "OAuth client created")
-      await refresh()
+      const response = await apiFetch(
+        editingClient ? `/v1/oauth/clients/${editingClient.client_id}` : "/v1/oauth/clients",
+        {
+          method: editingClient ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!response.ok) throw new Error(await errorText(response, "Could not save OAuth client"));
+      const saved = (await response.json()) as OAuthClient | OAuthClientCreated;
+      if ("client_secret" in saved) setOneTimeSecret(saved);
+      setFormOpen(false);
+      notify(editingClient ? "OAuth client updated" : "OAuth client created");
+      await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save OAuth client")
+      setError(err instanceof Error ? err.message : "Could not save OAuth client");
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function rotateSecret(client: OAuthClient) {
-    const response = await apiFetch(`/v1/oauth/clients/${client.client_id}/secret`, { method: "POST" })
+    const response = await apiFetch(`/v1/oauth/clients/${client.client_id}/secret`, {
+      method: "POST",
+    });
     if (!response.ok) {
-      setError(await errorText(response, "Could not rotate client secret"))
-      return
+      setError(await errorText(response, "Could not rotate client secret"));
+      return;
     }
-    setOneTimeSecret(await response.json() as OAuthClientCreated)
-    notify("OAuth client secret rotated")
-    await refresh()
+    setOneTimeSecret((await response.json()) as OAuthClientCreated);
+    notify("OAuth client secret rotated");
+    await refresh();
   }
 
   async function deleteClient(client: OAuthClient) {
-    const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, { method: "DELETE" })
+    const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, { method: "DELETE" });
     if (!response.ok) {
-      setError(await errorText(response, "Could not delete OAuth client"))
-      return
+      setError(await errorText(response, "Could not delete OAuth client"));
+      return;
     }
-    notify("OAuth client deleted")
-    await refresh()
+    notify("OAuth client deleted");
+    await refresh();
   }
 
   async function copy(value: string, label: string) {
-    await navigator.clipboard.writeText(value)
-    notify(`${label} copied`)
+    await navigator.clipboard.writeText(value);
+    notify(`${label} copied`);
   }
 
   function openCreatePAT() {
-    setPATForm({ ...emptyPATForm, scopes: activeOrg?.scopes?.filter((scope) => controlScopes.includes(scope)) ?? [] })
-    setError("")
-    setPATOpen(true)
+    setPATForm({
+      ...emptyPATForm,
+      scopes: activeOrg?.scopes?.filter((scope) => controlScopes.includes(scope)) ?? [],
+    });
+    setError("");
+    setPATOpen(true);
   }
 
   async function submitPAT() {
-    setSaving(true)
-    const expiresAt = expiryDate(patForm.expiresIn)
+    setSaving(true);
+    const expiresAt = expiryDate(patForm.expiresIn);
     const payload = {
       name: patForm.name,
       scope_type: patForm.scopeType,
       org_id: patForm.scopeType === "org" ? activeOrgID : undefined,
       scopes: patForm.scopes,
       expires_at: expiresAt,
-    }
+    };
     try {
       const response = await apiFetch("/v1/pats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      })
-      if (!response.ok) throw new Error(await errorText(response, "Could not create personal access token"))
-      const created = await response.json() as PersonalAccessTokenCreated
-      setOneTimePAT(created)
-      setPats((current) => [created, ...current.filter((token) => token.id !== created.id)])
-      setPATOpen(false)
-      setPATForm(emptyPATForm)
-      notify("Personal access token created")
-      await refresh()
+      });
+      if (!response.ok)
+        throw new Error(await errorText(response, "Could not create personal access token"));
+      const created = (await response.json()) as PersonalAccessTokenCreated;
+      setOneTimePAT(created);
+      setPats((current) => [created, ...current.filter((token) => token.id !== created.id)]);
+      setPATOpen(false);
+      setPATForm(emptyPATForm);
+      notify("Personal access token created");
+      await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create personal access token")
+      setError(err instanceof Error ? err.message : "Could not create personal access token");
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function revokePAT(token: PersonalAccessToken) {
-    const response = await apiFetch(`/v1/pats/${token.id}`, { method: "DELETE" })
+    const response = await apiFetch(`/v1/pats/${token.id}`, { method: "DELETE" });
     if (!response.ok) {
-      setError(await errorText(response, "Could not revoke personal access token"))
-      return
+      setError(await errorText(response, "Could not revoke personal access token"));
+      return;
     }
-    notify("Personal access token revoked")
-    await refresh()
+    notify("Personal access token revoked");
+    await refresh();
   }
 
   async function submitInvite() {
@@ -238,18 +581,18 @@ export function SettingsPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
-    })
+    });
     if (!response.ok) {
-      setError(await errorText(response, "Could not create invite"))
-      return
+      setError(await errorText(response, "Could not create invite"));
+      return;
     }
-    const invite = await response.json() as OrganizationInviteCreated
-    setInviteCreated(invite)
-    setInviteOpen(false)
-    setInviteEmail("")
-    setInviteRole("member")
-    notify("Invite created")
-    await refresh()
+    const invite = (await response.json()) as OrganizationInviteCreated;
+    setInviteCreated(invite);
+    setInviteOpen(false);
+    setInviteEmail("");
+    setInviteRole("member");
+    notify("Invite created");
+    await refresh();
   }
 
   async function updateMember(member: OrganizationMember, role: string) {
@@ -257,52 +600,67 @@ export function SettingsPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role }),
-    })
+    });
     if (!response.ok) {
-      setError(await errorText(response, "Could not update member"))
-      return
+      setError(await errorText(response, "Could not update member"));
+      return;
     }
-    notify("Member updated")
-    await refresh()
+    notify("Member updated");
+    await refresh();
   }
 
   async function removeMember(member: OrganizationMember) {
-    const response = await apiFetch(`/v1/orgs/${activeOrgID}/members/${member.user_id}`, { method: "DELETE" })
+    const response = await apiFetch(`/v1/orgs/${activeOrgID}/members/${member.user_id}`, {
+      method: "DELETE",
+    });
     if (!response.ok) {
-      setError(await errorText(response, "Could not remove member"))
-      return
+      setError(await errorText(response, "Could not remove member"));
+      return;
     }
-    notify("Member removed")
-    await refresh()
+    notify("Member removed");
+    await refresh();
   }
 
   async function revokeInvite(invite: OrganizationInvite) {
-    const response = await apiFetch(`/v1/orgs/${activeOrgID}/invites/${invite.id}`, { method: "DELETE" })
+    const response = await apiFetch(`/v1/orgs/${activeOrgID}/invites/${invite.id}`, {
+      method: "DELETE",
+    });
     if (!response.ok) {
-      setError(await errorText(response, "Could not remove invite"))
-      return
+      setError(await errorText(response, "Could not remove invite"));
+      return;
     }
-    notify("Invite removed")
-    await refresh()
+    notify("Invite removed");
+    await refresh();
   }
 
   return (
     <>
-      <PageHeading
-        eyebrow="Settings"
-        title="Settings"
-      />
+      <PageHeading eyebrow="Settings" title="Settings" />
 
-      {error && <Alert color="red" mb="md">{error}</Alert>}
+      {error && (
+        <Alert color="red" mb="md">
+          {error}
+        </Alert>
+      )}
 
       {oneTimeSecret && (
         <Alert color="blue" mb="md" title="Client secret shown once">
           <Group align="center" justify="space-between" wrap="nowrap">
             <Box>
-              <Text size="sm">Store this secret now. Nanoflare will not show it again after this page refreshes.</Text>
-              <Code mt={8} className="block break-all">{oneTimeSecret.client_secret}</Code>
+              <Text size="sm">
+                Store this secret now. Nanoflare will not show it again after this page refreshes.
+              </Text>
+              <Code mt={8} className="block break-all">
+                {oneTimeSecret.client_secret}
+              </Code>
             </Box>
-            <Button variant="outline" onClick={() => copy(oneTimeSecret.client_secret, "Client secret")}><Copy className="size-4" />Copy</Button>
+            <Button
+              variant="outline"
+              onClick={() => copy(oneTimeSecret.client_secret, "Client secret")}
+            >
+              <Copy className="size-4" />
+              Copy
+            </Button>
           </Group>
         </Alert>
       )}
@@ -311,10 +669,20 @@ export function SettingsPage() {
         <Alert color="blue" mb="md" title="Personal access token shown once">
           <Group align="center" justify="space-between" wrap="nowrap">
             <Box>
-              <Text size="sm">Store this token now. Nanoflare will not show it again after this page refreshes.</Text>
-              <Code mt={8} className="block break-all">{oneTimePAT.token}</Code>
+              <Text size="sm">
+                Store this token now. Nanoflare will not show it again after this page refreshes.
+              </Text>
+              <Code mt={8} className="block break-all">
+                {oneTimePAT.token}
+              </Code>
             </Box>
-            <Button variant="outline" onClick={() => copy(oneTimePAT.token, "Personal access token")}><Copy className="size-4" />Copy</Button>
+            <Button
+              variant="outline"
+              onClick={() => copy(oneTimePAT.token, "Personal access token")}
+            >
+              <Copy className="size-4" />
+              Copy
+            </Button>
           </Group>
         </Alert>
       )}
@@ -323,27 +691,63 @@ export function SettingsPage() {
         <Alert color="blue" mb="md" title="Invite link">
           <Group align="center" justify="space-between" wrap="nowrap">
             <Code className="block break-all">{inviteCreated.invite_url}</Code>
-            <Button variant="outline" onClick={() => copy(inviteCreated.invite_url, "Invite link")}><Copy className="size-4" />Copy</Button>
+            <Button variant="outline" onClick={() => copy(inviteCreated.invite_url, "Invite link")}>
+              <Copy className="size-4" />
+              Copy
+            </Button>
           </Group>
         </Alert>
       )}
 
       <Stack gap="lg">
-        <Panel title="Organization limits" eyebrow={usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}>
+        <Panel
+          title="Organization limits"
+          eyebrow={usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}
+        >
           <Stack gap="md">
             <LimitRow current={workers.length} label="Workers" limit={limits.workers} />
-            <LimitRow current={namespaces.length} label="KV namespaces" limit={limits.kvNamespaces} />
-            <LimitRow current={quotaUsage.kvBytes} format={formatBytes} label="KV storage" limit={limits.kvStorageBytes} loading={quotaUsage.loading} />
-            <LimitRow current={objectStorageBuckets.length} label="Object buckets" limit={limits.objectStorageBuckets} />
-            <LimitRow current={quotaUsage.objectBytes} format={formatBytes} label="Object storage" limit={limits.objectStorageBytes} loading={quotaUsage.loading} />
-            <LimitRow current={clients.length} label="OAuth clients" limit={limits.oauthClients} loading={loading} />
+            <LimitRow
+              current={namespaces.length}
+              label="KV namespaces"
+              limit={limits.kvNamespaces}
+            />
+            <LimitRow
+              current={quotaUsage.kvBytes}
+              format={formatBytes}
+              label="KV storage"
+              limit={limits.kvStorageBytes}
+              loading={quotaUsage.loading}
+            />
+            <LimitRow
+              current={objectStorageBuckets.length}
+              label="Object buckets"
+              limit={limits.objectStorageBuckets}
+            />
+            <LimitRow
+              current={quotaUsage.objectBytes}
+              format={formatBytes}
+              label="Object storage"
+              limit={limits.objectStorageBytes}
+              loading={quotaUsage.loading}
+            />
+            <LimitRow
+              current={clients.length}
+              label="OAuth clients"
+              limit={limits.oauthClients}
+              loading={loading}
+            />
           </Stack>
         </Panel>
 
         <Box>
           <SectionHeading
             title="Personal access tokens"
-            actions={<Button onClick={openCreatePAT}><Plus className="size-4" />New token</Button>}
+            actions={
+              <Button onClick={openCreatePAT}>
+                <Plus className="size-4" />
+                New token
+              </Button>
+            }
           />
           <TableSurface>
             <ScrollArea>
@@ -361,19 +765,48 @@ export function SettingsPage() {
                 <Table.Tbody>
                   {pats.map((token) => (
                     <Table.Tr key={token.id}>
-                      <Table.Td><Text fw={700} truncate>{token.name}</Text></Table.Td>
+                      <Table.Td>
+                        <Text fw={700} truncate>
+                          {token.name}
+                        </Text>
+                      </Table.Td>
                       <Table.Td>
                         <Stack gap={4}>
-                          <Badge tone={token.scope_type === "org" ? "blue" : "green"}>{token.scope_type}</Badge>
-                          <Text c="dimmed" size="xs" truncate>{token.scope_type === "org" ? orgName(token.org_id, organizations) : "All available orgs"}</Text>
+                          <Badge tone={token.scope_type === "org" ? "blue" : "green"}>
+                            {token.scope_type}
+                          </Badge>
+                          <Text c="dimmed" size="xs" truncate>
+                            {token.scope_type === "org"
+                              ? orgName(token.org_id, organizations)
+                              : "All available orgs"}
+                          </Text>
                         </Stack>
                       </Table.Td>
-                      <Table.Td><Text c="dimmed" size="sm">{formatDate(token.created_at)}</Text></Table.Td>
-                      <Table.Td><Text c="dimmed" size="sm">{formatDate(token.expires_at)}</Text></Table.Td>
-                      <Table.Td><Text c="dimmed" size="sm">{formatDate(token.last_used_at)}</Text></Table.Td>
+                      <Table.Td>
+                        <Text c="dimmed" size="sm">
+                          {formatDate(token.created_at)}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text c="dimmed" size="sm">
+                          {formatDate(token.expires_at)}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text c="dimmed" size="sm">
+                          {formatDate(token.last_used_at)}
+                        </Text>
+                      </Table.Td>
                       <Table.Td>
                         <Tooltip label="Revoke token">
-                          <ActionIcon aria-label="Revoke token" color="red" onClick={() => revokePAT(token)} variant="subtle"><Trash2 size={16} /></ActionIcon>
+                          <ActionIcon
+                            aria-label="Revoke token"
+                            color="red"
+                            onClick={() => revokePAT(token)}
+                            variant="subtle"
+                          >
+                            <Trash2 size={16} />
+                          </ActionIcon>
                         </Tooltip>
                       </Table.Td>
                     </Table.Tr>
@@ -381,7 +814,13 @@ export function SettingsPage() {
                 </Table.Tbody>
               </Table>
             </ScrollArea>
-            {!loading && !pats.length && <EmptyState icon={<Settings />} title="No personal access tokens" copy="Create one to authenticate automation or the Nanoflare CLI." />}
+            {!loading && !pats.length && (
+              <EmptyState
+                icon={<Settings />}
+                title="No personal access tokens"
+                copy="Create one to authenticate automation or the Nanoflare CLI."
+              />
+            )}
           </TableSurface>
         </Box>
 
@@ -389,7 +828,14 @@ export function SettingsPage() {
           <Box>
             <SectionHeading
               title="Members"
-              actions={canWriteMembers && <Button onClick={() => setInviteOpen(true)}><UserPlus className="size-4" />Invite</Button>}
+              actions={
+                canWriteMembers && (
+                  <Button onClick={() => setInviteOpen(true)}>
+                    <UserPlus className="size-4" />
+                    Invite
+                  </Button>
+                )
+              }
             />
             <TableSurface>
               <ScrollArea>
@@ -405,11 +851,15 @@ export function SettingsPage() {
                   </Table.Thead>
                   <Table.Tbody>
                     {members.map((member) => {
-                      const ownerChange = member.role === "owner"
-                      const canEditMember = canWriteMembers && (!ownerChange || canManageOwners)
+                      const ownerChange = member.role === "owner";
+                      const canEditMember = canWriteMembers && (!ownerChange || canManageOwners);
                       return (
                         <Table.Tr key={member.user_id}>
-                          <Table.Td><Text fw={700} truncate>{member.user_email}</Text></Table.Td>
+                          <Table.Td>
+                            <Text fw={700} truncate>
+                              {member.user_email}
+                            </Text>
+                          </Table.Td>
                           <Table.Td>
                             <Select
                               allowDeselect={false}
@@ -420,25 +870,59 @@ export function SettingsPage() {
                               value={member.role}
                             />
                           </Table.Td>
-                          <Table.Td><Badge tone="green">Joined</Badge></Table.Td>
-                          <Table.Td><Text c="dimmed" size="sm">{new Date(member.created_at).toLocaleDateString()}</Text></Table.Td>
+                          <Table.Td>
+                            <Badge tone="green">Joined</Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text c="dimmed" size="sm">
+                              {new Date(member.created_at).toLocaleDateString()}
+                            </Text>
+                          </Table.Td>
                           <Table.Td>
                             <Tooltip label="Remove member">
-                              <ActionIcon aria-label="Remove member" color="red" disabled={!canEditMember} onClick={() => removeMember(member)} variant="subtle"><UserMinus size={16} /></ActionIcon>
+                              <ActionIcon
+                                aria-label="Remove member"
+                                color="red"
+                                disabled={!canEditMember}
+                                onClick={() => removeMember(member)}
+                                variant="subtle"
+                              >
+                                <UserMinus size={16} />
+                              </ActionIcon>
                             </Tooltip>
                           </Table.Td>
                         </Table.Tr>
-                      )
+                      );
                     })}
                     {pendingInvites.map((invite) => (
                       <Table.Tr key={invite.id} opacity={0.74}>
-                        <Table.Td><Text fw={700} truncate>{invite.email}</Text></Table.Td>
-                        <Table.Td><Badge tone="blue">{invite.role}</Badge></Table.Td>
-                        <Table.Td><Badge tone="orange">Pending</Badge></Table.Td>
-                        <Table.Td><Text c="dimmed" size="sm">{new Date(invite.expires_at).toLocaleDateString()}</Text></Table.Td>
+                        <Table.Td>
+                          <Text fw={700} truncate>
+                            {invite.email}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge tone="blue">{invite.role}</Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge tone="orange">Pending</Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text c="dimmed" size="sm">
+                            {new Date(invite.expires_at).toLocaleDateString()}
+                          </Text>
+                        </Table.Td>
                         <Table.Td>
                           <Tooltip label="Remove invite">
-                            <ActionIcon aria-label="Remove invite" color="red" disabled={!canWriteMembers} onClick={() => revokeInvite(invite)} variant="subtle"><UserMinus size={16} /></ActionIcon>
+                            <ActionIcon
+                              aria-label="Remove invite"
+                              color="red"
+                              disabled={!canWriteMembers}
+                              onClick={() => revokeInvite(invite)}
+                              variant="subtle"
+                            >
+                              <UserMinus size={16} />
+                            </ActionIcon>
                           </Tooltip>
                         </Table.Td>
                       </Table.Tr>
@@ -453,9 +937,18 @@ export function SettingsPage() {
         <Box>
           <SectionHeading
             title="OAuth clients"
-            actions={canCreateOAuthClient
-              ? <Button onClick={openCreate}><Plus className="size-4" />New OAuth client</Button>
-              : <Text c="dimmed" size="sm">Default plan does not include OAuth clients.</Text>}
+            actions={
+              canCreateOAuthClient ? (
+                <Button onClick={openCreate}>
+                  <Plus className="size-4" />
+                  New OAuth client
+                </Button>
+              ) : (
+                <Text c="dimmed" size="sm">
+                  Default plan does not include OAuth clients.
+                </Text>
+              )
+            }
           />
           {canCreateOAuthClient ? (
             <TableSurface>
@@ -472,28 +965,83 @@ export function SettingsPage() {
                   </Table.Thead>
                   <Table.Tbody>
                     {clients.map((client) => (
-                      <Table.Tr key={client.client_id} className="cursor-pointer" onClick={() => navigate(`/settings/oauth-clients/${client.client_id}`)}>
+                      <Table.Tr
+                        key={client.client_id}
+                        className="cursor-pointer"
+                        onClick={() => navigate(`/settings/oauth-clients/${client.client_id}`)}
+                      >
                         <Table.Td className="w-[28%]">
                           <Group gap="sm" wrap="nowrap">
-                            <Text fw={700} truncate>{client.name}</Text>
+                            <Text fw={700} truncate>
+                              {client.name}
+                            </Text>
                             <Badge tone="green">Active</Badge>
                           </Group>
                         </Table.Td>
                         <Table.Td className="w-[34%]">
                           <Group gap="xs" wrap="nowrap">
-                            <Text c="dimmed" ff="monospace" size="xs" truncate>{client.client_id}</Text>
+                            <Text c="dimmed" ff="monospace" size="xs" truncate>
+                              {client.client_id}
+                            </Text>
                             <CopyButton label="Client ID" value={client.client_id} onCopy={copy} />
                           </Group>
                         </Table.Td>
                         <Table.Td className="w-[18%]">
-                          <Stack gap={4}>{client.redirect_uris.map((uri) => <Text c="dimmed" ff="monospace" key={uri} size="xs" truncate>{uri}</Text>)}</Stack>
+                          <Stack gap={4}>
+                            {client.redirect_uris.map((uri) => (
+                              <Text c="dimmed" ff="monospace" key={uri} size="xs" truncate>
+                                {uri}
+                              </Text>
+                            ))}
+                          </Stack>
                         </Table.Td>
-                        <Table.Td className="w-[10%]"><Text c="dimmed" size="sm" truncate>{new Date(client.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
+                        <Table.Td className="w-[10%]">
+                          <Text c="dimmed" size="sm" truncate>
+                            {new Date(client.updated_at).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </Text>
+                        </Table.Td>
                         <Table.Td className="w-[10%]">
                           <Group gap={4} wrap="nowrap">
-                            <Tooltip label="Edit client"><ActionIcon aria-label="Edit client" variant="subtle" onClick={(event) => { event.stopPropagation(); openEdit(client) }}><SquarePen size={16} /></ActionIcon></Tooltip>
-                            <Tooltip label="Rotate secret"><ActionIcon aria-label="Rotate secret" variant="subtle" onClick={(event) => { event.stopPropagation(); rotateSecret(client) }}><RotateCcw size={16} /></ActionIcon></Tooltip>
-                            <Tooltip label="Delete client"><ActionIcon aria-label="Delete client" color="red" variant="subtle" onClick={(event) => { event.stopPropagation(); deleteClient(client) }}><Trash2 size={16} /></ActionIcon></Tooltip>
+                            <Tooltip label="Edit client">
+                              <ActionIcon
+                                aria-label="Edit client"
+                                variant="subtle"
+                                onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                                  event.stopPropagation();
+                                  openEdit(client);
+                                }}
+                              >
+                                <SquarePen size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <Tooltip label="Rotate secret">
+                              <ActionIcon
+                                aria-label="Rotate secret"
+                                variant="subtle"
+                                onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                                  event.stopPropagation();
+                                  rotateSecret(client);
+                                }}
+                              >
+                                <RotateCcw size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <Tooltip label="Delete client">
+                              <ActionIcon
+                                aria-label="Delete client"
+                                color="red"
+                                variant="subtle"
+                                onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                                  event.stopPropagation();
+                                  deleteClient(client);
+                                }}
+                              >
+                                <Trash2 size={16} />
+                              </ActionIcon>
+                            </Tooltip>
                           </Group>
                         </Table.Td>
                       </Table.Tr>
@@ -501,22 +1049,37 @@ export function SettingsPage() {
                   </Table.Tbody>
                 </Table>
               </ScrollArea>
-              {!loading && !clients.length && <EmptyState icon={<Settings />} title="No OAuth clients" copy="Create one to let an external platform connect to Nanoflare." />}
+              {!loading && !clients.length && (
+                <EmptyState
+                  icon={<Settings />}
+                  title="No OAuth clients"
+                  copy="Create one to let an external platform connect to Nanoflare."
+                />
+              )}
             </TableSurface>
           ) : (
-            <EmptyState icon={<Settings />} title="OAuth clients unavailable" copy="OAuth clients are available on the paid plan." />
+            <EmptyState
+              icon={<Settings />}
+              title="OAuth clients unavailable"
+              copy="OAuth clients are available on the paid plan."
+            />
           )}
         </Box>
       </Stack>
 
-      <Modal opened={formOpen} onClose={() => setFormOpen(false)} title={editingClient ? "Edit OAuth client" : "New OAuth client"} size="lg">
+      <Modal
+        opened={formOpen}
+        onClose={() => setFormOpen(false)}
+        title={editingClient ? "Edit OAuth client" : "New OAuth client"}
+        size="lg"
+      >
         <Stack>
           <TextInput
             label="Name"
             value={form.name}
             onChange={(event) => {
-              const name = event.currentTarget.value
-              setForm((current) => ({ ...current, name }))
+              const name = event.currentTarget.value;
+              setForm((current) => ({ ...current, name }));
             }}
           />
           <Textarea
@@ -524,9 +1087,9 @@ export function SettingsPage() {
             label="Redirect URIs"
             minRows={3}
             value={form.redirectURIs}
-            onChange={(event) => {
-              const redirectURIs = event.currentTarget.value
-              setForm((current) => ({ ...current, redirectURIs }))
+            onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+              const redirectURIs = event.currentTarget.value;
+              setForm((current) => ({ ...current, redirectURIs }));
             }}
           />
           <MultiSelect
@@ -536,20 +1099,30 @@ export function SettingsPage() {
             onChange={(scopes) => setForm((current) => ({ ...current, scopes }))}
           />
           <Group justify="end">
-            <Button variant="ghost" onClick={() => setFormOpen(false)}>Cancel</Button>
-            <Button loading={saving} onClick={submitClient}><Check className="size-4" />{editingClient ? "Save changes" : "Create client"}</Button>
+            <Button variant="ghost" onClick={() => setFormOpen(false)}>
+              Cancel
+            </Button>
+            <Button loading={saving} onClick={submitClient}>
+              <Check className="size-4" />
+              {editingClient ? "Save changes" : "Create client"}
+            </Button>
           </Group>
         </Stack>
       </Modal>
 
-      <Modal opened={patOpen} onClose={() => setPATOpen(false)} title="New personal access token" size="lg">
+      <Modal
+        opened={patOpen}
+        onClose={() => setPATOpen(false)}
+        title="New personal access token"
+        size="lg"
+      >
         <Stack>
           <TextInput
             label="Name"
             value={patForm.name}
             onChange={(event) => {
-              const name = event.currentTarget.value
-              setPATForm((current) => ({ ...current, name }))
+              const name = event.currentTarget.value;
+              setPATForm((current) => ({ ...current, name }));
             }}
           />
           <Select
@@ -560,11 +1133,17 @@ export function SettingsPage() {
             ]}
             label="Scope"
             value={patForm.scopeType}
-            onChange={(scopeType) => scopeType && setPATForm((current) => ({
-              ...current,
-              scopeType,
-              scopes: scopeType === "org" ? (activeOrg?.scopes?.filter((scope) => controlScopes.includes(scope)) ?? []) : controlScopes,
-            }))}
+            onChange={(scopeType) =>
+              scopeType &&
+              setPATForm((current) => ({
+                ...current,
+                scopeType,
+                scopes:
+                  scopeType === "org"
+                    ? (activeOrg?.scopes?.filter((scope) => controlScopes.includes(scope)) ?? [])
+                    : controlScopes,
+              }))
+            }
           />
           <MultiSelect
             data={patScopeOptions}
@@ -582,37 +1161,73 @@ export function SettingsPage() {
             ]}
             label="Expiration"
             value={patForm.expiresIn}
-            onChange={(expiresIn) => expiresIn && setPATForm((current) => ({ ...current, expiresIn }))}
+            onChange={(expiresIn) =>
+              expiresIn && setPATForm((current) => ({ ...current, expiresIn }))
+            }
           />
           <Group justify="end">
-            <Button variant="ghost" onClick={() => setPATOpen(false)}>Cancel</Button>
-            <Button loading={saving} onClick={submitPAT}><Check className="size-4" />Create token</Button>
+            <Button variant="ghost" onClick={() => setPATOpen(false)}>
+              Cancel
+            </Button>
+            <Button loading={saving} onClick={submitPAT}>
+              <Check className="size-4" />
+              Create token
+            </Button>
           </Group>
         </Stack>
       </Modal>
 
       <Modal opened={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite member">
         <Stack>
-          <TextInput label="Email" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.currentTarget.value)} />
-          <Select allowDeselect={false} data={canManageOwners ? roleOptions : roleOptions.filter((role) => role !== "owner")} label="Role" value={inviteRole} onChange={(role) => role && setInviteRole(role)} />
+          <TextInput
+            label="Email"
+            type="email"
+            value={inviteEmail}
+            onChange={(event) => setInviteEmail(event.currentTarget.value)}
+          />
+          <Select
+            allowDeselect={false}
+            data={canManageOwners ? roleOptions : roleOptions.filter((role) => role !== "owner")}
+            label="Role"
+            value={inviteRole}
+            onChange={(role) => role && setInviteRole(role)}
+          />
           <Group justify="end">
-            <Button variant="ghost" onClick={() => setInviteOpen(false)}>Cancel</Button>
-            <Button onClick={submitInvite}><Check className="size-4" />Create invite</Button>
+            <Button variant="ghost" onClick={() => setInviteOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={submitInvite}>
+              <Check className="size-4" />
+              Create invite
+            </Button>
           </Group>
         </Stack>
       </Modal>
     </>
-  )
+  );
 }
 
-function CopyButton({ label, value, onCopy }: { label: string; value: string; onCopy: (value: string, label: string) => void }) {
+function CopyButton({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: (value: string, label: string) => void;
+}) {
   return (
     <Tooltip label={`Copy ${label.toLowerCase()}`}>
-      <ActionIcon aria-label={`Copy ${label.toLowerCase()}`} size="sm" variant="subtle" onClick={() => onCopy(value, label)}>
+      <ActionIcon
+        aria-label={`Copy ${label.toLowerCase()}`}
+        size="sm"
+        variant="subtle"
+        onClick={() => onCopy(value, label)}
+      >
         <Copy size={14} />
       </ActionIcon>
     </Tooltip>
-  )
+  );
 }
 
 function LimitRow({
@@ -622,68 +1237,120 @@ function LimitRow({
   limit,
   loading = false,
 }: {
-  current: number
-  format?: (value: number) => string
-  label: string
-  limit: number | null
-  loading?: boolean
+  current: number;
+  format?: (value: number) => string;
+  label: string;
+  limit: number | null;
+  loading?: boolean;
 }) {
-  const hasLimit = limit !== null
-  const percent = hasLimit && limit > 0 ? Math.min((current / limit) * 100, 100) : current > 0 ? 100 : 0
-  const usageLabel = loading ? "Loading" : hasLimit ? `${format(current)} / ${format(limit)}` : `${format(current)} used`
+  const hasLimit = limit !== null;
+  const percent =
+    hasLimit && limit > 0 ? Math.min((current / limit) * 100, 100) : current > 0 ? 100 : 0;
+  const usageLabel = loading
+    ? "Loading"
+    : hasLimit
+      ? `${format(current)} / ${format(limit)}`
+      : `${format(current)} used`;
 
   return (
     <Box>
       <Group justify="space-between" mb={6}>
-        <Text fw={700} size="sm">{label}</Text>
-        <Text c={hasLimit ? (current >= limit ? "orange" : "dimmed") : "gray.7"} ff="monospace" size="xs">
+        <Text fw={700} size="sm">
+          {label}
+        </Text>
+        <Text
+          c={hasLimit ? (current >= limit ? "orange" : "dimmed") : "gray.7"}
+          ff="monospace"
+          size="xs"
+        >
           {hasLimit ? usageLabel : `${usageLabel} · Unlimited`}
         </Text>
       </Group>
-      {hasLimit && <Progress color={current >= limit ? "orange" : "blue"} radius="xs" size="sm" value={percent} />}
+      {hasLimit && (
+        <Progress
+          color={current >= limit ? "orange" : "blue"}
+          radius="xs"
+          size="sm"
+          value={percent}
+        />
+      )}
     </Box>
-  )
+  );
 }
 
 function formatCount(value = 0) {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
 }
 
 function expiryDate(value: string) {
-  if (value === "never") return undefined
-  const days = Number(value)
-  if (!Number.isFinite(days) || days <= 0) return undefined
-  const date = new Date()
-  date.setDate(date.getDate() + days)
-  return date.toISOString()
+  if (value === "never") return undefined;
+  const days = Number(value);
+  if (!Number.isFinite(days) || days <= 0) return undefined;
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
 }
 
 function formatDate(value?: string) {
-  if (!value) return "Never"
-  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+  if (!value) return "Never";
+  return new Date(value).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function orgName(orgID: string | undefined, organizations: { id: string; name: string }[]) {
-  if (!orgID) return "Unknown org"
-  return organizations.find((org) => org.id === orgID)?.name ?? orgID
+  if (!orgID) return "Unknown org";
+  return organizations.find((org) => org.id === orgID)?.name ?? orgID;
 }
 
-function SectionHeading({ title, eyebrow, actions }: { title: string; eyebrow?: string; actions?: ReactNode }) {
+function SectionHeading({
+  title,
+  eyebrow,
+  actions,
+}: {
+  title: string;
+  eyebrow?: string;
+  actions?: ReactNode;
+}) {
   return (
     <Group align="end" justify="space-between" mb="sm">
       <Box>
-        {eyebrow && <Text c="dimmed" fw={700} size="xs" tt="uppercase">{eyebrow}</Text>}
-        <Title mt={2} order={3} size="h5">{title}</Title>
+        {eyebrow && (
+          <Text c="dimmed" fw={700} size="xs" tt="uppercase">
+            {eyebrow}
+          </Text>
+        )}
+        <Title mt={2} order={3} size="h5">
+          {title}
+        </Title>
       </Box>
       {actions}
     </Group>
-  )
+  );
 }
 
 function TableSurface({ children }: { children: ReactNode }) {
-  return <Box bg="white" className="overflow-hidden rounded-lg border border-[var(--mantine-color-gray-3)]">{children}</Box>
+  return (
+    <Box className="mt-3 overflow-hidden rounded-lg bg-kumo-base ring ring-kumo-line">
+      {children}
+    </Box>
+  );
 }
 
 function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
-  return <Center h={220}><Stack align="center" gap={4} ta="center" className="[&_svg]:size-6">{icon}<Text fw={700} size="sm">{title}</Text><Text c="dimmed" size="xs">{copy}</Text></Stack></Center>
+  return (
+    <Center h={220}>
+      <Stack align="center" gap={4} ta="center" className="[&_svg]:size-6">
+        {icon}
+        <Text fw={700} size="sm">
+          {title}
+        </Text>
+        <Text c="dimmed" size="xs">
+          {copy}
+        </Text>
+      </Stack>
+    </Center>
+  );
 }

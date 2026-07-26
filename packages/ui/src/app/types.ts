@@ -37,7 +37,13 @@ export type Worker = {
   bindings?: WorkerBinding[];
 };
 
-export type WorkerDetailTab = "overview" | "deployments" | "files" | "output" | "settings";
+export type WorkerDetailTab =
+  | "overview"
+  | "metrics"
+  | "deployments"
+  | "files"
+  | "output"
+  | "settings";
 
 export type WorkerDeployment = {
   id: string;
@@ -61,7 +67,11 @@ export type WorkerDeployment = {
 };
 
 export type WorkerSecret = { name: string; created_at: string; updated_at: string };
-export type WorkerDetailData = { app: Worker; deployment?: WorkerDeployment; secrets?: WorkerSecret[] };
+export type WorkerDetailData = {
+  app: Worker;
+  deployment?: WorkerDeployment;
+  secrets?: WorkerSecret[];
+};
 
 export type ConsoleDeployment = {
   id: string;
@@ -82,7 +92,13 @@ export type ConsoleDeployment = {
 };
 
 export type WorkerFile = { name: string; path: string; size: number; content: string };
-export type WorkerOutputLine = { timestamp: string; level: string; message: string; app_id?: string; deployment_id?: string };
+export type WorkerOutputLine = {
+  timestamp: string;
+  level: string;
+  message: string;
+  app_id?: string;
+  deployment_id?: string;
+};
 export type WorkerKVKey = { key: string; size: number };
 export type ObjectStorageBucket = { id: string; name: string; created_at: string };
 export type Database = { id: string; name: string; created_at: string };
@@ -111,8 +127,18 @@ export type WorkerTraffic = {
   status_codes: { code: string; value: number }[];
 };
 
-export type KVNamespaceMetrics = { available: boolean; reads: number; writes: number; size: number };
-export type ObjectStorageBucketMetrics = { available: boolean; reads: number; writes: number; size: number };
+export type KVNamespaceMetrics = {
+  available: boolean;
+  reads: number;
+  writes: number;
+  size: number;
+};
+export type ObjectStorageBucketMetrics = {
+  available: boolean;
+  reads: number;
+  writes: number;
+  size: number;
+};
 export type DatabaseMetrics = {
   available: boolean;
   queries: number;
@@ -194,7 +220,14 @@ export type PersonalAccessToken = {
   created_at: string;
 };
 export type PersonalAccessTokenCreated = PersonalAccessToken & { token: string };
-export type Organization = { id: string; name: string; usage_level: string; role?: string; scopes?: string[]; created_at: string };
+export type Organization = {
+  id: string;
+  name: string;
+  usage_level: string;
+  role?: string;
+  scopes?: string[];
+  created_at: string;
+};
 export type ControlUser = { id: string; email: string; created_at: string };
 export type AuthSession = {
   token: string;
@@ -202,8 +235,28 @@ export type AuthSession = {
   organizations: Organization[];
   active_org_id?: string;
 };
-export type OrganizationMember = { user_id: string; user_email: string; org_id: string; role: string; scopes: string[]; created_at: string };
-export type OrganizationInvite = { id: string; org_id: string; org_name?: string; email: string; role: string; scopes: string[]; inviter_id: string; inviter_email?: string; expires_at: string; accepted_at?: string; revoked_at?: string; created_at: string };
+export type OrganizationMember = {
+  user_id: string;
+  user_email: string;
+  org_id: string;
+  role: string;
+  scopes: string[];
+  created_at: string;
+};
+export type OrganizationInvite = {
+  id: string;
+  org_id: string;
+  org_name?: string;
+  email: string;
+  role: string;
+  scopes: string[];
+  inviter_id: string;
+  inviter_email?: string;
+  expires_at: string;
+  accepted_at?: string;
+  revoked_at?: string;
+  created_at: string;
+};
 export type OrganizationInviteCreated = OrganizationInvite & { token: string; invite_url: string };
 export type KVNamespaceOption = { id: string; label: string };
 export type ObjectStorageBucketOption = { id: string; label: string };

@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Code, Group, Loader, Paper, Stack, Text, ThemeIcon, Title } from "@mantine/core";
+import { Banner, Button, Code, LayerCard, Loader, Text } from "@cloudflare/kumo";
 import { Check, Copy, LoaderCircle, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
@@ -25,7 +25,7 @@ export function CLILoginPage() {
         if (!cancelled) setError(await errorText(response, "Could not create CLI login code"));
         return;
       }
-      const payload = await response.json() as { code: string };
+      const payload = (await response.json()) as { code: string };
       if (!cancelled) setCode(payload.code || "");
     }
     void createCode();
@@ -67,53 +67,64 @@ export function CLILoginPage() {
   }
 
   return (
-    <Box className="min-h-screen bg-[var(--mantine-color-gray-0)] px-4 py-10">
-      <Stack align="center" justify="center" mih="calc(100vh - 5rem)">
-        <Box w="100%" maw={520}>
-          <Stack gap="lg">
-            <Group gap="sm">
-              <ThemeIcon size={40} radius="md">
+    <div className="min-h-screen bg-kumo-base px-4 py-10">
+      <div className="flex min-h-[calc(100vh-5rem)] items-center justify-center">
+        <div className="w-full max-w-[520px]">
+          <div className="flex flex-col gap-6">
+            <div className="flex items-center gap-3">
+              <div className="grid size-10 place-items-center rounded-lg bg-kumo-info/15 text-kumo-info">
                 <Terminal size={20} />
-              </ThemeIcon>
-              <Box>
-                <Title order={1} size="h3">Nanoflare CLI login</Title>
-                <Text c="dimmed" size="sm">{auth.userEmail}</Text>
-              </Box>
-            </Group>
-            <Paper bg="white" p="xl" radius="lg" shadow="xs" withBorder>
-              <Stack>
-                {error && <Alert color="red">{error}</Alert>}
+              </div>
+              <div>
+                <Text as="h1" variant="heading3">
+                  Nanoflare CLI login
+                </Text>
+                <Text size="sm" variant="secondary">
+                  {auth.userEmail}
+                </Text>
+              </div>
+            </div>
+            <LayerCard>
+              <div className="flex flex-col gap-4">
+                {error && <Banner description={error} variant="error" />}
                 {!code && !error && (
-                  <Group gap="sm">
+                  <div className="flex items-center gap-3">
                     <Loader size="sm" />
                     <Text>Creating login code...</Text>
-                  </Group>
+                  </div>
                 )}
                 {code && callbackURL && sentToCLI && (
-                  <Group gap="sm">
+                  <div className="flex items-center gap-3">
                     <LoaderCircle className="animate-spin" size={16} />
                     <Text>Returning to Nanoflare CLI...</Text>
-                  </Group>
+                  </div>
                 )}
                 {code && !callbackURL && (
                   <>
-                    <Text c="dimmed" size="sm">Copy this one-time code back into your terminal.</Text>
-                    <Code block fz="lg" p="md">{code}</Code>
-                    <Button leftSection={copied ? <Check size={16} /> : <Copy size={16} />} onClick={copyCode} variant="light">
+                    <Text size="sm" variant="secondary">
+                      Copy this one-time code back into your terminal.
+                    </Text>
+                    <Code.Block code={code} />
+                    <Button icon={copied ? Check : Copy} onClick={copyCode} variant="secondary">
                       {copied ? "Copied" : "Copy code"}
                     </Button>
                   </>
                 )}
-              </Stack>
-            </Paper>
-          </Stack>
-        </Box>
-      </Stack>
-    </Box>
+              </div>
+            </LayerCard>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function isLoopbackCallback(callback: URL) {
   if (callback.protocol !== "http:" && callback.protocol !== "https:") return false;
-  return callback.hostname === "127.0.0.1" || callback.hostname === "localhost" || callback.hostname === "::1" || callback.hostname === "[::1]";
+  return (
+    callback.hostname === "127.0.0.1" ||
+    callback.hostname === "localhost" ||
+    callback.hostname === "::1" ||
+    callback.hostname === "[::1]"
+  );
 }

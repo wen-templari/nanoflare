@@ -33,7 +33,9 @@ export default {
       const key = decodeURIComponent(path.slice("/object/".length));
       if (request.method === "PUT") {
         await env.OBJECTS.put(key, await request.arrayBuffer(), {
-          httpMetadata: { contentType: request.headers.get("content-type") || "application/octet-stream" },
+          httpMetadata: {
+            contentType: request.headers.get("content-type") || "application/octet-stream",
+          },
         });
         return new Response("stored");
       }

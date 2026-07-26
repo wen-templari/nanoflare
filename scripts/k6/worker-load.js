@@ -15,7 +15,9 @@ const apiToken = __ENV.API_TOKEN || "";
 const orgID = __ENV.ORG_ID || "";
 const kvNamespaceID = __ENV.KV_NAMESPACE_ID || "";
 const objectBucketID = __ENV.OBJECT_BUCKET_ID || "";
-const assetPaths = splitList(__ENV.ASSET_PATHS || "/,/assets/app.js,/assets/logo.svg,/assets/image.svg");
+const assetPaths = splitList(
+  __ENV.ASSET_PATHS || "/,/assets/app.js,/assets/logo.svg,/assets/image.svg",
+);
 const objectKeyPrefix = __ENV.OBJECT_KEY_PREFIX || "k6";
 const objectPayload = __ENV.OBJECT_PAYLOAD || "nanoflare object load test payload";
 const controlPaths = splitList(__ENV.CONTROL_PATHS || defaultControlPaths());
@@ -173,7 +175,12 @@ function workerRequest(path, tagName, selectedWorkerID = workerID, selectedHostn
 
 export function setup() {
   if (["kv_read", "mixed", "mixed_app", "multi_worker"].includes(scenario)) {
-    const response = workerRequest("/kv-put", "kv_seed", workerIDs[0] || workerID, hostnames[0] || hostname);
+    const response = workerRequest(
+      "/kv-put",
+      "kv_seed",
+      workerIDs[0] || workerID,
+      hostnames[0] || hostname,
+    );
     check(response, {
       "seed status is 200": (r) => r.status === 200,
     });
@@ -200,12 +207,18 @@ function iterationObjectKey() {
 
 function objectURL(key, selectedWorkerID = workerID) {
   if (selectedWorkerID && objectBucketID) {
-    return controlPath(`/v1/workers/${selectedWorkerID}/object-storage-buckets/${objectBucketID}/${encodeURIComponent(key)}`);
+    return controlPath(
+      `/v1/workers/${selectedWorkerID}/object-storage-buckets/${objectBucketID}/${encodeURIComponent(key)}`,
+    );
   }
   return targetPath(`/object/${encodeURIComponent(key)}`, selectedWorkerID);
 }
 
-function objectRequestParams(extraHeaders = {}, selectedWorkerID = workerID, selectedHostname = hostname) {
+function objectRequestParams(
+  extraHeaders = {},
+  selectedWorkerID = workerID,
+  selectedHostname = hostname,
+) {
   if (selectedWorkerID && objectBucketID) {
     return { headers: extraHeaders };
   }
@@ -226,17 +239,35 @@ function putObject(name, tagName, selectedWorkerID = workerID, selectedHostname 
 
 function getObject(name, tagName, selectedWorkerID = workerID, selectedHostname = hostname) {
   const key = name.includes("/") ? name : objectKey(name);
-  return request("GET", objectURL(key, selectedWorkerID), tagName, null, objectRequestParams({}, selectedWorkerID, selectedHostname), [200]);
+  return request(
+    "GET",
+    objectURL(key, selectedWorkerID),
+    tagName,
+    null,
+    objectRequestParams({}, selectedWorkerID, selectedHostname),
+    [200],
+  );
 }
 
 function deleteObject(name, tagName, selectedWorkerID = workerID, selectedHostname = hostname) {
   const key = name.includes("/") ? name : objectKey(name);
-  return request("DELETE", objectURL(key, selectedWorkerID), tagName, null, objectRequestParams({}, selectedWorkerID, selectedHostname), [200, 204]);
+  return request(
+    "DELETE",
+    objectURL(key, selectedWorkerID),
+    tagName,
+    null,
+    objectRequestParams({}, selectedWorkerID, selectedHostname),
+    [200, 204],
+  );
 }
 
 function listObjects() {
   if (workerID && objectBucketID) {
-    return request("GET", controlPath(`/v1/workers/${workerID}/object-storage-buckets/${objectBucketID}`), "object_list");
+    return request(
+      "GET",
+      controlPath(`/v1/workers/${workerID}/object-storage-buckets/${objectBucketID}`),
+      "object_list",
+    );
   }
   return workerRequest("/objects", "object_list");
 }

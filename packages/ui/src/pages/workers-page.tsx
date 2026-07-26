@@ -1,4 +1,4 @@
-import { Anchor, Group, ScrollArea, Table, Text } from "@mantine/core";
+import { Link, Table, Text } from "@cloudflare/kumo";
 import { ChevronRight, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits";
@@ -22,17 +22,42 @@ export function WorkersPage() {
         eyebrow="Runtime"
         title="Workers"
         copy="Register isolated services, deploy bundles, and watch the runtime pool."
-        actions={workerLimitReached
-          ? <Text c="dimmed" size="sm">{limitReachedText("workers", workerLimit, usageLevel)}</Text>
-          : <Button onClick={openWorkerDialog}><Plus className="size-4" />New worker</Button>}
+        actions={
+          workerLimitReached ? (
+            <Text size="sm" variant="secondary">
+              {limitReachedText("workers", workerLimit, usageLevel)}
+            </Text>
+          ) : (
+            <Button onClick={openWorkerDialog}>
+              <Plus className="size-4" />
+              New worker
+            </Button>
+          )
+        }
       />
       <Panel flush>
-        <ScrollArea>
-          <Table highlightOnHover miw={720} verticalSpacing="sm">
-            <Table.Thead><Table.Tr><Table.Th>Worker</Table.Th><Table.Th>State</Table.Th><Table.Th>Requests (24h)</Table.Th><Table.Th>Deployment</Table.Th><Table.Th>Created</Table.Th></Table.Tr></Table.Thead>
-            <Table.Tbody>{workers.map((worker) => <WorkerRow key={worker.id} worker={worker} onSelect={() => navigate(`/workers/${worker.id}`)} />)}</Table.Tbody>
+        <div className="overflow-x-auto">
+          <Table className="min-w-[720px]">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Worker</Table.Head>
+                <Table.Head>State</Table.Head>
+                <Table.Head>Requests (24h)</Table.Head>
+                <Table.Head>Deployment</Table.Head>
+                <Table.Head>Created</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {workers.map((worker) => (
+                <WorkerRow
+                  key={worker.id}
+                  worker={worker}
+                  onSelect={() => navigate(`/workers/${worker.id}`)}
+                />
+              ))}
+            </Table.Body>
           </Table>
-        </ScrollArea>
+        </div>
       </Panel>
     </>
   );
@@ -40,13 +65,41 @@ export function WorkersPage() {
 
 function WorkerRow({ worker, onSelect }: { worker: Worker; onSelect: () => void }) {
   return (
-    <Table.Tr className="cursor-pointer" onClick={onSelect}>
-      <Table.Td><Group gap="sm"><div><Text fw={700}>{worker.name}</Text><Anchor ff="monospace" href={hostnameHref(worker.hostname)} onClick={(event) => event.stopPropagation()} size="xs" target="_blank">{worker.hostname}</Anchor></div></Group></Table.Td>
-      <Table.Td><Badge tone={worker.status === "draft" ? "orange" : "green"}>{worker.status ?? "live"}</Badge></Table.Td>
-      <Table.Td><Text ff="monospace" size="xs">{worker.requests ?? "0"}</Text></Table.Td>
-      <Table.Td><Text c="dimmed" ff="monospace" size="xs">{worker.deployment ?? "awaiting deploy"}</Text></Table.Td>
-      <Table.Td><Text c="dimmed" size="sm">{new Date(worker.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
-    </Table.Tr>
+    <Table.Row className="cursor-pointer" onClick={onSelect}>
+      <Table.Cell>
+        <div>
+          <Text>{worker.name}</Text>
+          <Link
+            href={hostnameHref(worker.hostname)}
+            onClick={(event) => event.stopPropagation()}
+            target="_blank"
+            variant="plain"
+            className="text-gray-300 hover:underline"
+          >
+            {worker.hostname}
+          </Link>
+        </div>
+      </Table.Cell>
+      <Table.Cell>
+        <Badge tone={worker.status === "draft" ? "orange" : "green"}>
+          {worker.status ?? "live"}
+        </Badge>
+      </Table.Cell>
+      <Table.Cell>
+        <Text variant="mono">{worker.requests ?? "0"}</Text>
+      </Table.Cell>
+      <Table.Cell>
+        <Text variant="mono-secondary">{worker.deployment ?? "awaiting deploy"}</Text>
+      </Table.Cell>
+      <Table.Cell>
+        <Text size="sm" variant="secondary">
+          {new Date(worker.created_at).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+          })}
+        </Text>
+      </Table.Cell>
+    </Table.Row>
   );
 }
 
@@ -55,5 +108,7 @@ function hostnameHref(hostname: string) {
 }
 
 function limitReachedText(resource: string, limit: number, usageLevel: string) {
-  return usageLevel === usageLevelPaid ? `Limit reached: ${limit} ${resource}.` : `Default plan limit reached: ${limit} ${resource}.`;
+  return usageLevel === usageLevelPaid
+    ? `Limit reached: ${limit} ${resource}.`
+    : `Default plan limit reached: ${limit} ${resource}.`;
 }

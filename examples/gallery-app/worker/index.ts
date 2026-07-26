@@ -45,7 +45,11 @@ export default {
       return uploadImage(request, env);
     }
 
-    if (request.method === "POST" && url.pathname.startsWith("/api/gallery/") && url.pathname.endsWith("/preview")) {
+    if (
+      request.method === "POST" &&
+      url.pathname.startsWith("/api/gallery/") &&
+      url.pathname.endsWith("/preview")
+    ) {
       return trackPreview(url.pathname, env);
     }
 
@@ -117,7 +121,15 @@ async function uploadImage(request: Request, env: GalleryEnv): Promise<Response>
       preview_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
-    .bind(item.id, item.key, item.filename, item.contentType, item.uploadedAt, item.size, item.previewCount)
+    .bind(
+      item.id,
+      item.key,
+      item.filename,
+      item.contentType,
+      item.uploadedAt,
+      item.size,
+      item.previewCount,
+    )
     .run();
 
   return Response.json({ ok: true, item }, { status: 201 });
@@ -158,9 +170,7 @@ async function serveImage(pathname: string, env: GalleryEnv): Promise<Response> 
 }
 
 async function trackPreview(pathname: string, env: GalleryEnv): Promise<Response> {
-  const id = pathname
-    .slice("/api/gallery/".length)
-    .replace(/\/preview$/, "");
+  const id = pathname.slice("/api/gallery/".length).replace(/\/preview$/, "");
 
   if (!id) {
     return new Response("Not found", { status: 404 });

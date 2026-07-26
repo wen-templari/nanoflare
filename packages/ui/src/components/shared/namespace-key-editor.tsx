@@ -27,8 +27,11 @@ export function NamespaceKeyEditor({
   const [value, setValue] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const namespaceBase = namespaceID ? `/v1/workers/${workerID}/kv/namespaces/${encodeURIComponent(namespaceID)}` : "";
-  const path = key.trim() && namespaceBase ? `${namespaceBase}/${encodeURIComponent(key.trim())}` : "";
+  const namespaceBase = namespaceID
+    ? `/v1/workers/${workerID}/kv/namespaces/${encodeURIComponent(namespaceID)}`
+    : "";
+  const path =
+    key.trim() && namespaceBase ? `${namespaceBase}/${encodeURIComponent(key.trim())}` : "";
 
   useEffect(() => {
     setKeys([]);
@@ -121,43 +124,120 @@ export function NamespaceKeyEditor({
       <aside className="border-b border-gray-200 bg-gray-50 py-3 md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-4 pb-2">
           <p className="font-mono text-[9px]   text-[#a0a39c]">KV keys</p>
-          <Button type="button" variant="ghost" size="icon" aria-label="Refresh KV keys" onClick={() => void refreshKeys()} disabled={loading}><RefreshCw className={cn("size-3.5", loading && "animate-spin")} /></Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Refresh KV keys"
+            onClick={() => void refreshKeys()}
+            disabled={loading}
+          >
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+          </Button>
         </div>
         <div className="px-4 pb-3">
-          <select value={namespaceID} onChange={(event) => onNamespaceChange(event.target.value)} className="w-full rounded-md border border-[#d6d0c3] bg-white/75 px-3 py-2 font-mono text-[10px] text-[#4c5853] outline-none" disabled={namespaceDisabled || !namespaces.length}>
+          <select
+            value={namespaceID}
+            onChange={(event) => onNamespaceChange(event.target.value)}
+            className="w-full rounded-md border border-[#d6d0c3] bg-white/75 px-3 py-2 font-mono text-[10px] text-[#4c5853] outline-none"
+            disabled={namespaceDisabled || !namespaces.length}
+          >
             {!namespaces.length && <option value="">No KV namespaces</option>}
-            {namespaces.map((namespace) => <option key={namespace.id} value={namespace.id}>{namespace.label}</option>)}
+            {namespaces.map((namespace) => (
+              <option key={namespace.id} value={namespace.id}>
+                {namespace.label}
+              </option>
+            ))}
           </select>
         </div>
-        <button onClick={() => { setKey(""); setValue(""); setStatus("Ready for a new key"); }} className="flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] font-bold text-[#68716c] transition hover:bg-white/60"><Plus className="size-3.5 text-[#d75a41]" />new key</button>
+        <button
+          onClick={() => {
+            setKey("");
+            setValue("");
+            setStatus("Ready for a new key");
+          }}
+          className="flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] font-bold text-[#68716c] transition hover:bg-white/60"
+        >
+          <Plus className="size-3.5 text-[#d75a41]" />
+          new key
+        </button>
         {keys.map((item) => (
-          <button key={item.key} onClick={() => void readKey(item.key)} className={cn("flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] transition", key === item.key ? "bg-[#e5e0d6] font-bold text-[#35413e]" : "text-[#848a83] hover:bg-white/60 hover:text-[#4c5853]")}>
+          <button
+            key={item.key}
+            onClick={() => void readKey(item.key)}
+            className={cn(
+              "flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] transition",
+              key === item.key
+                ? "bg-[#e5e0d6] font-bold text-[#35413e]"
+                : "text-[#848a83] hover:bg-white/60 hover:text-[#4c5853]",
+            )}
+          >
             <KeyRound className="size-3.5 text-[#668e7a]" />
             <span className="min-w-0 flex-1 truncate">{item.key}</span>
             <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
           </button>
         ))}
-        {!keys.length && <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">No keys yet</p>}
-        {status && <p className="mx-4 mt-3 rounded-md border border-[#ded8cd] bg-white/55 px-3 py-2 font-mono text-[10px]   text-[#727a74]">{status}</p>}
+        {!keys.length && (
+          <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">No keys yet</p>
+        )}
+        {status && (
+          <p className="mx-4 mt-3 rounded-md border border-[#ded8cd] bg-white/55 px-3 py-2 font-mono text-[10px]   text-[#727a74]">
+            {status}
+          </p>
+        )}
       </aside>
       <div className="p-5">
-        <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void readKey(); }}>
+        <form
+          className="flex flex-col gap-3 sm:flex-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void readKey();
+          }}
+        >
           <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-[#d6d0c3] bg-white/75 px-3">
             <Search className="size-4 text-[#959a93]" />
-            <Input required value={key} onChange={(event) => setKey(event.target.value)} placeholder="visits" variant="unstyled" className="min-w-0 flex-1" inputClassName="h-10 bg-transparent p-0" />
+            <Input
+              required
+              value={key}
+              onChange={(event) => setKey(event.target.value)}
+              placeholder="visits"
+              variant="unstyled"
+              className="min-w-0 flex-1"
+              inputClassName="h-10 bg-transparent p-0"
+            />
           </div>
-          <Button type="submit" variant="outline" disabled={loading}><Search className="size-3.5" />Read</Button>
+          <Button type="submit" variant="outline" disabled={loading}>
+            <Search className="size-3.5" />
+            Read
+          </Button>
         </form>
         <div className="mt-4 overflow-hidden rounded-lg border border-[#d9d3c7] bg-[#202b29]">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
             <p className="font-mono text-[10px] text-[#b5c1bb]">{key.trim() || "Select a key"}</p>
             <span className="font-mono text-[9px]   text-[#778781]">{value.length} bytes</span>
           </div>
-          <textarea value={value} onChange={(event) => setValue(event.target.value)} spellCheck={false} className="min-h-80 w-full resize-y bg-transparent p-4 font-mono text-[11px] leading-6 text-[#d8dfd8] outline-none" placeholder="Value" />
+          <textarea
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            spellCheck={false}
+            className="min-h-80 w-full resize-y bg-transparent p-4 font-mono text-[11px] leading-6 text-[#d8dfd8] outline-none"
+            placeholder="Value"
+          />
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={() => void deleteKey()} disabled={loading || !key.trim()}><Trash2 className="size-3.5" />Delete</Button>
-          <Button type="button" onClick={() => void writeKey()} disabled={loading || !key.trim()}><Save className="size-3.5" />Save</Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => void deleteKey()}
+            disabled={loading || !key.trim()}
+          >
+            <Trash2 className="size-3.5" />
+            Delete
+          </Button>
+          <Button type="button" onClick={() => void writeKey()} disabled={loading || !key.trim()}>
+            <Save className="size-3.5" />
+            Save
+          </Button>
         </div>
       </div>
     </div>

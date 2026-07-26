@@ -4,9 +4,15 @@ import http from "node:http";
 import crypto from "node:crypto";
 
 const nanoflareURL = (process.env.NANOFLARE_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
-const nanoflareUIURL = (process.env.NANOFLARE_UI_URL || "http://127.0.0.1:5173").replace(/\/+$/, "");
+const nanoflareUIURL = (process.env.NANOFLARE_UI_URL || "http://127.0.0.1:5173").replace(
+  /\/+$/,
+  "",
+);
 const port = Number(process.env.EXTERNAL_APP_PORT || 8787);
-const externalOrigin = (process.env.EXTERNAL_APP_ORIGIN || `http://127.0.0.1:${port}`).replace(/\/+$/, "");
+const externalOrigin = (process.env.EXTERNAL_APP_ORIGIN || `http://127.0.0.1:${port}`).replace(
+  /\/+$/,
+  "",
+);
 const redirectURI = `${externalOrigin}/oauth/callback`;
 const scopes = (process.env.EXTERNAL_APP_SCOPES || "workers:write kv:write")
   .split(/[,\s]+/)
@@ -14,9 +20,13 @@ const scopes = (process.env.EXTERNAL_APP_SCOPES || "workers:write kv:write")
   .filter(Boolean);
 
 const state = {
-  client: process.env.EXTERNAL_APP_CLIENT_ID && process.env.EXTERNAL_APP_CLIENT_SECRET
-    ? { client_id: process.env.EXTERNAL_APP_CLIENT_ID, client_secret: process.env.EXTERNAL_APP_CLIENT_SECRET }
-    : null,
+  client:
+    process.env.EXTERNAL_APP_CLIENT_ID && process.env.EXTERNAL_APP_CLIENT_SECRET
+      ? {
+          client_id: process.env.EXTERNAL_APP_CLIENT_ID,
+          client_secret: process.env.EXTERNAL_APP_CLIENT_SECRET,
+        }
+      : null,
   accessToken: "",
   refreshToken: "",
   tokenScope: "",
@@ -79,25 +89,34 @@ server.listen(port, "127.0.0.1", () => {
 
 async function ensureOAuthClient() {
   if (state.client) return;
-  throw new Error("External app is not registered in Nanoflare. Start this app with EXTERNAL_APP_CLIENT_ID and EXTERNAL_APP_CLIENT_SECRET, then click Connect Nanoflare.");
+  throw new Error(
+    "External app is not registered in Nanoflare. Start this app with EXTERNAL_APP_CLIENT_ID and EXTERNAL_APP_CLIENT_SECRET, then click Connect Nanoflare.",
+  );
 }
 
 async function exchangeCode(code) {
   if (!code) throw new Error("Nanoflare callback did not include a code.");
   if (!state.client) throw new Error("OAuth client was not initialized.");
-  const response = await nf("POST", "/v1/oauth/token", {
-    grant_type: "authorization_code",
-    client_id: state.client.client_id,
-    client_secret: state.client.client_secret,
-    code,
-    redirect_uri: redirectURI,
-  }, { wantStatus: 200 });
+  const response = await nf(
+    "POST",
+    "/v1/oauth/token",
+    {
+      grant_type: "authorization_code",
+      client_id: state.client.client_id,
+      client_secret: state.client.client_secret,
+      code,
+      redirect_uri: redirectURI,
+    },
+    { wantStatus: 200 },
+  );
   state.accessToken = response.json.access_token;
   state.refreshToken = response.json.refresh_token;
   state.tokenScope = response.json.scope;
   state.tokenType = response.json.token_type;
   state.tokenIssuedAt = new Date();
-  state.tokenExpiresAt = new Date(state.tokenIssuedAt.getTime() + Number(response.json.expires_in || 0) * 1000);
+  state.tokenExpiresAt = new Date(
+    state.tokenIssuedAt.getTime() + Number(response.json.expires_in || 0) * 1000,
+  );
 }
 
 async function provisionWorker(form) {
@@ -106,29 +125,41 @@ async function provisionWorker(form) {
   const suffix = Date.now();
   const hostname = `external-${suffix}.example.com`;
   const externalID = `external-worker-${suffix}`;
-  const response = await nf("POST", "/v1/workers", {
-    name,
-    hostname,
-    external_id: externalID,
-  }, { token: state.accessToken, wantStatus: 201 });
+  const response = await nf(
+    "POST",
+    "/v1/workers",
+    {
+      name,
+      hostname,
+      external_id: externalID,
+    },
+    { token: state.accessToken, wantStatus: 201 },
+  );
   state.lastApp = response.json;
   logEvent(`Provisioned worker ${response.json.id}.`);
 }
 
 async function refreshToken() {
   if (!state.refreshToken || !state.client) throw new Error("No refresh token is available.");
-  const response = await nf("POST", "/v1/oauth/token", {
-    grant_type: "refresh_token",
-    client_id: state.client.client_id,
-    client_secret: state.client.client_secret,
-    refresh_token: state.refreshToken,
-  }, { wantStatus: 200 });
+  const response = await nf(
+    "POST",
+    "/v1/oauth/token",
+    {
+      grant_type: "refresh_token",
+      client_id: state.client.client_id,
+      client_secret: state.client.client_secret,
+      refresh_token: state.refreshToken,
+    },
+    { wantStatus: 200 },
+  );
   state.accessToken = response.json.access_token;
   state.refreshToken = response.json.refresh_token;
   state.tokenScope = response.json.scope;
   state.tokenType = response.json.token_type;
   state.tokenIssuedAt = new Date();
-  state.tokenExpiresAt = new Date(state.tokenIssuedAt.getTime() + Number(response.json.expires_in || 0) * 1000);
+  state.tokenExpiresAt = new Date(
+    state.tokenIssuedAt.getTime() + Number(response.json.expires_in || 0) * 1000,
+  );
 }
 
 async function revokeToken() {
@@ -225,7 +256,9 @@ function tokenDetailsHTML() {
   const expiresAt = state.tokenExpiresAt instanceof Date ? state.tokenExpiresAt : null;
   const issuedAt = state.tokenIssuedAt instanceof Date ? state.tokenIssuedAt : null;
   const now = Date.now();
-  const secondsRemaining = expiresAt ? Math.max(0, Math.round((expiresAt.getTime() - now) / 1000)) : 0;
+  const secondsRemaining = expiresAt
+    ? Math.max(0, Math.round((expiresAt.getTime() - now) / 1000))
+    : 0;
   const rows = [
     ["Status", state.accessToken ? "active" : "not connected"],
     ["Token type", state.tokenType || "none"],
@@ -247,5 +280,8 @@ function maskToken(token) {
 }
 
 function escapeHTML(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+  return String(value).replace(
+    /[&<>"']/g,
+    (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char],
+  );
 }

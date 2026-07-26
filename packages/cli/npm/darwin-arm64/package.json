@@ -3,20 +3,20 @@
   "version": "0.0.2",
   "description": "Nanoflare CLI binary for macOS arm64.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git",
+    "directory": "packages/cli/npm/darwin-arm64"
+  },
+  "files": [
+    "bin/nanoflare"
+  ],
   "os": [
     "darwin"
   ],
   "cpu": [
     "arm64"
   ],
-  "files": [
-    "bin/nanoflare"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/wen-templari/nanoflare.git",
-    "directory": "packages/cli/npm/darwin-arm64"
-  },
   "publishConfig": {
     "access": "public"
   }

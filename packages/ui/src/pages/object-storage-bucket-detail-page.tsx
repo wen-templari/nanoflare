@@ -1,6 +1,21 @@
 import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
-import { SegmentedControl, Text } from "@mantine/core";
-import { Archive, ArrowDownToLine, BookOpen, DatabaseZap, FileJson, FileText, Globe2, HardDrive, RefreshCw, Search, Trash2, Upload, Waypoints, Workflow } from "lucide-react";
+import { Tabs, Text } from "@cloudflare/kumo";
+import {
+  Archive,
+  ArrowDownToLine,
+  BookOpen,
+  DatabaseZap,
+  FileJson,
+  FileText,
+  Globe2,
+  HardDrive,
+  RefreshCw,
+  Search,
+  Trash2,
+  Upload,
+  Waypoints,
+  Workflow,
+} from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { ObjectStorageBucketMetrics, ObjectStorageObject } from "../app/types";
@@ -28,7 +43,9 @@ export function ObjectStorageBucketDetailPage() {
   if (!workspaceReady) return null;
   if (!bucket) return <Navigate to="/object-storage" replace />;
 
-  return <ObjectStorageBucketDetailContent bucket={bucket} onBack={() => navigate("/object-storage")} />;
+  return (
+    <ObjectStorageBucketDetailContent bucket={bucket} onBack={() => navigate("/object-storage")} />
+  );
 }
 
 function ObjectStorageBucketDetailContent({
@@ -39,7 +56,10 @@ function ObjectStorageBucketDetailContent({
   onBack: () => void;
 }) {
   const { workers, setObjectStorageBuckets, notify, apiConnected } = useWorkspace();
-  const [tab, setTab] = useQueryTab<(typeof objectStorageBucketDetailTabs)[number]>(objectStorageBucketDetailTabs, "overview");
+  const [tab, setTab] = useQueryTab<(typeof objectStorageBucketDetailTabs)[number]>(
+    objectStorageBucketDetailTabs,
+    "overview",
+  );
   const [name, setName] = useState(bucket.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -53,13 +73,24 @@ function ObjectStorageBucketDetailContent({
   const [preview, setPreview] = useState<ObjectPreview>({ kind: "empty" });
   const [previewLoading, setPreviewLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [metrics, setMetrics] = useState<ObjectStorageBucketMetrics>({ available: false, reads: 0, writes: 0, size: 0 });
+  const [metrics, setMetrics] = useState<ObjectStorageBucketMetrics>({
+    available: false,
+    reads: 0,
+    writes: 0,
+    size: 0,
+  });
   const bindings = workers.flatMap((worker) =>
     (worker.bindings ?? [])
-      .filter((binding) => binding.kind === "object_storage_bucket" && binding.bucket_id === bucket.id)
+      .filter(
+        (binding) => binding.kind === "object_storage_bucket" && binding.bucket_id === bucket.id,
+      )
       .map((binding) => ({ worker, binding })),
   );
-  const accessorWorkers = bindings.map(({ worker }) => worker).filter((worker, index, all) => all.findIndex((candidate) => candidate.id === worker.id) === index);
+  const accessorWorkers = bindings
+    .map(({ worker }) => worker)
+    .filter(
+      (worker, index, all) => all.findIndex((candidate) => candidate.id === worker.id) === index,
+    );
   const [accessorWorkerID, setAccessorWorkerID] = useState(accessorWorkers[0]?.id ?? "");
 
   useEffect(() => {
@@ -67,7 +98,11 @@ function ObjectStorageBucketDetailContent({
   }, [bucket.id, bucket.name]);
 
   useEffect(() => {
-    setAccessorWorkerID((current) => current && accessorWorkers.some((worker) => worker.id === current) ? current : (accessorWorkers[0]?.id ?? ""));
+    setAccessorWorkerID((current) =>
+      current && accessorWorkers.some((worker) => worker.id === current)
+        ? current
+        : (accessorWorkers[0]?.id ?? ""),
+    );
   }, [accessorWorkers]);
 
   useEffect(() => {
@@ -77,7 +112,9 @@ function ObjectStorageBucketDetailContent({
     }
     let cancelled = false;
     async function loadMetrics() {
-      const nextMetrics = await fetchJSON<ObjectStorageBucketMetrics>(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}/metrics`).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }));
+      const nextMetrics = await fetchJSON<ObjectStorageBucketMetrics>(
+        `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}/metrics`,
+      ).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }));
       if (!cancelled) setMetrics(nextMetrics);
     }
     void loadMetrics();
@@ -88,8 +125,12 @@ function ObjectStorageBucketDetailContent({
     };
   }, [apiConnected, bucket.id]);
 
-  const basePath = accessorWorkerID ? `/v1/workers/${accessorWorkerID}/object-storage-buckets/${encodeURIComponent(bucket.id)}` : "";
-  const filteredObjects = objects.filter((item) => item.key.toLowerCase().includes(deferredSearch.trim().toLowerCase()));
+  const basePath = accessorWorkerID
+    ? `/v1/workers/${accessorWorkerID}/object-storage-buckets/${encodeURIComponent(bucket.id)}`
+    : "";
+  const filteredObjects = objects.filter((item) =>
+    item.key.toLowerCase().includes(deferredSearch.trim().toLowerCase()),
+  );
 
   useEffect(() => {
     setObjects([]);
@@ -107,7 +148,11 @@ function ObjectStorageBucketDetailContent({
   async function refreshObjects() {
     if (!basePath) {
       setObjects([]);
-      setStatus(accessorWorkers.length ? "Choose a worker to inspect this bucket." : "Bind this bucket to a worker to inspect its objects.");
+      setStatus(
+        accessorWorkers.length
+          ? "Choose a worker to inspect this bucket."
+          : "Bind this bucket to a worker to inspect its objects.",
+      );
       return;
     }
     setLoadingObjects(true);
@@ -148,7 +193,10 @@ function ObjectStorageBucketDetailContent({
         size: Number(response.headers.get("content-length") ?? listedMetadata?.size ?? "0"),
         etag: response.headers.get("x-nanoflare-object-etag") ?? listedMetadata?.etag ?? "",
         httpEtag: response.headers.get("etag") ?? listedMetadata?.httpEtag ?? "",
-        uploaded: response.headers.get("x-nanoflare-object-uploaded") ?? listedMetadata?.uploaded ?? new Date().toISOString(),
+        uploaded:
+          response.headers.get("x-nanoflare-object-uploaded") ??
+          listedMetadata?.uploaded ??
+          new Date().toISOString(),
         httpMetadata: { ...listedMetadata?.httpMetadata, contentType },
       };
       setSelectedObject(metadata);
@@ -207,7 +255,9 @@ function ObjectStorageBucketDetailContent({
     if (!basePath || !selectedKey) return;
     if (!window.confirm(`Delete object "${selectedKey}" from ${bucket.name}?`)) return;
     try {
-      const response = await apiFetch(`${basePath}/${encodeURIComponent(selectedKey)}`, { method: "DELETE" });
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(selectedKey)}`, {
+        method: "DELETE",
+      });
       if (!response.ok) throw new Error(`Object delete failed (${response.status})`);
       await refreshObjects();
       setSelectedKey("");
@@ -226,15 +276,22 @@ function ObjectStorageBucketDetailContent({
     try {
       let nextBucket = { ...bucket, name: trimmed };
       if (apiConnected) {
-        const response = await apiFetch(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`, {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: trimmed }),
-        });
+        const response = await apiFetch(
+          `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name: trimmed }),
+          },
+        );
         if (!response.ok) throw new Error(`Bucket update failed (${response.status})`);
         nextBucket = await response.json();
       }
-      setObjectStorageBuckets((current) => sortObjectStorageBuckets(current.map((item) => item.id === bucket.id ? nextBucket : item)));
+      setObjectStorageBuckets((current) =>
+        sortObjectStorageBuckets(
+          current.map((item) => (item.id === bucket.id ? nextBucket : item)),
+        ),
+      );
       notify(`${trimmed} updated`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Bucket update failed");
@@ -248,8 +305,12 @@ function ObjectStorageBucketDetailContent({
     setDeleting(true);
     try {
       if (apiConnected) {
-        const response = await apiFetch(`/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`, { method: "DELETE" });
-        if (!response.ok) throw new Error(await errorText(response, `Bucket delete failed (${response.status})`));
+        const response = await apiFetch(
+          `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`,
+          { method: "DELETE" },
+        );
+        if (!response.ok)
+          throw new Error(await errorText(response, `Bucket delete failed (${response.status})`));
       }
       setObjectStorageBuckets((current) => current.filter((item) => item.id !== bucket.id));
       notify(`${bucket.name} deleted`);
@@ -262,184 +323,343 @@ function ObjectStorageBucketDetailContent({
   }
 
   const cards = [
-    { label: "Reads", value: compactNumber(metrics.reads), note: metrics.available ? "runtime object reads" : "metrics unavailable", icon: BookOpen },
-    { label: "Writes", value: compactNumber(metrics.writes), note: metrics.available ? "runtime object writes" : "metrics unavailable", icon: Workflow },
-    { label: "Size", value: formatBytes(metrics.size), note: metrics.available ? "stored object bytes" : "metrics unavailable", icon: HardDrive },
-    { label: "Bindings", value: String(bindings.length), note: "active bucket references", icon: Waypoints },
-    { label: "Workers", value: String(accessorWorkers.length), note: "workers with live access", icon: Globe2 },
-    { label: "Objects", value: String(objects.length), note: "objects currently listed", icon: DatabaseZap },
+    {
+      label: "Reads",
+      value: compactNumber(metrics.reads),
+      note: metrics.available ? "runtime object reads" : "metrics unavailable",
+      icon: BookOpen,
+    },
+    {
+      label: "Writes",
+      value: compactNumber(metrics.writes),
+      note: metrics.available ? "runtime object writes" : "metrics unavailable",
+      icon: Workflow,
+    },
+    {
+      label: "Size",
+      value: formatBytes(metrics.size),
+      note: metrics.available ? "stored object bytes" : "metrics unavailable",
+      icon: HardDrive,
+    },
+    {
+      label: "Bindings",
+      value: String(bindings.length),
+      note: "active bucket references",
+      icon: Waypoints,
+    },
+    {
+      label: "Workers",
+      value: String(accessorWorkers.length),
+      note: "workers with live access",
+      icon: Globe2,
+    },
+    {
+      label: "Objects",
+      value: String(objects.length),
+      note: "objects currently listed",
+      icon: DatabaseZap,
+    },
   ];
 
   return (
     <>
       <div className="mb-6">
-        <SegmentedControl
-          data={[
+        <Tabs
+          tabs={[
             { label: "Overview", value: "overview" },
             { label: "Objects", value: "objects" },
             { label: "Settings", value: "settings" },
           ]}
-          onChange={(value) => setTab(value as "overview" | "objects" | "settings")}
+          onValueChange={(value) => setTab(value as "overview" | "objects" | "settings")}
           value={tab}
         />
       </div>
 
       {tab === "overview" && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          {cards.map(({ label, value, note, icon: Icon }, index) => <div key={label} style={{ animationDelay: `${index * 60}ms` }} className="rounded-lg border border-gray-200 bg-white p-4"><div className="flex items-center justify-between"><p className="font-mono text-[9px] text-gray-500">{label}</p><Icon className="size-3.5 text-blue-600" /></div><p className="mt-3 text-3xl font-semibold">{value}</p><p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p></div>)}
+          {cards.map(({ label, value, note, icon: Icon }, index) => (
+            <div
+              key={label}
+              style={{ animationDelay: `${index * 60}ms` }}
+              className="rounded-lg border border-gray-200 bg-white p-4"
+            >
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-[9px] text-gray-500">{label}</p>
+                <Icon className="size-3.5 text-blue-600" />
+              </div>
+              <p className="mt-3 text-3xl font-semibold">{value}</p>
+              <p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p>
+            </div>
+          ))}
         </div>
       )}
 
-      {tab === "settings" && <div className="space-y-6">
-        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <header className="border-b border-gray-200 px-5 py-4"><h2 className="text-sm font-extrabold">Settings</h2></header>
-          <div className="p-5">
-            <Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="customer-files" /></Field>
-            <div className="mt-4 overflow-hidden rounded-lg border border-[#e2ddd2]">
-              {[
-                ["Bucket ID", bucket.id],
-                ["Created", new Date(bucket.created_at).toLocaleString()],
-                ["Bindings", String(bindings.length)],
-                ["Workers", String(accessorWorkers.length)],
-                ["Objects", String(objects.length)],
-              ].map(([label, value]) => (
-                <div key={label} className="grid gap-1 border-b border-gray-200 bg-white px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
-                  <span className="font-mono text-[10px] text-gray-500">{label}</span>
-                  <span className="break-all font-mono text-[11px] font-bold text-gray-700">{value}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 flex gap-2">
-              <Button onClick={() => void saveBucket()} disabled={saving || deleting || !name.trim()}><Archive className="size-3.5" />Save</Button>
-            </div>
-          </div>
-        </section>
-
-        <Panel title="Danger zone">
-          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-            <div>
-              <Text fw={700} size="sm">Delete bucket</Text>
-              <Text c="dimmed" mt={4} size="sm">Permanently remove this bucket and its objects. Worker bindings should be updated before deleting it.</Text>
-            </div>
-            <Button variant="ghost" onClick={() => void deleteBucket()} disabled={deleting || saving}><Trash2 className="size-3.5" />Delete bucket</Button>
-          </div>
-        </Panel>
-
-        <Panel title="Bound workers">
-          {bindings.length ? (
-            <div className="space-y-3">
-              {bindings.map(({ worker, binding }) => (
-                <div key={`${worker.id}-${binding.binding}`} className="rounded-lg border border-gray-200 bg-white px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
-                      <p className="mt-1 font-mono text-[10px] text-[#7d837d]">{worker.hostname}</p>
-                    </div>
-                    <Badge tone="green">{binding.binding}</Badge>
+      {tab === "settings" && (
+        <div className="space-y-6">
+          <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <header className="border-b border-gray-200 px-5 py-4">
+              <h2 className="text-sm font-extrabold">Settings</h2>
+            </header>
+            <div className="p-5">
+              <Field label="Name">
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="customer-files"
+                />
+              </Field>
+              <div className="mt-4 overflow-hidden rounded-lg border border-[#e2ddd2]">
+                {[
+                  ["Bucket ID", bucket.id],
+                  ["Created", new Date(bucket.created_at).toLocaleString()],
+                  ["Bindings", String(bindings.length)],
+                  ["Workers", String(accessorWorkers.length)],
+                  ["Objects", String(objects.length)],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="grid gap-1 border-b border-gray-200 bg-white px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"
+                  >
+                    <span className="font-mono text-[10px] text-gray-500">{label}</span>
+                    <span className="break-all font-mono text-[11px] font-bold text-gray-700">
+                      {value}
+                    </span>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm leading-6 text-[#7a8079]">This bucket is not bound by any active deployment yet, so there is no worker path available for object inspection.</p>
-          )}
-        </Panel>
-      </div>}
-
-      {tab === "objects" && <section className="overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-7rem)] md:min-h-[540px]">
-        {!accessorWorkerID ? (
-          <WorkerDetailEmpty icon={<DatabaseZap />} title="No worker access path" copy="Bind this bucket to a worker to browse objects through the runtime API." />
-        ) : (
-          <div className="grid min-h-[540px] md:h-full md:min-h-0 md:grid-cols-[280px_minmax(0,1fr)]">
-            <aside className="flex min-h-0 flex-col border-b border-gray-200 bg-gray-50 md:h-full md:border-b-0 md:border-r">
-              <div className="flex items-center justify-between px-4 pb-2 pt-3">
-                <p className="font-mono text-[9px]   text-[#a0a39c]">Objects</p>
-                <Button type="button" variant="ghost" size="icon" aria-label="Refresh objects" onClick={() => void refreshObjects()} disabled={loadingObjects}><RefreshCw className={loadingObjects ? "size-3.5 animate-spin" : "size-3.5"} /></Button>
-              </div>
-              <div className="space-y-3 px-4 pb-3">
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-gray-300 bg-white px-3 py-2 font-mono text-[10px] font-bold text-gray-700 hover:bg-gray-50">
-                  <Upload className="size-3.5 text-[#d75a41]" />
-                  {uploading ? "Uploading..." : "Upload file"}
-                  <input type="file" className="hidden" onChange={uploadObject} />
-                </label>
-                <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
-                  <Search className="size-4 text-[#959a93]" />
-                  <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search objects" variant="unstyled" className="min-w-0 flex-1" inputClassName="h-10 bg-transparent p-0" />
-                </div>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto pb-3">
-                {filteredObjects.map((item) => (
-                  <button key={item.key} onClick={() => void loadObject(item.key)} className={selectedKey === item.key ? "flex w-full items-center gap-2 bg-[#e5e0d6] px-4 py-2 text-left font-mono text-[10px] font-bold text-[#35413e]" : "flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] text-[#848a83] transition hover:bg-white/60 hover:text-[#4c5853]"}>
-                    {item.httpMetadata?.contentType?.includes("json") ? <FileJson className="size-3.5 text-[#bd7e35]" /> : <FileText className="size-3.5 text-[#668e7a]" />}
-                    <span className="min-w-0 flex-1 truncate">{item.key}</span>
-                    <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
-                  </button>
                 ))}
-                {!filteredObjects.length && <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">{status || "No objects yet"}</p>}
               </div>
-            </aside>
-
-            <div className="min-h-0 overflow-y-auto p-5">
-              {!selectedKey ? (
-                <WorkerDetailEmpty icon={<DatabaseZap />} title="Select an object" copy="Choose an object to inspect its metadata, preview text content, or download it." />
-              ) : (
-                <>
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-extrabold text-[#26332f]">{selectedKey}</p>
-                      <p className="mt-1 font-mono text-[10px] text-[#8a8f88]">{selectedObject?.httpMetadata?.contentType || "application/octet-stream"}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="outline" onClick={() => void downloadSelectedObject()}><ArrowDownToLine className="size-3.5" />Download</Button>
-                      <Button type="button" variant="ghost" onClick={() => void deleteSelectedObject()}><Trash2 className="size-3.5" />Delete</Button>
-                    </div>
-                  </div>
-                  {selectedObject ? (
-                    <div className="mb-4 overflow-hidden rounded-lg border border-[#e2ddd2]">
-                      {[
-                        ["Size", formatBytes(selectedObject.size)],
-                        ["Uploaded", new Date(selectedObject.uploaded).toLocaleString()],
-                        ["ETag", selectedObject.etag || "-"],
-                      ].map(([label, value]) => (
-                        <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
-                          <span className="font-mono text-[10px]   text-[#93978f]">{label}</span>
-                          <span className="font-mono text-[11px] font-bold break-all text-[#4f5a55]">{value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="overflow-hidden rounded-lg border border-[#d9d3c7] bg-[#202b29]">
-                    <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-                      <p className="font-mono text-[10px] text-[#b5c1bb]">Preview</p>
-                      <span className="font-mono text-[9px]   text-[#778781]">{previewLoading ? "loading" : previewLabel(preview)}</span>
-                    </div>
-                    <div className="relative min-h-80 bg-[#111917]">
-                      {preview.kind === "image" ? (
-                        <div className="flex min-h-80 items-center justify-center p-4">
-                          <img src={preview.url} alt={selectedKey} className="max-h-[560px] max-w-full object-contain" />
-                        </div>
-                      ) : (
-                        <pre className="min-h-80 overflow-x-auto p-4 font-mono text-[11px] leading-6 text-[#d8dfd8]">{preview.kind === "text" ? preview.content : "No inline preview available for this object type."}</pre>
-                      )}
-                      {previewLoading ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-[#111917]/75 font-mono text-[10px] text-[#b5c1bb]">
-                          Loading preview
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </>
-              )}
+              <div className="mt-4 flex gap-2">
+                <Button
+                  onClick={() => void saveBucket()}
+                  disabled={saving || deleting || !name.trim()}
+                >
+                  <Archive className="size-3.5" />
+                  Save
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
-      </section>}
+          </section>
+
+          <Panel title="Danger zone">
+            <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+              <div>
+                <Text bold size="sm">
+                  Delete bucket
+                </Text>
+                <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
+                  Permanently remove this bucket and its objects. Worker bindings should be updated
+                  before deleting it.
+                </Text>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => void deleteBucket()}
+                disabled={deleting || saving}
+              >
+                <Trash2 className="size-3.5" />
+                Delete bucket
+              </Button>
+            </div>
+          </Panel>
+
+          <Panel title="Bound workers">
+            {bindings.length ? (
+              <div className="space-y-3">
+                {bindings.map(({ worker, binding }) => (
+                  <div
+                    key={`${worker.id}-${binding.binding}`}
+                    className="rounded-lg border border-gray-200 bg-white px-4 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
+                        <p className="mt-1 font-mono text-[10px] text-[#7d837d]">
+                          {worker.hostname}
+                        </p>
+                      </div>
+                      <Badge tone="green">{binding.binding}</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm leading-6 text-[#7a8079]">
+                This bucket is not bound by any active deployment yet, so there is no worker path
+                available for object inspection.
+              </p>
+            )}
+          </Panel>
+        </div>
+      )}
+
+      {tab === "objects" && (
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-7rem)] md:min-h-[540px]">
+          {!accessorWorkerID ? (
+            <WorkerDetailEmpty
+              icon={<DatabaseZap />}
+              title="No worker access path"
+              copy="Bind this bucket to a worker to browse objects through the runtime API."
+            />
+          ) : (
+            <div className="grid min-h-[540px] md:h-full md:min-h-0 md:grid-cols-[280px_minmax(0,1fr)]">
+              <aside className="flex min-h-0 flex-col border-b border-gray-200 bg-gray-50 md:h-full md:border-b-0 md:border-r">
+                <div className="flex items-center justify-between px-4 pb-2 pt-3">
+                  <p className="font-mono text-[9px]   text-[#a0a39c]">Objects</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Refresh objects"
+                    onClick={() => void refreshObjects()}
+                    disabled={loadingObjects}
+                  >
+                    <RefreshCw className={loadingObjects ? "size-3.5 animate-spin" : "size-3.5"} />
+                  </Button>
+                </div>
+                <div className="space-y-3 px-4 pb-3">
+                  <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-gray-300 bg-white px-3 py-2 font-mono text-[10px] font-bold text-gray-700 hover:bg-gray-50">
+                    <Upload className="size-3.5 text-[#d75a41]" />
+                    {uploading ? "Uploading..." : "Upload file"}
+                    <input type="file" className="hidden" onChange={uploadObject} />
+                  </label>
+                  <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
+                    <Search className="size-4 text-[#959a93]" />
+                    <Input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search objects"
+                      variant="unstyled"
+                      className="min-w-0 flex-1"
+                      inputClassName="h-10 bg-transparent p-0"
+                    />
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto pb-3">
+                  {filteredObjects.map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => void loadObject(item.key)}
+                      className={
+                        selectedKey === item.key
+                          ? "flex w-full items-center gap-2 bg-[#e5e0d6] px-4 py-2 text-left font-mono text-[10px] font-bold text-[#35413e]"
+                          : "flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] text-[#848a83] transition hover:bg-white/60 hover:text-[#4c5853]"
+                      }
+                    >
+                      {item.httpMetadata?.contentType?.includes("json") ? (
+                        <FileJson className="size-3.5 text-[#bd7e35]" />
+                      ) : (
+                        <FileText className="size-3.5 text-[#668e7a]" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate">{item.key}</span>
+                      <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
+                    </button>
+                  ))}
+                  {!filteredObjects.length && (
+                    <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">
+                      {status || "No objects yet"}
+                    </p>
+                  )}
+                </div>
+              </aside>
+
+              <div className="min-h-0 overflow-y-auto p-5">
+                {!selectedKey ? (
+                  <WorkerDetailEmpty
+                    icon={<DatabaseZap />}
+                    title="Select an object"
+                    copy="Choose an object to inspect its metadata, preview text content, or download it."
+                  />
+                ) : (
+                  <>
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-extrabold text-[#26332f]">{selectedKey}</p>
+                        <p className="mt-1 font-mono text-[10px] text-[#8a8f88]">
+                          {selectedObject?.httpMetadata?.contentType || "application/octet-stream"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void downloadSelectedObject()}
+                        >
+                          <ArrowDownToLine className="size-3.5" />
+                          Download
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => void deleteSelectedObject()}
+                        >
+                          <Trash2 className="size-3.5" />
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                    {selectedObject ? (
+                      <div className="mb-4 overflow-hidden rounded-lg border border-[#e2ddd2]">
+                        {[
+                          ["Size", formatBytes(selectedObject.size)],
+                          ["Uploaded", new Date(selectedObject.uploaded).toLocaleString()],
+                          ["ETag", selectedObject.etag || "-"],
+                        ].map(([label, value]) => (
+                          <div
+                            key={label}
+                            className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"
+                          >
+                            <span className="font-mono text-[10px]   text-[#93978f]">{label}</span>
+                            <span className="font-mono text-[11px] font-bold break-all text-[#4f5a55]">
+                              {value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="overflow-hidden rounded-lg border border-[#d9d3c7] bg-[#202b29]">
+                      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                        <p className="font-mono text-[10px] text-[#b5c1bb]">Preview</p>
+                        <span className="font-mono text-[9px]   text-[#778781]">
+                          {previewLoading ? "loading" : previewLabel(preview)}
+                        </span>
+                      </div>
+                      <div className="relative min-h-80 bg-[#111917]">
+                        {preview.kind === "image" ? (
+                          <div className="flex min-h-80 items-center justify-center p-4">
+                            <img
+                              src={preview.url}
+                              alt={selectedKey}
+                              className="max-h-[560px] max-w-full object-contain"
+                            />
+                          </div>
+                        ) : (
+                          <pre className="min-h-80 overflow-x-auto p-4 font-mono text-[11px] leading-6 text-[#d8dfd8]">
+                            {preview.kind === "text"
+                              ? preview.content
+                              : "No inline preview available for this object type."}
+                          </pre>
+                        )}
+                        {previewLoading ? (
+                          <div className="absolute inset-0 flex items-center justify-center bg-[#111917]/75 font-mono text-[10px] text-[#b5c1bb]">
+                            Loading preview
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
     </>
   );
 }
 
 function compactNumber(value: number) {
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
+    value || 0,
+  );
 }
 
 function previewLabel(preview: ObjectPreview) {

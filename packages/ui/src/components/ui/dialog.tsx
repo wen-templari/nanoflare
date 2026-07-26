@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Modal, Stack, Text } from "@mantine/core";
+import { Dialog as KumoDialog, Text } from "@cloudflare/kumo";
 
 export function Dialog({
   open,
@@ -17,11 +17,19 @@ export function Dialog({
   panelClassName?: string;
 }) {
   return (
-    <Modal opened={open} onClose={onClose} title={title} centered size={panelClassName?.includes("2xl") ? "lg" : "md"}>
-      <Stack gap="md">
-        <Text c="dimmed" size="sm">{description}</Text>
-        {children}
-      </Stack>
-    </Modal>
+    <KumoDialog.Root open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <KumoDialog className={panelClassName} size={panelClassName?.includes("2xl") ? "lg" : "base"}>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-4">
+            <KumoDialog.Title>{title}</KumoDialog.Title>
+            <KumoDialog.Close aria-label="Close" />
+          </div>
+          <Text size="sm" variant="secondary">
+            {description}
+          </Text>
+          {children}
+        </div>
+      </KumoDialog>
+    </KumoDialog.Root>
   );
 }

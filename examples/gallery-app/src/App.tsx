@@ -1,92 +1,92 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react";
 
 type GalleryItem = {
-  id: string
-  key: string
-  filename: string
-  contentType: string
-  uploadedAt: string
-  size: number
-  previewCount: number
-}
+  id: string;
+  key: string;
+  filename: string;
+  contentType: string;
+  uploadedAt: string;
+  size: number;
+  previewCount: number;
+};
 
 type GalleryResponse = {
-  items: GalleryItem[]
-}
+  items: GalleryItem[];
+};
 
 type UploadResponse = {
-  ok: true
-  item: GalleryItem
-}
+  ok: true;
+  item: GalleryItem;
+};
 
 type UploadErrorResponse = {
-  ok?: false
-  error?: string
-}
+  ok?: false;
+  error?: string;
+};
 
 type DeleteResponse = {
-  ok: true
-  id: string
-}
+  ok: true;
+  id: string;
+};
 
-type Theme = "light" | "dark"
+type Theme = "light" | "dark";
 
-const THEME_STORAGE_KEY = "gallery-app-theme"
+const THEME_STORAGE_KEY = "gallery-app-theme";
 
 function getInitialTheme(): Theme {
-  if (typeof window === "undefined") return "light"
+  if (typeof window === "undefined") return "light";
 
-  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (storedTheme === "light" || storedTheme === "dark") {
-    return storedTheme
+    return storedTheme;
   }
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 export function App() {
-  const [items, setItems] = useState<GalleryItem[]>([])
-  const [status, setStatus] = useState("Loading gallery...")
-  const [isUploading, setIsUploading] = useState(false)
-  const [selectedItem, setSelectedItem] = useState<GalleryItem | null>(null)
-  const [previewingId, setPreviewingId] = useState<string | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [theme, setTheme] = useState<Theme>(getInitialTheme)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [items, setItems] = useState<GalleryItem[]>([]);
+  const [status, setStatus] = useState("Loading gallery...");
+  const [isUploading, setIsUploading] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<GalleryItem | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    document.documentElement.style.colorScheme = theme
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
-  }, [theme])
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
-    let active = true
+    let active = true;
 
     async function loadGallery() {
       try {
-        const response = await fetch("/api/gallery")
+        const response = await fetch("/api/gallery");
         if (!response.ok) {
-          throw new Error("Gallery unavailable")
+          throw new Error("Gallery unavailable");
         }
 
-        const payload = (await response.json()) as GalleryResponse
-        if (!active) return
+        const payload = (await response.json()) as GalleryResponse;
+        if (!active) return;
 
-        const nextItems = payload.items ?? []
-        setItems(nextItems)
-        setStatus(nextItems.length ? "" : "No uploads yet. Add the first image.")
+        const nextItems = payload.items ?? [];
+        setItems(nextItems);
+        setStatus(nextItems.length ? "" : "No uploads yet. Add the first image.");
       } catch {
-        if (!active) return
-        setStatus("Gallery unavailable.")
+        if (!active) return;
+        setStatus("Gallery unavailable.");
       }
     }
 
-    void loadGallery()
+    void loadGallery();
     return () => {
-      active = false
-    }
-  }, [])
+      active = false;
+    };
+  }, []);
 
   async function uploadFile(file: File) {
     console.log("[gallery ui] selected file", {
@@ -94,90 +94,90 @@ export function App() {
       browserType: file.type,
       size: file.size,
       lastModified: file.lastModified,
-    })
+    });
 
-    setIsUploading(true)
-    setStatus(`Uploading ${file.name}...`)
+    setIsUploading(true);
+    setStatus(`Uploading ${file.name}...`);
 
-    const body = new FormData()
-    body.set("image", file)
+    const body = new FormData();
+    body.set("image", file);
 
     try {
       const response = await fetch("/api/gallery", {
         method: "POST",
         body,
-      })
-      const payload = (await response.json()) as UploadResponse | UploadErrorResponse
+      });
+      const payload = (await response.json()) as UploadResponse | UploadErrorResponse;
       if (!response.ok || !("item" in payload)) {
-        const message = "error" in payload ? payload.error : undefined
-        throw new Error(message || "Upload failed")
+        const message = "error" in payload ? payload.error : undefined;
+        throw new Error(message || "Upload failed");
       }
 
-      console.log("[gallery ui] upload response", payload.item)
+      console.log("[gallery ui] upload response", payload.item);
 
-      setItems((current) => [payload.item, ...current].slice(0, 24))
-      setStatus(`Uploaded ${payload.item.filename}.`)
+      setItems((current) => [payload.item, ...current].slice(0, 24));
+      setStatus(`Uploaded ${payload.item.filename}.`);
       if (fileInputRef.current) {
-        fileInputRef.current.value = ""
+        fileInputRef.current.value = "";
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Upload failed")
+      setStatus(error instanceof Error ? error.message : "Upload failed");
     } finally {
-      setIsUploading(false)
+      setIsUploading(false);
     }
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null
+    const file = event.target.files?.[0] ?? null;
     if (file) {
-      void uploadFile(file)
+      void uploadFile(file);
     }
   }
 
   async function handlePreview(item: GalleryItem) {
-    setPreviewingId(item.id)
+    setPreviewingId(item.id);
 
     try {
       const response = await fetch(`/api/gallery/${item.id}/preview`, {
         method: "POST",
-      })
-      const payload = (await response.json()) as UploadResponse | UploadErrorResponse
+      });
+      const payload = (await response.json()) as UploadResponse | UploadErrorResponse;
       if (!response.ok || !("item" in payload)) {
-        const message = "error" in payload ? payload.error : undefined
-        throw new Error(message || "Preview unavailable")
+        const message = "error" in payload ? payload.error : undefined;
+        throw new Error(message || "Preview unavailable");
       }
 
       setItems((current) =>
         current.map((candidate) => (candidate.id === payload.item.id ? payload.item : candidate)),
-      )
-      setSelectedItem(payload.item)
+      );
+      setSelectedItem(payload.item);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Preview unavailable")
+      setStatus(error instanceof Error ? error.message : "Preview unavailable");
     } finally {
-      setPreviewingId(null)
+      setPreviewingId(null);
     }
   }
 
   async function handleDelete(item: GalleryItem) {
-    setDeletingId(item.id)
+    setDeletingId(item.id);
 
     try {
       const response = await fetch(`/api/gallery/${item.id}`, {
         method: "DELETE",
-      })
-      const payload = (await response.json()) as DeleteResponse | UploadErrorResponse
+      });
+      const payload = (await response.json()) as DeleteResponse | UploadErrorResponse;
       if (!response.ok || !("id" in payload)) {
-        const message = "error" in payload ? payload.error : undefined
-        throw new Error(message || "Delete failed")
+        const message = "error" in payload ? payload.error : undefined;
+        throw new Error(message || "Delete failed");
       }
 
-      setItems((current) => current.filter((candidate) => candidate.id !== payload.id))
-      setSelectedItem((current) => (current?.id === payload.id ? null : current))
-      setStatus(`Deleted ${item.filename}.`)
+      setItems((current) => current.filter((candidate) => candidate.id !== payload.id));
+      setSelectedItem((current) => (current?.id === payload.id ? null : current));
+      setStatus(`Deleted ${item.filename}.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Delete failed")
+      setStatus(error instanceof Error ? error.message : "Delete failed");
     } finally {
-      setDeletingId(null)
+      setDeletingId(null);
     }
   }
 
@@ -243,7 +243,10 @@ export function App() {
             </div>
           </div>
 
-          <div className="mt-4 min-h-6 text-sm text-slate-500 dark:text-slate-400" aria-live="polite">
+          <div
+            className="mt-4 min-h-6 text-sm text-slate-500 dark:text-slate-400"
+            aria-live="polite"
+          >
             {status}
           </div>
         </section>
@@ -269,18 +272,24 @@ export function App() {
                       className="block aspect-square w-full bg-slate-100 object-cover dark:bg-slate-800"
                     />
                     <span className="sr-only">
-                      {previewingId === item.id ? `Opening ${item.filename}` : `Preview ${item.filename}`}
+                      {previewingId === item.id
+                        ? `Opening ${item.filename}`
+                        : `Preview ${item.filename}`}
                     </span>
                   </button>
                   <div className="flex justify-between px-4 pb-4 pt-4">
                     <div className="flex flex-col space-y-1">
-                      <strong className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{item.filename}</strong>
+                      <strong className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {item.filename}
+                      </strong>
                       <span className="text-sm text-slate-500 dark:text-slate-400">
                         {formatBytes(item.size)} • {new Date(item.uploadedAt).toLocaleString()}
                       </span>
                     </div>
                     <div>
-                      <span className="text-sm text-slate-500 dark:text-slate-400">{formatPreviews(item.previewCount)}</span>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">
+                        {formatPreviews(item.previewCount)}
+                      </span>
                     </div>
                   </div>
                   {/* <div className="flex gap-2 px-4 pb-4">
@@ -341,9 +350,12 @@ export function App() {
                 {selectedItem.filename}
               </h2>
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                {formatBytes(selectedItem.size)} • {new Date(selectedItem.uploadedAt).toLocaleString()}
+                {formatBytes(selectedItem.size)} •{" "}
+                {new Date(selectedItem.uploadedAt).toLocaleString()}
               </p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">{formatPreviews(selectedItem.previewCount)}</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                {formatPreviews(selectedItem.previewCount)}
+              </p>
               <div className="mt-2">
                 <button
                   type="button"
@@ -359,15 +371,15 @@ export function App() {
         </div>
       ) : null}
     </main>
-  )
+  );
 }
 
 function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatPreviews(count: number): string {
-  return `${count} ${count === 1 ? "preview" : "previews"}`
+  return `${count} ${count === 1 ? "preview" : "previews"}`;
 }

@@ -1,7 +1,15 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useAuth } from "./auth-context";
 import { fetchJSON } from "./api";
-import type { Database, KVNamespace, ObjectStorageBucket, Worker, WorkerDetailData, WorkerTraffic, WorkspaceContextValue } from "./types";
+import type {
+  Database,
+  KVNamespace,
+  ObjectStorageBucket,
+  Worker,
+  WorkerDetailData,
+  WorkerTraffic,
+  WorkspaceContextValue,
+} from "./types";
 import { sortDatabases, sortNamespaces, sortObjectStorageBuckets } from "./utils";
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -38,20 +46,22 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         ]);
         if (cancelled) return;
         setApiConnected(true);
-        const nextWorkers = await Promise.all((apps ?? []).map(async (app) => {
-          const [detail, traffic] = await Promise.all([
-            fetchJSON<WorkerDetailData>(`/v1/workers/${app.id}`).catch(() => undefined),
-            fetchJSON<WorkerTraffic>(`/v1/workers/${app.id}/traffic`).catch(() => undefined),
-          ]);
+        const nextWorkers = await Promise.all(
+          (apps ?? []).map(async (app) => {
+            const [detail, traffic] = await Promise.all([
+              fetchJSON<WorkerDetailData>(`/v1/workers/${app.id}`).catch(() => undefined),
+              fetchJSON<WorkerTraffic>(`/v1/workers/${app.id}/traffic`).catch(() => undefined),
+            ]);
 
-          return {
-            ...app,
-            status: detail?.deployment ? "live" as const : "draft" as const,
-            requests: traffic?.available ? formatCount(traffic.invocations) : "unavailable",
-            deployment: detail?.deployment?.id ?? "awaiting deploy",
-            bindings: detail?.deployment?.bindings ?? [],
-          };
-        }));
+            return {
+              ...app,
+              status: detail?.deployment ? ("live" as const) : ("draft" as const),
+              requests: traffic?.available ? formatCount(traffic.invocations) : "unavailable",
+              deployment: detail?.deployment?.id ?? "awaiting deploy",
+              bindings: detail?.deployment?.bindings ?? [],
+            };
+          }),
+        );
         if (cancelled) return;
         setWorkers(nextWorkers);
         setNamespaces(sortNamespaces(kvNamespaces ?? []));
@@ -123,7 +133,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 }
 
 function formatCount(value = 0) {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value);
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(
+    value,
+  );
 }
 
 export function useWorkspace() {

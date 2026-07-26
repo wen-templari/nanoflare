@@ -9,7 +9,7 @@ const supportedPackages = {
   "linux arm64": "nanoflare-cli-linux-arm64",
   "linux x64": "nanoflare-cli-linux-x64",
   "win32 arm64": "nanoflare-cli-win32-arm64",
-  "win32 x64": "nanoflare-cli-win32-x64"
+  "win32 x64": "nanoflare-cli-win32-x64",
 };
 
 const packageName = supportedPackages[`${process.platform} ${process.arch}`];
@@ -22,7 +22,11 @@ if (!packageName) {
 let binary;
 try {
   const packageJSON = require.resolve(`${packageName}/package.json`);
-  binary = path.join(path.dirname(packageJSON), "bin", process.platform === "win32" ? "nanoflare.exe" : "nanoflare");
+  binary = path.join(
+    path.dirname(packageJSON),
+    "bin",
+    process.platform === "win32" ? "nanoflare.exe" : "nanoflare",
+  );
 } catch (error) {
   console.error(`nanoflare: failed to find ${packageName}. Try reinstalling nanoflare-cli.`);
   process.exit(1);

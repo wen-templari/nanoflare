@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ActionIcon, Alert, Box, Center, Code, Group, Modal, MultiSelect, ScrollArea, SegmentedControl, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip } from "@mantine/core";
+import {
+  Banner,
+  Button,
+  Dialog,
+  Input,
+  InputArea,
+  LayerCard,
+  Table,
+  Tabs,
+  Text,
+  Tooltip,
+} from "@cloudflare/kumo";
 import { Check, Copy, PlugZap, Settings, SquarePen, Trash2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
@@ -8,10 +19,18 @@ import type { OAuthClient, OAuthClientConnection } from "../app/types";
 import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
 import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
 import { Panel } from "../components/shared/primitives";
 
-const oauthScopes = ["workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "objects:read", "objects:write"];
+const oauthScopes = [
+  "workers:read",
+  "workers:write",
+  "deployments:write",
+  "secrets:write",
+  "kv:read",
+  "kv:write",
+  "objects:read",
+  "objects:write",
+];
 const emptyForm = { name: "", redirectURIs: "", scopes: [] as string[] };
 const oauthClientDetailTabs = ["overview", "connections", "settings"] as const;
 
@@ -23,7 +42,10 @@ export function OAuthClientDetailPage() {
   const [connections, setConnections] = useState<OAuthClientConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useQueryTab<(typeof oauthClientDetailTabs)[number]>(oauthClientDetailTabs, "overview");
+  const [tab, setTab] = useQueryTab<(typeof oauthClientDetailTabs)[number]>(
+    oauthClientDetailTabs,
+    "overview",
+  );
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
@@ -65,7 +87,11 @@ export function OAuthClientDetailPage() {
 
   function openEdit() {
     if (!client) return;
-    setForm({ name: client.name, redirectURIs: client.redirect_uris.join("\n"), scopes: client.scopes });
+    setForm({
+      name: client.name,
+      redirectURIs: client.redirect_uris.join("\n"),
+      scopes: client.scopes,
+    });
     setError("");
     setFormOpen(true);
   }
@@ -75,7 +101,10 @@ export function OAuthClientDetailPage() {
     setSaving(true);
     const payload = {
       name: form.name,
-      redirect_uris: form.redirectURIs.split(/\n+/).map((value) => value.trim()).filter(Boolean),
+      redirect_uris: form.redirectURIs
+        .split(/\n+/)
+        .map((value) => value.trim())
+        .filter(Boolean),
       scopes: form.scopes,
     };
     try {
@@ -108,84 +137,120 @@ export function OAuthClientDetailPage() {
 
   return (
     <>
-      {error && <Alert color="red" mb="md">{error}</Alert>}
+      {error && <Banner className="mb-4" description={error} variant="error" />}
 
       {client && (
-        <Stack gap="lg">
-          <SegmentedControl
-            data={[
+        <div className="flex flex-col gap-6">
+          <Tabs
+            tabs={[
               { label: "Overview", value: "overview" },
               { label: "Connections", value: "connections" },
               { label: "Settings", value: "settings" },
             ]}
-            onChange={(value) => setTab(value as "overview" | "connections" | "settings")}
+            onValueChange={(value) => setTab(value as "overview" | "connections" | "settings")}
             value={tab}
+            variant="segmented"
           />
 
           {tab === "overview" && (
             <>
-              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+              <div className="grid gap-4 md:grid-cols-3">
                 <Panel title="Client ID" eyebrow="Registration">
-                  <Group gap="xs" wrap="nowrap">
-                    <Code className="min-w-0 truncate">{client.client_id}</Code>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Text DANGEROUS_className="min-w-0 truncate" variant="mono">
+                      {client.client_id}
+                    </Text>
                     <CopyButton label="Client ID" value={client.client_id} onCopy={copy} />
-                  </Group>
+                  </div>
                 </Panel>
                 <Panel title="Status" eyebrow="Lifecycle">
                   <Badge tone="green">Active</Badge>
-                  <Text c="dimmed" mt="xs" size="xs">Updated {new Date(client.updated_at).toLocaleString()}</Text>
+                  <Text DANGEROUS_className="mt-2 text-xs" variant="secondary">
+                    Updated {new Date(client.updated_at).toLocaleString()}
+                  </Text>
                 </Panel>
                 <Panel title="Scopes" eyebrow={`${client.scopes.length} allowed`}>
                   <ScopeBadges scopes={client.scopes} />
                 </Panel>
-              </SimpleGrid>
+              </div>
 
               <Panel title="Redirect URIs" eyebrow={`${client.redirect_uris.length} configured`}>
-                <Stack gap="xs">
+                <div className="flex flex-col gap-2">
                   {client.redirect_uris.map((uri) => (
-                    <Group key={uri} gap="xs" wrap="nowrap">
-                      <Text c="dimmed" ff="monospace" size="xs" truncate>{uri}</Text>
+                    <div className="flex min-w-0 items-center gap-2" key={uri}>
+                      <Text DANGEROUS_className="min-w-0 truncate text-xs" variant="mono-secondary">
+                        {uri}
+                      </Text>
                       <CopyButton label="Redirect URI" value={uri} onCopy={copy} />
-                    </Group>
+                    </div>
                   ))}
-                </Stack>
+                </div>
               </Panel>
             </>
           )}
 
           {tab === "connections" && (
-            <Box>
+            <div>
               <SectionHeading title="Connected" eyebrow={`${connections.length} active`} />
               <TableSurface>
-                <ScrollArea>
-                  <Table highlightOnHover miw={860} verticalSpacing="sm" className="table-fixed">
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th className="w-[30%]">User</Table.Th>
-                        <Table.Th className="w-[30%]">Resource org</Table.Th>
-                        <Table.Th className="w-[28%]">Granted scopes</Table.Th>
-                        <Table.Th className="w-[12%]">Connected</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
+                <div className="overflow-x-auto">
+                  <Table className="min-w-[860px] table-fixed">
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.Head className="w-[30%]">User</Table.Head>
+                        <Table.Head className="w-[30%]">Resource org</Table.Head>
+                        <Table.Head className="w-[28%]">Granted scopes</Table.Head>
+                        <Table.Head className="w-[12%]">Connected</Table.Head>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
                       {connections.map((connection) => (
-                        <Table.Tr key={`${connection.user_id}-${connection.org_id}`}>
-                          <Table.Td className="w-[30%]"><Text fw={700} truncate>{connection.user_email}</Text><Text c="dimmed" ff="monospace" size="xs" truncate>{connection.user_id}</Text></Table.Td>
-                          <Table.Td className="w-[30%]"><Text fw={700} truncate>{connection.org_name}</Text><Text c="dimmed" ff="monospace" size="xs" truncate>{connection.org_id}</Text></Table.Td>
-                          <Table.Td className="w-[28%]"><ScopeBadges scopes={connection.scopes} /></Table.Td>
-                          <Table.Td className="w-[12%]"><Text c="dimmed" size="sm" truncate>{new Date(connection.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
-                        </Table.Tr>
+                        <Table.Row key={`${connection.user_id}-${connection.org_id}`}>
+                          <Table.Cell className="w-[30%]">
+                            <Text DANGEROUS_className="truncate font-medium">
+                              {connection.user_email}
+                            </Text>
+                            <Text DANGEROUS_className="truncate text-xs" variant="mono-secondary">
+                              {connection.user_id}
+                            </Text>
+                          </Table.Cell>
+                          <Table.Cell className="w-[30%]">
+                            <Text DANGEROUS_className="truncate font-medium">
+                              {connection.org_name}
+                            </Text>
+                            <Text DANGEROUS_className="truncate text-xs" variant="mono-secondary">
+                              {connection.org_id}
+                            </Text>
+                          </Table.Cell>
+                          <Table.Cell className="w-[28%]">
+                            <ScopeBadges scopes={connection.scopes} />
+                          </Table.Cell>
+                          <Table.Cell className="w-[12%]">
+                            <Text DANGEROUS_className="truncate" size="sm" variant="secondary">
+                              {new Date(connection.created_at).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </Text>
+                          </Table.Cell>
+                        </Table.Row>
                       ))}
-                    </Table.Tbody>
+                    </Table.Body>
                   </Table>
-                </ScrollArea>
-                {!loading && !connections.length && <EmptyState icon={<PlugZap />} title="No active connections" copy="Approved users and resource organizations will appear here." />}
+                </div>
+                {!loading && !connections.length && (
+                  <EmptyState
+                    icon={<PlugZap />}
+                    title="No active connections"
+                    copy="Approved users and resource organizations will appear here."
+                  />
+                )}
               </TableSurface>
-            </Box>
+            </div>
           )}
 
           {tab === "settings" && (
-            <Stack gap="md">
+            <div className="flex flex-col gap-4">
               <Panel title="Basic info" eyebrow="OAuth client">
                 <div className="overflow-hidden rounded-lg border border-[#e2ddd2]">
                   {[
@@ -197,98 +262,186 @@ export function OAuthClientDetailPage() {
                     ["Redirect URIs", String(client.redirect_uris.length)],
                     ["Allowed scopes", String(client.scopes.length)],
                   ].map(([label, value]) => (
-                    <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
+                    <div
+                      key={label}
+                      className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"
+                    >
                       <span className="font-mono text-[10px] text-[#93978f]">{label}</span>
-                      <span className="break-all font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span>
+                      <span className="break-all font-mono text-[0.9em] font-medium text-kumo-default">
+                        {value}
+                      </span>
                     </div>
                   ))}
                 </div>
               </Panel>
               <Panel title="Actions" eyebrow="Manage client">
                 <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-                  <Text c="dimmed" size="sm">Update this client registration, redirect URIs, and allowed scopes.</Text>
-                  <Button variant="outline" onClick={openEdit}><SquarePen className="size-4" />Edit</Button>
+                  <Text size="sm" variant="secondary">
+                    Update this client registration, redirect URIs, and allowed scopes.
+                  </Text>
+                  <Button variant="outline" onClick={openEdit}>
+                    <SquarePen className="size-4" />
+                    Edit
+                  </Button>
                 </div>
               </Panel>
               <Panel title="Danger zone">
                 <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
                   <div>
-                    <Text fw={700} size="sm">Delete client</Text>
-                    <Text c="dimmed" mt={4} size="sm">Permanently remove this OAuth client so integrations can no longer authorize through it.</Text>
+                    <Text as="h3" size="sm">
+                      Delete client
+                    </Text>
+                    <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
+                      Permanently remove this OAuth client so integrations can no longer authorize
+                      through it.
+                    </Text>
                   </div>
-                  <Button variant="danger" onClick={deleteClient}><Trash2 className="size-4" />Delete client</Button>
+                  <Button variant="destructive" onClick={deleteClient}>
+                    <Trash2 className="size-4" />
+                    Delete client
+                  </Button>
                 </div>
               </Panel>
-            </Stack>
+            </div>
           )}
-        </Stack>
+        </div>
       )}
 
-      {!loading && !client && !error && <EmptyState icon={<Settings />} title="Client not found" copy="This OAuth client is not owned by the active organization." />}
+      {!loading && !client && !error && (
+        <EmptyState
+          icon={<Settings />}
+          title="Client not found"
+          copy="This OAuth client is not owned by the active organization."
+        />
+      )}
 
-      <Modal opened={formOpen} onClose={() => setFormOpen(false)} title="Edit OAuth client" size="lg">
-        <Stack>
-          <TextInput
-            label="Name"
-            value={form.name}
-            onChange={(event) => {
-              const name = event.currentTarget.value;
-              setForm((current) => ({ ...current, name }));
-            }}
-          />
-          <Textarea
-            autosize
-            label="Redirect URIs"
-            minRows={3}
-            value={form.redirectURIs}
-            onChange={(event) => {
-              const redirectURIs = event.currentTarget.value;
-              setForm((current) => ({ ...current, redirectURIs }));
-            }}
-          />
-          <MultiSelect
-            data={oauthScopes}
-            label="Allowed scopes"
-            value={form.scopes}
-            onChange={(scopes) => setForm((current) => ({ ...current, scopes }))}
-          />
-          <Group justify="end">
-            <Button variant="ghost" onClick={() => setFormOpen(false)}>Cancel</Button>
-            <Button loading={saving} onClick={submitClient}><Check className="size-4" />Save changes</Button>
-          </Group>
-        </Stack>
-      </Modal>
+      <Dialog.Root open={formOpen} onOpenChange={(open) => !open && setFormOpen(false)}>
+        <Dialog className="sm:w-[48rem]">
+          <div className="flex items-start justify-between gap-4">
+            <Dialog.Title>Edit OAuth client</Dialog.Title>
+            <Dialog.Close aria-label="Close" />
+          </div>
+          <div className="flex flex-col gap-4 pt-4">
+            <Input
+              label="Name"
+              value={form.name}
+              onChange={(event) => {
+                const name = event.currentTarget.value;
+                setForm((current) => ({ ...current, name }));
+              }}
+            />
+            <InputArea
+              label="Redirect URIs"
+              rows={3}
+              value={form.redirectURIs}
+              onChange={(event) => {
+                const redirectURIs = event.currentTarget.value;
+                setForm((current) => ({ ...current, redirectURIs }));
+              }}
+            />
+            <label className="grid gap-1.5 text-sm">
+              <span className="font-medium">Allowed scopes</span>
+              <select
+                className="min-h-24 rounded-lg bg-kumo-base p-2 ring ring-kumo-line"
+                multiple
+                value={form.scopes}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    scopes: [...event.currentTarget.selectedOptions].map((option) => option.value),
+                  }))
+                }
+              >
+                {oauthScopes.map((scope) => (
+                  <option key={scope} value={scope}>
+                    {scope}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setFormOpen(false)}>
+                Cancel
+              </Button>
+              <Button loading={saving} onClick={submitClient}>
+                <Check className="size-4" />
+                Save changes
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      </Dialog.Root>
     </>
   );
 }
 
 function ScopeBadges({ scopes }: { scopes: string[] }) {
-  return <Group gap={6}>{scopes.map((scope) => <Badge key={scope} tone="blue">{scope}</Badge>)}</Group>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {scopes.map((scope) => (
+        <Badge key={scope} tone="blue">
+          {scope}
+        </Badge>
+      ))}
+    </div>
+  );
 }
 
-function CopyButton({ label, value, onCopy }: { label: string; value: string; onCopy: (value: string, label: string) => void }) {
+function CopyButton({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: (value: string, label: string) => void;
+}) {
   return (
-    <Tooltip label={`Copy ${label.toLowerCase()}`}>
-      <ActionIcon aria-label={`Copy ${label.toLowerCase()}`} size="sm" variant="subtle" onClick={() => onCopy(value, label)}>
-        <Copy size={14} />
-      </ActionIcon>
-    </Tooltip>
+    <Tooltip
+      content={`Copy ${label.toLowerCase()}`}
+      render={
+        <Button
+          aria-label={`Copy ${label.toLowerCase()}`}
+          shape="square"
+          variant="ghost"
+          onClick={() => onCopy(value, label)}
+        >
+          <Copy size={14} />
+        </Button>
+      }
+    />
   );
 }
 
 function SectionHeading({ title, eyebrow }: { title: string; eyebrow: string }) {
   return (
-    <Box mb="sm">
-      <Text c="dimmed" fw={700} size="xs" tt="uppercase">{eyebrow}</Text>
-      <Title mt={2} order={3} size="h5">{title}</Title>
-    </Box>
+    <div className="mb-3">
+      <Text size="xs" variant="secondary">
+        {eyebrow}
+      </Text>
+      <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
+        {title}
+      </Text>
+    </div>
   );
 }
 
 function TableSurface({ children }: { children: ReactNode }) {
-  return <Box bg="white" className="overflow-hidden rounded-lg border border-[var(--mantine-color-gray-3)]">{children}</Box>;
+  return <LayerCard className="overflow-hidden">{children}</LayerCard>;
 }
 
 function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
-  return <Center h={220}><Stack align="center" gap={4} ta="center" className="[&_svg]:size-6">{icon}<Text fw={700} size="sm">{title}</Text><Text c="dimmed" size="xs">{copy}</Text></Stack></Center>;
+  return (
+    <div className="flex h-[220px] items-center justify-center">
+      <div className="flex flex-col items-center gap-1 text-center [&_svg]:size-6">
+        {icon}
+        <Text DANGEROUS_className="font-medium" size="sm">
+          {title}
+        </Text>
+        <Text DANGEROUS_className="text-xs" variant="secondary">
+          {copy}
+        </Text>
+      </div>
+    </div>
+  );
 }

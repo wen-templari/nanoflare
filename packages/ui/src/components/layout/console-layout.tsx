@@ -1,14 +1,34 @@
-import { ActionIcon, Anchor, AppShell, Badge, Box, Breadcrumbs, Burger, Button, Group, Modal, NavLink as MantineNavLink, Notification, Paper, Select, Stack, Text, TextInput, Title, Tooltip } from "@mantine/core"
-import { useDisclosure } from "@mantine/hooks"
-import { Boxes, Check, ChevronDown, CircleGauge, Database, DatabaseZap, KeyRound, LogOut, Plus, Settings, Waypoints } from "lucide-react"
-import { useState } from "react"
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { normalizeUsageLevel, usageLevelPaid } from "../../app/org-limits"
-import { useWorkspace } from "../../app/workspace-context"
-import { CreateDatabaseDialog } from "../dialogs/create-database-dialog"
-import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog"
-import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog"
-import { CreateWorkerDialog } from "../dialogs/create-worker-dialog"
+import {
+  Breadcrumbs,
+  Button,
+  Dialog,
+  Field,
+  Input,
+  LayerCard,
+  Select,
+  Sidebar,
+  Text,
+  Tooltip,
+} from "@cloudflare/kumo";
+import {
+  Boxes,
+  Check,
+  CircleGauge,
+  Database,
+  DatabaseZap,
+  KeyRound,
+  LogOut,
+  Settings,
+  Waypoints,
+} from "lucide-react";
+import { Fragment, useState } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { normalizeUsageLevel, usageLevelPaid } from "../../app/org-limits";
+import { useWorkspace } from "../../app/workspace-context";
+import { CreateDatabaseDialog } from "../dialogs/create-database-dialog";
+import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog";
+import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog";
+import { CreateWorkerDialog } from "../dialogs/create-worker-dialog";
 
 const navItems = [
   { href: "/", match: "/", label: "Overview", icon: CircleGauge },
@@ -17,15 +37,14 @@ const navItems = [
   { href: "/databases", match: "/databases", label: "Databases", icon: Database },
   { href: "/object-storage", match: "/object-storage", label: "Object storage", icon: DatabaseZap },
   { href: "/settings", match: "/settings", label: "Settings", icon: Settings },
-]
+];
 
-const defaultOwnedOrganizationLimit = 1
-const createOrganizationSelectValue = "__create_organization__"
+const defaultOwnedOrganizationLimit = 1;
+const createOrganizationSelectValue = "__create_organization__";
 
 export function ConsoleLayout() {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const [opened, { toggle, close }] = useDisclosure()
+  const location = useLocation();
+  const navigate = useNavigate();
   const {
     workers,
     setWorkers,
@@ -53,18 +72,25 @@ export function ConsoleLayout() {
     closeObjectStorageBucketDialog,
     toast,
     notify,
-  } = useWorkspace()
-  const [orgModalOpen, setOrgModalOpen] = useState(false)
-  const [orgName, setOrgName] = useState("")
-  const [orgSaving, setOrgSaving] = useState(false)
-  const [orgError, setOrgError] = useState("")
+  } = useWorkspace();
+  const [orgModalOpen, setOrgModalOpen] = useState(false);
+  const [orgName, setOrgName] = useState("");
+  const [orgSaving, setOrgSaving] = useState(false);
+  const [orgError, setOrgError] = useState("");
 
-  const breadcrumbs = getBreadcrumbs(location.pathname, { workers, namespaces, databases, objectStorageBuckets })
-  const hasOrg = Boolean(activeOrgID)
-  const activeOrg = organizations.find((org) => org.id === activeOrgID)
-  const activeUsageLevel = normalizeUsageLevel(activeOrg?.usage_level)
-  const ownedOrganizations = organizations.filter((org) => org.role === "owner")
-  const ownedOrganizationLimitReached = activeUsageLevel !== usageLevelPaid && ownedOrganizations.length >= defaultOwnedOrganizationLimit
+  const breadcrumbs = getBreadcrumbs(location.pathname, {
+    workers,
+    namespaces,
+    databases,
+    objectStorageBuckets,
+  });
+  const hasOrg = Boolean(activeOrgID);
+  const activeOrg = organizations.find((org) => org.id === activeOrgID);
+  const activeUsageLevel = normalizeUsageLevel(activeOrg?.usage_level);
+  const ownedOrganizations = organizations.filter((org) => org.role === "owner");
+  const ownedOrganizationLimitReached =
+    activeUsageLevel !== usageLevelPaid &&
+    ownedOrganizations.length >= defaultOwnedOrganizationLimit;
   const organizationSelectData = [
     ...organizations.map((org) => ({
       value: org.id,
@@ -74,31 +100,33 @@ export function ConsoleLayout() {
     ...(!ownedOrganizationLimitReached
       ? [{ value: createOrganizationSelectValue, label: "Create organization", usageLevel: "" }]
       : []),
-  ]
+  ];
 
   function signOut() {
-    logout()
-    window.location.assign("/v1/auth/oidc/logout")
+    logout();
+    window.location.assign("/v1/auth/oidc/logout");
   }
 
   async function submitOrganization(event: React.FormEvent) {
-    event.preventDefault()
+    event.preventDefault();
     if (ownedOrganizationLimitReached) {
-      setOrgError(`Default users are limited to ${defaultOwnedOrganizationLimit} owned organization.`)
-      return
+      setOrgError(
+        `Default users are limited to ${defaultOwnedOrganizationLimit} owned organization.`,
+      );
+      return;
     }
-    setOrgSaving(true)
-    setOrgError("")
+    setOrgSaving(true);
+    setOrgError("");
     try {
-      await createOrganization(orgName)
-      setOrgName("")
-      setOrgModalOpen(false)
-      notify("Organization created")
-      navigate("/")
+      await createOrganization(orgName);
+      setOrgName("");
+      setOrgModalOpen(false);
+      notify("Organization created");
+      navigate("/");
     } catch (err) {
-      setOrgError(err instanceof Error ? err.message : "Could not create organization")
+      setOrgError(err instanceof Error ? err.message : "Could not create organization");
     } finally {
-      setOrgSaving(false)
+      setOrgSaving(false);
     }
   }
 
@@ -113,160 +141,171 @@ export function ConsoleLayout() {
         saving={orgSaving}
         toast={toast}
       />
-    )
+    );
   }
 
   return (
-    <AppShell
-      header={{ height: 64 }}
-      layout="alt"
-      navbar={{ width: 260, breakpoint: "md", collapsed: { mobile: !opened } }}
-      padding="lg"
-    >
-      <AppShell.Header>
-        <Group h="100%" px="lg" justify="space-between">
-          <Group>
-            <Burger opened={opened} onClick={toggle} hiddenFrom="md" size="sm" />
-            {breadcrumbs.length > 1 && (
-              <Breadcrumbs>
-                {breadcrumbs.map((item, index) => (
-                  item.href && index < breadcrumbs.length - 1
-                    ? <Anchor c="gray.5" component={Link} key={item.href} size="sm" to={item.href}>{item.label}</Anchor>
-                    : <Text c="gray.9" fw={700} key={`${item.label}-${index}`} size="sm">{item.label}</Text>
-                ))}
-              </Breadcrumbs>
-            )}
-          </Group>
-          <Group gap="sm">
+    <Sidebar.Provider className="h-svh overflow-hidden" collapsible="none" defaultOpen>
+      <Sidebar>
+        <Sidebar.Header>
+          <div className="flex w-full items-center gap-2">
+            <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-kumo-brand text-kumo-inverse">
+              <Boxes size={17} />
+            </div>
             <Select
-              allowDeselect={false}
-              data={organizationSelectData}
+              className="min-w-0 flex-1"
+              items={organizationSelectData}
               disabled={!organizations.length}
-              maw={220}
-              onChange={(value) => {
-                if (!value) return
+              onValueChange={(value) => {
+                if (!value) return;
                 if (value === createOrganizationSelectValue) {
-                  setOrgModalOpen(true)
-                  return
+                  setOrgModalOpen(true);
+                  return;
                 }
-                setActiveOrgID(value)
+                setActiveOrgID(value);
               }}
               placeholder="No organization"
-              renderOption={({ option }) => {
-                if (option.value === createOrganizationSelectValue) {
-                  return (
-                    <Group gap="xs" wrap="nowrap">
-                      <Plus size={14} />
-                      <Text size="sm">{option.label}</Text>
-                    </Group>
-                  )
-                }
-
-                const usageLevel = "usageLevel" in option ? option.usageLevel : ""
-
-                return (
-                  <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
-                    <Text size="sm" truncate>{option.label}</Text>
-                    <Badge color={usageLevel === usageLevelPaid ? "green" : "gray"} radius="sm" size="xs" variant="light">
-                      {usageLevel === usageLevelPaid ? "Paid" : "Default"}
-                    </Badge>
-                  </Group>
-                )
-              }}
-              rightSection={activeOrg ? (
-                <Group gap={6} mr={4} wrap="nowrap">
-                  <Badge color={activeUsageLevel === usageLevelPaid ? "green" : "gray"} radius="sm" size="xs" variant="light">
-                    {activeUsageLevel === usageLevelPaid ? "Paid" : "Default"}
-                  </Badge>
-                  <ChevronDown size={14} />
-                </Group>
-              ) : undefined}
-              rightSectionPointerEvents="none"
-              rightSectionWidth={86}
-              size="xs"
-              styles={{
-                input: { paddingRight: activeOrg ? 90 : undefined },
-              }}
               value={activeOrgID}
             />
-            <Tooltip label="Sign out">
-              <ActionIcon
-                aria-label="Sign out"
-                color="gray"
-                onClick={signOut}
-                variant="subtle"
-              >
+          </div>
+        </Sidebar.Header>
+        <Sidebar.Content>
+          <Sidebar.Group>
+            <Sidebar.GroupLabel>Console</Sidebar.GroupLabel>
+            <Sidebar.Menu>
+              {navItems.map(({ href, match, label, icon: Icon }) => (
+                <Sidebar.MenuButton
+                  active={
+                    location.pathname === match ||
+                    (match !== "/" && location.pathname.startsWith(match))
+                  }
+                  icon={Icon}
+                  key={href}
+                  onClick={() => navigate(href)}
+                  tooltip={label}
+                >
+                  {label}
+                </Sidebar.MenuButton>
+              ))}
+            </Sidebar.Menu>
+          </Sidebar.Group>
+        </Sidebar.Content>
+        <Sidebar.Footer>
+          <Tooltip
+            content="Sign out"
+            render={
+              <Button aria-label="Sign out" onClick={signOut} shape="square" variant="ghost">
                 <LogOut size={16} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
-        </Group>
-      </AppShell.Header>
+              </Button>
+            }
+          />
+        </Sidebar.Footer>
+      </Sidebar>
 
-      <AppShell.Navbar p="md">
-        <Group mb="xl">
-          <Box bg="blue" c="white" className="grid size-9 place-items-center rounded-md">
-            <Boxes size={18} />
-          </Box>
-          <Box>
-            <Title order={2} size="h4">nanoflare</Title>
-          </Box>
-        </Group>
-        <div className="flex flex-col gap-1">
-          {navItems.map(({ href, match, label, icon: Icon }) => {
-            const active = location.pathname === match || (match !== "/" && location.pathname.startsWith(match))
+      <div className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-kumo-base text-kumo-default">
+        <header className="z-20 flex h-[58px] shrink-0 items-center border-b border-kumo-line bg-kumo-base px-5 md:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <Sidebar.Trigger className="md:hidden" />
+            <Breadcrumbs>
+              {breadcrumbs.map((item, index) => {
+                const isCurrent = index === breadcrumbs.length - 1;
 
-            return (
-              <MantineNavLink
-                active={active}
-                className="w-full rounded-xl px-4 py-3"
-                component={NavLink}
-                key={href}
-                label={label}
-                leftSection={<Icon size={18} />}
-                onClick={close}
-                to={href}
-              />
-            )
-          })}
-        </div>
-      </AppShell.Navbar>
+                return (
+                  <Fragment key={`${item.label}-${index}`}>
+                    {isCurrent ? (
+                      <Breadcrumbs.Current>{item.label}</Breadcrumbs.Current>
+                    ) : (
+                      <Breadcrumbs.Link href={item.href ?? "/"}>{item.label}</Breadcrumbs.Link>
+                    )}
+                    {!isCurrent && <Breadcrumbs.Separator />}
+                  </Fragment>
+                );
+              })}
+            </Breadcrumbs>
+          </div>
+        </header>
 
-      <AppShell.Main>
-        <Box maw={1280} mx="auto">
-          <Outlet />
-        </Box>
-      </AppShell.Main>
+        <main className="min-h-0 flex-1 overflow-y-auto p-5 md:p-8">
+          <div className="mx-auto w-full max-w-screen-xl">
+            <Outlet />
+          </div>
+        </main>
+        <CreateWorkerDialog
+          open={workerDialogOpen}
+          onClose={closeWorkerDialog}
+          workers={workers}
+          setWorkers={(nextWorkers) => setWorkers(nextWorkers)}
+          notify={notify}
+          apiConnected={apiConnected}
+        />
+        <CreateKVNamespaceDialog
+          open={namespaceDialogOpen}
+          onClose={closeNamespaceDialog}
+          namespaces={namespaces}
+          setNamespaces={setNamespaces}
+          notify={notify}
+          apiConnected={apiConnected}
+        />
+        <CreateDatabaseDialog
+          open={databaseDialogOpen}
+          onClose={closeDatabaseDialog}
+          databases={databases}
+          setDatabases={setDatabases}
+          notify={notify}
+          apiConnected={apiConnected}
+        />
+        <CreateObjectStorageBucketDialog
+          open={objectStorageBucketDialogOpen}
+          onClose={closeObjectStorageBucketDialog}
+          buckets={objectStorageBuckets}
+          setBuckets={setObjectStorageBuckets}
+          notify={notify}
+          apiConnected={apiConnected}
+        />
 
-      <CreateWorkerDialog open={workerDialogOpen} onClose={closeWorkerDialog} workers={workers} setWorkers={(nextWorkers) => setWorkers(nextWorkers)} notify={notify} apiConnected={apiConnected} />
-      <CreateKVNamespaceDialog open={namespaceDialogOpen} onClose={closeNamespaceDialog} namespaces={namespaces} setNamespaces={setNamespaces} notify={notify} apiConnected={apiConnected} />
-      <CreateDatabaseDialog open={databaseDialogOpen} onClose={closeDatabaseDialog} databases={databases} setDatabases={setDatabases} notify={notify} apiConnected={apiConnected} />
-      <CreateObjectStorageBucketDialog open={objectStorageBucketDialogOpen} onClose={closeObjectStorageBucketDialog} buckets={objectStorageBuckets} setBuckets={setObjectStorageBuckets} notify={notify} apiConnected={apiConnected} />
+        {toast && (
+          <LayerCard className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 px-4 py-3 shadow-lg">
+            <Check className="size-4 text-kumo-success" />
+            {toast}
+          </LayerCard>
+        )}
 
-      {toast && (
-        <Notification className="fixed bottom-5 right-5 z-[60]" color="green" icon={<Check size={16} />} withCloseButton={false}>
-          {toast}
-        </Notification>
-      )}
-
-      <Modal opened={orgModalOpen} onClose={() => setOrgModalOpen(false)} title="Create organization">
-        <form onSubmit={submitOrganization}>
-          <Stack>
-            {ownedOrganizationLimitReached && (
-              <Text c="dimmed" size="sm">Default users are limited to {defaultOwnedOrganizationLimit} owned organization.</Text>
-            )}
-            {orgError && <Text c="red" size="sm">{orgError}</Text>}
-            <TextInput label="Name" onChange={(event) => setOrgName(event.currentTarget.value)} required value={orgName} />
-            <Group justify="end">
-              <ActionIcon aria-label="Create organization" disabled={ownedOrganizationLimitReached} loading={orgSaving} type="submit" variant="filled">
-                <Check size={16} />
-              </ActionIcon>
-            </Group>
-          </Stack>
-        </form>
-      </Modal>
-    </AppShell>
-  )
+        <Dialog.Root open={orgModalOpen} onOpenChange={(open) => !open && setOrgModalOpen(false)}>
+          <Dialog>
+            <div className="flex items-start justify-between gap-4">
+              <Dialog.Title>Create organization</Dialog.Title>
+              <Dialog.Close aria-label="Close" />
+            </div>
+            <form className="mt-4 grid gap-4" onSubmit={submitOrganization}>
+              {ownedOrganizationLimitReached && (
+                <Text size="sm" variant="secondary">
+                  Default users are limited to {defaultOwnedOrganizationLimit} owned organization.
+                </Text>
+              )}
+              {orgError && (
+                <Text size="sm" variant="error">
+                  {orgError}
+                </Text>
+              )}
+              <Field label="Name">
+                <Input
+                  onChange={(event) => setOrgName(event.currentTarget.value)}
+                  required
+                  value={orgName}
+                />
+              </Field>
+              <div className="flex justify-end">
+                <Button disabled={ownedOrganizationLimitReached} loading={orgSaving} type="submit">
+                  <Check className="size-4" />
+                  Create organization
+                </Button>
+              </div>
+            </form>
+          </Dialog>
+        </Dialog.Root>
+      </div>
+    </Sidebar.Provider>
+  );
 }
 
 function OrganizationOnboarding({
@@ -278,130 +317,176 @@ function OrganizationOnboarding({
   saving,
   toast,
 }: {
-  error: string
-  name: string
-  onLogout: () => void
-  onNameChange: (name: string) => void
-  onSubmit: (event: React.FormEvent) => void
-  saving: boolean
-  toast: string
+  error: string;
+  name: string;
+  onLogout: () => void;
+  onNameChange: (name: string) => void;
+  onSubmit: (event: React.FormEvent) => void;
+  saving: boolean;
+  toast: string;
 }) {
   return (
-    <Box className="min-h-screen bg-[var(--mantine-color-gray-0)]">
-      <Group h={64} px="xl" justify="space-between">
-        <Group gap="sm">
-          <Box bg="blue" c="white" className="grid size-9 place-items-center rounded-md">
+    <div className="min-h-screen bg-kumo-base">
+      <header className="flex h-16 items-center justify-between px-8">
+        <div className="flex items-center gap-3">
+          <div className="grid size-9 place-items-center rounded-md bg-kumo-brand text-kumo-inverse">
             <Boxes size={18} />
-          </Box>
-          <Box>
-            <Title order={2} size="h4">nanoflare</Title>
-          </Box>
-        </Group>
-        <Tooltip label="Sign out">
-          <ActionIcon aria-label="Sign out" color="gray" onClick={onLogout} variant="subtle">
-            <LogOut size={16} />
-          </ActionIcon>
-        </Tooltip>
-      </Group>
+          </div>
+          <Text as="h2" variant="heading3">
+            nanoflare
+          </Text>
+        </div>
+        <Tooltip
+          content="Sign out"
+          render={
+            <Button aria-label="Sign out" onClick={onLogout} shape="square" variant="ghost">
+              <LogOut size={16} />
+            </Button>
+          }
+        />
+      </header>
 
-      <Group align="center" className="min-h-[calc(100vh-64px)]" gap={56} justify="center" px="xl" py={48}>
-        <Stack gap="lg" maw={500}>
-          <Box>
-            <Title order={1} size="h1">Create your first organization</Title>
-            <Text c="dimmed" mt="md" size="md">
-              Start with a workspace for your team, resources, OAuth clients, and member access. You can create more organizations later.
+      <div className="flex min-h-[calc(100vh-64px)] items-center justify-center gap-14 px-8 py-12">
+        <div className="grid max-w-md gap-6">
+          <div>
+            <Text as="h1" variant="heading1">
+              Create your first organization
             </Text>
-          </Box>
-          <Stack gap="xs">
-            <GuideStep label="1" title="Name the organization" copy="Use a team, company, project, or environment name." />
-            <GuideStep label="2" title="Become the owner" copy="You receive owner access and can invite other users next." />
-            <GuideStep label="3" title="Build in the console" copy="Workers, KV, object storage, and settings will open after creation." />
-          </Stack>
-        </Stack>
+            <div className="mt-4">
+              <Text variant="secondary">
+                Start with a workspace for your team, resources, OAuth clients, and member access.
+                You can create more organizations later.
+              </Text>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <GuideStep
+              label="1"
+              title="Name the organization"
+              copy="Use a team, company, project, or environment name."
+            />
+            <GuideStep
+              label="2"
+              title="Become the owner"
+              copy="You receive owner access and can invite other users next."
+            />
+            <GuideStep
+              label="3"
+              title="Build in the console"
+              copy="Workers, KV, object storage, and settings will open after creation."
+            />
+          </div>
+        </div>
 
-        <Paper bg="white" p="xl" radius="lg" shadow="xs" withBorder w="100%" maw={430}>
-          <form onSubmit={onSubmit}>
-            <Stack>
-              <Box>
-                <Title order={2} size="h3">Organization details</Title>
-                <Text c="dimmed" size="sm">This creates a new org and selects it immediately.</Text>
-              </Box>
-              {error && <Text c="red" size="sm">{error}</Text>}
-              <TextInput
+        <LayerCard className="w-full max-w-[430px] px-6 py-5 shadow-sm ring ring-kumo-line">
+          <form className="grid gap-4" onSubmit={onSubmit}>
+            <div className="grid gap-1.5">
+              <Text as="h2" variant="heading3">
+                Organization details
+              </Text>
+              <Text size="sm" variant="secondary">
+                This creates a new org and selects it immediately.
+              </Text>
+            </div>
+            {error && (
+              <Text size="sm" variant="error">
+                {error}
+              </Text>
+            )}
+            <Field label="Organization name">
+              <Input
                 autoFocus
-                label="Organization name"
                 onChange={(event) => onNameChange(event.currentTarget.value)}
                 placeholder="Acme Production"
                 required
                 value={name}
               />
-              <Button leftSection={<Check size={16} />} loading={saving} type="submit">
-                Create organization
-              </Button>
-            </Stack>
+            </Field>
+            <Button loading={saving} type="submit">
+              <Check className="size-4" />
+              Create organization
+            </Button>
           </form>
-        </Paper>
-      </Group>
+        </LayerCard>
+      </div>
 
       {toast && (
-        <Notification className="fixed bottom-5 right-5 z-[60]" color="green" icon={<Check size={16} />} withCloseButton={false}>
+        <LayerCard className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 px-4 py-3 shadow-lg">
+          <Check className="size-4 text-kumo-success" />
           {toast}
-        </Notification>
+        </LayerCard>
       )}
-    </Box>
-  )
+    </div>
+  );
 }
 
 function GuideStep({ label, title, copy }: { label: string; title: string; copy: string }) {
   return (
-    <Group align="start" gap="sm" wrap="nowrap">
-      <Box bg="white" c="blue" className="grid size-7 shrink-0 place-items-center rounded-md border border-[var(--mantine-color-gray-3)] text-sm font-bold">
+    <div className="flex items-start gap-3">
+      <div className="grid size-7 shrink-0 place-items-center rounded-md bg-kumo-base text-sm font-semibold text-kumo-info ring ring-kumo-line">
         {label}
-      </Box>
-      <Box>
-        <Text fw={700} size="sm">{title}</Text>
-        <Text c="dimmed" size="sm">{copy}</Text>
-      </Box>
-    </Group>
-  )
+      </div>
+      <div>
+        <Text as="h3" bold size="sm">
+          {title}
+        </Text>
+        <Text size="sm" variant="secondary">
+          {copy}
+        </Text>
+      </div>
+    </div>
+  );
 }
 
 function getBreadcrumbs(
   pathname: string,
   workspace: {
-    objectStorageBuckets: { id: string; name: string }[]
-    databases: { id: string; name: string }[]
-    namespaces: { id: string; name: string }[]
-    workers: { id: string; name: string }[]
+    objectStorageBuckets: { id: string; name: string }[];
+    databases: { id: string; name: string }[];
+    namespaces: { id: string; name: string }[];
+    workers: { id: string; name: string }[];
   },
 ) {
-  const [, section, id] = pathname.split("/")
+  const [, section, id] = pathname.split("/");
 
-  if (!section) return [{ label: "Overview" }]
+  if (!section) return [{ label: "Overview" }];
 
   if (section === "workers") {
-    const worker = workspace.workers.find((item) => item.id === id)
-    return id ? [{ href: "/workers", label: "Workers" }, { label: worker?.name ?? id }] : [{ label: "Workers" }]
+    const worker = workspace.workers.find((item) => item.id === id);
+    return id
+      ? [{ href: "/workers", label: "Workers" }, { label: worker?.name ?? id }]
+      : [{ label: "Workers" }];
   }
 
   if (section === "kv") {
-    const namespace = workspace.namespaces.find((item) => item.id === id)
-    return id ? [{ href: "/kv", label: "KV" }, { label: namespace?.name ?? id }] : [{ label: "KV" }]
+    const namespace = workspace.namespaces.find((item) => item.id === id);
+    return id
+      ? [{ href: "/kv", label: "KV" }, { label: namespace?.name ?? id }]
+      : [{ label: "KV" }];
   }
 
   if (section === "databases") {
-    const database = workspace.databases.find((item) => item.id === id)
-    return id ? [{ href: "/databases", label: "Databases" }, { label: database?.name ?? id }] : [{ label: "Databases" }]
+    const database = workspace.databases.find((item) => item.id === id);
+    return id
+      ? [{ href: "/databases", label: "Databases" }, { label: database?.name ?? id }]
+      : [{ label: "Databases" }];
   }
 
   if (section === "object-storage") {
-    const bucket = workspace.objectStorageBuckets.find((item) => item.id === id)
-    return id ? [{ href: "/object-storage", label: "Object storage" }, { label: bucket?.name ?? id }] : [{ label: "Object storage" }]
+    const bucket = workspace.objectStorageBuckets.find((item) => item.id === id);
+    return id
+      ? [{ href: "/object-storage", label: "Object storage" }, { label: bucket?.name ?? id }]
+      : [{ label: "Object storage" }];
   }
 
   if (section === "settings") {
-    return id ? [{ href: "/settings", label: "Settings" }, { label: id === "oauth-clients" ? "OAuth client" : id }] : [{ label: "Settings" }]
+    return id
+      ? [
+          { href: "/settings", label: "Settings" },
+          { label: id === "oauth-clients" ? "OAuth client" : id },
+        ]
+      : [{ label: "Settings" }];
   }
 
-  return [{ label: "Overview" }]
+  return [{ label: "Overview" }];
 }

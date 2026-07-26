@@ -28,25 +28,25 @@ The multi-worker tests found a clear short-run boundary: 20 VUs passed cleanly, 
 
 ## Results
 
-| Scenario | Load | Duration | Requests | RPS | Failed | Avg | p95 | Max | Result |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Plain Worker fetch | 50 VUs | 2m | 16,809 | 139.8 | 0.00% | 168.4 ms | 290.0 ms | 422.3 ms | Pass |
-| KV read (initial run) | 25 VUs | 2m | 8,293 | 69.0 | 0.00% | 170.7 ms | 256.7 ms | 814.2 ms | Pass |
-| KV read (rerun after restart) | 25 VUs | 2m | 8,182 | 68.0 | 0.00% | 173.1 ms | 260.8 ms | 342.0 ms | Pass |
-| KV write (initial run) | 25 VUs | 2m | 7,592 | 63.2 | 5.01% | 187.2 ms | 308.6 ms | 1030.8 ms | Fail |
-| KV write (rerun after restart and KV write-path changes) | 25 VUs | 2m | 8,649 | 71.9 | 0.00% | 163.2 ms | 236.4 ms | 311.8 ms | Pass |
-| Mixed plain/KV (initial run) | 25 VUs | 2m | 8,415 | 70.0 | 4.19% | 167.9 ms | 261.6 ms | 468.6 ms | Fail |
-| Mixed plain/KV (rerun after restart and KV write-path changes) | 25 VUs | 2m | 6,605 | 54.9 | 0.00% | 217.0 ms | 335.0 ms | 400.3 ms | Pass |
-| Static assets | 25 VUs | 2m | 11,789 | 98.2 | 0.75% | 116.9 ms | 149.0 ms | 242.2 ms | Pass |
-| Objects through Worker binding | 25 VUs | 2m | 8,220 | 68.3 | 0.00% | 173.3 ms | 242.1 ms | 302.8 ms | Pass |
-| Mixed app traffic | 25 VUs | 2m | 8,216 | 68.3 | 0.00% | 172.4 ms | 299.0 ms | 496.4 ms | Pass |
-| Control API reads | 25 VUs | 2m | 12,146 | 100.9 | 0.00% | 113.3 ms | 449.4 ms | 834.6 ms | Pass |
-| Control API low-rate writes/deploys | 5 VUs | 1m | 1,475 | 24.5 | 0.00% | 51.1 ms | 277.2 ms | 650.9 ms | Pass |
-| Multi-worker | 20 VUs | 2m | 9,516 | 79.1 | 0.00% | 115.8 ms | 197.9 ms | 326.8 ms | Pass |
-| Multi-worker | 30 VUs | 2m | 8,306 | 69.0 | 0.48% | 206.6 ms | 344.1 ms | 1137.7 ms | Pass under threshold |
-| Multi-worker | 40 VUs | 2m | 18,056 | 150.0 | 65.44% | 121.2 ms | 411.2 ms | 1265.2 ms | Fail |
-| Multi-worker port-guarded soak | 20 VUs | 5m | 21,014 | 69.9 | 3.28% | 132.1 ms | 257.8 ms | 533.7 ms | Fail |
-| Multi-worker debug after soak | 5 VUs | 20s | 951 | 47.4 | 81.91% | 40.0 ms | 103.6 ms | 238.5 ms | Fail |
+| Scenario                                                       |   Load | Duration | Requests |   RPS | Failed |      Avg |      p95 |       Max | Result               |
+| -------------------------------------------------------------- | -----: | -------: | -------: | ----: | -----: | -------: | -------: | --------: | -------------------- |
+| Plain Worker fetch                                             | 50 VUs |       2m |   16,809 | 139.8 |  0.00% | 168.4 ms | 290.0 ms |  422.3 ms | Pass                 |
+| KV read (initial run)                                          | 25 VUs |       2m |    8,293 |  69.0 |  0.00% | 170.7 ms | 256.7 ms |  814.2 ms | Pass                 |
+| KV read (rerun after restart)                                  | 25 VUs |       2m |    8,182 |  68.0 |  0.00% | 173.1 ms | 260.8 ms |  342.0 ms | Pass                 |
+| KV write (initial run)                                         | 25 VUs |       2m |    7,592 |  63.2 |  5.01% | 187.2 ms | 308.6 ms | 1030.8 ms | Fail                 |
+| KV write (rerun after restart and KV write-path changes)       | 25 VUs |       2m |    8,649 |  71.9 |  0.00% | 163.2 ms | 236.4 ms |  311.8 ms | Pass                 |
+| Mixed plain/KV (initial run)                                   | 25 VUs |       2m |    8,415 |  70.0 |  4.19% | 167.9 ms | 261.6 ms |  468.6 ms | Fail                 |
+| Mixed plain/KV (rerun after restart and KV write-path changes) | 25 VUs |       2m |    6,605 |  54.9 |  0.00% | 217.0 ms | 335.0 ms |  400.3 ms | Pass                 |
+| Static assets                                                  | 25 VUs |       2m |   11,789 |  98.2 |  0.75% | 116.9 ms | 149.0 ms |  242.2 ms | Pass                 |
+| Objects through Worker binding                                 | 25 VUs |       2m |    8,220 |  68.3 |  0.00% | 173.3 ms | 242.1 ms |  302.8 ms | Pass                 |
+| Mixed app traffic                                              | 25 VUs |       2m |    8,216 |  68.3 |  0.00% | 172.4 ms | 299.0 ms |  496.4 ms | Pass                 |
+| Control API reads                                              | 25 VUs |       2m |   12,146 | 100.9 |  0.00% | 113.3 ms | 449.4 ms |  834.6 ms | Pass                 |
+| Control API low-rate writes/deploys                            |  5 VUs |       1m |    1,475 |  24.5 |  0.00% |  51.1 ms | 277.2 ms |  650.9 ms | Pass                 |
+| Multi-worker                                                   | 20 VUs |       2m |    9,516 |  79.1 |  0.00% | 115.8 ms | 197.9 ms |  326.8 ms | Pass                 |
+| Multi-worker                                                   | 30 VUs |       2m |    8,306 |  69.0 |  0.48% | 206.6 ms | 344.1 ms | 1137.7 ms | Pass under threshold |
+| Multi-worker                                                   | 40 VUs |       2m |   18,056 | 150.0 | 65.44% | 121.2 ms | 411.2 ms | 1265.2 ms | Fail                 |
+| Multi-worker port-guarded soak                                 | 20 VUs |       5m |   21,014 |  69.9 |  3.28% | 132.1 ms | 257.8 ms |  533.7 ms | Fail                 |
+| Multi-worker debug after soak                                  |  5 VUs |      20s |      951 |  47.4 | 81.91% |  40.0 ms | 103.6 ms |  238.5 ms | Fail                 |
 
 ## Findings
 

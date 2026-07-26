@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Group, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Banner, Button, Input, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
 import { Check, UserPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
@@ -24,7 +24,7 @@ export function InvitePage() {
         setError(await errorText(response, "Invite is not available"));
         return;
       }
-      const nextInvite = await response.json() as OrganizationInvite;
+      const nextInvite = (await response.json()) as OrganizationInvite;
       if (!cancelled) {
         setInvite(nextInvite);
         setEmail(nextInvite.email);
@@ -44,7 +44,11 @@ export function InvitePage() {
     setError("");
     try {
       if (!auth.signedIn) await auth.signup(email, password);
-      const response = await apiFetch(`/v1/invites/${token}/accept`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const response = await apiFetch(`/v1/invites/${token}/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
       if (!response.ok) throw new Error(await errorText(response, "Could not accept invite"));
       await auth.refresh();
       navigate("/", { replace: true });
@@ -56,33 +60,55 @@ export function InvitePage() {
   }
 
   return (
-    <Box className="min-h-screen bg-[var(--mantine-color-gray-0)] px-4 py-10">
-      <Stack align="center" justify="center" mih="calc(100vh - 5rem)">
-        <Paper bg="white" p="xl" radius="lg" shadow="xs" withBorder w="100%" maw={460}>
+    <div className="min-h-screen bg-kumo-base px-4 py-10">
+      <div className="flex min-h-[calc(100vh-5rem)] items-center justify-center">
+        <LayerCard className="w-full max-w-[460px]">
           <form onSubmit={accept}>
-            <Stack>
-              <Group>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3">
                 <UserPlus size={22} />
-                <Title order={1} size="h3">Join organization</Title>
-              </Group>
-              {error && <Alert color="red">{error}</Alert>}
+                <Text as="h1" variant="heading3">
+                  Join organization
+                </Text>
+              </div>
+              {error && <Banner description={error} variant="error" />}
               {invite && (
-                <Text c="dimmed" size="sm">
-                  {invite.inviter_email || "A Nanoflare user"} invited {invite.email} to join {invite.org_name || "this organization"} as {invite.role}.
+                <Text size="sm" variant="secondary">
+                  {invite.inviter_email || "A Nanoflare user"} invited {invite.email} to join{" "}
+                  {invite.org_name || "this organization"} as {invite.role}.
                 </Text>
               )}
               {!auth.signedIn && (
                 <>
-                  <TextInput autoComplete="email" label="Email" required type="email" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
-                  <PasswordInput autoComplete="new-password" label="Password" required value={password} onChange={(event) => setPassword(event.currentTarget.value)} />
+                  <Input
+                    autoComplete="email"
+                    label="Email"
+                    required
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.currentTarget.value)}
+                  />
+                  <SensitiveInput
+                    autoComplete="new-password"
+                    label="Password"
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.currentTarget.value)}
+                  />
                 </>
               )}
-              {auth.signedIn && <Text c="dimmed" size="sm">Accept this invite with your signed-in account.</Text>}
-              <Button leftSection={<Check size={16} />} loading={submitting} type="submit">Accept invite</Button>
-            </Stack>
+              {auth.signedIn && (
+                <Text size="sm" variant="secondary">
+                  Accept this invite with your signed-in account.
+                </Text>
+              )}
+              <Button icon={Check} loading={submitting} type="submit">
+                Accept invite
+              </Button>
+            </div>
           </form>
-        </Paper>
-      </Stack>
-    </Box>
+        </LayerCard>
+      </div>
+    </div>
   );
 }

@@ -5,9 +5,7 @@
   "entrypoint": "dist/worker.js",
   "format": "modules",
   "compatibility_date": "2025-12-10",
-  "files": [
-    "dist/worker.js"
-  ],
+  "files": ["dist/worker.js"],
   "db": [
     {
       "binding": "GALLERY_DB",
@@ -25,9 +23,7 @@
     "directory": "dist/client",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "single-page-application",
-    "run_worker_first": [
-      "/api/*"
-    ]
+    "run_worker_first": ["/api/*"]
   },
   "auth": {}
 }
