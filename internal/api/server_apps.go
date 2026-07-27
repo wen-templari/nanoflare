@@ -262,6 +262,10 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	_, _, escapedRequestPath, escapedOK := appGatewayPath(r.URL.EscapedPath())
+	if !escapedOK {
+		escapedRequestPath = requestPath
+	}
 	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeploymentWithPreference(appID, requestPath, stickyDeploymentID(r, appID))
 	if err != nil {
 		writeWorkerError(w, err)
@@ -288,7 +292,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer release()
-		workerResponse, err := s.workerResponse(r, port, requestPath)
+		workerResponse, err := s.workerResponse(r, port, requestPath, escapedRequestPath)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
@@ -307,7 +311,7 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	workerResponse, err := s.workerResponse(r, port, requestPath)
+	workerResponse, err := s.workerResponse(r, port, requestPath, escapedRequestPath)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -389,11 +393,12 @@ func (s *Server) ensureWorker(r *http.Request, active nanoflare.ActiveDeployment
 	return ensured.Port, ensured.Release, nil
 }
 
-func (s *Server) workerResponse(r *http.Request, port int, requestPath string) (*http.Response, error) {
+func (s *Server) workerResponse(r *http.Request, port int, requestPath, escapedRequestPath string) (*http.Response, error) {
 	target := &url.URL{
 		Scheme:   "http",
 		Host:     "127.0.0.1:" + strconv.Itoa(port),
 		Path:     requestPath,
+		RawPath:  escapedRequestPath,
 		RawQuery: r.URL.RawQuery,
 	}
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)

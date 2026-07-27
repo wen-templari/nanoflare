@@ -606,6 +606,44 @@ func TestAppGatewayServesAttachedAsset(t *testing.T) {
 	}
 }
 
+func TestAppGatewayPreservesEscapedSlashes(t *testing.T) {
+	dir := t.TempDir()
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := NewServer(service)
+	app := createApp(t, server, "Registry", "registry.example.com")
+	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}}, "")
+
+	workerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, portValue, err := net.SplitHostPort(workerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerPort, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.RequestURI))
+	})}
+	go func() { _ = workerServer.Serve(workerListener) }()
+	t.Cleanup(func() { _ = workerServer.Close() })
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/@scope%2Fpackage?version=next", nil)
+	server.ServeHTTP(recorder, request)
+	if got, want := recorder.Body.String(), "/@scope%2Fpackage?version=next"; recorder.Code != http.StatusOK || got != want {
+		t.Fatalf("gateway status = %d request URI = %q, want %q", recorder.Code, got, want)
+	}
+}
+
 func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
 	dir := t.TempDir()
 	store := newAPIObjectBackedRepo()
