@@ -75,9 +75,9 @@ func (m *SQLiteManager) Execute(databaseID string, request nanoflare.DBQueryRequ
 		}
 		switch method {
 		case "raw":
-			raw := rowsToRaw(result.Results)
+			raw := rowsToRaw(result.Results, result.Columns)
 			if request.ColumnNames {
-				raw = append([][]any{columnNames(result.Results)}, raw...)
+				raw = append([][]any{columnNames(result.Columns)}, raw...)
 			}
 			return nanoflare.DBQueryResponse{Raw: raw, Bookmark: m.nextBookmark(databaseID)}, nil
 		case "first":
@@ -289,7 +289,7 @@ func runStatement(ctx context.Context, runner statementRunner, dbPath string, st
 	if err != nil {
 		return nanoflare.D1Result{}, err
 	}
-	resultRows, err := scanRows(rows)
+	resultRows, columns, err := scanRows(rows)
 	closeErr := rows.Close()
 	if err != nil {
 		return nanoflare.D1Result{}, err
@@ -306,6 +306,7 @@ func runStatement(ctx context.Context, runner statementRunner, dbPath string, st
 	}
 	return nanoflare.D1Result{
 		Success: true,
+		Columns: columns,
 		Meta: nanoflare.D1Meta{
 			ServedBy:        "nanoflare.db",
 			ServedByPrimary: true,
@@ -342,10 +343,10 @@ func normalizeParams(params []any) []any {
 	return out
 }
 
-func scanRows(rows *sql.Rows) ([]map[string]any, error) {
+func scanRows(rows *sql.Rows) ([]map[string]any, []string, error) {
 	columns, err := rows.Columns()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := make([]map[string]any, 0)
 	for rows.Next() {
@@ -355,7 +356,7 @@ func scanRows(rows *sql.Rows) ([]map[string]any, error) {
 			pointers[i] = &values[i]
 		}
 		if err := rows.Scan(pointers...); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		row := make(map[string]any, len(columns))
 		for i, column := range columns {
@@ -363,7 +364,7 @@ func scanRows(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		result = append(result, row)
 	}
-	return result, rows.Err()
+	return result, columns, rows.Err()
 }
 
 func normalizeSQLiteValue(value any) any {
@@ -375,26 +376,22 @@ func normalizeSQLiteValue(value any) any {
 	}
 }
 
-func rowsToRaw(rows []map[string]any) [][]any {
-	names := columnNames(rows)
+func rowsToRaw(rows []map[string]any, columns []string) [][]any {
 	raw := make([][]any, 0, len(rows))
 	for _, row := range rows {
-		item := make([]any, 0, len(names))
-		for _, name := range names {
-			item = append(item, row[name.(string)])
+		item := make([]any, 0, len(columns))
+		for _, column := range columns {
+			item = append(item, row[column])
 		}
 		raw = append(raw, item)
 	}
 	return raw
 }
 
-func columnNames(rows []map[string]any) []any {
-	if len(rows) == 0 {
-		return []any{}
-	}
-	names := make([]any, 0, len(rows[0]))
-	for name := range rows[0] {
-		names = append(names, name)
+func columnNames(columns []string) []any {
+	names := make([]any, len(columns))
+	for i, column := range columns {
+		names[i] = column
 	}
 	return names
 }

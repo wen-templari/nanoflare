@@ -2,8 +2,10 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +55,64 @@ func TestSQLiteManagerD1Methods(t *testing.T) {
 	}
 	if len(raw.Raw) != 2 || raw.Raw[1][0] != "hello" {
 		t.Fatalf("raw = %#v", raw.Raw)
+	}
+}
+
+func TestSQLiteManagerRawUsesSelectColumnOrder(t *testing.T) {
+	manager, err := NewSQLiteManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Execute("db-raw-order", nanoflare.DBQueryRequest{
+		Method:     "exec",
+		Statements: []nanoflare.DBStatementRequest{{SQL: `CREATE TABLE items (id integer, name text); INSERT INTO items VALUES (7, 'seven');`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, columnNames := range []bool{false, true} {
+		response, err := manager.Execute("db-raw-order", nanoflare.DBQueryRequest{
+			Method:      "raw",
+			ColumnNames: columnNames,
+			Statements:  []nanoflare.DBStatementRequest{{SQL: `SELECT name, id FROM items`}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := [][]any{{"seven", int64(7)}}
+		if columnNames {
+			want = append([][]any{{"name", "id"}}, want...)
+		}
+		if !reflect.DeepEqual(response.Raw, want) {
+			t.Fatalf("raw(columnNames: %t) = %#v, want %#v", columnNames, response.Raw, want)
+		}
+	}
+}
+
+func TestSQLiteManagerAllEncodesObjectsInSelectColumnOrder(t *testing.T) {
+	manager, err := NewSQLiteManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Execute("db-all-order", nanoflare.DBQueryRequest{
+		Method:     "exec",
+		Statements: []nanoflare.DBStatementRequest{{SQL: `CREATE TABLE items (id integer, name text); INSERT INTO items VALUES (7, 'seven');`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := manager.Execute("db-all-order", nanoflare.DBQueryRequest{
+		Method:     "all",
+		Statements: []nanoflare.DBStatementRequest{{SQL: `SELECT name, id FROM items`}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"results":[{"name":"seven","id":7}]`) {
+		t.Fatalf("encoded response does not preserve SELECT column order: %s", encoded)
 	}
 }
 
