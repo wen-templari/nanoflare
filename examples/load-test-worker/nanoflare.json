@@ -14,6 +14,28 @@
       "id": "d9e7d2a4c475eedb08df5f5ed7e6ef164f346232e756364f"
     }
   ],
+  "db": [
+    {
+      "binding": "DB",
+      "database_id": "1a21404a1cf2b79e65c258618cc419786f93c1fb7477b596"
+    },
+    {
+      "binding": "DB_2",
+      "database_id": "bbadaf65d31790ea11c7b10616462e9dac697a89b1ca76d0"
+    },
+    {
+      "binding": "DB_3",
+      "database_id": "3e7d2251ff226b1cad36da9efecaf76cfca0042d45424511"
+    },
+    {
+      "binding": "DB_4",
+      "database_id": "8e0d4f85114f648d72be9c3c50cb90a81bbdfd62f7c595ff"
+    },
+    {
+      "binding": "DB_5",
+      "database_id": "8d7dbb18810df4f64f526e0938db2a05434900d28646ddc8"
+    }
+  ],
   "object_storage_buckets": [
     {
       "binding": "OBJECTS",
@@ -23,7 +45,7 @@
   "assets": {
     "binding": "ASSETS",
     "directory": "public",
-    "run_worker_first": ["/plain", "/kv-*", "/object*", "/objects"]
+    "run_worker_first": ["/plain", "/kv-*", "/db-*", "/object*", "/objects"]
   },
   "auth": {}
 }

@@ -35,6 +35,17 @@ nanoflare create
 nanoflare deploy
 ```
 
+For D1-style database tests, create a dedicated database and add its ID to the
+Worker configuration before deploying:
+
+```sh
+nanoflare db create load-test-db
+```
+
+```json
+"db": [{ "binding": "DB", "database_id": "<database-id>" }]
+```
+
 Use the worker id from `nanoflare.json` when running k6:
 
 ```sh
@@ -46,6 +57,11 @@ BASE_URL=http://127.0.0.1:8080 WORKER_ID=<worker-id> k6 run ../../scripts/k6/wor
 - `GET /plain` returns a small static response.
 - `GET /kv-put` writes one KV key and returns `stored`.
 - `GET /kv-get` reads the same KV key and returns its value.
+- `GET /db-init` creates the `k6_events` table and seeds it.
+- `GET /db-read` returns the current event count.
+- `GET /db-write` inserts a small unique event.
+- `GET /db-{init,read,write}/{n}` targets database binding `DB` for `n=1` and
+  `DB_n` for `n > 1`, enabling a multi-database test.
 - `GET /`, `/assets/app.js`, `/assets/logo.svg`, and `/assets/image.svg`
   serve static assets from `public/`.
 - `PUT /object/{key}` writes an object when `OBJECTS` is configured.

@@ -2,6 +2,34 @@ export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
 
+    const databaseRoute = path.match(/^\/db-(init|read|write)(?:\/(\d+))?$/);
+    if (databaseRoute) {
+      const [, operation, databaseNumber] = databaseRoute;
+      const database = databaseNumber === "1" ? env.DB : databaseNumber ? env[`DB_${databaseNumber}`] : env.DB;
+      if (!database) {
+        return new Response("database is not configured", { status: 501 });
+      }
+      if (operation === "init") {
+        await database.exec(
+          "CREATE TABLE IF NOT EXISTS k6_events (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT NOT NULL)",
+        );
+        await database.prepare("INSERT INTO k6_events (value) VALUES (?)")
+          .bind("seed")
+          .run();
+        return new Response("initialized");
+      }
+      if (operation === "read") {
+        const row = await database
+          .prepare("SELECT COUNT(*) AS count FROM k6_events")
+          .first();
+        return Response.json(row);
+      }
+      await database.prepare("INSERT INTO k6_events (value) VALUES (?)")
+        .bind(`${Date.now()}-${Math.random()}`)
+        .run();
+      return new Response("stored");
+    }
+
     if (path === "/plain") {
       return new Response("plain");
     }

@@ -319,13 +319,13 @@ function DatabaseDetailContent({
             <Panel title="Row activity" eyebrow="Database metrics">
               <DatabaseRowsChart series={series} />
             </Panel>
-            <Panel title="Query latency histogram" eyebrow="Database metrics">
+            <Panel title="Query latency distribution" eyebrow="Database metrics">
               <DatabaseLatencyHistogram metrics={metrics} />
             </Panel>
             <Panel title="Storage and schema" eyebrow="Database metrics">
               <DatabaseStorageChart series={series} />
             </Panel>
-            <Panel title="Query latency" eyebrow="Database metrics">
+            <Panel title="Query latency over time" eyebrow="Database metrics">
               <DatabaseLatencySeriesChart series={series} />
             </Panel>
           </div>
@@ -618,11 +618,12 @@ function DatabaseLatencyHistogram({ metrics }: { metrics: DatabaseMetrics }) {
         },
         series: [
           {
-            barMaxWidth: 32,
             data: data.map((item) => item.count),
-            itemStyle: { borderRadius: [4, 4, 0, 0], color: ChartPalette.categorical(4) },
+            itemStyle: { color: ChartPalette.categorical(4) },
+            lineStyle: { width: 2 },
             name: "Queries",
-            type: "bar",
+            showSymbol: false,
+            type: "line",
           },
         ],
       }}
@@ -632,7 +633,7 @@ function DatabaseLatencyHistogram({ metrics }: { metrics: DatabaseMetrics }) {
 
 function DatabaseQueryMixChart({ series }: { series: DatabaseMetricsTimeseries }) {
   return (
-    <DatabaseTimeseriesBars
+    <DatabaseMetricTimeseriesLines
       emptyCopy="Run read or write queries while Prometheus is scraping to populate query series."
       series={[
         { key: "total", label: "Total", points: series.queries },
@@ -646,7 +647,7 @@ function DatabaseQueryMixChart({ series }: { series: DatabaseMetricsTimeseries }
 
 function DatabaseRowsChart({ series }: { series: DatabaseMetricsTimeseries }) {
   return (
-    <DatabaseTimeseriesBars
+    <DatabaseMetricTimeseriesLines
       emptyCopy="Run queries that read or write rows while Prometheus is scraping to populate row series."
       series={[
         { key: "read", label: "Read", points: series.rows_read },
@@ -659,7 +660,7 @@ function DatabaseRowsChart({ series }: { series: DatabaseMetricsTimeseries }) {
 
 function DatabaseStorageChart({ series }: { series: DatabaseMetricsTimeseries }) {
   return (
-    <DatabaseTimeseriesBars
+    <DatabaseMetricTimeseriesLines
       emptyCopy="Create tables or write data while Prometheus is scraping to populate storage and schema series."
       series={[
         { key: "storage", label: "Storage", points: series.storage_bytes, formatter: formatBytes },
@@ -691,7 +692,7 @@ type DatabaseSeries = {
   formatter?: (value: number) => string;
 };
 
-function DatabaseTimeseriesBars({
+function DatabaseMetricTimeseriesLines({
   emptyCopy,
   series,
   valueLabel,
@@ -712,7 +713,6 @@ function DatabaseTimeseriesBars({
       echarts={echarts}
       height={288}
       tooltipValueFormat={(value) => compactNumber(value)}
-      type="bar"
       xAxisTickFormat={formatSeriesTickAt}
       yAxisTickFormat={compactNumber}
     />

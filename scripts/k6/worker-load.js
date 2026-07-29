@@ -2,12 +2,22 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import exec from "k6/execution";
 
-const baseURL = (__ENV.BASE_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
+// Exercise the production ingress path by default: k6 -> Traefik -> workerd.
+// Set ROUTE_VIA=internal only when diagnosing the nanoflared worker gateway.
+const routeVia = __ENV.ROUTE_VIA || "traefik";
+const defaultBaseURL =
+  routeVia === "internal" ? "http://127.0.0.1:8080" : "http://127.0.0.1:8088";
+const baseURL = (__ENV.BASE_URL || defaultBaseURL).replace(/\/$/, "");
+// Console object routes remain available for object-storage-specific tests.
+const controlBaseURL = (
+  __ENV.CONTROL_BASE_URL || "http://127.0.0.1:8080"
+).replace(/\/$/, "");
 const workerID = __ENV.WORKER_ID || "";
 const workerIDs = splitList(__ENV.WORKER_IDS || workerID);
 const hostname = __ENV.HOSTNAME || "";
 const hostnames = splitList(__ENV.HOSTNAMES || hostname);
 const scenario = __ENV.SCENARIO || "mixed";
+const databaseCount = Number(__ENV.DATABASE_COUNT || "1");
 const profile = __ENV.PROFILE || "step";
 const thinkTime = Number(__ENV.THINK_TIME || "0");
 const debugErrors = __ENV.DEBUG_ERRORS === "1";
@@ -20,45 +30,17 @@ const assetPaths = splitList(
 );
 const objectKeyPrefix = __ENV.OBJECT_KEY_PREFIX || "k6";
 const objectPayload = __ENV.OBJECT_PAYLOAD || "nanoflare object load test payload";
-const controlPaths = splitList(__ENV.CONTROL_PATHS || defaultControlPaths());
-const controlWrites = __ENV.CONTROL_WRITES === "1";
-const controlDeployWorkerID = __ENV.CONTROL_DEPLOY_WORKER_ID || workerID;
-const controlDeployBody = __ENV.CONTROL_DEPLOY_BODY || defaultDeployBody();
 let debugErrorCount = 0;
+
+function isManyWorkersScenario() {
+  return scenario === "multi_worker" || scenario === "many_workers";
+}
 
 function splitList(value) {
   return String(value || "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function defaultControlPaths() {
-  const paths = ["/v1/workers", "/v1/kv/namespaces", "/v1/object-storage-buckets", "/metrics"];
-  if (workerID) {
-    paths.push(`/v1/workers/${workerID}`, `/v1/workers/${workerID}/deployments`);
-  }
-  if (kvNamespaceID) {
-    paths.push(`/v1/kv/namespaces/${kvNamespaceID}/metrics`);
-  }
-  if (objectBucketID) {
-    paths.push(`/v1/object-storage-buckets/${objectBucketID}/metrics`);
-  }
-  return paths.join(",");
-}
-
-function defaultDeployBody() {
-  return JSON.stringify({
-    entrypoint: "worker.js",
-    format: "modules",
-    compatibility_date: "2025-12-10",
-    files: [
-      {
-        path: "worker.js",
-        content: 'export default { fetch() { return new Response("k6 deploy"); } };',
-      },
-    ],
-  });
 }
 
 function stagesForProfile() {
@@ -114,15 +96,22 @@ function currentHostname() {
   return hostnames[currentIndex(hostnames)];
 }
 
+function workerTargetCount() {
+  return routeVia === "internal" ? workerIDs.length : hostnames.length;
+}
+
 function targetPath(path, selectedWorkerID = workerID) {
-  if (selectedWorkerID) {
+  if (routeVia === "internal") {
+    if (!selectedWorkerID) {
+      throw new Error("WORKER_ID or WORKER_IDS is required when ROUTE_VIA=internal");
+    }
     return `${baseURL}/internal/http/workers/${selectedWorkerID}${path}`;
   }
   return `${baseURL}${path}`;
 }
 
 function controlPath(path) {
-  return `${baseURL}${path}`;
+  return `${controlBaseURL}${path}`;
 }
 
 function headers(extra = {}, selectedHostname = hostname) {
@@ -174,19 +163,59 @@ function workerRequest(path, tagName, selectedWorkerID = workerID, selectedHostn
 }
 
 export function setup() {
-  if (["kv_read", "mixed", "mixed_app", "multi_worker"].includes(scenario)) {
-    const response = workerRequest(
-      "/kv-put",
-      "kv_seed",
-      workerIDs[0] || workerID,
-      hostnames[0] || hostname,
-    );
-    check(response, {
-      "seed status is 200": (r) => r.status === 200,
-    });
+  if (!["traefik", "internal"].includes(routeVia)) {
+    throw new Error(`ROUTE_VIA must be "traefik" or "internal", got ${routeVia}`);
   }
-  if (["object_read", "objects", "mixed_app", "multi_worker"].includes(scenario)) {
-    putObject("k6-seed.txt", "object_seed");
+  if (routeVia === "traefik" && hostnames.length === 0) {
+    throw new Error("HOSTNAME or HOSTNAMES is required when ROUTE_VIA=traefik");
+  }
+  if (isManyWorkersScenario()) {
+    const targetCount = workerTargetCount();
+    if (targetCount < 2) {
+      throw new Error("many_workers requires at least two WORKER_IDS or HOSTNAMES targets");
+    }
+    if (objectBucketID && workerIDs.length > 0 && workerIDs.length !== hostnames.length) {
+      throw new Error("WORKER_IDS and HOSTNAMES must contain the same number of targets");
+    }
+  }
+  if (["kv_read", "mixed", "mixed_app"].includes(scenario) || isManyWorkersScenario()) {
+    const seedCount = isManyWorkersScenario() ? workerTargetCount() : 1;
+    for (let index = 0; index < seedCount; index += 1) {
+      const response = workerRequest(
+        "/kv-put",
+        "kv_seed",
+        workerIDs[index] || workerID,
+        hostnames[index] || hostname,
+      );
+      check(response, {
+        [`worker ${index + 1} seed status is 200`]: (r) => r.status === 200,
+      });
+    }
+  }
+  if (["object_read", "objects", "mixed_app"].includes(scenario) || isManyWorkersScenario()) {
+    const seedCount = isManyWorkersScenario() ? workerTargetCount() : 1;
+    for (let index = 0; index < seedCount; index += 1) {
+      putObject(
+        "k6-seed.txt",
+        "object_seed",
+        workerIDs[index] || workerID,
+        hostnames[index] || hostname,
+      );
+    }
+  }
+  if (!["db_read", "db_write", "db_mixed", "db_multi"].includes(scenario) && scenario.startsWith("db_")) {
+    throw new Error(`unknown database scenario ${scenario}`);
+  }
+  if (!Number.isInteger(databaseCount) || databaseCount < 1) {
+    throw new Error(`DATABASE_COUNT must be a positive integer, got ${databaseCount}`);
+  }
+  if (["db_read", "db_write", "db_mixed", "db_multi"].includes(scenario)) {
+    const count = scenario === "db_multi" ? databaseCount : 1;
+    for (let index = 1; index <= count; index += 1) {
+      const suffix = count === 1 ? "" : `/${index}`;
+      const response = workerRequest(`/db-init${suffix}`, `db_init_${index}`);
+      check(response, { [`database ${index} initialized`]: (r) => r.status === 200 });
+    }
   }
 }
 
@@ -272,39 +301,6 @@ function listObjects() {
   return workerRequest("/objects", "object_list");
 }
 
-function controlRead() {
-  const path = controlPaths[currentIndex(controlPaths)];
-  return request("GET", controlPath(path), `control:${path}`, null, {}, [200, 204]);
-}
-
-function controlWrite() {
-  const slot = exec.scenario.iterationInTest % 10;
-  if (slot < 7) {
-    return controlRead();
-  }
-  if (slot < 9) {
-    return request(
-      "POST",
-      controlPath("/v1/kv/namespaces"),
-      "control:namespace_create",
-      JSON.stringify({ name: `k6-${exec.vu.idInTest}-${exec.scenario.iterationInTest}` }),
-      { headers: { "Content-Type": "application/json" } },
-      [200, 201],
-    );
-  }
-  if (!controlDeployWorkerID) {
-    return controlRead();
-  }
-  return request(
-    "POST",
-    controlPath(`/v1/workers/${controlDeployWorkerID}/deployments`),
-    "control:deploy",
-    controlDeployBody,
-    { headers: { "Content-Type": "application/json" } },
-    [200, 201],
-  );
-}
-
 function runScenario() {
   if (scenario === "plain") {
     workerRequest("/plain", "plain");
@@ -345,15 +341,27 @@ function runScenario() {
     }
     return;
   }
-  if (scenario === "control_api") {
-    if (controlWrites) {
-      controlWrite();
-    } else {
-      controlRead();
-    }
+  if (scenario === "db_read") {
+    workerRequest("/db-read", "db_read");
     return;
   }
-  if (scenario === "multi_worker") {
+  if (scenario === "db_write") {
+    workerRequest("/db-write", "db_write");
+    return;
+  }
+  if (scenario === "db_mixed") {
+    const slot = exec.scenario.iterationInTest % 10;
+    workerRequest(slot < 7 ? "/db-read" : "/db-write", slot < 7 ? "db_read" : "db_write");
+    return;
+  }
+  if (scenario === "db_multi") {
+    const database = (exec.scenario.iterationInTest % databaseCount) + 1;
+    const slot = exec.scenario.iterationInTest % 10;
+    const operation = slot < 7 ? "read" : "write";
+    workerRequest(`/db-${operation}/${database}`, `db_${operation}_${database}`);
+    return;
+  }
+  if (isManyWorkersScenario()) {
     const selectedWorkerID = currentWorkerID();
     const selectedHostname = currentHostname();
     const slot = exec.scenario.iterationInTest % 10;
