@@ -1,16 +1,39 @@
-import { Card, Group, ScrollArea, SegmentedControl, SimpleGrid, Table, Text, ThemeIcon, Title } from "@mantine/core";
-import { Activity, BookOpen, CalendarClock, Database, Gauge, HardDrive, Play, Rows3, Table2, Trash2, Waypoints, Workflow, type LucideIcon } from "lucide-react";
+import {
+  Badge,
+  Button,
+  Chart,
+  ChartPalette,
+  LayerCard,
+  Table,
+  Tabs,
+  Text,
+  TimeseriesChart,
+} from "@cloudflare/kumo";
+import {
+  Activity,
+  BookOpen,
+  CalendarClock,
+  Database,
+  Gauge,
+  HardDrive,
+  Play,
+  Rows3,
+  Table2,
+  Trash2,
+  Waypoints,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { DatabaseMetrics, DatabaseMetricsTimeseries, MetricPoint } from "../app/types";
 import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortDatabases } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
-import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
+import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
+import { echarts } from "../lib/kumo-echarts";
 
 type D1Meta = {
   duration?: number;
@@ -56,11 +79,13 @@ function helpQueryRun(): QueryRun {
     sql: "/help",
     createdAt: new Date().toISOString(),
     response: {
-      results: [{
-        success: true,
-        meta: { duration: 0, changes: 0 },
-        results: slashCommands.map(({ command, description }) => ({ command, description })),
-      }],
+      results: [
+        {
+          success: true,
+          meta: { duration: 0, changes: 0 },
+          results: slashCommands.map(({ command, description }) => ({ command, description })),
+        },
+      ],
     },
   };
 }
@@ -85,12 +110,20 @@ function DatabaseDetailContent({
   onBack: () => void;
 }) {
   const { apiConnected, notify, setDatabases, workers } = useWorkspace();
-  const [tab, setTab] = useQueryTab<(typeof databaseDetailTabs)[number]>(databaseDetailTabs, "overview");
+  const [tab, setTab] = useQueryTab<(typeof databaseDetailTabs)[number]>(
+    databaseDetailTabs,
+    "overview",
+  );
   const [sql, setSQL] = useState("");
   const [querying, setQuerying] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [queryRuns, setQueryRuns] = useState<QueryRun[]>(() => [helpQueryRun()]);
   const [metrics, setMetrics] = useState<DatabaseMetrics>(() => emptyDatabaseMetrics());
-  const [series, setSeries] = useState<DatabaseMetricsTimeseries>(() => emptyDatabaseMetricsTimeseries());
+  const [series, setSeries] = useState<DatabaseMetricsTimeseries>(() =>
+    emptyDatabaseMetricsTimeseries(),
+  );
   const queryResultEndRef = useRef<HTMLDivElement>(null);
   const bindings = workers.flatMap((worker) =>
     (worker.bindings ?? [])
@@ -112,8 +145,12 @@ function DatabaseDetailContent({
     let cancelled = false;
     async function loadMetrics() {
       const [nextMetrics, nextSeries] = await Promise.all([
-        fetchJSON<DatabaseMetrics>(`/v1/db/${encodeURIComponent(database.id)}/metrics`).catch(() => emptyDatabaseMetrics()),
-        fetchJSON<DatabaseMetricsTimeseries>(`/v1/db/${encodeURIComponent(database.id)}/metrics/timeseries`).catch(() => emptyDatabaseMetricsTimeseries()),
+        fetchJSON<DatabaseMetrics>(`/v1/db/${encodeURIComponent(database.id)}/metrics`).catch(() =>
+          emptyDatabaseMetrics(),
+        ),
+        fetchJSON<DatabaseMetricsTimeseries>(
+          `/v1/db/${encodeURIComponent(database.id)}/metrics/timeseries`,
+        ).catch(() => emptyDatabaseMetricsTimeseries()),
       ]);
       if (!cancelled) setMetrics(nextMetrics);
       if (!cancelled) setSeries(nextSeries);
@@ -128,17 +165,23 @@ function DatabaseDetailContent({
 
   async function deleteDatabase() {
     if (bindings.length) return notify("Remove worker bindings before deleting this database");
-    if (!window.confirm(`Delete database "${database.name}"?`)) return;
+    setDeleting(true);
+    setDeleteError("");
     try {
       if (apiConnected) {
-        const response = await apiFetch(`/v1/db/${encodeURIComponent(database.id)}`, { method: "DELETE" });
-        if (!response.ok) throw new Error(await errorText(response, `Database delete failed (${response.status})`));
+        const response = await apiFetch(`/v1/db/${encodeURIComponent(database.id)}`, {
+          method: "DELETE",
+        });
+        if (!response.ok)
+          throw new Error(await errorText(response, `Database delete failed (${response.status})`));
       }
       setDatabases((current) => sortDatabases(current.filter((item) => item.id !== database.id)));
       notify(`${database.name} deleted`);
       onBack();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Database delete failed");
+      setDeleteError(error instanceof Error ? error.message : "Database delete failed");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -157,78 +200,117 @@ function DatabaseDetailContent({
 
   async function runSlashCommand(command: string) {
     switch (command) {
-    case "/clear":
-      setQueryRuns([]);
-      return true;
-    case "/help":
-    case "/?":
-      setQueryRuns((current) => [...current, { ...helpQueryRun(), sql: command }]);
-      return true;
-    case "/tables":
-      if (!apiConnected) {
-        notify("API connection is required to list tables");
+      case "/clear":
+        setQueryRuns([]);
+        return true;
+      case "/help":
+      case "/?":
+        setQueryRuns((current) => [...current, { ...helpQueryRun(), sql: command }]);
+        return true;
+      case "/tables":
+        if (!apiConnected) {
+          notify("API connection is required to list tables");
+          return false;
+        }
+        await executeSQL(tablesSQL, command);
+        return true;
+      default:
+        notify(`Unknown slash command: ${command}`);
         return false;
-      }
-      await executeSQL(tablesSQL, command);
-      return true;
-    default:
-      notify(`Unknown slash command: ${command}`);
-      return false;
     }
   }
 
   async function executeSQL(statement: string, label: string) {
     setQuerying(true);
-    const run: QueryRun = { id: crypto.randomUUID(), sql: label, createdAt: new Date().toISOString() };
+    const run: QueryRun = {
+      id: crypto.randomUUID(),
+      sql: label,
+      createdAt: new Date().toISOString(),
+    };
     try {
       const response = await apiFetch(`/v1/db/${encodeURIComponent(database.id)}/execute`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ statements: [{ sql: statement }] }),
       });
-      if (!response.ok) throw new Error(await errorText(response, `Query failed (${response.status})`));
-      run.response = await response.json() as DBQueryResponse;
+      if (!response.ok)
+        throw new Error(await errorText(response, `Query failed (${response.status})`));
+      run.response = (await response.json()) as DBQueryResponse;
     } catch (error) {
       run.error = error instanceof Error ? error.message : "Query failed";
     } finally {
       setQueryRuns((current) => [...current, run]);
       if (apiConnected) {
-        void fetchJSON<DatabaseMetrics>(`/v1/db/${encodeURIComponent(database.id)}/metrics`).then(setMetrics).catch(() => undefined);
-        void fetchJSON<DatabaseMetricsTimeseries>(`/v1/db/${encodeURIComponent(database.id)}/metrics/timeseries`).then(setSeries).catch(() => undefined);
+        void fetchJSON<DatabaseMetrics>(`/v1/db/${encodeURIComponent(database.id)}/metrics`)
+          .then(setMetrics)
+          .catch(() => undefined);
+        void fetchJSON<DatabaseMetricsTimeseries>(
+          `/v1/db/${encodeURIComponent(database.id)}/metrics/timeseries`,
+        )
+          .then(setSeries)
+          .catch(() => undefined);
       }
       setQuerying(false);
     }
   }
 
   const metricCards = [
-    { label: "Total queries", value: compactNumber(metrics.queries), note: metrics.available ? "successful DB executions" : "metrics unavailable", icon: Activity },
-    { label: "Rows read", value: compactNumber(metrics.rows_read), note: metrics.available ? "rows scanned or returned" : "metrics unavailable", icon: Rows3 },
-    { label: "Rows written", value: compactNumber(metrics.rows_written), note: metrics.available ? "rows changed" : "metrics unavailable", icon: Rows3 },
-    { label: "Storage used", value: formatBytes(metrics.storage_bytes), note: metrics.available ? "current SQLite file size" : "metrics unavailable", icon: HardDrive },
-    { label: "Tables", value: compactNumber(metrics.table_count), note: metrics.available ? "current user tables" : "metrics unavailable", icon: Table2 },
+    {
+      label: "Total queries",
+      value: compactNumber(metrics.queries),
+      note: metrics.available ? "successful DB executions" : "metrics unavailable",
+      icon: Activity,
+    },
+    {
+      label: "Rows read",
+      value: compactNumber(metrics.rows_read),
+      note: metrics.available ? "rows scanned or returned" : "metrics unavailable",
+      icon: Rows3,
+    },
+    {
+      label: "Rows written",
+      value: compactNumber(metrics.rows_written),
+      note: metrics.available ? "rows changed" : "metrics unavailable",
+      icon: Rows3,
+    },
+    {
+      label: "Storage used",
+      value: formatBytes(metrics.storage_bytes),
+      note: metrics.available ? "current SQLite file size" : "metrics unavailable",
+      icon: HardDrive,
+    },
+    {
+      label: "Tables",
+      value: compactNumber(metrics.table_count),
+      note: metrics.available ? "current user tables" : "metrics unavailable",
+      icon: Table2,
+    },
   ];
 
   return (
     <>
       <div className="mb-6">
-        <SegmentedControl
-          data={[
+        <Tabs
+          className="inline-flex max-w-full"
+          listClassName="max-w-full"
+          tabs={[
             { label: "Overview", value: "overview" },
             { label: "Query", value: "query" },
             { label: "Settings", value: "settings" },
           ]}
-          onChange={(value) => setTab(value as "overview" | "query" | "settings")}
+          onValueChange={(value) => setTab(value as "overview" | "query" | "settings")}
           value={tab}
+          variant="segmented"
         />
       </div>
 
       {tab === "overview" ? (
         <>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="md">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             {metricCards.map((metric) => (
               <MetricCard key={metric.label} {...metric} />
             ))}
-          </SimpleGrid>
+          </div>
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
             <Panel title="Query mix" eyebrow="Database metrics">
@@ -252,42 +334,70 @@ function DatabaseDetailContent({
             <Panel flush>
               <div className="border-b border-[#e8e3d9] px-5 py-4">
                 <Field label="Bound workers">
-                  <Text c="dimmed" size="sm">Workers that can access this database through an active deployment.</Text>
+                  <Text size="sm" variant="secondary">
+                    Workers that can access this database through an active deployment.
+                  </Text>
                 </Field>
               </div>
               {bindings.length ? (
                 <div className="divide-y divide-gray-200">
                   {bindings.map(({ worker, binding }) => (
-                    <div key={`${worker.id}-${binding.binding}`} className="flex items-center justify-between gap-4 px-5 py-4">
+                    <div
+                      key={`${worker.id}-${binding.binding}`}
+                      className="flex items-center justify-between gap-4 px-5 py-4"
+                    >
                       <div className="min-w-0">
-                        <Text fw={700} truncate>{worker.name}</Text>
-                        <Text c="dimmed" ff="monospace" size="xs" truncate>{binding.binding}</Text>
+                        <Text bold truncate>
+                          {worker.name}
+                        </Text>
+                        <Text variant="mono-secondary" truncate>
+                          {binding.binding}
+                        </Text>
                       </div>
-                      <Badge tone="green"><Waypoints className="mr-1 inline size-3" />Bound</Badge>
+                      <Badge variant="success">
+                        <Waypoints className="mr-1 inline size-3" />
+                        Bound
+                      </Badge>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="px-5 py-12">
-                  <WorkerDetailEmpty icon={<Database />} title="No worker bindings" copy="Add this database to a worker's db config and deploy it." />
+                  <WorkerDetailEmpty
+                    icon={<Database />}
+                    title="No worker bindings"
+                    copy="Add this database to a worker's db config and deploy it."
+                  />
                 </div>
               )}
             </Panel>
           </div>
         </>
       ) : tab === "query" ? (
-        <Card withBorder padding={0} radius="lg" className="overflow-hidden">
+        <LayerCard className="overflow-hidden">
           <div className="flex h-[calc(100dvh-164px)] min-h-[520px] flex-col overflow-hidden bg-white">
             <div className="min-h-0 flex-1 bg-[#f8faf9]">
               <div className="h-full overflow-auto">
-                <div className={queryRuns.length ? "space-y-4 p-5" : "flex min-h-full items-center justify-center p-5"}>
-                  {queryRuns.length ? queryRuns.map((run, index) => (
-                    <QueryRunCard key={run.id} index={index + 1} run={run} />
-                  )) : (
+                <div
+                  className={
+                    queryRuns.length
+                      ? "space-y-4 p-5"
+                      : "flex min-h-full items-center justify-center p-5"
+                  }
+                >
+                  {queryRuns.length ? (
+                    queryRuns.map((run, index) => (
+                      <QueryRunCard key={run.id} index={index + 1} run={run} />
+                    ))
+                  ) : (
                     <div className="max-w-sm text-center">
                       <Database className="mx-auto mb-2 size-6" />
-                      <Text fw={700} size="sm">No query run yet</Text>
-                      <Text c="dimmed" size="xs">Run SQL below to build a console history of statements and results.</Text>
+                      <Text bold size="sm">
+                        No query run yet
+                      </Text>
+                      <Text size="xs" variant="secondary">
+                        Run SQL below to build a console history of statements and results.
+                      </Text>
                     </div>
                   )}
                   <div ref={queryResultEndRef} />
@@ -307,10 +417,13 @@ function DatabaseDetailContent({
                 spellCheck={false}
                 className="min-w-0 flex-1 border border-gray-300 bg-white px-2 py-1.5 font-mono text-[12px] text-gray-900 outline-none focus:border-blue-500"
               />
-              <Button disabled={querying} onClick={() => void runQuery()}><Play className="size-3.5" />Run</Button>
+              <Button disabled={querying} onClick={() => void runQuery()}>
+                <Play className="size-3.5" />
+                Run
+              </Button>
             </div>
           </div>
-        </Card>
+        </LayerCard>
       ) : (
         <div className="space-y-6">
           <Panel title="Basic info" eyebrow="Database">
@@ -322,9 +435,14 @@ function DatabaseDetailContent({
                 ["Created", new Date(database.created_at).toLocaleString()],
                 ["Bindings", String(bindings.length)],
               ].map(([label, value]) => (
-                <div key={label} className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]">
+                <div
+                  key={label}
+                  className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"
+                >
                   <span className="font-mono text-[10px] text-[#93978f]">{label}</span>
-                  <span className="break-all font-mono text-[11px] font-bold text-[#4f5a55]">{value}</span>
+                  <span className="break-all font-mono text-[11px] font-bold text-[#4f5a55]">
+                    {value}
+                  </span>
                 </div>
               ))}
             </div>
@@ -332,12 +450,37 @@ function DatabaseDetailContent({
           <Panel title="Danger zone">
             <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
               <div>
-                <Text fw={700} size="sm">Delete database</Text>
-                <Text c="dimmed" mt={4} size="sm">Permanently remove this database and its stored data. Databases with active worker bindings must be unbound first.</Text>
+                <Text bold size="sm">
+                  Delete database
+                </Text>
+                <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
+                  Permanently remove this database and its stored data. Databases with active worker
+                  bindings must be unbound first.
+                </Text>
               </div>
-              <Button disabled={bindings.length > 0} onClick={() => void deleteDatabase()} variant="ghost"><Trash2 className="size-4" />Delete database</Button>
+              <Button
+                disabled={bindings.length > 0}
+                onClick={() => {
+                  setDeleteError("");
+                  setDeleteOpen(true);
+                }}
+                variant="destructive"
+              >
+                <Trash2 className="size-4" />
+                Delete database
+              </Button>
             </div>
           </Panel>
+          <ConfirmDeleteDialog
+            confirmLabel="Delete database"
+            description="This action cannot be undone. All data stored in this database will be permanently deleted."
+            errorMessage={deleteError}
+            loading={deleting}
+            onConfirm={deleteDatabase}
+            onOpenChange={setDeleteOpen}
+            open={deleteOpen}
+            title="Delete database"
+          />
         </div>
       )}
     </>
@@ -352,58 +495,86 @@ function QueryRunCard({ index, run }: { index: number; run: QueryRun }) {
 
   return (
     <div className="overflow-hidden">
-      <pre className="overflow-auto font-mono text-sm"><code>{"> " + run.sql}</code></pre>
+      <pre className="overflow-auto px-4 pt-4 pb-3 font-mono text-sm">
+        <code>{"> " + run.sql}</code>
+      </pre>
       {run.error ? (
         <div className="px-4 py-4">
-          <Text c="red" size="sm">{run.error}</Text>
+          <Text size="sm" variant="error">
+            {run.error}
+          </Text>
         </div>
       ) : columns.length ? (
-        <ScrollArea>
-          <Table miw={720} verticalSpacing="sm" className="table-fixed border-collapse border border-gray-300">
-            <Table.Thead>
-              <Table.Tr>
+        <div className="overflow-auto">
+          <Table className="min-w-[720px] border-collapse [&_th]:bg-transparent" layout="fixed">
+            <Table.Header>
+              <Table.Row>
                 {columns.map((column) => (
-                  <Table.Th key={column} className="border border-gray-300 bg-gray-50">
-                    <Text ff="monospace" size="xs" truncate>{column}</Text>
-                  </Table.Th>
+                  <Table.Head key={column}>
+                    <Text variant="mono-secondary" truncate>
+                      {column}
+                    </Text>
+                  </Table.Head>
                 ))}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {rows.map((row, rowIndex) => (
-                <Table.Tr key={rowIndex}>
+                <Table.Row key={rowIndex}>
                   {columns.map((column) => (
-                    <Table.Td key={column} className="border border-gray-300">
-                      <Text ff="monospace" size="xs" truncate title={formatCell(row[column])}>{formatCell(row[column])}</Text>
-                    </Table.Td>
+                    <Table.Cell key={column}>
+                      <Text title={formatCell(row[column])} truncate variant="mono">
+                        {formatCell(row[column])}
+                      </Text>
+                    </Table.Cell>
                   ))}
-                </Table.Tr>
+                </Table.Row>
               ))}
-            </Table.Tbody>
+            </Table.Body>
           </Table>
-        </ScrollArea>
+        </div>
       ) : (
         <div className="px-4 py-5">
-          <Text c="dimmed" size="sm">Statement complete. No rows returned.</Text>
+          <Text size="sm" variant="secondary">
+            Statement complete. No rows returned.
+          </Text>
         </div>
       )}
       <div className="border-t border-gray-200 bg-gray-50  py-2 text-xs">
-        <Text c={run.error ? "red" : "dimmed"} ff="monospace" size="xs">{status}</Text>
+        <Text variant={run.error ? "error" : "mono-secondary"}>{status}</Text>
       </div>
     </div>
   );
 }
 
-function MetricCard({ icon: Icon, label, note, value }: { icon: LucideIcon; label: string; note: string; value: string }) {
+function MetricCard({
+  icon: Icon,
+  label,
+  note,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  note: string;
+  value: string;
+}) {
   return (
-    <Card padding="md" radius="md" withBorder>
-      <Group justify="space-between">
-        <Text c="dimmed" fw={700} size="xs" tt="uppercase">{label}</Text>
-        <ThemeIcon size="sm" variant="light"><Icon size={14} /></ThemeIcon>
-      </Group>
-      <Title mt="sm" order={3}>{value}</Title>
-      <Text c="dimmed" size="xs">{note}</Text>
-    </Card>
+    <LayerCard className="px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <Text bold size="xs" variant="secondary">
+          {label}
+        </Text>
+        <span className="grid size-7 place-items-center rounded-md bg-kumo-info/15 text-kumo-info">
+          <Icon size={14} />
+        </span>
+      </div>
+      <Text as="p" DANGEROUS_className="mt-3" variant="heading3">
+        {value}
+      </Text>
+      <Text size="xs" variant="secondary">
+        {note}
+      </Text>
+    </LayerCard>
   );
 }
 
@@ -415,40 +586,47 @@ function DatabaseLatencyHistogram({ metrics }: { metrics: DatabaseMetrics }) {
       <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-[#d8d2c6] bg-[#fbfaf6] px-6 text-center">
         <div>
           <Gauge className="mx-auto mb-2 size-6 text-[#7b827b]" />
-          <Text fw={700} size="sm">No latency samples yet</Text>
-          <Text c="dimmed" size="xs">Run a query or send database traffic to populate the histogram.</Text>
+          <Text bold size="sm">
+            No latency samples yet
+          </Text>
+          <Text size="xs" variant="secondary">
+            Run a query or send database traffic to populate the histogram.
+          </Text>
         </div>
       </div>
     );
   }
   return (
-    <div className="h-72 min-w-0">
-      <ResponsiveContainer height="100%" width="100%">
-        <BarChart data={data} margin={{ bottom: 8, left: -22, right: 8, top: 8 }}>
-          <CartesianGrid stroke="#eee7dc" vertical={false} />
-          <XAxis
-            axisLine={false}
-            dataKey="label"
-            interval={0}
-            tick={{ fill: "#68716b", fontSize: 10 }}
-            tickLine={false}
-          />
-          <YAxis
-            allowDecimals={false}
-            axisLine={false}
-            tick={{ fill: "#68716b", fontSize: 10 }}
-            tickFormatter={(value) => compactNumber(Number(value))}
-            tickLine={false}
-          />
-          <Tooltip
-            contentStyle={{ border: "1px solid #ded7cb", borderRadius: 6, boxShadow: "0 10px 25px rgba(49, 56, 51, 0.08)" }}
-            formatter={(value) => [compactNumber(Number(value)), "Queries"]}
-            labelFormatter={(label) => `Latency ${label}`}
-          />
-          <Bar dataKey="count" fill="#256f6a" radius={[4, 4, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
+    <Chart
+      echarts={echarts}
+      height={288}
+      options={{
+        grid: { bottom: 34, left: 44, right: 10, top: 12 },
+        tooltip: { trigger: "axis", valueFormatter: (value) => compactNumber(Number(value)) },
+        xAxis: {
+          axisLine: { show: false },
+          axisTick: { show: false },
+          data: data.map((item) => item.label),
+          type: "category",
+        },
+        yAxis: {
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: { formatter: compactNumber },
+          splitLine: { lineStyle: { color: "#e5e7eb" } },
+          type: "value",
+        },
+        series: [
+          {
+            barMaxWidth: 32,
+            data: data.map((item) => item.count),
+            itemStyle: { borderRadius: [4, 4, 0, 0], color: ChartPalette.categorical(4) },
+            name: "Queries",
+            type: "bar",
+          },
+        ],
+      }}
+    />
   );
 }
 
@@ -528,35 +706,16 @@ function DatabaseTimeseriesBars({
     return <DatabaseChartEmpty copy={emptyCopy} />;
   }
   return (
-    <div className="h-72 min-w-0">
-      <ResponsiveContainer height="100%" width="100%">
-        <BarChart data={data} margin={{ bottom: 8, left: -18, right: 8, top: 8 }}>
-          <CartesianGrid stroke="#eee7dc" vertical={false} />
-          <XAxis
-            axisLine={false}
-            dataKey="timestamp"
-            tick={{ fill: "#68716b", fontSize: 11 }}
-            tickFormatter={formatSeriesTick}
-            tickLine={false}
-          />
-          <YAxis
-            allowDecimals={false}
-            axisLine={false}
-            tick={{ fill: "#68716b", fontSize: 10 }}
-            tickFormatter={(value) => compactNumber(Number(value))}
-            tickLine={false}
-          />
-          <Tooltip
-            contentStyle={{ border: "1px solid #ded7cb", borderRadius: 6, boxShadow: "0 10px 25px rgba(49, 56, 51, 0.08)" }}
-            formatter={(value, name) => [formatSeriesValue(series, String(name), Number(value)), valueLabel]}
-            labelFormatter={formatSeriesLabel}
-          />
-          {series.map((entry, index) => (
-            <Bar key={entry.key} dataKey={entry.key} fill={chartColors[index % chartColors.length]} name={entry.key} radius={[4, 4, 0, 0]} />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
+    <TimeseriesChart
+      ariaDescription={`${valueLabel} over time.`}
+      data={toKumoTimeseries(series)}
+      echarts={echarts}
+      height={288}
+      tooltipValueFormat={(value) => compactNumber(value)}
+      type="bar"
+      xAxisTickFormat={formatSeriesTickAt}
+      yAxisTickFormat={compactNumber}
+    />
   );
 }
 
@@ -575,34 +734,15 @@ function DatabaseTimeseriesLines({
     return <DatabaseChartEmpty copy={emptyCopy} />;
   }
   return (
-    <div className="h-72 min-w-0">
-      <ResponsiveContainer height="100%" width="100%">
-        <LineChart data={data} margin={{ bottom: 8, left: -18, right: 8, top: 8 }}>
-          <CartesianGrid stroke="#eee7dc" vertical={false} />
-          <XAxis
-            axisLine={false}
-            dataKey="timestamp"
-            tick={{ fill: "#68716b", fontSize: 11 }}
-            tickFormatter={formatSeriesTick}
-            tickLine={false}
-          />
-          <YAxis
-            axisLine={false}
-            tick={{ fill: "#68716b", fontSize: 10 }}
-            tickFormatter={(value) => formatQueryDuration(Number(value))}
-            tickLine={false}
-          />
-          <Tooltip
-            contentStyle={{ border: "1px solid #ded7cb", borderRadius: 6, boxShadow: "0 10px 25px rgba(49, 56, 51, 0.08)" }}
-            formatter={(value, name) => [formatSeriesValue(series, String(name), Number(value)), valueLabel]}
-            labelFormatter={formatSeriesLabel}
-          />
-          {series.map((entry, index) => (
-            <Line key={entry.key} dataKey={entry.key} dot={false} name={entry.key} stroke={chartColors[index % chartColors.length]} strokeWidth={2} type="monotone" />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <TimeseriesChart
+      ariaDescription={`${valueLabel} over time.`}
+      data={toKumoTimeseries(series)}
+      echarts={echarts}
+      height={288}
+      tooltipValueFormat={formatQueryDuration}
+      xAxisTickFormat={formatSeriesTickAt}
+      yAxisTickFormat={formatQueryDuration}
+    />
   );
 }
 
@@ -611,8 +751,12 @@ function DatabaseChartEmpty({ copy }: { copy: string }) {
     <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-[#d8d2c6] bg-[#fbfaf6] px-6 text-center">
       <div>
         <Gauge className="mx-auto mb-2 size-6 text-[#7b827b]" />
-        <Text fw={700} size="sm">No chart data yet</Text>
-        <Text c="dimmed" size="xs">{copy}</Text>
+        <Text bold size="sm">
+          No chart data yet
+        </Text>
+        <Text size="xs" variant="secondary">
+          {copy}
+        </Text>
       </div>
     </div>
   );
@@ -632,7 +776,16 @@ function columnsForRows(rows: Record<string, unknown>[]) {
   return [...seen];
 }
 
-const chartColors = ["#256f6a", "#3b82f6", "#9b8cf2", "#d97706"];
+function toKumoTimeseries(series: DatabaseSeries[]) {
+  return series.map((entry, index) => ({
+    color: ChartPalette.categorical(index),
+    data: entry.points.flatMap((point) => {
+      const timestamp = new Date(point.timestamp).getTime();
+      return Number.isNaN(timestamp) ? [] : [[timestamp, point.value] as [number, number]];
+    }),
+    name: entry.label,
+  }));
+}
 
 function mergeTimeseries(series: DatabaseSeries[]) {
   const rows = new Map<string, Record<string, number | string>>();
@@ -645,7 +798,9 @@ function mergeTimeseries(series: DatabaseSeries[]) {
       rows.set(timestamp, row);
     }
   }
-  return [...rows.values()].sort((a, b) => new Date(String(a.timestamp)).getTime() - new Date(String(b.timestamp)).getTime());
+  return [...rows.values()].sort(
+    (a, b) => new Date(String(a.timestamp)).getTime() - new Date(String(b.timestamp)).getTime(),
+  );
 }
 
 function formatSeriesValue(series: DatabaseSeries[], key: string, value: number) {
@@ -660,11 +815,20 @@ function formatSeriesTick(timestamp: string) {
   return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatSeriesTickAt(timestamp: number) {
+  return formatSeriesTick(new Date(timestamp).toISOString());
+}
+
 function formatSeriesLabel(timestamp: unknown) {
   const raw = String(timestamp ?? "");
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function latencyHistogramData(metrics: DatabaseMetrics) {
@@ -731,7 +895,9 @@ function emptyDatabaseMetrics(): DatabaseMetrics {
 
 function compactNumber(value: number) {
   if (!Number.isFinite(value)) return "0";
-  return Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  return Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
+    value,
+  );
 }
 
 function resultSummary(result?: D1Result, bookmark?: string) {

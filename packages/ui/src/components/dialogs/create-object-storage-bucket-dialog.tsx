@@ -28,7 +28,11 @@ export function CreateObjectStorageBucketDialog({
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) return notify("Bucket name is required");
-    let bucket: ObjectStorageBucket = { id: crypto.randomUUID().replace(/-/g, ""), name: trimmed, created_at: new Date().toISOString() };
+    let bucket: ObjectStorageBucket = {
+      id: crypto.randomUUID().replace(/-/g, ""),
+      name: trimmed,
+      created_at: new Date().toISOString(),
+    };
     if (apiConnected) {
       const response = await apiFetch("/v1/object-storage-buckets", {
         method: "POST",
@@ -36,7 +40,7 @@ export function CreateObjectStorageBucketDialog({
         body: JSON.stringify({ name: trimmed }),
       });
       if (!response.ok) return notify(await errorText(response, "Bucket creation failed"));
-      bucket = await response.json() as ObjectStorageBucket;
+      bucket = (await response.json()) as ObjectStorageBucket;
     }
     setBuckets(sortObjectStorageBuckets([...buckets, bucket]));
     setName("");
@@ -44,5 +48,29 @@ export function CreateObjectStorageBucketDialog({
     notify(`${bucket.name} created`);
   }
 
-  return <Dialog open={open} onClose={onClose} title="Create object storage bucket" description="Provision a shared object bucket you can bind into one or more workers."><form className="space-y-4" onSubmit={submit}><Field label="Name"><Input required placeholder="customer-files" value={name} onChange={(event) => setName(event.target.value)} /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Create bucket</Button></div></form></Dialog>;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Create object storage bucket"
+      description="Provision a shared object bucket you can bind into one or more workers."
+    >
+      <form className="space-y-4" onSubmit={submit}>
+        <Field label="Name">
+          <Input
+            required
+            placeholder="customer-files"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit">Create bucket</Button>
+        </div>
+      </form>
+    </Dialog>
+  );
 }

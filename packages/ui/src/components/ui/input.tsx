@@ -1,20 +1,26 @@
-import { TextInput, type TextInputProps } from "@mantine/core";
+import { Input as KumoInput } from "@cloudflare/kumo";
+import type { ChangeEventHandler } from "react";
 import { cn } from "../../lib/utils";
 
-type InputProps = TextInputProps & {
+type InputProps = {
+  [key: string]: any;
   inputClassName?: string;
+  className?: string;
+  onChange?: ChangeEventHandler<HTMLInputElement>;
 };
-
-export function Input({ className, classNames, inputClassName, ...props }: InputProps) {
-  const mergedClassNames = typeof classNames === "function"
-    ? classNames
-    : { ...classNames, input: cn("w-full", classNames?.input, inputClassName) };
-
+export function Input({ className, inputClassName, ...props }: InputProps) {
+  const InputBase = KumoInput as any;
+  const unstyled = props.variant === "unstyled";
   return (
-    <TextInput
-      className={cn("w-full", className)}
-      classNames={mergedClassNames}
+    <InputBase
       {...props}
+      {...(unstyled ? { variant: undefined } : {})}
+      className={cn(
+        "w-full",
+        inputClassName,
+        className,
+        unstyled && "!border-0 !bg-transparent !shadow-none !ring-0 focus:!ring-0",
+      )}
     />
   );
 }

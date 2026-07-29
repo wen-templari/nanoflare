@@ -28,7 +28,11 @@ export function CreateKVNamespaceDialog({
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) return notify("Namespace name is required");
-    let namespace: KVNamespace = { id: crypto.randomUUID().replace(/-/g, ""), name: trimmed, created_at: new Date().toISOString() };
+    let namespace: KVNamespace = {
+      id: crypto.randomUUID().replace(/-/g, ""),
+      name: trimmed,
+      created_at: new Date().toISOString(),
+    };
     if (apiConnected) {
       const response = await apiFetch("/v1/kv/namespaces", {
         method: "POST",
@@ -36,7 +40,7 @@ export function CreateKVNamespaceDialog({
         body: JSON.stringify({ name: trimmed }),
       });
       if (!response.ok) return notify(await errorText(response, "Namespace creation failed"));
-      namespace = await response.json() as KVNamespace;
+      namespace = (await response.json()) as KVNamespace;
     }
     setNamespaces(sortNamespaces([...namespaces, namespace]));
     setName("");
@@ -44,5 +48,29 @@ export function CreateKVNamespaceDialog({
     notify(`${namespace.name} created`);
   }
 
-  return <Dialog open={open} onClose={onClose} title="Create KV namespace" description="Provision a shared namespace you can bind into one or more workers."><form className="space-y-4" onSubmit={submit}><Field label="Name"><Input required placeholder="shared-cache" value={name} onChange={(event) => setName(event.target.value)} /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Create namespace</Button></div></form></Dialog>;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Create KV namespace"
+      description="Provision a shared namespace you can bind into one or more workers."
+    >
+      <form className="space-y-4" onSubmit={submit}>
+        <Field label="Name">
+          <Input
+            required
+            placeholder="shared-cache"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit">Create namespace</Button>
+        </div>
+      </form>
+    </Dialog>
+  );
 }

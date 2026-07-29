@@ -50,7 +50,11 @@ export type ObjectStoragePutValue =
   | Response;
 
 export interface ObjectStorageBucket {
-  put(key: string, value: ObjectStoragePutValue, options?: ObjectStoragePutOptions): Promise<ObjectStorageObject>;
+  put(
+    key: string,
+    value: ObjectStoragePutValue,
+    options?: ObjectStoragePutOptions,
+  ): Promise<ObjectStorageObject>;
   get(key: string): Promise<ObjectStorageObjectBody | null>;
   head(key: string): Promise<ObjectStorageObject | null>;
   delete(key: string): Promise<void>;
@@ -108,7 +112,9 @@ export interface D1Database {
   prepare(query: string): D1PreparedStatement;
   batch<T = Record<string, unknown>>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
   exec(query: string): Promise<D1ExecResult>;
-  withSession(initialBookmark?: "first-primary" | "first-unconstrained" | string): D1DatabaseSession;
+  withSession(
+    initialBookmark?: "first-primary" | "first-unconstrained" | string,
+  ): D1DatabaseSession;
 }
 
 export interface AssetFetcher {

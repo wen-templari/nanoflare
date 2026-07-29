@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Divider, Group, Paper, PasswordInput, Stack, Text, TextInput, ThemeIcon, Title } from "@mantine/core";
+import { Banner, Button, Input, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
 import { Boxes, LogIn } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
@@ -21,9 +21,15 @@ export function LoginPage() {
   const [signupMode, setSignupMode] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [oidcConfig, setOIDCConfig] = useState<OIDCConfig>({ directLogin: false, enabled: false, loading: true });
+  const [oidcConfig, setOIDCConfig] = useState<OIDCConfig>({
+    directLogin: false,
+    enabled: false,
+    loading: true,
+  });
   const [oidcLoading, setOIDCLoading] = useState(false);
-  const [suppressDirectLogin, setSuppressDirectLogin] = useState(() => searchParams.get("sso_logged_out") === "1");
+  const [suppressDirectLogin, setSuppressDirectLogin] = useState(
+    () => searchParams.get("sso_logged_out") === "1",
+  );
   const handledOIDCCode = useRef("");
   const startedDirectLogin = useRef(false);
 
@@ -35,7 +41,12 @@ export function LoginPage() {
         if (!cancelled) setOIDCConfig({ directLogin: false, enabled: false, loading: false });
         return;
       }
-      const config = await response.json().catch(() => ({ direct_login: false, enabled: false })) as { direct_login?: boolean; enabled?: boolean };
+      const config = (await response
+        .json()
+        .catch(() => ({ direct_login: false, enabled: false }))) as {
+        direct_login?: boolean;
+        enabled?: boolean;
+      };
       if (!cancelled) {
         setOIDCConfig({
           directLogin: Boolean(config.direct_login),
@@ -80,7 +91,12 @@ export function LoginPage() {
     };
   }, [auth, navigate, next, oidcCode, searchParams, setSearchParams]);
 
-  const shouldStartDirectLogin = oidcConfig.directLogin && oidcConfig.enabled && !auth.signedIn && !oidcCode && !suppressDirectLogin;
+  const shouldStartDirectLogin =
+    oidcConfig.directLogin &&
+    oidcConfig.enabled &&
+    !auth.signedIn &&
+    !oidcCode &&
+    !suppressDirectLogin;
 
   useEffect(() => {
     if (oidcConfig.loading || !shouldStartDirectLogin || startedDirectLogin.current) return;
@@ -91,7 +107,7 @@ export function LoginPage() {
 
   if (auth.signedIn) return <Navigate to={next} replace />;
   if ((oidcConfig.loading && !oidcCode) || shouldStartDirectLogin) {
-    return <Box className="min-h-screen bg-[var(--mantine-color-gray-0)]" />;
+    return <div className="min-h-screen bg-kumo-base" />;
   }
 
   async function submit(event: React.FormEvent) {
@@ -116,29 +132,33 @@ export function LoginPage() {
   }
 
   return (
-    <Box className="min-h-screen bg-[var(--mantine-color-gray-0)] px-4 py-10">
-      <Stack align="center" justify="center" mih="calc(100vh - 5rem)">
-        <Box w="100%" maw={420}>
-          <Stack gap="lg">
-            <Group gap="sm">
-              <ThemeIcon size={40} radius="md">
+    <div className="min-h-screen bg-kumo-base px-4 py-10">
+      <div className="flex min-h-[calc(100vh-5rem)] items-center justify-center">
+        <div className="w-full max-w-[420px]">
+          <div className="flex flex-col gap-6">
+            <div className="flex items-center gap-3">
+              <div className="grid size-10 place-items-center rounded-lg bg-kumo-info/15 text-kumo-info">
                 <Boxes size={20} />
-              </ThemeIcon>
-              <Box>
-                <Title order={1} size="h3">nanoflare</Title>
-              </Box>
-            </Group>
-            <Paper bg="white" p="xl" radius="lg" shadow="xs" withBorder>
+              </div>
+              <Text as="h1" variant="heading3">
+                nanoflare
+              </Text>
+            </div>
+            <LayerCard>
               <form onSubmit={submit}>
-                <Stack>
-                  {error && <Alert color="red">{error}</Alert>}
-                  <Box>
-                    <Title order={2} size="h4">{signupMode ? "Create account" : "Sign in"}</Title>
-                    <Text c="dimmed" size="sm">
-                      {signupMode ? "Create your Nanoflare account. You can create or join an organization next." : "Use your control-plane account."}
+                <div className="flex flex-col gap-4">
+                  {error && <Banner description={error} variant="error" />}
+                  <div>
+                    <Text as="h2" variant="heading3">
+                      {signupMode ? "Create account" : "Sign in"}
                     </Text>
-                  </Box>
-                  <TextInput
+                    <Text size="sm" variant="secondary">
+                      {signupMode
+                        ? "Create your Nanoflare account. You can create or join an organization next."
+                        : "Use your control-plane account."}
+                    </Text>
+                  </div>
+                  <Input
                     autoComplete="email"
                     label="Email"
                     onChange={(event) => setEmail(event.currentTarget.value)}
@@ -146,33 +166,45 @@ export function LoginPage() {
                     type="email"
                     value={email}
                   />
-                  <PasswordInput
+                  <SensitiveInput
                     autoComplete={signupMode ? "new-password" : "current-password"}
                     label="Password"
                     onChange={(event) => setPassword(event.currentTarget.value)}
                     required
                     value={password}
                   />
-                  <Button leftSection={<LogIn size={16} />} loading={submitting} type="submit">
+                  <Button icon={LogIn} loading={submitting} type="submit">
                     {signupMode ? "Create account" : "Sign in"}
                   </Button>
                   {oidcConfig.enabled && !signupMode && (
                     <>
-                      <Divider label="or" labelPosition="center" />
-                      <Button leftSection={<LogIn size={16} />} loading={oidcLoading} onClick={startOIDCLogin} type="button" variant="light">
+                      <div className="flex items-center gap-3">
+                        <div className="h-px flex-1 bg-kumo-line" />
+                        <Text size="sm" variant="secondary">
+                          or
+                        </Text>
+                        <div className="h-px flex-1 bg-kumo-line" />
+                      </div>
+                      <Button
+                        icon={LogIn}
+                        loading={oidcLoading}
+                        onClick={startOIDCLogin}
+                        type="button"
+                        variant="secondary"
+                      >
                         Sign in with OIDC
                       </Button>
                     </>
                   )}
-                  <Button color="gray" onClick={() => setSignupMode((value) => !value)} variant="subtle">
+                  <Button onClick={() => setSignupMode((value) => !value)} variant="ghost">
                     {signupMode ? "Use existing account" : "Create a new account"}
                   </Button>
-                </Stack>
+                </div>
               </form>
-            </Paper>
-          </Stack>
-        </Box>
-      </Stack>
-    </Box>
+            </LayerCard>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -6,13 +6,9 @@
   "format": "modules",
   "compatibility_date": "2025-12-10",
   "triggers": {
-    "crons": [
-      "*/1 * * * *"
-    ]
+    "crons": ["*/1 * * * *"]
   },
-  "files": [
-    "dist/worker.js"
-  ],
+  "files": ["dist/worker.js"],
   "assets": {},
   "auth": {}
 }

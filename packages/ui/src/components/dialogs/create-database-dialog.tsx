@@ -28,7 +28,11 @@ export function CreateDatabaseDialog({
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) return notify("Database name is required");
-    let database: Database = { id: crypto.randomUUID().replace(/-/g, ""), name: trimmed, created_at: new Date().toISOString() };
+    let database: Database = {
+      id: crypto.randomUUID().replace(/-/g, ""),
+      name: trimmed,
+      created_at: new Date().toISOString(),
+    };
     if (apiConnected) {
       const response = await apiFetch("/v1/db", {
         method: "POST",
@@ -36,7 +40,7 @@ export function CreateDatabaseDialog({
         body: JSON.stringify({ name: trimmed }),
       });
       if (!response.ok) return notify(await errorText(response, "Database creation failed"));
-      database = await response.json() as Database;
+      database = (await response.json()) as Database;
     }
     setDatabases(sortDatabases([...databases, database]));
     setName("");
@@ -44,5 +48,29 @@ export function CreateDatabaseDialog({
     notify(`${database.name} created`);
   }
 
-  return <Dialog open={open} onClose={onClose} title="Create database" description="Provision a SQLite database you can bind into one or more workers."><form className="space-y-4" onSubmit={submit}><Field label="Name"><Input required placeholder="app-data" value={name} onChange={(event) => setName(event.target.value)} /></Field><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit">Create database</Button></div></form></Dialog>;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Create database"
+      description="Provision a SQLite database you can bind into one or more workers."
+    >
+      <form className="space-y-4" onSubmit={submit}>
+        <Field label="Name">
+          <Input
+            required
+            placeholder="app-data"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit">Create database</Button>
+        </div>
+      </form>
+    </Dialog>
+  );
 }

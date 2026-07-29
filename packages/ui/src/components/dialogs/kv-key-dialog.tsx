@@ -35,12 +35,22 @@ export function KVKeyDialog({
       open={open}
       onClose={onClose}
       title={editing ? "Edit KV entry" : "Create KV entry"}
-      description={editing ? "Update the key name or value for this namespace entry." : "Add a new key and seed its initial value for this namespace."}
+      description={
+        editing
+          ? "Update the key name or value for this namespace entry."
+          : "Add a new key and seed its initial value for this namespace."
+      }
       panelClassName="max-w-2xl"
     >
       <form className="space-y-4" onSubmit={onSubmit}>
         <Field label="Key">
-          <Input required placeholder="visits" value={keyName} onChange={(event) => onKeyNameChange(event.target.value)} disabled={loading || submitting} />
+          <Input
+            required
+            placeholder="visits"
+            value={keyName}
+            onChange={(event) => onKeyNameChange(event.target.value)}
+            disabled={loading || submitting}
+          />
         </Field>
         <Field label="Value">
           <textarea
@@ -54,10 +64,17 @@ export function KVKeyDialog({
           />
         </Field>
         <div className="flex items-center justify-between gap-3 rounded-lg border border-[#e2ddd2] bg-white/45 px-4 py-3">
-          <p className="font-mono text-[10px]   text-[#7a817a]">{loading ? "Loading key value..." : `${value.length} bytes ready`}</p>
+          <p className="font-mono text-[10px]   text-[#7a817a]">
+            {loading ? "Loading key value..." : `${value.length} bytes ready`}
+          </p>
           <div className="flex gap-2">
-            <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
-            <Button type="submit" disabled={loading || submitting || !keyName.trim()}><Save className="size-3.5" />{editing ? "Save changes" : "Create key"}</Button>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading || submitting || !keyName.trim()}>
+              <Save className="size-3.5" />
+              {editing ? "Save changes" : "Create key"}
+            </Button>
           </div>
         </div>
       </form>

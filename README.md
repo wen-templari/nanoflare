@@ -352,9 +352,7 @@ Then bind it in `nanoflare.json`:
 
 ```json
 {
-  "db": [
-    { "binding": "DB", "database_id": "db_123" }
-  ]
+  "db": [{ "binding": "DB", "database_id": "db_123" }]
 }
 ```
 
@@ -441,9 +439,7 @@ Then bind them in `nanoflare.json`:
 
 ```json
 {
-  "object_storage_buckets": [
-    { "binding": "OBJECTS", "bucket_id": "bucket_123" }
-  ]
+  "object_storage_buckets": [{ "binding": "OBJECTS", "bucket_id": "bucket_123" }]
 }
 ```
 
@@ -473,9 +469,7 @@ disabled in that mode.
 Run the React control plane UI:
 
 ```sh
-cd packages/ui
-npm install
-npm run dev
+pnpm dev:ui
 ```
 
 Vite serves the console at `http://127.0.0.1:5173` and proxies `/v1` requests to

@@ -1,6 +1,7 @@
-import { MantineProvider, createTheme } from "@mantine/core";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Toasty } from "@cloudflare/kumo";
 import { AuthProvider, useAuth } from "./app/auth-context";
+import { appToastManager } from "./app/toast";
 import { WorkspaceProvider } from "./app/workspace-context";
 import { ConsoleLayout } from "./components/layout/console-layout";
 import { DatabaseDetailPage } from "./pages/database-detail-page";
@@ -19,41 +20,34 @@ import { LoginPage } from "./pages/login-page";
 import { InvitePage } from "./pages/invite-page";
 import { CLILoginPage } from "./pages/cli-login-page";
 
-const theme = createTheme({
-  primaryColor: "blue",
-  defaultRadius: "md",
-  fontFamily: "Manrope, sans-serif",
-  headings: { fontFamily: "Manrope, sans-serif" },
-});
-
 export function App() {
   return (
-    <MantineProvider theme={theme} defaultColorScheme="light">
+    <Toasty toastManager={appToastManager}>
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/cli-login" element={<CLILoginPage />} />
-            <Route path="/invites/:token" element={<InvitePage />} />
-            <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
-            <Route element={<ProtectedConsole />}>
-              <Route index element={<OverviewPage />} />
-              <Route path="workers" element={<WorkersPage />} />
-              <Route path="workers/:workerId" element={<WorkerDetailPage />} />
-              <Route path="kv" element={<KVNamespacesPage />} />
-              <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />
-              <Route path="databases" element={<DatabasesPage />} />
-              <Route path="databases/:databaseId" element={<DatabaseDetailPage />} />
-              <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
-              <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="settings/oauth-clients/:clientId" element={<OAuthClientDetailPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/cli-login" element={<CLILoginPage />} />
+          <Route path="/invites/:token" element={<InvitePage />} />
+          <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
+          <Route element={<ProtectedConsole />}>
+            <Route index element={<OverviewPage />} />
+            <Route path="workers" element={<WorkersPage />} />
+            <Route path="workers/:workerId" element={<WorkerDetailPage />} />
+            <Route path="kv" element={<KVNamespacesPage />} />
+            <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />
+            <Route path="databases" element={<DatabasesPage />} />
+            <Route path="databases/:databaseId" element={<DatabaseDetailPage />} />
+            <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
+            <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/oauth-clients/:clientId" element={<OAuthClientDetailPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
           </Routes>
         </BrowserRouter>
       </AuthProvider>
-    </MantineProvider>
+    </Toasty>
   );
 }
 

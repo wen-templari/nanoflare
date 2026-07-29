@@ -41,7 +41,7 @@ export async function fetchJSON<T>(path: string) {
 
 export async function errorText(response: Response, fallback: string) {
   try {
-    const payload = await response.json() as { error?: string };
+    const payload = (await response.json()) as { error?: string };
     return payload.error || fallback;
   } catch {
     return fallback;

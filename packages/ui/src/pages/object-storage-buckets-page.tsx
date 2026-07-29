@@ -1,4 +1,4 @@
-import { Center, ScrollArea, Stack, Table, Text } from "@mantine/core";
+import { Empty, Table, Text } from "@cloudflare/kumo";
 import { DatabaseZap, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits";
@@ -9,7 +9,13 @@ import { Button } from "../components/ui/button";
 
 export function ObjectStorageBucketsPage() {
   const navigate = useNavigate();
-  const { activeOrgID, organizations, objectStorageBuckets, workers, openObjectStorageBucketDialog } = useWorkspace();
+  const {
+    activeOrgID,
+    organizations,
+    objectStorageBuckets,
+    workers,
+    openObjectStorageBucketDialog,
+  } = useWorkspace();
   const activeOrg = organizations.find((org) => org.id === activeOrgID);
   const usageLevel = normalizeUsageLevel(activeOrg?.usage_level);
   const bucketLimit = orgLimitsForLevel(usageLevel).objectStorageBuckets;
@@ -21,35 +27,85 @@ export function ObjectStorageBucketsPage() {
         eyebrow="Storage"
         title="Object storage"
         copy="Manage bucket inventory for your workers."
-        actions={bucketLimitReached
-          ? <Text c="dimmed" size="sm">{limitReachedText("object buckets", bucketLimit, usageLevel)}</Text>
-          : <Button onClick={openObjectStorageBucketDialog}><Plus className="size-4" />New bucket</Button>}
+        actions={
+          bucketLimitReached ? (
+            <Text size="sm" variant="secondary">
+              {limitReachedText("object buckets", bucketLimit, usageLevel)}
+            </Text>
+          ) : (
+            <Button onClick={openObjectStorageBucketDialog}>
+              <Plus className="size-4" />
+              Create bucket
+            </Button>
+          )
+        }
       />
       <Panel flush>
-        <ScrollArea>
-          <Table highlightOnHover miw={760} verticalSpacing="sm" className="table-fixed">
-            <Table.Thead><Table.Tr><Table.Th className="w-[30%]">Bucket</Table.Th><Table.Th className="w-[44%]">ID</Table.Th><Table.Th className="w-[14%]">Bindings</Table.Th><Table.Th className="w-[12%]">Created</Table.Th></Table.Tr></Table.Thead>
-            <Table.Tbody>
+        <div className="overflow-x-auto">
+          <Table className="min-w-[760px]" layout="fixed">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head className="w-[30%]">Bucket</Table.Head>
+                <Table.Head className="w-[44%]">ID</Table.Head>
+                <Table.Head className="w-[14%]">Bindings</Table.Head>
+                <Table.Head className="w-[12%]">Created</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {objectStorageBuckets.map((bucket) => {
-                const boundCount = workers.filter((worker) => worker.bindings?.some((binding) => binding.kind === "object_storage_bucket" && binding.bucket_id === bucket.id)).length;
+                const boundCount = workers.filter((worker) =>
+                  worker.bindings?.some(
+                    (binding) =>
+                      binding.kind === "object_storage_bucket" && binding.bucket_id === bucket.id,
+                  ),
+                ).length;
                 return (
-                  <Table.Tr key={bucket.id} className="cursor-pointer" onClick={() => navigate(`/object-storage/${bucket.id}`)}>
-                    <Table.Td className="w-[30%]"><Text fw={700} truncate>{bucket.name}</Text></Table.Td>
-                    <Table.Td className="w-[44%]"><Text c="dimmed" ff="monospace" size="xs" truncate>{bucket.id}</Text></Table.Td>
-                    <Table.Td className="w-[14%]"><Badge tone={boundCount ? "green" : "orange"}>{boundCount} worker{boundCount === 1 ? "" : "s"}</Badge></Table.Td>
-                    <Table.Td className="w-[12%]"><Text c="dimmed" size="sm" truncate>{new Date(bucket.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></Table.Td>
-                  </Table.Tr>
+                  <Table.Row
+                    key={bucket.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/object-storage/${bucket.id}`)}
+                  >
+                    <Table.Cell className="w-[30%]">
+                      <Text DANGEROUS_className="truncate">{bucket.name}</Text>
+                    </Table.Cell>
+                    <Table.Cell className="w-[44%]">
+                      <Text DANGEROUS_className="truncate" variant="mono-secondary">
+                        {bucket.id}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell className="w-[14%]">
+                      <Badge tone={boundCount ? "green" : "orange"}>
+                        {boundCount} worker{boundCount === 1 ? "" : "s"}
+                      </Badge>
+                    </Table.Cell>
+                    <Table.Cell className="w-[12%]">
+                      <Text DANGEROUS_className="truncate" size="sm" variant="secondary">
+                        {new Date(bucket.created_at).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </Text>
+                    </Table.Cell>
+                  </Table.Row>
                 );
               })}
-            </Table.Tbody>
+            </Table.Body>
           </Table>
-        </ScrollArea>
-        {!objectStorageBuckets.length && <Center h={240}><Stack align="center" gap={4}><DatabaseZap size={22} /><Text fw={700} size="sm">No buckets yet</Text><Text c="dimmed" size="xs">Create one to bind object storage into a worker</Text></Stack></Center>}
+        </div>
+        {!objectStorageBuckets.length && (
+          <Empty
+            icon={<DatabaseZap />}
+            title="No buckets yet"
+            description="Create one to bind object storage into a worker"
+          />
+        )}
       </Panel>
     </>
   );
 }
 
 function limitReachedText(resource: string, limit: number, usageLevel: string) {
-  return usageLevel === usageLevelPaid ? `Limit reached: ${limit} ${resource}.` : `Default plan limit reached: ${limit} ${resource}.`;
+  return usageLevel === usageLevelPaid
+    ? `Limit reached: ${limit} ${resource}.`
+    : `Default plan limit reached: ${limit} ${resource}.`;
 }

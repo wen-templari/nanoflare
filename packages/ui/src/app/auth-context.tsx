@@ -23,7 +23,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [activeOrgIDState, setActiveOrgIDState] = useState(() => window.localStorage.getItem("nanoflare.auth.active_org_id") || "");
+  const [activeOrgIDState, setActiveOrgIDState] = useState(
+    () => window.localStorage.getItem("nanoflare.auth.active_org_id") || "",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -58,9 +60,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function refresh() {
     const response = await apiFetch("/v1/auth/me");
     if (!response.ok) throw new Error("auth expired");
-    const session = await response.json() as AuthSession;
+    const session = (await response.json()) as AuthSession;
     const currentOrgID = window.localStorage.getItem("nanoflare.auth.active_org_id") || "";
-    const savedOrgID = currentOrgID && session.organizations.some((org) => org.id === currentOrgID) ? currentOrgID : "";
+    const savedOrgID =
+      currentOrgID && session.organizations.some((org) => org.id === currentOrgID)
+        ? currentOrgID
+        : "";
     const orgID = savedOrgID || session.active_org_id || session.organizations[0]?.id || "";
     setUserEmail(session.user.email);
     setOrganizations(session.organizations);
@@ -80,7 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const body = await response.json().catch(() => ({ error: "Login failed" }));
       throw new Error(body.error || "Login failed");
     }
-    const session = await response.json() as AuthSession;
+    const session = (await response.json()) as AuthSession;
     const orgID = session.active_org_id || session.organizations[0]?.id || "";
     saveAuth(session.token, orgID);
     setUserEmail(session.user.email);
@@ -102,7 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const body = await response.json().catch(() => ({ error: "OIDC login failed" }));
       throw new Error(body.error || "OIDC login failed");
     }
-    const session = await response.json() as AuthSession;
+    const session = (await response.json()) as AuthSession;
     const orgID = session.active_org_id || session.organizations[0]?.id || "";
     saveAuth(session.token, orgID);
     setUserEmail(session.user.email);
@@ -124,8 +129,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const body = await response.json().catch(() => ({ error: "Could not create organization" }));
       throw new Error(body.error || "Could not create organization");
     }
-    const org = await response.json() as Organization;
-    const nextOrgs = [...organizations.filter((item) => item.id !== org.id), org].sort((a, b) => a.name.localeCompare(b.name));
+    const org = (await response.json()) as Organization;
+    const nextOrgs = [...organizations.filter((item) => item.id !== org.id), org].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
     setOrganizations(nextOrgs);
     setActiveOrgID(org.id);
   }

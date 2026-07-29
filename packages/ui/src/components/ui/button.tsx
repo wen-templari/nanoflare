@@ -1,31 +1,50 @@
-import type { ButtonHTMLAttributes } from "react";
-import { Button as MantineButton, type ButtonProps as MantineButtonProps } from "@mantine/core";
+import { Button as KumoButton } from "@cloudflare/kumo";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { cn } from "../../lib/utils";
 
 type LegacyVariant = "default" | "outline" | "ghost" | "dark" | "danger";
 type LegacySize = "default" | "sm" | "icon";
-export type ButtonProps = Omit<MantineButtonProps, "variant" | "size"> & ButtonHTMLAttributes<HTMLButtonElement> & {
+export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: LegacyVariant;
   size?: LegacySize;
+  color?: string;
+  loading?: boolean;
+  leftSection?: ReactNode;
+  rightSection?: ReactNode;
 };
 
-const variantMap: Record<LegacyVariant, MantineButtonProps["variant"]> = {
-  default: "filled",
-  outline: "outline",
-  ghost: "subtle",
-  dark: "filled",
-  danger: "subtle",
-};
-
-export function Button({ variant = "default", size = "default", color, children, ...props }: ButtonProps) {
+export function Button({
+  variant = "default",
+  size = "default",
+  color,
+  children,
+  className,
+  leftSection,
+  rightSection,
+  ...props
+}: ButtonProps) {
+  const ButtonBase = KumoButton as any;
   return (
-    <MantineButton
-      color={color ?? (variant === "danger" ? "red" : variant === "dark" ? "dark" : undefined)}
-      px={size === "icon" ? "xs" : undefined}
-      size={size === "sm" || size === "icon" ? "xs" : "sm"}
-      variant={variantMap[variant]}
+    <ButtonBase
       {...props}
+      aria-label={props["aria-label"] ?? (typeof children === "string" ? children : "Action")}
+      className={cn(size === "icon" && "size-9 p-0", size === "sm" && "h-6.5 text-xs", className)}
+      {...(size === "icon" ? { shape: "square" } : {})}
+      variant={
+        variant === "danger"
+          ? "destructive"
+          : variant === "outline"
+            ? "outline"
+            : variant === "ghost"
+              ? "ghost"
+              : variant === "default"
+                ? "primary"
+                : "secondary"
+      }
     >
-      <span className="inline-flex items-center gap-1.5">{children}</span>
-    </MantineButton>
+      {leftSection}
+      {children}
+      {rightSection}
+    </ButtonBase>
   );
 }
