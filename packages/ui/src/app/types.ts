@@ -290,6 +290,5 @@ export type WorkspaceContextValue = {
   closeDatabaseDialog: () => void;
   openObjectStorageBucketDialog: () => void;
   closeObjectStorageBucketDialog: () => void;
-  toast: string;
   notify: (message: string) => void;
 };

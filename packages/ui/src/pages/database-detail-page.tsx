@@ -32,6 +32,7 @@ import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortDatabases } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
+import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
 import { echarts } from "../lib/kumo-echarts";
 
 type D1Meta = {
@@ -115,6 +116,9 @@ function DatabaseDetailContent({
   );
   const [sql, setSQL] = useState("");
   const [querying, setQuerying] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [queryRuns, setQueryRuns] = useState<QueryRun[]>(() => [helpQueryRun()]);
   const [metrics, setMetrics] = useState<DatabaseMetrics>(() => emptyDatabaseMetrics());
   const [series, setSeries] = useState<DatabaseMetricsTimeseries>(() =>
@@ -161,7 +165,8 @@ function DatabaseDetailContent({
 
   async function deleteDatabase() {
     if (bindings.length) return notify("Remove worker bindings before deleting this database");
-    if (!window.confirm(`Delete database "${database.name}"?`)) return;
+    setDeleting(true);
+    setDeleteError("");
     try {
       if (apiConnected) {
         const response = await apiFetch(`/v1/db/${encodeURIComponent(database.id)}`, {
@@ -174,7 +179,9 @@ function DatabaseDetailContent({
       notify(`${database.name} deleted`);
       onBack();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Database delete failed");
+      setDeleteError(error instanceof Error ? error.message : "Database delete failed");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -284,6 +291,8 @@ function DatabaseDetailContent({
     <>
       <div className="mb-6">
         <Tabs
+          className="inline-flex max-w-full"
+          listClassName="max-w-full"
           tabs={[
             { label: "Overview", value: "overview" },
             { label: "Query", value: "query" },
@@ -451,7 +460,10 @@ function DatabaseDetailContent({
               </div>
               <Button
                 disabled={bindings.length > 0}
-                onClick={() => void deleteDatabase()}
+                onClick={() => {
+                  setDeleteError("");
+                  setDeleteOpen(true);
+                }}
                 variant="destructive"
               >
                 <Trash2 className="size-4" />
@@ -459,6 +471,16 @@ function DatabaseDetailContent({
               </Button>
             </div>
           </Panel>
+          <ConfirmDeleteDialog
+            confirmLabel="Delete database"
+            description="This action cannot be undone. All data stored in this database will be permanently deleted."
+            errorMessage={deleteError}
+            loading={deleting}
+            onConfirm={deleteDatabase}
+            onOpenChange={setDeleteOpen}
+            open={deleteOpen}
+            title="Delete database"
+          />
         </div>
       )}
     </>
@@ -473,7 +495,7 @@ function QueryRunCard({ index, run }: { index: number; run: QueryRun }) {
 
   return (
     <div className="overflow-hidden">
-      <pre className="overflow-auto font-mono text-sm">
+      <pre className="overflow-auto px-4 pt-4 pb-3 font-mono text-sm">
         <code>{"> " + run.sql}</code>
       </pre>
       {run.error ? (
@@ -484,7 +506,7 @@ function QueryRunCard({ index, run }: { index: number; run: QueryRun }) {
         </div>
       ) : columns.length ? (
         <div className="overflow-auto">
-          <Table className="min-w-[720px] border-collapse" layout="fixed">
+          <Table className="min-w-[720px] border-collapse [&_th]:bg-transparent" layout="fixed">
             <Table.Header>
               <Table.Row>
                 {columns.map((column) => (

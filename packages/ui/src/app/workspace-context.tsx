@@ -11,6 +11,7 @@ import type {
   WorkspaceContextValue,
 } from "./types";
 import { sortDatabases, sortNamespaces, sortObjectStorageBuckets } from "./utils";
+import { appToastManager } from "./toast";
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
@@ -24,7 +25,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [namespaceDialogOpen, setNamespaceDialogOpen] = useState(false);
   const [databaseDialogOpen, setDatabaseDialogOpen] = useState(false);
   const [objectStorageBucketDialogOpen, setObjectStorageBucketDialogOpen] = useState(false);
-  const [toast, setToast] = useState("");
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [apiConnected, setApiConnected] = useState(false);
 
@@ -89,8 +89,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [auth.activeOrgID]);
 
   function notify(message: string) {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
+    appToastManager.add({ title: message });
   }
 
   return (
@@ -123,7 +122,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         closeDatabaseDialog: () => setDatabaseDialogOpen(false),
         openObjectStorageBucketDialog: () => setObjectStorageBucketDialogOpen(true),
         closeObjectStorageBucketDialog: () => setObjectStorageBucketDialogOpen(false),
-        toast,
         notify,
       }}
     >

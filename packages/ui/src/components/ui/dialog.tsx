@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Dialog as KumoDialog, Text } from "@cloudflare/kumo";
+import { Button, Dialog as KumoDialog, Text, cn } from "@cloudflare/kumo";
+import { X } from "lucide-react";
 
 export function Dialog({
   open,
@@ -18,11 +19,20 @@ export function Dialog({
 }) {
   return (
     <KumoDialog.Root open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
-      <KumoDialog className={panelClassName} size={panelClassName?.includes("2xl") ? "lg" : "base"}>
+      <KumoDialog
+        className={cn("p-6", panelClassName)}
+        size={panelClassName?.includes("2xl") ? "lg" : "base"}
+      >
         <div className="flex flex-col gap-4">
           <div className="flex items-start justify-between gap-4">
-            <KumoDialog.Title>{title}</KumoDialog.Title>
-            <KumoDialog.Close aria-label="Close" />
+            <KumoDialog.Title className="text-lg font-semibold">{title}</KumoDialog.Title>
+            <KumoDialog.Close
+              render={(props) => (
+                <Button {...props} aria-label="Close" shape="square" size="sm" variant="ghost">
+                  <X className="size-4" />
+                </Button>
+              )}
+            />
           </div>
           <Text size="sm" variant="secondary">
             {description}

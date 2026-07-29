@@ -21,6 +21,7 @@ import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortNamespaces } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { KVKeyDialog } from "../components/dialogs/kv-key-dialog";
+import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
 import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -56,6 +57,8 @@ function KVNamespaceDetailContent({
   const [name, setName] = useState(namespace.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [keys, setKeys] = useState<WorkerKVKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
   const [keysStatus, setKeysStatus] = useState("");
@@ -306,8 +309,8 @@ function KVNamespaceDetailContent({
   }
 
   async function deleteNamespace() {
-    if (!window.confirm(`Delete namespace "${namespace.name}"?`)) return;
     setDeleting(true);
+    setDeleteError("");
     try {
       if (apiConnected) {
         const response = await apiFetch(`/v1/kv/namespaces/${encodeURIComponent(namespace.id)}`, {
@@ -322,7 +325,7 @@ function KVNamespaceDetailContent({
       notify(`${namespace.name} deleted`);
       onBack();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Namespace delete failed");
+      setDeleteError(error instanceof Error ? error.message : "Namespace delete failed");
     } finally {
       setDeleting(false);
     }
@@ -375,6 +378,8 @@ function KVNamespaceDetailContent({
     <>
       <div className="mb-6">
         <Tabs
+          className="inline-flex max-w-full"
+          listClassName="max-w-full"
           tabs={[
             { label: "Overview", value: "overview" },
             { label: "Keys", value: "keys" },
@@ -460,8 +465,11 @@ function KVNamespaceDetailContent({
                 </Text>
               </div>
               <Button
-                variant="ghost"
-                onClick={() => void deleteNamespace()}
+                variant="danger"
+                onClick={() => {
+                  setDeleteError("");
+                  setDeleteOpen(true);
+                }}
                 disabled={deleting || saving}
               >
                 <Trash2 className="size-3.5" />
@@ -469,6 +477,16 @@ function KVNamespaceDetailContent({
               </Button>
             </div>
           </Panel>
+          <ConfirmDeleteDialog
+            confirmLabel="Delete namespace"
+            description="This action cannot be undone. All keys in this namespace will be permanently deleted."
+            errorMessage={deleteError}
+            loading={deleting}
+            onConfirm={deleteNamespace}
+            onOpenChange={setDeleteOpen}
+            open={deleteOpen}
+            title="Delete KV namespace"
+          />
 
           <Panel title="Bound workers">
             {bindings.length ? (

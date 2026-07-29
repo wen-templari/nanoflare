@@ -469,9 +469,7 @@ disabled in that mode.
 Run the React control plane UI:
 
 ```sh
-cd packages/ui
-npm install
-npm run dev
+pnpm dev:ui
 ```
 
 Vite serves the console at `http://127.0.0.1:5173` and proxies `/v1` requests to

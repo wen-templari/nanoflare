@@ -30,7 +30,7 @@ export function WorkersPage() {
           ) : (
             <Button onClick={openWorkerDialog}>
               <Plus className="size-4" />
-              New worker
+              Create worker
             </Button>
           )
         }

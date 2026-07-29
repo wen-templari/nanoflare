@@ -35,7 +35,7 @@ export function ObjectStorageBucketsPage() {
           ) : (
             <Button onClick={openObjectStorageBucketDialog}>
               <Plus className="size-4" />
-              New bucket
+              Create bucket
             </Button>
           )
         }

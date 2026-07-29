@@ -1,9 +1,6 @@
-import { Chart, ChartPalette, LayerCard, Text } from "@cloudflare/kumo";
+import { LayerCard, Text } from "@cloudflare/kumo";
 import {
-  Archive,
   ArrowUpRight,
-  CloudUpload,
-  Code2,
   DatabaseZap,
   KeyRound,
   Waypoints,
@@ -11,8 +8,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../app/auth-context";
 import { useWorkspace } from "../app/workspace-context";
-import { Event, PageHeading, Panel } from "../components/shared/primitives";
-import { echarts } from "../lib/kumo-echarts";
+import { PageHeading } from "../components/shared/primitives";
 
 export function OverviewPage() {
   const navigate = useNavigate();
@@ -90,20 +86,6 @@ export function OverviewPage() {
           </button>
         ))}
       </div>
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-        <Panel title="Runtime activity" eyebrow="Last 24 hours">
-          <RuntimeActivityChart />
-        </Panel>
-        <Panel title="Recent events" eyebrow="Live log">
-          <div>
-            <Event icon={<CloudUpload />} text="worker bundle deployed" time="34m" />
-            <Event icon={<KeyRound />} text="env.KV binding refreshed" time="2h" />
-            <Event icon={<DatabaseZap />} text="object bucket binding refreshed" time="3h" />
-            <Event icon={<Code2 />} text="billing-sync deployed" time="5h" />
-            <Event icon={<Archive />} text="previous generation retired" time="8h" />
-          </div>
-        </Panel>
-      </div>
     </>
   );
 }
@@ -113,40 +95,4 @@ function displayNameFromEmail(email: string) {
   const firstName = localPart.split(/[._+-]/, 1)[0];
 
   return firstName ? firstName.charAt(0).toUpperCase() + firstName.slice(1) : "there";
-}
-
-const runtimeActivity = [
-  35, 44, 37, 58, 65, 52, 76, 68, 88, 72, 82, 96, 77, 64, 73, 56, 61, 49, 66, 72, 60, 52, 44, 59,
-].map((requests, hour) => ({
-  hour: hour === 23 ? "NOW" : `${hour}:00`,
-  requests,
-}));
-
-function RuntimeActivityChart() {
-  return (
-    <Chart
-      echarts={echarts}
-      height={256}
-      options={{
-        grid: { bottom: 28, left: 12, right: 8, top: 12 },
-        tooltip: { trigger: "axis" },
-        xAxis: {
-          axisLabel: { interval: 5 },
-          axisLine: { show: false },
-          axisTick: { show: false },
-          data: runtimeActivity.map((item) => item.hour),
-          type: "category",
-        },
-        yAxis: { show: false, type: "value" },
-        series: [
-          {
-            barMaxWidth: 22,
-            data: runtimeActivity.map((item) => item.requests),
-            itemStyle: { borderRadius: [4, 4, 0, 0], color: ChartPalette.categorical(0) },
-            type: "bar",
-          },
-        ],
-      }}
-    />
-  );
 }

@@ -23,6 +23,7 @@ import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
+import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -63,6 +64,8 @@ function ObjectStorageBucketDetailContent({
   const [name, setName] = useState(bucket.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [objects, setObjects] = useState<ObjectStorageObject[]>([]);
   const [loadingObjects, setLoadingObjects] = useState(false);
   const [status, setStatus] = useState("");
@@ -301,8 +304,8 @@ function ObjectStorageBucketDetailContent({
   }
 
   async function deleteBucket() {
-    if (!window.confirm(`Delete bucket "${bucket.name}"?`)) return;
     setDeleting(true);
+    setDeleteError("");
     try {
       if (apiConnected) {
         const response = await apiFetch(
@@ -316,7 +319,7 @@ function ObjectStorageBucketDetailContent({
       notify(`${bucket.name} deleted`);
       onBack();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Bucket delete failed");
+      setDeleteError(error instanceof Error ? error.message : "Bucket delete failed");
     } finally {
       setDeleting(false);
     }
@@ -365,6 +368,8 @@ function ObjectStorageBucketDetailContent({
     <>
       <div className="mb-6">
         <Tabs
+          className="inline-flex max-w-full"
+          listClassName="max-w-full"
           tabs={[
             { label: "Overview", value: "overview" },
             { label: "Objects", value: "objects" },
@@ -451,8 +456,11 @@ function ObjectStorageBucketDetailContent({
                 </Text>
               </div>
               <Button
-                variant="ghost"
-                onClick={() => void deleteBucket()}
+                variant="danger"
+                onClick={() => {
+                  setDeleteError("");
+                  setDeleteOpen(true);
+                }}
                 disabled={deleting || saving}
               >
                 <Trash2 className="size-3.5" />
@@ -460,6 +468,16 @@ function ObjectStorageBucketDetailContent({
               </Button>
             </div>
           </Panel>
+          <ConfirmDeleteDialog
+            confirmLabel="Delete bucket"
+            description="This action cannot be undone. All objects stored in this bucket will be permanently deleted."
+            errorMessage={deleteError}
+            loading={deleting}
+            onConfirm={deleteBucket}
+            onOpenChange={setDeleteOpen}
+            open={deleteOpen}
+            title="Delete bucket"
+          />
 
           <Panel title="Bound workers">
             {bindings.length ? (

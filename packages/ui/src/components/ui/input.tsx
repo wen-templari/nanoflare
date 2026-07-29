@@ -10,5 +10,17 @@ type InputProps = {
 };
 export function Input({ className, inputClassName, ...props }: InputProps) {
   const InputBase = KumoInput as any;
-  return <InputBase {...props} className={cn("w-full", inputClassName, className)} />;
+  const unstyled = props.variant === "unstyled";
+  return (
+    <InputBase
+      {...props}
+      {...(unstyled ? { variant: undefined } : {})}
+      className={cn(
+        "w-full",
+        inputClassName,
+        className,
+        unstyled && "!border-0 !bg-transparent !shadow-none !ring-0 focus:!ring-0",
+      )}
+    />
+  );
 }

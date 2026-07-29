@@ -202,7 +202,7 @@ const DefinitionCard = forwardRef<HTMLDivElement, DefinitionCardProps>(function 
       {...props}
       ref={ref}
       className={cn(
-        "w-44 rounded-xl bg-kumo-base px-4 py-3 shadow-sm ring ring-kumo-hairline",
+        "w-fit min-w-60 rounded-xl bg-kumo-base px-4 py-3 shadow-sm ring ring-kumo-hairline",
         className,
       )}
     >
@@ -240,7 +240,7 @@ const BindingsCard = forwardRef<HTMLDivElement, BindingsCardProps>(function Bind
       {...props}
       ref={ref}
       className={cn(
-        "w-60 overflow-hidden rounded-xl bg-kumo-base shadow-sm ring ring-kumo-hairline",
+        "w-72 overflow-hidden rounded-xl bg-kumo-base shadow-sm ring ring-kumo-hairline",
         className,
       )}
     >

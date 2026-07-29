@@ -1,5 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Toasty } from "@cloudflare/kumo";
 import { AuthProvider, useAuth } from "./app/auth-context";
+import { appToastManager } from "./app/toast";
 import { WorkspaceProvider } from "./app/workspace-context";
 import { ConsoleLayout } from "./components/layout/console-layout";
 import { DatabaseDetailPage } from "./pages/database-detail-page";
@@ -20,9 +22,10 @@ import { CLILoginPage } from "./pages/cli-login-page";
 
 export function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
+    <Toasty toastManager={appToastManager}>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/cli-login" element={<CLILoginPage />} />
           <Route path="/invites/:token" element={<InvitePage />} />
@@ -41,9 +44,10 @@ export function App() {
             <Route path="settings/oauth-clients/:clientId" element={<OAuthClientDetailPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </Toasty>
   );
 }
 

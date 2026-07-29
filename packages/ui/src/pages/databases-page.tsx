@@ -19,7 +19,7 @@ export function DatabasesPage() {
         actions={
           <Button onClick={openDatabaseDialog}>
             <Plus className="size-4" />
-            New database
+            Create database
           </Button>
         }
       />

@@ -3,8 +3,10 @@ import type { ChangeEvent, MouseEvent, ReactNode } from "react";
 import {
   Banner,
   Button,
+  cn,
   Dialog,
   Input,
+  Label,
   Meter,
   Select as KumoSelect,
   Table as KumoTable,
@@ -22,6 +24,7 @@ import {
   Trash2,
   UserMinus,
   UserPlus,
+  X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
@@ -148,27 +151,19 @@ function Center({ children, ...props }: { children: ReactNode; [key: string]: un
   );
 }
 
-function Code({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
-  return (
-    <code {...(props as any)} className="font-mono text-[0.9em]">
-      {children}
-    </code>
-  );
-}
-
-function ActionIcon({
+function Code({
   children,
-  color,
+  className,
   ...props
 }: {
   children: ReactNode;
-  color?: string;
+  className?: string;
   [key: string]: unknown;
 }) {
   return (
-    <Button {...(props as any)} shape="square" variant={color === "red" ? "destructive" : "ghost"}>
+    <code {...(props as any)} className={cn("font-mono text-[0.9em]", className)}>
       {children}
-    </Button>
+    </code>
   );
 }
 
@@ -189,8 +184,14 @@ function Modal({
     <Dialog.Root open={opened} onOpenChange={(open) => !open && onClose()}>
       <Dialog size={size} className="p-6">
         <div className="mb-5 flex items-start justify-between gap-4">
-          <Dialog.Title>{title}</Dialog.Title>
-          <Dialog.Close aria-label="Close" />
+          <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
+          <Dialog.Close
+            render={(props) => (
+              <Button {...props} aria-label="Close" shape="square" size="sm" variant="ghost">
+                <X className="size-4" />
+              </Button>
+            )}
+          />
         </div>
         {children}
       </Dialog>
@@ -211,7 +212,9 @@ function MultiSelect({
 }) {
   return (
     <fieldset className="grid gap-2">
-      <legend className="text-sm font-medium">{label}</legend>
+      <legend>
+        <Label asContent>{label}</Label>
+      </legend>
       <div className="flex flex-wrap gap-x-4 gap-y-2">
         {data.map((item) => (
           <label className="flex items-center gap-2 text-sm" key={item}>
@@ -322,6 +325,7 @@ export function SettingsPage() {
   const [form, setForm] = useState(emptyForm);
   const [oneTimeSecret, setOneTimeSecret] = useState<OAuthClientCreated | null>(null);
   const [oneTimePAT, setOneTimePAT] = useState<PersonalAccessTokenCreated | null>(null);
+  const [selectedPAT, setSelectedPAT] = useState<PersonalAccessToken | null>(null);
   const [patOpen, setPATOpen] = useState(false);
   const [patForm, setPATForm] = useState(emptyPATForm);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -665,46 +669,12 @@ export function SettingsPage() {
         </Alert>
       )}
 
-      {oneTimePAT && (
-        <Alert color="blue" mb="md" title="Personal access token shown once">
-          <Group align="center" justify="space-between" wrap="nowrap">
-            <Box>
-              <Text size="sm">
-                Store this token now. Nanoflare will not show it again after this page refreshes.
-              </Text>
-              <Code mt={8} className="block break-all">
-                {oneTimePAT.token}
-              </Code>
-            </Box>
-            <Button
-              variant="outline"
-              onClick={() => copy(oneTimePAT.token, "Personal access token")}
-            >
-              <Copy className="size-4" />
-              Copy
-            </Button>
-          </Group>
-        </Alert>
-      )}
-
-      {inviteCreated && (
-        <Alert color="blue" mb="md" title="Invite link">
-          <Group align="center" justify="space-between" wrap="nowrap">
-            <Code className="block break-all">{inviteCreated.invite_url}</Code>
-            <Button variant="outline" onClick={() => copy(inviteCreated.invite_url, "Invite link")}>
-              <Copy className="size-4" />
-              Copy
-            </Button>
-          </Group>
-        </Alert>
-      )}
-
-      <Stack gap="lg">
+      <div className="flex flex-col gap-8">
         <Panel
-          title="Organization limits"
+          title="Usage"
           eyebrow={usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}
         >
-          <Stack gap="md">
+          <div className="grid gap-3 sm:grid-cols-2">
             <LimitRow current={workers.length} label="Workers" limit={limits.workers} />
             <LimitRow
               current={namespaces.length}
@@ -736,7 +706,7 @@ export function SettingsPage() {
               limit={limits.oauthClients}
               loading={loading}
             />
-          </Stack>
+          </div>
         </Panel>
 
         <Box>
@@ -745,42 +715,52 @@ export function SettingsPage() {
             actions={
               <Button onClick={openCreatePAT}>
                 <Plus className="size-4" />
-                New token
+                Create token
               </Button>
             }
           />
           <TableSurface>
             <ScrollArea>
-              <Table highlightOnHover miw={920} verticalSpacing="sm" className="table-fixed">
+              <Table highlightOnHover miw={960} verticalSpacing="sm" className="table-fixed">
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th className="w-[30%]">Name</Table.Th>
-                    <Table.Th className="w-[22%]">Scope</Table.Th>
-                    <Table.Th className="w-[16%]">Created</Table.Th>
-                    <Table.Th className="w-[14%]">Expires</Table.Th>
-                    <Table.Th className="w-[12%]">Last used</Table.Th>
-                    <Table.Th className="w-[6%]">Actions</Table.Th>
+                    <Table.Th className="w-[22%]">Name</Table.Th>
+                    <Table.Th className="w-[16%]">Scope</Table.Th>
+                    <Table.Th className="w-[18%]">Owner</Table.Th>
+                    <Table.Th className="w-[15%]">Created</Table.Th>
+                    <Table.Th className="w-[13%]">Expires</Table.Th>
+                    <Table.Th className="w-[10%]">Last used</Table.Th>
+                    <Table.Th className="w-[6%] text-center">Actions</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {pats.map((token) => (
-                    <Table.Tr key={token.id}>
+                    <Table.Tr
+                      className="cursor-pointer"
+                      key={token.id}
+                      onClick={() => setSelectedPAT(token)}
+                    >
                       <Table.Td>
                         <Text fw={700} truncate>
                           {token.name}
                         </Text>
                       </Table.Td>
-                      <Table.Td>
-                        <Stack gap={4}>
+                      <Table.Td className="w-[16%]">
+                        <div className="flex items-center gap-2">
                           <Badge tone={token.scope_type === "org" ? "blue" : "green"}>
-                            {token.scope_type}
+                            {token.scope_type === "org" ? "Organization" : "User"}
                           </Badge>
-                          <Text c="dimmed" size="xs" truncate>
-                            {token.scope_type === "org"
-                              ? orgName(token.org_id, organizations)
-                              : "All available orgs"}
+                          <Text c="dimmed" size="sm">
+                            {token.scopes.length}
                           </Text>
-                        </Stack>
+                        </div>
+                      </Table.Td>
+                      <Table.Td className="w-[18%]">
+                        <Text c="dimmed" size="sm" truncate>
+                          {token.scope_type === "org"
+                            ? orgName(token.org_id, organizations)
+                            : "All organizations"}
+                        </Text>
                       </Table.Td>
                       <Table.Td>
                         <Text c="dimmed" size="sm">
@@ -797,16 +777,19 @@ export function SettingsPage() {
                           {formatDate(token.last_used_at)}
                         </Text>
                       </Table.Td>
-                      <Table.Td>
+                      <Table.Td className="text-center">
                         <Tooltip label="Revoke token">
-                          <ActionIcon
+                          <Button
                             aria-label="Revoke token"
-                            color="red"
-                            onClick={() => revokePAT(token)}
-                            variant="subtle"
+                            onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                              event.stopPropagation();
+                              void revokePAT(token);
+                            }}
+                            shape="square"
+                            variant="destructive"
                           >
                             <Trash2 size={16} />
-                          </ActionIcon>
+                          </Button>
                         </Tooltip>
                       </Table.Td>
                     </Table.Tr>
@@ -846,7 +829,7 @@ export function SettingsPage() {
                       <Table.Th className="w-[24%]">Role</Table.Th>
                       <Table.Th className="w-[14%]">Status</Table.Th>
                       <Table.Th className="w-[10%]">Date</Table.Th>
-                      <Table.Th className="w-[10%]">Actions</Table.Th>
+                      <Table.Th className="w-[10%] text-center">Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -861,12 +844,14 @@ export function SettingsPage() {
                             </Text>
                           </Table.Td>
                           <Table.Td>
-                            <Select
-                              allowDeselect={false}
-                              data={roleOptions}
+                            <KumoSelect
+                              aria-label={`Role for ${member.user_email}`}
                               disabled={!canEditMember}
-                              onChange={(role) => role && updateMember(member, role)}
-                              size="xs"
+                              items={roleOptions.map((role) => ({ label: role, value: role }))}
+                              onValueChange={(role) => {
+                                if (typeof role === "string") void updateMember(member, role);
+                              }}
+                              size="sm"
                               value={member.role}
                             />
                           </Table.Td>
@@ -878,17 +863,17 @@ export function SettingsPage() {
                               {new Date(member.created_at).toLocaleDateString()}
                             </Text>
                           </Table.Td>
-                          <Table.Td>
+                          <Table.Td className="text-center">
                             <Tooltip label="Remove member">
-                              <ActionIcon
+                              <Button
                                 aria-label="Remove member"
-                                color="red"
                                 disabled={!canEditMember}
                                 onClick={() => removeMember(member)}
-                                variant="subtle"
+                                shape="square"
+                                variant="destructive"
                               >
                                 <UserMinus size={16} />
-                              </ActionIcon>
+                              </Button>
                             </Tooltip>
                           </Table.Td>
                         </Table.Tr>
@@ -912,17 +897,17 @@ export function SettingsPage() {
                             {new Date(invite.expires_at).toLocaleDateString()}
                           </Text>
                         </Table.Td>
-                        <Table.Td>
+                        <Table.Td className="text-center">
                           <Tooltip label="Remove invite">
-                            <ActionIcon
+                            <Button
                               aria-label="Remove invite"
-                              color="red"
                               disabled={!canWriteMembers}
                               onClick={() => revokeInvite(invite)}
-                              variant="subtle"
+                              shape="square"
+                              variant="destructive"
                             >
                               <UserMinus size={16} />
-                            </ActionIcon>
+                            </Button>
                           </Tooltip>
                         </Table.Td>
                       </Table.Tr>
@@ -941,7 +926,7 @@ export function SettingsPage() {
               canCreateOAuthClient ? (
                 <Button onClick={openCreate}>
                   <Plus className="size-4" />
-                  New OAuth client
+                  Create OAuth client
                 </Button>
               ) : (
                 <Text c="dimmed" size="sm">
@@ -960,7 +945,7 @@ export function SettingsPage() {
                       <Table.Th className="w-[34%]">Client ID</Table.Th>
                       <Table.Th className="w-[18%]">Redirect URIs</Table.Th>
                       <Table.Th className="w-[10%]">Updated</Table.Th>
-                      <Table.Th className="w-[10%]">Actions</Table.Th>
+                      <Table.Th className="w-[10%] text-center">Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -1004,45 +989,47 @@ export function SettingsPage() {
                           </Text>
                         </Table.Td>
                         <Table.Td className="w-[10%]">
-                          <Group gap={4} wrap="nowrap">
+                          <div className="flex items-center justify-center gap-1">
                             <Tooltip label="Edit client">
-                              <ActionIcon
+                              <Button
                                 aria-label="Edit client"
-                                variant="subtle"
                                 onClick={(event: MouseEvent<HTMLButtonElement>) => {
                                   event.stopPropagation();
                                   openEdit(client);
                                 }}
+                                shape="square"
+                                variant="ghost"
                               >
                                 <SquarePen size={16} />
-                              </ActionIcon>
+                              </Button>
                             </Tooltip>
                             <Tooltip label="Rotate secret">
-                              <ActionIcon
+                              <Button
                                 aria-label="Rotate secret"
-                                variant="subtle"
                                 onClick={(event: MouseEvent<HTMLButtonElement>) => {
                                   event.stopPropagation();
                                   rotateSecret(client);
                                 }}
+                                shape="square"
+                                variant="ghost"
                               >
                                 <RotateCcw size={16} />
-                              </ActionIcon>
+                              </Button>
                             </Tooltip>
                             <Tooltip label="Delete client">
-                              <ActionIcon
+                              <Button
                                 aria-label="Delete client"
-                                color="red"
-                                variant="subtle"
                                 onClick={(event: MouseEvent<HTMLButtonElement>) => {
                                   event.stopPropagation();
                                   deleteClient(client);
                                 }}
+                                shape="square"
+                                variant="destructive"
                               >
                                 <Trash2 size={16} />
-                              </ActionIcon>
+                              </Button>
                             </Tooltip>
-                          </Group>
+                          </div>
                         </Table.Td>
                       </Table.Tr>
                     ))}
@@ -1065,12 +1052,12 @@ export function SettingsPage() {
             />
           )}
         </Box>
-      </Stack>
+      </div>
 
       <Modal
         opened={formOpen}
         onClose={() => setFormOpen(false)}
-        title={editingClient ? "Edit OAuth client" : "New OAuth client"}
+        title={editingClient ? "Edit OAuth client" : "Create OAuth client"}
         size="lg"
       >
         <Stack>
@@ -1098,7 +1085,7 @@ export function SettingsPage() {
             value={form.scopes}
             onChange={(scopes) => setForm((current) => ({ ...current, scopes }))}
           />
-          <Group justify="end">
+          <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setFormOpen(false)}>
               Cancel
             </Button>
@@ -1106,14 +1093,14 @@ export function SettingsPage() {
               <Check className="size-4" />
               {editingClient ? "Save changes" : "Create client"}
             </Button>
-          </Group>
+          </div>
         </Stack>
       </Modal>
 
       <Modal
         opened={patOpen}
         onClose={() => setPATOpen(false)}
-        title="New personal access token"
+        title="Create personal access token"
         size="lg"
       >
         <Stack>
@@ -1165,7 +1152,7 @@ export function SettingsPage() {
               expiresIn && setPATForm((current) => ({ ...current, expiresIn }))
             }
           />
-          <Group justify="end">
+          <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setPATOpen(false)}>
               Cancel
             </Button>
@@ -1173,8 +1160,101 @@ export function SettingsPage() {
               <Check className="size-4" />
               Create token
             </Button>
-          </Group>
+          </div>
         </Stack>
+      </Modal>
+
+      <Modal
+        opened={Boolean(oneTimePAT)}
+        onClose={() => setOneTimePAT(null)}
+        title="Personal access token created"
+        size="lg"
+      >
+        {oneTimePAT && (
+          <div className="grid gap-5">
+            <Banner variant="alert">
+              Copy this token now. For security, it will not be shown again.
+            </Banner>
+            <div className="grid gap-2">
+              <Label>Personal access token</Label>
+              <Code className="block max-w-full rounded-lg bg-kumo-tint px-4 py-3 break-all">
+                {oneTimePAT.token}
+              </Code>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => copy(oneTimePAT.token, "Personal access token")}>
+                <Copy className="size-4" />
+                Copy token
+              </Button>
+              <Button onClick={() => setOneTimePAT(null)} variant="secondary">
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        opened={Boolean(inviteCreated)}
+        onClose={() => setInviteCreated(null)}
+        title="Invite created"
+        size="lg"
+      >
+        {inviteCreated && (
+          <div className="grid gap-5">
+            <Banner variant="alert">
+              <p className="break-words text-sm">
+                Share this link with <span className="font-medium">{inviteCreated.email}</span>. It is the
+                only way to accept this invite.
+              </p>
+            </Banner>
+            <div className="grid gap-2">
+              <Label>Invite link</Label>
+              <Code className="block max-w-full rounded-lg bg-kumo-tint px-4 py-3 break-all">
+                {inviteCreated.invite_url}
+              </Code>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => copy(inviteCreated.invite_url, "Invite link")}>
+                <Copy className="size-4" />
+                Copy invite link
+              </Button>
+              <Button onClick={() => setInviteCreated(null)} variant="secondary">
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        opened={Boolean(selectedPAT)}
+        onClose={() => setSelectedPAT(null)}
+        title={selectedPAT ? `${selectedPAT.name} scopes` : "Personal access token scopes"}
+        size="lg"
+      >
+        {selectedPAT && (
+          <div className="grid gap-5">
+            <div className="grid gap-1.5">
+              <Label>Scope owner</Label>
+              <Text size="sm" variant="secondary">
+                {selectedPAT.scope_type === "org"
+                  ? orgName(selectedPAT.org_id, organizations)
+                  : "All organizations"}
+              </Text>
+            </div>
+            <div className="grid gap-2">
+              <Label>Allowed scopes</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedPAT.scopes.map((scope) => (
+                  <Badge key={scope} tone="blue">
+                    {scope}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal opened={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite member">
@@ -1192,7 +1272,7 @@ export function SettingsPage() {
             value={inviteRole}
             onChange={(role) => role && setInviteRole(role)}
           />
-          <Group justify="end">
+          <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setInviteOpen(false)}>
               Cancel
             </Button>
@@ -1200,7 +1280,7 @@ export function SettingsPage() {
               <Check className="size-4" />
               Create invite
             </Button>
-          </Group>
+          </div>
         </Stack>
       </Modal>
     </>
@@ -1218,14 +1298,15 @@ function CopyButton({
 }) {
   return (
     <Tooltip label={`Copy ${label.toLowerCase()}`}>
-      <ActionIcon
+      <Button
         aria-label={`Copy ${label.toLowerCase()}`}
-        size="sm"
-        variant="subtle"
         onClick={() => onCopy(value, label)}
+        shape="square"
+        size="sm"
+        variant="ghost"
       >
         <Copy size={14} />
-      </ActionIcon>
+      </Button>
     </Tooltip>
   );
 }
@@ -1253,7 +1334,7 @@ function LimitRow({
       : `${format(current)} used`;
 
   return (
-    <Box>
+    <Box className="rounded-lg bg-kumo-tint px-4 py-3">
       <Group justify="space-between" mb={6}>
         <Text fw={700} size="sm">
           {label}
@@ -1315,7 +1396,7 @@ function SectionHeading({
   actions?: ReactNode;
 }) {
   return (
-    <Group align="end" justify="space-between" mb="sm">
+    <div className="mb-3 flex items-end justify-between gap-4">
       <Box>
         {eyebrow && (
           <Text c="dimmed" fw={700} size="xs" tt="uppercase">
@@ -1327,7 +1408,7 @@ function SectionHeading({
         </Title>
       </Box>
       {actions}
-    </Group>
+    </div>
   );
 }
 
@@ -1341,7 +1422,7 @@ function TableSurface({ children }: { children: ReactNode }) {
 
 function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
   return (
-    <Center h={220}>
+    <div className="flex min-h-56 items-center justify-center px-5 py-8">
       <Stack align="center" gap={4} ta="center" className="[&_svg]:size-6">
         {icon}
         <Text fw={700} size="sm">
@@ -1351,6 +1432,6 @@ function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; cop
           {copy}
         </Text>
       </Stack>
-    </Center>
+    </div>
   );
 }

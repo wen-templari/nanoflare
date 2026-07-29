@@ -6,13 +6,14 @@ import {
   Dialog,
   Input,
   InputArea,
+  Label,
   LayerCard,
   Table,
   Tabs,
   Text,
   Tooltip,
 } from "@cloudflare/kumo";
-import { Check, Copy, PlugZap, Settings, SquarePen, Trash2 } from "lucide-react";
+import { Check, Copy, PlugZap, Settings, SquarePen, Trash2, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import type { OAuthClient, OAuthClientConnection } from "../app/types";
@@ -20,6 +21,7 @@ import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
 import { Badge } from "../components/ui/badge";
 import { Panel } from "../components/shared/primitives";
+import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
 
 const oauthScopes = [
   "workers:read",
@@ -49,6 +51,9 @@ export function OAuthClientDetailPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     void refresh();
@@ -126,13 +131,18 @@ export function OAuthClientDetailPage() {
 
   async function deleteClient() {
     if (!client) return;
-    const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, { method: "DELETE" });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not delete OAuth client"));
-      return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(await errorText(response, "Could not delete OAuth client"));
+      notify("OAuth client deleted");
+      navigate("/settings");
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Could not delete OAuth client");
+    } finally {
+      setDeleting(false);
     }
-    notify("OAuth client deleted");
-    navigate("/settings");
   }
 
   return (
@@ -142,6 +152,8 @@ export function OAuthClientDetailPage() {
       {client && (
         <div className="flex flex-col gap-6">
           <Tabs
+            className="inline-flex max-w-full"
+            listClassName="max-w-full"
             tabs={[
               { label: "Overview", value: "overview" },
               { label: "Connections", value: "connections" },
@@ -296,12 +308,28 @@ export function OAuthClientDetailPage() {
                       through it.
                     </Text>
                   </div>
-                  <Button variant="destructive" onClick={deleteClient}>
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      setDeleteError("");
+                      setDeleteOpen(true);
+                    }}
+                  >
                     <Trash2 className="size-4" />
                     Delete client
                   </Button>
                 </div>
               </Panel>
+              <ConfirmDeleteDialog
+                confirmLabel="Delete client"
+                description="This action cannot be undone. Existing integrations will no longer be able to authorize through this client."
+                errorMessage={deleteError}
+                loading={deleting}
+                onConfirm={deleteClient}
+                onOpenChange={setDeleteOpen}
+                open={deleteOpen}
+                title="Delete OAuth client"
+              />
             </div>
           )}
         </div>
@@ -316,10 +344,16 @@ export function OAuthClientDetailPage() {
       )}
 
       <Dialog.Root open={formOpen} onOpenChange={(open) => !open && setFormOpen(false)}>
-        <Dialog className="sm:w-[48rem]">
+        <Dialog className="p-6" size="xl">
           <div className="flex items-start justify-between gap-4">
-            <Dialog.Title>Edit OAuth client</Dialog.Title>
-            <Dialog.Close aria-label="Close" />
+            <Dialog.Title className="text-lg font-semibold">Edit OAuth client</Dialog.Title>
+            <Dialog.Close
+              render={(props) => (
+                <Button {...props} aria-label="Close" shape="square" size="sm" variant="ghost">
+                  <X className="size-4" />
+                </Button>
+              )}
+            />
           </div>
           <div className="flex flex-col gap-4 pt-4">
             <Input
@@ -339,9 +373,10 @@ export function OAuthClientDetailPage() {
                 setForm((current) => ({ ...current, redirectURIs }));
               }}
             />
-            <label className="grid gap-1.5 text-sm">
-              <span className="font-medium">Allowed scopes</span>
+            <div className="grid gap-1.5">
+              <Label htmlFor="oauth-client-scopes">Allowed scopes</Label>
               <select
+                id="oauth-client-scopes"
                 className="min-h-24 rounded-lg bg-kumo-base p-2 ring ring-kumo-line"
                 multiple
                 value={form.scopes}
@@ -358,7 +393,7 @@ export function OAuthClientDetailPage() {
                   </option>
                 ))}
               </select>
-            </label>
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setFormOpen(false)}>
                 Cancel

@@ -32,6 +32,7 @@ import {
   SlidersHorizontal,
   Terminal,
   TimerReset,
+  X,
 } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
@@ -196,8 +197,8 @@ function WorkerDetailContent({
       <div>
         <div className="mb-4">
           <Tabs
-            className="w-full"
-            listClassName="w-full overflow-x-auto"
+            className="inline-flex max-w-full"
+            listClassName="max-w-full overflow-x-auto"
             tabs={(
               [
                 { id: "overview", label: "Overview", icon: GitBranch },
@@ -947,10 +948,16 @@ function WorkerDeployments({
       </section>
 
       <Dialog.Root open={splitOpen} onOpenChange={(open) => !open && setSplitOpen(false)}>
-        <Dialog size="xl">
+        <Dialog className="p-6" size="xl">
           <div className="flex items-start justify-between gap-4">
-            <Dialog.Title>Split deployment across versions</Dialog.Title>
-            <Dialog.Close aria-label="Close" />
+            <Dialog.Title className="text-lg font-semibold">Split deployment across versions</Dialog.Title>
+            <Dialog.Close
+              render={(props) => (
+                <Button {...props} aria-label="Close" shape="square" size="sm" variant="ghost">
+                  <X className="size-4" />
+                </Button>
+              )}
+            />
           </div>
           <div className="space-y-5 pt-4">
             {current && (

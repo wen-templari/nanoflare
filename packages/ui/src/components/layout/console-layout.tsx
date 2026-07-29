@@ -20,6 +20,7 @@ import {
   LogOut,
   Settings,
   Waypoints,
+  X,
 } from "lucide-react";
 import { Fragment, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -70,7 +71,6 @@ export function ConsoleLayout() {
     closeNamespaceDialog,
     closeDatabaseDialog,
     closeObjectStorageBucketDialog,
-    toast,
     notify,
   } = useWorkspace();
   const [orgModalOpen, setOrgModalOpen] = useState(false);
@@ -139,7 +139,6 @@ export function ConsoleLayout() {
         onNameChange={setOrgName}
         onSubmit={submitOrganization}
         saving={orgSaving}
-        toast={toast}
       />
     );
   }
@@ -153,7 +152,8 @@ export function ConsoleLayout() {
               <Boxes size={17} />
             </div>
             <Select
-              className="min-w-0 flex-1"
+              aria-label="Active organization"
+              className="min-w-0 flex-1 !h-8 !justify-start !bg-transparent !px-2 !text-sm !shadow-none !ring-0 hover:!bg-kumo-tint"
               items={organizationSelectData}
               disabled={!organizations.length}
               onValueChange={(value) => {
@@ -165,6 +165,11 @@ export function ConsoleLayout() {
                 setActiveOrgID(value);
               }}
               placeholder="No organization"
+              renderValue={(value) => {
+                const organization = organizationSelectData.find((item) => item.value === value);
+                return <span className="block truncate">{organization?.label ?? "No organization"}</span>;
+              }}
+              size="sm"
               value={activeOrgID}
             />
           </div>
@@ -263,18 +268,17 @@ export function ConsoleLayout() {
           apiConnected={apiConnected}
         />
 
-        {toast && (
-          <LayerCard className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 px-4 py-3 shadow-lg">
-            <Check className="size-4 text-kumo-success" />
-            {toast}
-          </LayerCard>
-        )}
-
         <Dialog.Root open={orgModalOpen} onOpenChange={(open) => !open && setOrgModalOpen(false)}>
-          <Dialog>
+          <Dialog className="p-6">
             <div className="flex items-start justify-between gap-4">
-              <Dialog.Title>Create organization</Dialog.Title>
-              <Dialog.Close aria-label="Close" />
+              <Dialog.Title className="text-lg font-semibold">Create organization</Dialog.Title>
+              <Dialog.Close
+                render={(props) => (
+                  <Button {...props} aria-label="Close" shape="square" size="sm" variant="ghost">
+                    <X className="size-4" />
+                  </Button>
+                )}
+              />
             </div>
             <form className="mt-4 grid gap-4" onSubmit={submitOrganization}>
               {ownedOrganizationLimitReached && (
@@ -315,7 +319,6 @@ function OrganizationOnboarding({
   onNameChange,
   onSubmit,
   saving,
-  toast,
 }: {
   error: string;
   name: string;
@@ -323,7 +326,6 @@ function OrganizationOnboarding({
   onNameChange: (name: string) => void;
   onSubmit: (event: React.FormEvent) => void;
   saving: boolean;
-  toast: string;
 }) {
   return (
     <div className="min-h-screen bg-kumo-base">
@@ -409,13 +411,6 @@ function OrganizationOnboarding({
           </form>
         </LayerCard>
       </div>
-
-      {toast && (
-        <LayerCard className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 px-4 py-3 shadow-lg">
-          <Check className="size-4 text-kumo-success" />
-          {toast}
-        </LayerCard>
-      )}
     </div>
   );
 }

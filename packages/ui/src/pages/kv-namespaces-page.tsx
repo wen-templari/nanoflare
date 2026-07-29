@@ -29,7 +29,7 @@ export function KVNamespacesPage() {
           ) : (
             <Button onClick={openNamespaceDialog}>
               <Plus className="size-4" />
-              New namespace
+              Create namespace
             </Button>
           )
         }
