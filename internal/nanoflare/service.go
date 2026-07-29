@@ -2,6 +2,7 @@ package nanoflare
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -31,6 +32,19 @@ type ObjectStore interface {
 
 type WorkerOutputReader interface {
 	Output(string) []WorkerOutputLine
+}
+
+type WorkerOutputQuery struct {
+	DeploymentID string
+	Level        string
+	Text         string
+	Since        time.Time
+	Until        time.Time
+	Limit        int
+}
+
+type WorkerOutputQuerier interface {
+	Query(context.Context, string, WorkerOutputQuery) ([]WorkerOutputLine, error)
 }
 
 type WorkerTrafficReader interface {
@@ -900,6 +914,19 @@ func (s *Service) WorkerOutput(appID string) ([]WorkerOutputLine, error) {
 func (s *Service) WorkerOutputForOrg(orgID, appID string) ([]WorkerOutputLine, error) {
 	if _, err := s.appForOrg(orgID, appID); err != nil {
 		return nil, err
+	}
+	return s.WorkerOutput(appID)
+}
+
+func (s *Service) WorkerOutputQueryForOrg(ctx context.Context, orgID, appID string, query WorkerOutputQuery) ([]WorkerOutputLine, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return nil, err
+	}
+	if s.output == nil {
+		return []WorkerOutputLine{}, nil
+	}
+	if reader, ok := s.output.(WorkerOutputQuerier); ok {
+		return reader.Query(ctx, appID, query)
 	}
 	return s.WorkerOutput(appID)
 }

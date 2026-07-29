@@ -241,7 +241,7 @@ function WorkerDetailContent({
         {tab === "files" && (
           <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />
         )}
-        {tab === "output" && <WorkerOutput lines={output} />}
+        {tab === "output" && <WorkerOutput workerID={worker.id} deployments={deployments} initialLines={output} />}
         {tab === "settings" && (
           <WorkerConfig
             detail={detail}
@@ -1010,19 +1010,66 @@ function WorkerDeployments({
   );
 }
 
-function WorkerOutput({ lines }: { lines: WorkerOutputLine[] }) {
+function WorkerOutput({
+  workerID,
+  deployments,
+  initialLines,
+}: {
+  workerID: string;
+  deployments: ConsoleDeployment[];
+  initialLines: WorkerOutputLine[];
+}) {
+  const [lines, setLines] = useState(initialLines);
+  const [deploymentID, setDeploymentID] = useState("");
+  const [level, setLevel] = useState("");
+  const [search, setSearch] = useState("");
+  const [follow, setFollow] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => setLines(initialLines), [initialLines]);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      const params = new URLSearchParams({ limit: "500" });
+      if (deploymentID) params.set("deployment_id", deploymentID);
+      if (level) params.set("level", level);
+      if (search.trim()) params.set("q", search.trim());
+      const next = await fetchJSON<WorkerOutputLine[]>(`/v1/workers/${workerID}/output?${params}`).catch(() => []);
+      if (!cancelled) {
+        setLines(next);
+        setLoading(false);
+      }
+    }
+    void load();
+    if (!follow) return () => { cancelled = true; };
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [workerID, deploymentID, level, search, follow]);
+
   return (
     <div className="min-h-[510px] bg-[#202b29] p-4 rounded-lg">
-      <div className="mb-4 flex items-center gap-2 font-mono text-[9px]   text-[#82928c]">
+      <div className="mb-3 flex items-center gap-2 font-mono text-[9px] text-[#82928c]">
         <span className="size-1.5 rounded-full bg-[#78b88b]" />
-        Deployment output
+        Deployment output {loading && <span className="text-[#9fb0aa]">syncing</span>}
+      </div>
+      <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px_auto]">
+        <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter output" className="!bg-[#18211f] !border-[#40504b] !text-[#d7e1dc]" />
+        <select value={deploymentID} onChange={(event) => setDeploymentID(event.target.value)} className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]">
+          <option value="">All deployments</option>
+          {deployments.map((deployment) => <option key={deployment.id} value={deployment.id}>{shortDeploymentID(deployment.id)}</option>)}
+        </select>
+        <select value={level} onChange={(event) => setLevel(event.target.value)} className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]">
+          <option value="">All levels</option><option value="error">Error</option><option value="warn">Warn</option><option value="info">Info</option>
+        </select>
+        <Button variant="outline" size="sm" onClick={() => setFollow((value) => !value)} className="border-[#40504b] !text-[#c6d0cb]">{follow ? "Following" : "Paused"}</Button>
       </div>
       {lines.length ? (
         <div className="space-y-1.5">
           {lines.map(({ timestamp, level, message, deployment_id }, index) => (
             <p
               key={`${timestamp}-${index}`}
-              className="font-mono text-[11px] leading-5 text-[#c6d0cb]"
+              className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#c6d0cb]"
             >
               <span className="mr-3 text-[#71817b]">
                 {new Date(timestamp).toLocaleTimeString()}

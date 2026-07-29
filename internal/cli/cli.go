@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -403,6 +404,12 @@ func (r *Runner) deploymentOutput(args []string) error {
 	flags := flag.NewFlagSet("deployment output", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	apiURL := flags.String("api-url", "", "nanoflared base URL")
+	deploymentID := flags.String("deployment", "", "deployment ID")
+	level := flags.String("level", "", "output level")
+	search := flags.String("search", "", "text to search for")
+	limit := flags.Int("limit", 500, "maximum output lines (1-1000)")
+	since := flags.String("since", "", "RFC3339 start time")
+	until := flags.String("until", "", "RFC3339 end time")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -428,8 +435,31 @@ func (r *Runner) deploymentOutput(args []string) error {
 		return errors.New("app id is required")
 	}
 	baseURL := projectAPIURL(project, *apiURL)
+	query := url.Values{}
+	if *deploymentID != "" {
+		query.Set("deployment_id", *deploymentID)
+	}
+	if *level != "" {
+		query.Set("level", *level)
+	}
+	if *search != "" {
+		query.Set("q", *search)
+	}
+	if *since != "" {
+		query.Set("since", *since)
+	}
+	if *until != "" {
+		query.Set("until", *until)
+	}
+	if *limit != 500 {
+		query.Set("limit", strconv.Itoa(*limit))
+	}
+	endpoint := baseURL + "/v1/workers/" + appID + "/output"
+	if encoded := query.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
 	var output []nanoflare.WorkerOutputLine
-	if err := r.request(http.MethodGet, baseURL+"/v1/workers/"+appID+"/output", nil, &output); err != nil {
+	if err := r.request(http.MethodGet, endpoint, nil, &output); err != nil {
 		return err
 	}
 	for _, line := range output {

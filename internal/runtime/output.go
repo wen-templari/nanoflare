@@ -16,13 +16,21 @@ const outputIdentityPrefix = "[[nanoflare-output "
 // OutputBuffer captures the shared workerd process stream for the console.
 // A workerd generation hosts multiple isolates, so its raw output is shared.
 type OutputBuffer struct {
-	mu      sync.RWMutex
-	pending []byte
-	lines   []nanoflare.WorkerOutputLine
+	mu            sync.RWMutex
+	pending       []byte
+	lines         []nanoflare.WorkerOutputLine
+	forward       *VectorForwarder
+	forwardTimers map[*nanoflare.WorkerOutputLine]*time.Timer
 }
 
 func NewOutputBuffer() *OutputBuffer {
-	return &OutputBuffer{}
+	return &OutputBuffer{forwardTimers: make(map[*nanoflare.WorkerOutputLine]*time.Timer)}
+}
+
+func (b *OutputBuffer) SetForwarder(forwarder *VectorForwarder) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.forward = forwarder
 }
 
 func (b *OutputBuffer) Write(value []byte) (int, error) {
@@ -51,13 +59,17 @@ func (b *OutputBuffer) AppendActive(active nanoflare.ActiveDeployment, level, me
 func (b *OutputBuffer) AppendScoped(appID, deploymentID, level, message string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.lines = append(b.lines, nanoflare.WorkerOutputLine{
+	line := nanoflare.WorkerOutputLine{
 		Timestamp:    time.Now().UTC(),
 		Level:        level,
 		Message:      message,
 		AppID:        appID,
 		DeploymentID: deploymentID,
-	})
+	}
+	b.lines = append(b.lines, line)
+	if b.forward != nil {
+		b.forward.Append(line)
+	}
 	b.trim()
 }
 
@@ -81,13 +93,15 @@ func (b *OutputBuffer) append(message string) {
 	if appID == "" && b.appendContinuation(message) {
 		return
 	}
-	b.lines = append(b.lines, nanoflare.WorkerOutputLine{
+	line := nanoflare.WorkerOutputLine{
 		Timestamp:    time.Now().UTC(),
 		Level:        "info",
 		Message:      message,
 		AppID:        appID,
 		DeploymentID: deploymentID,
-	})
+	}
+	b.lines = append(b.lines, line)
+	b.scheduleForward(&b.lines[len(b.lines)-1])
 	b.trim()
 }
 
@@ -100,7 +114,27 @@ func (b *OutputBuffer) appendContinuation(message string) bool {
 		return false
 	}
 	last.Message += "\n" + message
+	b.scheduleForward(last)
 	return true
+}
+
+// workerd writes multiline console values as separate stdout lines. Delay the
+// forwarding slightly so Vector receives the assembled record rather than its
+// first line alone. Terminal output remains synchronous through MultiWriter.
+func (b *OutputBuffer) scheduleForward(line *nanoflare.WorkerOutputLine) {
+	if b.forward == nil || line.AppID == "" {
+		return
+	}
+	if timer := b.forwardTimers[line]; timer != nil {
+		timer.Stop()
+	}
+	b.forwardTimers[line] = time.AfterFunc(75*time.Millisecond, func() {
+		b.mu.Lock()
+		delete(b.forwardTimers, line)
+		copy := *line
+		b.mu.Unlock()
+		b.forward.Append(copy)
+	})
 }
 
 func (b *OutputBuffer) trim() {

@@ -205,6 +205,8 @@ locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 alternate file path when you need a different auth store location.
 Use `nanoflare deployment output` from a registered project to print captured
 worker output, or pass a worker ID with `nanoflare deployment output <worker-id>`.
+When `NANOFLARE_LOKI_URL` is configured, output is retained in Loki and can be
+filtered with `--deployment`, `--level`, `--search`, `--since`, and `--until`.
 
 The browser console can also use an external OIDC provider for login. Configure
 the console-specific settings on `nanoflared`:
@@ -481,6 +483,15 @@ The development Compose stack also starts Prometheus at
 metrics endpoint, and Prometheus scrapes them every 15 seconds. The console's
 Monitoring view queries Prometheus through Vite's `/prometheus` development
 proxy.
+
+The Compose stack also starts Vector and Loki for logs. Vector labels worker
+output with its worker and deployment IDs before writing it to Loki; Grafana at
+`http://127.0.0.1:3000` can query all platform services. For a host-run runtime,
+set `NANOFLARE_LOG_VECTOR_SOCKET` to Vector's Unix socket path (or
+`tcp://127.0.0.1:6000` when Vector runs in Docker Compose on macOS) and
+`NANOFLARE_LOKI_URL` to the Loki endpoint. If the collector is unavailable,
+Nanoflare continues running and drops newly queued log events rather than
+blocking Workers.
 
 Worker drill-down data is served by `nanoflared`:
 

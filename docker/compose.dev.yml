@@ -61,7 +61,47 @@ services:
     depends_on:
       - traefik
 
+  loki:
+    image: grafana/loki:3.5.0
+    command: -config.file=/etc/loki/config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ../loki/loki-config.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+
+  vector:
+    image: timberio/vector:0.46.1-alpine
+    command: --config /etc/vector/vector.yaml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - vector-data:/var/lib/vector
+      - ../var/vector:/var/run/nanoflare
+    ports:
+      # Host-run nanoflared/nanoflare-runner should use:
+      # NANOFLARE_LOG_VECTOR_SOCKET=tcp://127.0.0.1:6000
+      - "127.0.0.1:6000:6000"
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:12.0.2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
+
 volumes:
   postgres-data:
   minio-data:
   prometheus-data:
+  loki-data:
+  vector-data:
+  grafana-data:

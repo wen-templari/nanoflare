@@ -17,6 +17,7 @@ import (
 	"github.com/clas/nanoflare/internal/api"
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/database"
+	"github.com/clas/nanoflare/internal/logs"
 	"github.com/clas/nanoflare/internal/metrics"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/objects"
@@ -51,6 +52,8 @@ func main() {
 		portStart           = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 		idleTimeout         = flag.Duration("runtime-idle-timeout", 30*time.Second, "idle duration before a lazy worker runtime is stopped")
 		prometheus          = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
+		lokiURL             = flag.String("loki-url", os.Getenv("NANOFLARE_LOKI_URL"), "Loki base URL for persistent worker output")
+		vectorSocket        = flag.String("log-vector-socket", os.Getenv("NANOFLARE_LOG_VECTOR_SOCKET"), "optional local Vector Unix socket for structured runtime output")
 		runnerURL           = flag.String("runner-url", "", "nanoflare-runner control API URL; empty starts workerd directly")
 		runnerToken         = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
 		traefikToken        = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
@@ -117,6 +120,11 @@ func main() {
 	}
 
 	output := runtime.NewOutputBuffer()
+	forwarder := runtime.NewVectorForwarder(*vectorSocket, 1024)
+	if forwarder != nil {
+		output.SetForwarder(forwarder)
+		defer forwarder.Close()
+	}
 	durationTelemetry, err := runtime.NewPersistentDurationTelemetry(filepath.Join(*configDir, "duration-telemetry.json"))
 	if err != nil {
 		log.Fatal(err)
@@ -170,7 +178,12 @@ func main() {
 		defer closeRuntime()
 	}
 
-	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, output, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
+	var outputReader nanoflare.WorkerOutputReader = output
+	if strings.TrimSpace(*lokiURL) != "" {
+		outputReader = logs.NewLokiReader(*lokiURL)
+		log.Printf("using Loki worker output at %s", *lokiURL)
+	}
+	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, outputReader, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
 	litestream := database.NewLitestreamSupervisor(*litestreamEnabled, *litestreamBin, *litestreamConfig)
 	if litestream.Enabled() && strings.TrimSpace(*litestreamConfig) == "" {
 		replica, err := generatedLitestreamReplicaConfig()

@@ -105,6 +105,15 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	}
 }
 
+func TestWorkerOutputRejectsInvalidLimit(t *testing.T) {
+	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), config.NewWriter(
+		filepath.Join(t.TempDir(), "workerd.capnp"), filepath.Join(t.TempDir(), "traefik.yml"), "http://nanoflared/internal/auth/verify", "127.0.0.1",
+	), nil, runtime.NewOutputBuffer(), fakeTraffic{})
+	server := NewServer(service)
+	app := createApp(t, server, "Output App", "output.example.com")
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/output?limit=1001", http.StatusBadRequest, &map[string]string{})
+}
+
 func TestSecretAPIsReturnMetadataOnly(t *testing.T) {
 	dir := t.TempDir()
 	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), config.NewWriter(

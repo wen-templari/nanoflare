@@ -1,0 +1,50 @@
+data_dir: /var/lib/vector
+
+sources:
+  docker:
+    type: docker_logs
+    docker_host: unix:///var/run/docker.sock
+  host_runtime_unix:
+    type: socket
+    mode: unix
+    path: /var/run/nanoflare/vector.sock
+    decoding:
+      codec: json
+  host_runtime_tcp:
+    type: socket
+    mode: tcp
+    address: 0.0.0.0:6000
+    decoding:
+      codec: json
+
+transforms:
+  normalize:
+    type: remap
+    inputs: [docker, host_runtime_unix, host_runtime_tcp]
+    source: |
+      if !exists(.container_name) { .container_name = "host-runtime" }
+      .service = .container_name
+      if !exists(.level) { .level = "info" }
+      if exists(.app_id) { .worker_id = .app_id }
+      if exists(.deployment_id) { .deployment_id = .deployment_id }
+      parsed, err = parse_regex(.message, r'\[\[nanoflare-output app=(?P<worker_id>[^ ]+) deployment=(?P<deployment_id>[^\]]+)\]\]\s*(?P<message>.*)')
+      if err == null {
+        .worker_id = parsed.worker_id
+        .deployment_id = parsed.deployment_id
+        .message = parsed.message
+      }
+      if !exists(.worker_id) { .worker_id = "" }
+      if !exists(.deployment_id) { .deployment_id = "" }
+
+sinks:
+  loki:
+    type: loki
+    inputs: [normalize]
+    endpoint: http://loki:3100
+    encoding:
+      codec: text
+    labels:
+      service: "{{ service }}"
+      worker_id: "{{ worker_id }}"
+      deployment_id: "{{ deployment_id }}"
+      level: "{{ level }}"

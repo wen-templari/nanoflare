@@ -1,6 +1,15 @@
 package runtime
 
-import "testing"
+import (
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/clas/nanoflare/internal/nanoflare"
+)
 
 func TestOutputBufferCapturesLinesAsInfo(t *testing.T) {
 	buffer := NewOutputBuffer()
@@ -84,5 +93,42 @@ func TestOutputBufferAppendsMultilineConsoleContinuation(t *testing.T) {
 	want := "[gallery serve] object metadata {\nid: '5c8632',\nsize: 204082\n}"
 	if lines[0].Message != want {
 		t.Fatalf("message = %q, want %q", lines[0].Message, want)
+	}
+}
+
+func TestOutputBufferForwardsAssembledMultilineOutput(t *testing.T) {
+	socket := fmt.Sprintf("/tmp/nanoflare-vector-%d.sock", time.Now().UnixNano())
+	defer os.Remove(socket)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	received := make(chan nanoflare.WorkerOutputLine, 1)
+	go func() {
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		var line nanoflare.WorkerOutputLine
+		if json.NewDecoder(connection).Decode(&line) == nil {
+			received <- line
+		}
+	}()
+	forwarder := NewVectorForwarder(listener.Addr().String(), 10)
+	defer forwarder.Close()
+	buffer := NewOutputBuffer()
+	buffer.SetForwarder(forwarder)
+	if _, err := buffer.Write([]byte("[[nanoflare-output app=app-one deployment=dep-one]] object {\n  id: 'one'\n}\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case line := <-received:
+		if line.Message != "object {\nid: 'one'\n}" {
+			t.Fatalf("message = %q", line.Message)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for forwarded output")
 	}
 }

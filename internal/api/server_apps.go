@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
@@ -95,12 +96,43 @@ func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
-	output, err := s.service.WorkerOutputForOrg(controlOrgID(r), r.PathValue("workerID"))
+	query, err := workerOutputQuery(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	output, err := s.service.WorkerOutputQueryForOrg(r.Context(), controlOrgID(r), r.PathValue("workerID"), query)
 	if err != nil {
 		writeWorkerError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, output)
+}
+
+func workerOutputQuery(r *http.Request) (nanoflare.WorkerOutputQuery, error) {
+	values := r.URL.Query()
+	query := nanoflare.WorkerOutputQuery{DeploymentID: strings.TrimSpace(values.Get("deployment_id")), Level: strings.TrimSpace(values.Get("level")), Text: strings.TrimSpace(values.Get("q")), Limit: 500}
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 1000 {
+			return query, errors.New("limit must be between 1 and 1000")
+		}
+		query.Limit = limit
+	}
+	for _, item := range []struct {
+		raw    string
+		target *time.Time
+	}{{values.Get("since"), &query.Since}, {values.Get("until"), &query.Until}} {
+		if item.raw == "" {
+			continue
+		}
+		value, err := time.Parse(time.RFC3339, item.raw)
+		if err != nil {
+			return query, errors.New("since and until must be RFC3339 timestamps")
+		}
+		*item.target = value
+	}
+	return query, nil
 }
 
 func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {

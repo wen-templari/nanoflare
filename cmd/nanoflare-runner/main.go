@@ -27,6 +27,7 @@ func main() {
 		portStart            = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 		nanoflareRuntimeAddr = flag.String("nanoflare-runtime-addr", "127.0.0.1:8081", "nanoflared private runtime KV API address reachable from workerd")
 		token                = flag.String("token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflared authentication token")
+		vectorSocket         = flag.String("log-vector-socket", os.Getenv("NANOFLARE_LOG_VECTOR_SOCKET"), "optional local Vector Unix socket for structured runtime output")
 	)
 	flag.Parse()
 
@@ -41,6 +42,11 @@ func main() {
 	}
 
 	output := runtime.NewOutputBuffer()
+	forwarder := runtime.NewVectorForwarder(*vectorSocket, 1024)
+	if forwarder != nil {
+		output.SetForwarder(forwarder)
+		defer forwarder.Close()
+	}
 	writer := config.NewWriter(
 		filepath.Join(*configDir, "workerd.capnp"),
 		filepath.Join(*configDir, "unused-traefik.yml"),
