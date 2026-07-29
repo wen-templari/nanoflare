@@ -68,23 +68,25 @@ type OAuthAuthorizationCode struct {
 }
 
 type OAuthToken struct {
-	TokenHash        string
-	RefreshTokenHash string
-	ClientID         string
-	UserID           string
-	OrgID            string
-	Scopes           []string
-	ExpiresAt        time.Time
-	RefreshExpiresAt time.Time
-	RevokedAt        *time.Time
-	CreatedAt        time.Time
+	TokenHash           string
+	RefreshTokenHash    string
+	ClientID            string
+	UserID              string
+	PartnerConnectionID string
+	OrgID               string
+	Scopes              []string
+	ExpiresAt           time.Time
+	RefreshExpiresAt    time.Time
+	RevokedAt           *time.Time
+	CreatedAt           time.Time
 }
 
 type OAuthAccess struct {
-	ClientID string
-	UserID   string
-	OrgID    string
-	Scopes   []string
+	ClientID     string
+	UserID       string
+	OrgID        string
+	Scopes       []string
+	ConnectionID string
 }
 
 type OAuthConnection struct {
@@ -440,7 +442,37 @@ func (s *OAuthService) ValidateAccessToken(token string) (OAuthAccess, error) {
 	if record.RevokedAt != nil || !record.ExpiresAt.After(s.now().UTC()) {
 		return OAuthAccess{}, ErrOAuthTokenNotFound
 	}
-	return OAuthAccess{ClientID: record.ClientID, UserID: record.UserID, OrgID: record.OrgID, Scopes: append([]string(nil), record.Scopes...)}, nil
+	if record.PartnerConnectionID != "" {
+		connection, err := s.store.PartnerConnection(record.PartnerConnectionID)
+		if err != nil || connection.Status != PartnerConnectionStatusActive || connection.OrgID != record.OrgID {
+			return OAuthAccess{}, ErrOAuthTokenNotFound
+		}
+	}
+	return OAuthAccess{ClientID: record.ClientID, UserID: record.UserID, OrgID: record.OrgID, Scopes: append([]string(nil), record.Scopes...), ConnectionID: record.PartnerConnectionID}, nil
+}
+
+func (s *OAuthService) IssuePartnerTokens(connection PartnerConnection, scopes []string) (OAuthTokenResponse, error) {
+	if connection.Status != PartnerConnectionStatusActive {
+		return OAuthTokenResponse{}, ErrOAuthTokenNotFound
+	}
+	return s.issueTokensForConnection(connection.IntegrationID, connection.ID, connection.OrgID, scopes)
+}
+
+func (s *OAuthService) RefreshPartner(connectionID, refreshToken string) (OAuthTokenResponse, error) {
+	record, err := s.store.OAuthRefreshToken(tokenHash(refreshToken))
+	if err != nil || record.PartnerConnectionID != connectionID || record.RevokedAt != nil || !record.RefreshExpiresAt.After(s.now().UTC()) {
+		return OAuthTokenResponse{}, ErrOAuthInvalidGrant
+	}
+	connection, err := s.store.PartnerConnection(connectionID)
+	if err != nil || connection.Status != PartnerConnectionStatusActive || connection.OrgID != record.OrgID {
+		return OAuthTokenResponse{}, ErrOAuthInvalidGrant
+	}
+	now := s.now().UTC()
+	record.RevokedAt = &now
+	if err := s.store.UpdateOAuthToken(record); err != nil {
+		return OAuthTokenResponse{}, err
+	}
+	return s.issueTokensForConnection(connection.IntegrationID, connection.ID, connection.OrgID, record.Scopes)
 }
 
 func (s *OAuthService) validClientRequest(clientID, redirectURI string, requested []string) (OAuthClient, []string, error) {
@@ -479,6 +511,14 @@ func (s *OAuthService) validateClientSecret(clientID, clientSecret string) (OAut
 }
 
 func (s *OAuthService) issueTokens(clientID, userID, orgID string, scopes []string) (OAuthTokenResponse, error) {
+	return s.issueTokensWithSubject(clientID, userID, "", orgID, scopes)
+}
+
+func (s *OAuthService) issueTokensForConnection(integrationID, connectionID, orgID string, scopes []string) (OAuthTokenResponse, error) {
+	return s.issueTokensWithSubject(integrationID, "", connectionID, orgID, scopes)
+}
+
+func (s *OAuthService) issueTokensWithSubject(clientID, userID, connectionID, orgID string, scopes []string) (OAuthTokenResponse, error) {
 	access, err := s.randomID()
 	if err != nil {
 		return OAuthTokenResponse{}, err
@@ -489,15 +529,16 @@ func (s *OAuthService) issueTokens(clientID, userID, orgID string, scopes []stri
 	}
 	now := s.now().UTC()
 	record := OAuthToken{
-		TokenHash:        tokenHash(access),
-		RefreshTokenHash: tokenHash(refresh),
-		ClientID:         clientID,
-		UserID:           userID,
-		OrgID:            orgID,
-		Scopes:           append([]string(nil), scopes...),
-		ExpiresAt:        now.Add(s.accessTTL),
-		RefreshExpiresAt: now.Add(s.refreshTTL),
-		CreatedAt:        now,
+		TokenHash:           tokenHash(access),
+		RefreshTokenHash:    tokenHash(refresh),
+		ClientID:            clientID,
+		UserID:              userID,
+		PartnerConnectionID: connectionID,
+		OrgID:               orgID,
+		Scopes:              append([]string(nil), scopes...),
+		ExpiresAt:           now.Add(s.accessTTL),
+		RefreshExpiresAt:    now.Add(s.refreshTTL),
+		CreatedAt:           now,
 	}
 	if err := s.store.CreateOAuthToken(record); err != nil {
 		return OAuthTokenResponse{}, err

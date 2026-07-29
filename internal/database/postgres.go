@@ -161,6 +161,26 @@ CREATE TABLE IF NOT EXISTS organizations (
 	usage_level text NOT NULL DEFAULT 'default',
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS partner_integrations (
+	id text PRIMARY KEY,
+	owner_org_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+	name text NOT NULL,
+	allowed_scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+	secret_hash bytea NOT NULL,
+	disabled boolean NOT NULL DEFAULT false,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS partner_connections (
+	id text PRIMARY KEY,
+	integration_id text NOT NULL REFERENCES partner_integrations(id) ON DELETE CASCADE,
+	external_account_id text NOT NULL,
+	org_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+	status text NOT NULL DEFAULT 'active',
+	created_at timestamptz NOT NULL,
+	revoked_at timestamptz,
+	UNIQUE (integration_id, external_account_id)
+);
 CREATE TABLE IF NOT EXISTS user_organizations (
 	user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -282,8 +302,14 @@ ALTER TABLE workers ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAU
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS created_by text NOT NULL DEFAULT '';
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS runtime_token text;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS usage_level text NOT NULL DEFAULT 'default';
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS partner_integration_id text NOT NULL DEFAULT '';
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS external_account_id text NOT NULL DEFAULT '';
 UPDATE organizations SET usage_level = 'default' WHERE usage_level = '';
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS owner_org_id text NOT NULL DEFAULT '';
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS partner_connection_id text NOT NULL DEFAULT '';
+ALTER TABLE oauth_tokens ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE oauth_tokens DROP CONSTRAINT IF EXISTS oauth_tokens_client_id_fkey;
+CREATE UNIQUE INDEX IF NOT EXISTS organizations_partner_external_account_idx ON organizations (partner_integration_id, external_account_id) WHERE partner_integration_id <> '';
 ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'owner';
 ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS scopes jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS scope_type text NOT NULL DEFAULT 'user';
@@ -812,8 +838,8 @@ func (p *Postgres) UserCount() (int, error) {
 }
 
 func (p *Postgres) CreateOrganization(org nanoflare.Organization) error {
-	_, err := p.db.Exec(`INSERT INTO organizations (id, name, usage_level, created_at) VALUES ($1, $2, $3, $4)`,
-		org.ID, org.Name, nanoflare.NormalizeUsageLevel(org.UsageLevel), org.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO organizations (id, name, usage_level, partner_integration_id, external_account_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		org.ID, org.Name, nanoflare.NormalizeUsageLevel(org.UsageLevel), org.PartnerIntegrationID, org.ExternalAccountID, org.CreatedAt)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrOrganizationExists
 	}
@@ -822,12 +848,43 @@ func (p *Postgres) CreateOrganization(org nanoflare.Organization) error {
 
 func (p *Postgres) GetOrganization(orgID string) (nanoflare.Organization, error) {
 	var org nanoflare.Organization
-	err := p.db.QueryRow(`SELECT id, name, usage_level, created_at FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.UsageLevel, &org.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, name, usage_level, partner_integration_id, external_account_id, created_at FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.UsageLevel, &org.PartnerIntegrationID, &org.ExternalAccountID, &org.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.Organization{}, nanoflare.ErrOrganizationNotFound
 	}
 	org.UsageLevel = nanoflare.NormalizeUsageLevel(org.UsageLevel)
 	return org, err
+}
+
+func (p *Postgres) ProvisionPartnerConnection(org nanoflare.Organization, connection nanoflare.PartnerConnection) (nanoflare.Organization, nanoflare.PartnerConnection, bool, error) {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return nanoflare.Organization{}, nanoflare.PartnerConnection{}, false, err
+	}
+	defer tx.Rollback()
+	var existing nanoflare.PartnerConnection
+	err = tx.QueryRow(`SELECT id, integration_id, external_account_id, org_id, status, created_at, revoked_at FROM partner_connections WHERE integration_id = $1 AND external_account_id = $2`, connection.IntegrationID, connection.ExternalAccountID).Scan(&existing.ID, &existing.IntegrationID, &existing.ExternalAccountID, &existing.OrgID, &existing.Status, &existing.CreatedAt, &existing.RevokedAt)
+	if err == nil {
+		var existingOrg nanoflare.Organization
+		err = tx.QueryRow(`SELECT id, name, usage_level, partner_integration_id, external_account_id, created_at FROM organizations WHERE id = $1`, existing.OrgID).Scan(&existingOrg.ID, &existingOrg.Name, &existingOrg.UsageLevel, &existingOrg.PartnerIntegrationID, &existingOrg.ExternalAccountID, &existingOrg.CreatedAt)
+		if err != nil {
+			return nanoflare.Organization{}, nanoflare.PartnerConnection{}, false, err
+		}
+		return existingOrg, existing, false, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.Organization{}, nanoflare.PartnerConnection{}, false, err
+	}
+	if _, err = tx.Exec(`INSERT INTO organizations (id, name, usage_level, partner_integration_id, external_account_id, created_at) VALUES ($1,$2,$3,$4,$5,$6)`, org.ID, org.Name, nanoflare.NormalizeUsageLevel(org.UsageLevel), org.PartnerIntegrationID, org.ExternalAccountID, org.CreatedAt); err != nil {
+		return nanoflare.Organization{}, nanoflare.PartnerConnection{}, false, err
+	}
+	if _, err = tx.Exec(`INSERT INTO partner_connections (id, integration_id, external_account_id, org_id, status, created_at, revoked_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, connection.ID, connection.IntegrationID, connection.ExternalAccountID, connection.OrgID, connection.Status, connection.CreatedAt, connection.RevokedAt); err != nil {
+		return nanoflare.Organization{}, nanoflare.PartnerConnection{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nanoflare.Organization{}, nanoflare.PartnerConnection{}, false, err
+	}
+	return org, connection, true, nil
 }
 
 func (p *Postgres) CountOwnedOrganizationsByUser(userID string) (int, error) {
@@ -1204,9 +1261,9 @@ func (p *Postgres) UpdateOAuthAuthorizationCode(code nanoflare.OAuthAuthorizatio
 
 func (p *Postgres) CreateOAuthToken(token nanoflare.OAuthToken) error {
 	_, err := p.db.Exec(`
-INSERT INTO oauth_tokens (token_hash, refresh_token_hash, client_id, user_id, org_id, scopes, expires_at, refresh_expires_at, revoked_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		token.TokenHash, token.RefreshTokenHash, token.ClientID, token.UserID, token.OrgID, mustJSON(token.Scopes), token.ExpiresAt, token.RefreshExpiresAt, token.RevokedAt, token.CreatedAt)
+INSERT INTO oauth_tokens (token_hash, refresh_token_hash, client_id, user_id, partner_connection_id, org_id, scopes, expires_at, refresh_expires_at, revoked_at, created_at)
+VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11)`,
+		token.TokenHash, token.RefreshTokenHash, token.ClientID, token.UserID, token.PartnerConnectionID, token.OrgID, mustJSON(token.Scopes), token.ExpiresAt, token.RefreshExpiresAt, token.RevokedAt, token.CreatedAt)
 	return err
 }
 
@@ -1303,13 +1360,134 @@ WHERE client_id = $1 AND revoked_at IS NULL`, clientID, revokedAt)
 	return err
 }
 
+func (p *Postgres) CreatePartnerIntegration(integration nanoflare.PartnerIntegration) error {
+	_, err := p.db.Exec(`INSERT INTO partner_integrations (id, owner_org_id, name, allowed_scopes, secret_hash, disabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, integration.ID, integration.OwnerOrgID, integration.Name, mustJSON(integration.AllowedScopes), integration.SecretHash, integration.Disabled, integration.CreatedAt, integration.UpdatedAt)
+	if isUniqueViolation(err) {
+		return nanoflare.ErrPartnerIntegrationExists
+	}
+	return err
+}
+
+func (p *Postgres) PartnerIntegration(id string) (nanoflare.PartnerIntegration, error) {
+	var integration nanoflare.PartnerIntegration
+	var scopes []byte
+	err := p.db.QueryRow(`SELECT id, owner_org_id, name, allowed_scopes, secret_hash, disabled, created_at, updated_at FROM partner_integrations WHERE id = $1`, id).Scan(&integration.ID, &integration.OwnerOrgID, &integration.Name, &scopes, &integration.SecretHash, &integration.Disabled, &integration.CreatedAt, &integration.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.PartnerIntegration{}, nanoflare.ErrPartnerIntegrationNotFound
+	}
+	if err != nil {
+		return nanoflare.PartnerIntegration{}, err
+	}
+	if err := json.Unmarshal(scopes, &integration.AllowedScopes); err != nil {
+		return nanoflare.PartnerIntegration{}, err
+	}
+	return integration, nil
+}
+
+func (p *Postgres) PartnerIntegrationsByOwnerOrg(ownerOrgID string) ([]nanoflare.PartnerIntegration, error) {
+	rows, err := p.db.Query(`SELECT id, owner_org_id, name, allowed_scopes, secret_hash, disabled, created_at, updated_at FROM partner_integrations WHERE owner_org_id = $1 ORDER BY name, id`, ownerOrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]nanoflare.PartnerIntegration, 0)
+	for rows.Next() {
+		var value nanoflare.PartnerIntegration
+		var scopes []byte
+		if err := rows.Scan(&value.ID, &value.OwnerOrgID, &value.Name, &scopes, &value.SecretHash, &value.Disabled, &value.CreatedAt, &value.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(scopes, &value.AllowedScopes); err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
+func (p *Postgres) UpdatePartnerIntegration(integration nanoflare.PartnerIntegration) error {
+	result, err := p.db.Exec(`UPDATE partner_integrations SET owner_org_id=$2, name=$3, allowed_scopes=$4, secret_hash=$5, disabled=$6, updated_at=$7 WHERE id=$1`, integration.ID, integration.OwnerOrgID, integration.Name, mustJSON(integration.AllowedScopes), integration.SecretHash, integration.Disabled, integration.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nanoflare.ErrPartnerIntegrationNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) PartnerConnection(id string) (nanoflare.PartnerConnection, error) {
+	var value nanoflare.PartnerConnection
+	err := p.db.QueryRow(`SELECT id, integration_id, external_account_id, org_id, status, created_at, revoked_at FROM partner_connections WHERE id=$1`, id).Scan(&value.ID, &value.IntegrationID, &value.ExternalAccountID, &value.OrgID, &value.Status, &value.CreatedAt, &value.RevokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nanoflare.PartnerConnection{}, nanoflare.ErrPartnerConnectionNotFound
+	}
+	return value, err
+}
+
+func (p *Postgres) PartnerConnectionsByIntegration(integrationID string) ([]nanoflare.PartnerConnection, error) {
+	rows, err := p.db.Query(`SELECT id, integration_id, external_account_id, org_id, status, created_at, revoked_at FROM partner_connections WHERE integration_id=$1 ORDER BY created_at, id`, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]nanoflare.PartnerConnection, 0)
+	for rows.Next() {
+		var value nanoflare.PartnerConnection
+		if err := rows.Scan(&value.ID, &value.IntegrationID, &value.ExternalAccountID, &value.OrgID, &value.Status, &value.CreatedAt, &value.RevokedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
+func (p *Postgres) RevokePartnerConnection(id string, revokedAt time.Time) error {
+	result, err := p.db.Exec(`UPDATE partner_connections SET status=$2, revoked_at=$3 WHERE id=$1`, id, nanoflare.PartnerConnectionStatusRevoked, revokedAt)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nanoflare.ErrPartnerConnectionNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) RestorePartnerConnection(id string) error {
+	result, err := p.db.Exec(`UPDATE partner_connections SET status=$2, revoked_at=NULL WHERE id=$1`, id, nanoflare.PartnerConnectionStatusActive)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nanoflare.ErrPartnerConnectionNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) RevokePartnerConnectionTokens(connectionID string, revokedAt time.Time) error {
+	_, err := p.db.Exec(`UPDATE oauth_tokens SET revoked_at=$2 WHERE partner_connection_id=$1 AND revoked_at IS NULL`, connectionID, revokedAt)
+	return err
+}
+
 func (p *Postgres) oauthToken(where, value string) (nanoflare.OAuthToken, error) {
 	var token nanoflare.OAuthToken
 	var scopes []byte
 	err := p.db.QueryRow(`
-SELECT token_hash, refresh_token_hash, client_id, user_id, org_id, scopes, expires_at, refresh_expires_at, revoked_at, created_at
+SELECT token_hash, refresh_token_hash, client_id, COALESCE(user_id, ''), partner_connection_id, org_id, scopes, expires_at, refresh_expires_at, revoked_at, created_at
 FROM oauth_tokens WHERE `+where, value).
-		Scan(&token.TokenHash, &token.RefreshTokenHash, &token.ClientID, &token.UserID, &token.OrgID, &scopes, &token.ExpiresAt, &token.RefreshExpiresAt, &token.RevokedAt, &token.CreatedAt)
+		Scan(&token.TokenHash, &token.RefreshTokenHash, &token.ClientID, &token.UserID, &token.PartnerConnectionID, &token.OrgID, &scopes, &token.ExpiresAt, &token.RefreshExpiresAt, &token.RevokedAt, &token.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.OAuthToken{}, nanoflare.ErrOAuthTokenNotFound
 	}

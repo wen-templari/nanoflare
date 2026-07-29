@@ -27,6 +27,7 @@ type Server struct {
 	controlOIDCCodes       map[string]controlOIDCCode
 	controlCLICodes        map[string]controlCLICode
 	oauth                  *nanoflare.OAuthService
+	partner                *nanoflare.PartnerService
 	runtime                RuntimeEnsurer
 	workerClient           *http.Client
 	workerGatewayMetrics   workerGatewayMetrics
@@ -122,6 +123,13 @@ func NewServerWithRuntimeAndOAuth(service *nanoflare.Service, traefik TraefikCon
 	return server
 }
 
+func (s *Server) SetPartnerService(partner *nanoflare.PartnerService) {
+	s.partner = partner
+	if partner != nil {
+		s.registerPartnerRoutes()
+	}
+}
+
 func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer, oauth *nanoflare.OAuthService) *Server {
 	return &Server{
 		service:      service,
@@ -156,7 +164,7 @@ func (s *Server) SetControlOIDCDirectLogin(enabled bool) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if s.controlAuth != nil && strings.HasPrefix(r.URL.Path, "/v1/") && !isPublicControlPath(r.URL.Path) {
+	if s.controlAuth != nil && strings.HasPrefix(r.URL.Path, "/v1/") && !isPublicControlPath(r.URL.Path) && !isPartnerMachineRequest(r) {
 		next, ok := s.authenticateControlRequest(w, r)
 		if !ok {
 			return

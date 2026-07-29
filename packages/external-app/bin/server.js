@@ -18,6 +18,12 @@ const scopes = (process.env.EXTERNAL_APP_SCOPES || "workers:write kv:write")
   .split(/[,\s]+/)
   .map((scope) => scope.trim())
   .filter(Boolean);
+const partnerIntegrationID = process.env.NANOFLARE_PARTNER_INTEGRATION_ID || "";
+const partnerSecret = process.env.NANOFLARE_PARTNER_SECRET || "";
+const partnerScopes = (process.env.NANOFLARE_PARTNER_SCOPES || "workers:read workers:write deployments:write secrets:write kv:read kv:write db:read db:write objects:read objects:write")
+  .split(/[,\s]+/)
+  .map((scope) => scope.trim())
+  .filter(Boolean);
 
 const state = {
   client:
@@ -34,6 +40,7 @@ const state = {
   tokenIssuedAt: null,
   tokenExpiresAt: null,
   lastApp: null,
+  partner: null,
   events: [],
 };
 
@@ -53,6 +60,11 @@ const server = http.createServer(async (request, response) => {
       oauthURL.searchParams.set("state", nonce());
       logEvent("Redirecting user to Nanoflare for consent.");
       return redirect(response, oauthURL.toString());
+    }
+    if (request.method === "POST" && url.pathname === "/partner/connect") {
+      const body = await readForm(request);
+      await connectPartnerWorkspace(body);
+      return redirect(response, "/");
     }
     if (request.method === "GET" && url.pathname === "/oauth/callback") {
       await exchangeCode(url.searchParams.get("code") || "");
@@ -139,8 +151,40 @@ async function provisionWorker(form) {
   logEvent(`Provisioned worker ${response.json.id}.`);
 }
 
+async function connectPartnerWorkspace(form) {
+  if (!partnerIntegrationID || !partnerSecret) {
+    throw new Error("Set NANOFLARE_PARTNER_INTEGRATION_ID and NANOFLARE_PARTNER_SECRET to use partner-managed connections.");
+  }
+  const externalAccountID = (form.get("external_account_id") || "").trim();
+  const organizationName = (form.get("organization_name") || "").trim();
+  if (!externalAccountID || !organizationName) throw new Error("Workspace ID and organization name are required.");
+  const response = await nf(
+    "POST",
+    `/v1/partner-integrations/${encodeURIComponent(partnerIntegrationID)}/connections`,
+    { external_account_id: externalAccountID, organization_name: organizationName, requested_scopes: partnerScopes },
+    { token: partnerSecret, allowStatus: [200, 201] },
+  );
+  applyPartnerToken(response.json);
+  state.partner = { connectionID: response.json.connection_id, organization: response.json.organization, externalAccountID };
+  logEvent(`Connected workspace ${externalAccountID} to Nanoflare organization ${response.json.organization.id}.`);
+}
+
+function applyPartnerToken(token) {
+  state.accessToken = token.access_token;
+  state.refreshToken = token.refresh_token;
+  state.tokenScope = token.scope;
+  state.tokenType = token.token_type;
+  state.tokenIssuedAt = new Date();
+  state.tokenExpiresAt = new Date(state.tokenIssuedAt.getTime() + Number(token.expires_in || 0) * 1000);
+}
+
 async function refreshToken() {
-  if (!state.refreshToken || !state.client) throw new Error("No refresh token is available.");
+	if (state.partner) {
+		const response = await nf("POST", "/v1/partner-connections/token", { connection_id: state.partner.connectionID, refresh_token: state.refreshToken }, { wantStatus: 200 });
+		applyPartnerToken(response.json);
+		return;
+	}
+	if (!state.refreshToken || !state.client) throw new Error("No refresh token is available.");
   const response = await nf(
     "POST",
     "/v1/oauth/token",
@@ -163,8 +207,13 @@ async function refreshToken() {
 }
 
 async function revokeToken() {
-  if (!state.accessToken) throw new Error("No access token is available.");
-  await nf("POST", "/v1/oauth/revoke", { token: state.accessToken }, { wantStatus: 204 });
+	if (!state.accessToken) throw new Error("No access token is available.");
+	if (state.partner) {
+		await nf("DELETE", `/v1/partner-integrations/${encodeURIComponent(partnerIntegrationID)}/connections/${encodeURIComponent(state.partner.connectionID)}`, undefined, { token: partnerSecret, wantStatus: 204 });
+		state.partner = null;
+	} else {
+	await nf("POST", "/v1/oauth/revoke", { token: state.accessToken }, { wantStatus: 204 });
+	}
   state.accessToken = "";
   state.refreshToken = "";
   state.tokenScope = "";
@@ -238,15 +287,16 @@ function page(error = "") {
 </style>
 </head>
 <body><main class="shell">
-<section class="hero"><div class="brand">External Platform Test App</div><h1>Connect Nanoflare and create a managed worker</h1><p>A minimal UI for testing the full OAuth redirect flow from a registered external app. User authentication happens in the Nanoflare UI, not here.</p><div class="meta-line"><span>Nanoflare API: ${escapeHTML(nanoflareURL)}</span><span>Nanoflare UI: ${escapeHTML(nanoflareUIURL)}</span><span>Callback: ${escapeHTML(redirectURI)}</span></div></section>
+<section class="hero"><div class="brand">External Platform Test App</div><h1>Connect Nanoflare and create a managed worker</h1><p>Use a partner-managed connection for automatic workspace provisioning, or the existing OAuth flow for a customer-owned Nanoflare organization.</p><div class="meta-line"><span>Nanoflare API: ${escapeHTML(nanoflareURL)}</span><span>Partner integration: ${partnerIntegrationID ? escapeHTML(partnerIntegrationID) : "not configured"}</span></div></section>
 ${error ? `<div class="error">${escapeHTML(error)}</div>` : ""}
 <section class="grid">
-<div class="panel"><div class="step"><div class="step-number">1</div><div class="content"><h2>Connect Nanoflare</h2><p>This redirects to Nanoflare for login and approval, then returns to this app.</p><form method="post" action="/connect"><div class="actions"><button type="submit">Connect Nanoflare</button></div></form><div>${scopes.map((scope) => `<span class="pill">${escapeHTML(scope)}</span>`).join("")}</div><div class="meta"><span class="${state.client ? "ok" : "no"}">${state.client ? "External app registered" : "Missing EXTERNAL_APP_CLIENT_ID / EXTERNAL_APP_CLIENT_SECRET"}</span></div></div></div></div>
-<div class="panel"><div class="step"><div class="step-number">2</div><div class="content"><h2>Create worker from external app</h2><p>The external app chooses hostname and external ID internally, then calls Nanoflare with its OAuth token.</p><form method="post" action="/provision"><div class="fields">
+<div class="panel"><div class="step"><div class="step-number">1</div><div class="content"><h2>Partner-managed connection</h2><p>Your backend provisions one Nanoflare organization for this workspace. No customer redirect or Nanoflare login is required.</p><form method="post" action="/partner/connect"><div class="fields"><div><label>External workspace ID</label><input name="external_account_id" value="workspace_123" required></div><div><label>Organization name</label><input name="organization_name" value="Acme Production" required></div></div><div class="actions"><button type="submit">Connect workspace</button></div></form><div>${partnerScopes.map((scope) => `<span class="pill">${escapeHTML(scope)}</span>`).join("")}</div><div class="meta"><span class="${partnerIntegrationID && partnerSecret ? "ok" : "no"}">${partnerIntegrationID && partnerSecret ? "Partner integration configured" : "Missing partner integration credentials"}</span>${state.partner ? `<span class="ok">Connected to ${escapeHTML(state.partner.organization.name)} (${escapeHTML(state.partner.organization.id)})</span>` : ""}</div></div></div></div>
+<div class="panel"><div class="step"><div class="step-number">2</div><div class="content"><h2>Customer-approved OAuth connection</h2><p>Optional alternative for an existing customer-owned Nanoflare organization.</p><form method="post" action="/connect"><div class="actions"><button class="secondary" type="submit">Connect existing organization</button></div></form><div class="meta"><span class="${state.client ? "ok" : "no"}">${state.client ? "External app registered" : "Missing EXTERNAL_APP_CLIENT_ID / EXTERNAL_APP_CLIENT_SECRET"}</span></div></div></div></div>
+<div class="panel"><div class="step"><div class="step-number">3</div><div class="content"><h2>Create worker from external app</h2><p>The external app chooses hostname and external ID internally, then calls Nanoflare with its connection token.</p><form method="post" action="/provision"><div class="fields">
 <div><label>Worker name</label><input name="name" value="External Managed Worker"></div>
 </div><div class="actions"><button type="submit">Create worker</button></div></form>${state.lastApp ? `<div class="meta"><span>App: ${escapeHTML(state.lastApp.id)}</span><span>Host: ${escapeHTML(state.lastApp.hostname)}</span><span>External ID: ${escapeHTML(state.lastApp.external_id || "")}</span><span>Owner: ${escapeHTML(state.lastApp.oauth_client_id || "")}</span></div>` : ""}</div></div></div>
-<div class="panel"><div class="step"><div class="step-number">3</div><div class="content"><h2>Token actions</h2><div class="meta"><span class="${state.accessToken ? "ok" : "no"}">${state.accessToken ? "Access token stored" : "No access token"}</span><span>Scopes: ${escapeHTML(state.tokenScope || "none")}</span></div><div class="actions"><form method="post" action="/refresh"><button class="secondary" type="submit">Refresh token</button></form><form method="post" action="/revoke"><button class="danger" type="submit">Revoke token</button></form></div></div></div></div>
-<div class="panel"><div class="step"><div class="step-number">4</div><div class="content"><h2>Token details</h2><p>Nanoflare access tokens are opaque, so this shows the token response metadata the external app can safely inspect.</p>${tokenDetailsHTML()}</div></div></div>
+<div class="panel"><div class="step"><div class="step-number">4</div><div class="content"><h2>Token actions</h2><div class="meta"><span class="${state.accessToken ? "ok" : "no"}">${state.accessToken ? "Access token stored" : "No access token"}</span><span>Scopes: ${escapeHTML(state.tokenScope || "none")}</span></div><div class="actions"><form method="post" action="/refresh"><button class="secondary" type="submit">Refresh token</button></form><form method="post" action="/revoke"><button class="danger" type="submit">${state.partner ? "Disconnect workspace" : "Revoke token"}</button></form></div></div></div></div>
+<div class="panel"><div class="step"><div class="step-number">5</div><div class="content"><h2>Token details</h2><p>Nanoflare access tokens are opaque, so this shows the token response metadata the external app can safely inspect.</p>${tokenDetailsHTML()}</div></div></div>
 </section>
 <section class="panel"><h2>Event log</h2><ul class="events">${state.events.map((event) => `<li>${escapeHTML(event.time)} - ${escapeHTML(event.message)}</li>`).join("") || "<li>No events yet.</li>"}</ul></section>
 </main></body></html>`;

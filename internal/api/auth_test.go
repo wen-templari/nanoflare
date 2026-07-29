@@ -794,6 +794,116 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	}
 }
 
+func TestPartnerConnectionProvisionsTenantAndManagesResources(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, &noopWriter{})
+	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
+	oauth := nanoflare.NewOAuthService(store)
+	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+	server.SetPartnerService(nanoflare.NewPartnerService(store))
+	session := signupControlUser(t, server)
+
+	createIntegration := httptest.NewRequest(http.MethodPost, "/v1/partner-integrations", bytes.NewBufferString(`{"name":"External Platform","allowed_scopes":["workers:read","workers:write","deployments:write","secrets:write","kv:read","kv:write","db:read","db:write","objects:read","objects:write"]}`))
+	createIntegration.Header.Set("Content-Type", "application/json")
+	createIntegration.Header.Set("Authorization", "Bearer "+session.Token)
+	createIntegration.Header.Set("X-Nanoflare-Org-ID", session.ActiveOrgID)
+	integrationRecorder := httptest.NewRecorder()
+	server.ServeHTTP(integrationRecorder, createIntegration)
+	if integrationRecorder.Code != http.StatusCreated {
+		t.Fatalf("create integration status = %d body = %q", integrationRecorder.Code, integrationRecorder.Body.String())
+	}
+	var integration struct {
+		ID     string `json:"id"`
+		Secret string `json:"secret"`
+	}
+	if err := json.Unmarshal(integrationRecorder.Body.Bytes(), &integration); err != nil {
+		t.Fatal(err)
+	}
+
+	provision := func() partnerConnectionResponse {
+		request := httptest.NewRequest(http.MethodPost, "/v1/partner-integrations/"+integration.ID+"/connections", bytes.NewBufferString(`{"external_account_id":"workspace-123","organization_name":"Acme","requested_scopes":["workers:write","kv:write"]}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+integration.Secret)
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusCreated && recorder.Code != http.StatusOK {
+			t.Fatalf("provision status = %d body = %q", recorder.Code, recorder.Body.String())
+		}
+		var response partnerConnectionResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	connected := provision()
+	repeated := provision()
+	if connected.ConnectionID == "" || connected.Organization.ID == "" || connected.RefreshToken == "" {
+		t.Fatalf("connection response = %#v", connected)
+	}
+	if connected.ConnectionID != repeated.ConnectionID || connected.Organization.ID != repeated.Organization.ID {
+		t.Fatalf("provisioning was not idempotent: %#v %#v", connected, repeated)
+	}
+
+	createWorker := httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(`{"name":"Managed","hostname":"partner-managed.example.com","external_id":"worker-123"}`))
+	createWorker.Header.Set("Content-Type", "application/json")
+	createWorker.Header.Set("Authorization", "Bearer "+connected.AccessToken)
+	workerRecorder := httptest.NewRecorder()
+	server.ServeHTTP(workerRecorder, createWorker)
+	if workerRecorder.Code != http.StatusCreated {
+		t.Fatalf("machine create worker status = %d body = %q", workerRecorder.Code, workerRecorder.Body.String())
+	}
+	var worker nanoflare.App
+	if err := json.Unmarshal(workerRecorder.Body.Bytes(), &worker); err != nil {
+		t.Fatal(err)
+	}
+	if worker.OrgID != connected.Organization.ID || worker.OAuthClientID != integration.ID || worker.ExternalID != "worker-123" {
+		t.Fatalf("machine worker metadata = %#v", worker)
+	}
+
+	refreshRequest := httptest.NewRequest(http.MethodPost, "/v1/partner-connections/token", bytes.NewBufferString(`{"connection_id":`+strconv.Quote(connected.ConnectionID)+`,"refresh_token":`+strconv.Quote(connected.RefreshToken)+`}`))
+	refreshRequest.Header.Set("Content-Type", "application/json")
+	refreshRecorder := httptest.NewRecorder()
+	server.ServeHTTP(refreshRecorder, refreshRequest)
+	if refreshRecorder.Code != http.StatusOK {
+		t.Fatalf("machine refresh status = %d body = %q", refreshRecorder.Code, refreshRecorder.Body.String())
+	}
+	var refreshed partnerConnectionResponse
+	if err := json.Unmarshal(refreshRecorder.Body.Bytes(), &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.AccessToken == connected.AccessToken || refreshed.RefreshToken == connected.RefreshToken {
+		t.Fatalf("machine tokens did not rotate")
+	}
+
+	revokeRequest := httptest.NewRequest(http.MethodDelete, "/v1/partner-integrations/"+integration.ID+"/connections/"+connected.ConnectionID, nil)
+	revokeRequest.Header.Set("Authorization", "Bearer "+integration.Secret)
+	revokeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(revokeRecorder, revokeRequest)
+	if revokeRecorder.Code != http.StatusNoContent {
+		t.Fatalf("machine revoke status = %d body = %q", revokeRecorder.Code, revokeRecorder.Body.String())
+	}
+	blockedRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(`{"name":"Blocked","hostname":"blocked.example.com"}`))
+	blockedRequest.Header.Set("Content-Type", "application/json")
+	blockedRequest.Header.Set("Authorization", "Bearer "+refreshed.AccessToken)
+	blockedRecorder := httptest.NewRecorder()
+	server.ServeHTTP(blockedRecorder, blockedRequest)
+	if blockedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked machine token status = %d body = %q", blockedRecorder.Code, blockedRecorder.Body.String())
+	}
+	reconnected := provision()
+	if reconnected.ConnectionID != connected.ConnectionID || reconnected.AccessToken == refreshed.AccessToken {
+		t.Fatalf("reconnect response = %#v", reconnected)
+	}
+	oldTokenRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(`{"name":"Still Blocked","hostname":"still-blocked.example.com"}`))
+	oldTokenRequest.Header.Set("Content-Type", "application/json")
+	oldTokenRequest.Header.Set("Authorization", "Bearer "+refreshed.AccessToken)
+	oldTokenRecorder := httptest.NewRecorder()
+	server.ServeHTTP(oldTokenRecorder, oldTokenRequest)
+	if oldTokenRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("reconnected old token status = %d body = %q", oldTokenRecorder.Code, oldTokenRecorder.Body.String())
+	}
+}
+
 func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})

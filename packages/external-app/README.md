@@ -1,7 +1,9 @@
 # Nanoflare External App
 
-This package simulates an external platform that connects to Nanoflare through
-OAuth and manages resources with the existing `/v1` API.
+This package simulates an external platform that can automatically provision a
+tenant organization through a partner integration, or connect an existing
+organization through OAuth. Its browser UI talks only to this package's local
+server; credentials remain server-side.
 
 Start `nanoflared` first:
 
@@ -18,45 +20,62 @@ Start the Nanoflare UI too:
 npm --prefix packages/ui run dev
 ```
 
-Register this external app in Nanoflare once, using a Nanoflare control-plane
-token from `nanoflare auth login` or `/v1/auth/login`. The client registration
-is owned by the organization in `X-Nanoflare-Org-ID`; users can still approve
-that client for any Nanoflare organization they belong to:
+## Partner-managed connection UI
+
+Create a partner integration once from the organization selected in your CLI
+auth store:
 
 ```sh
-curl -s -X POST http://127.0.0.1:8080/v1/oauth/clients \
+./bin/nanoflare auth whoami
+npm --prefix packages/external-app run setup-partner
+```
+
+The command reads the same OS-specific default location as `./bin/nanoflare`:
+`~/Library/Application Support/nanoflare/auth.json` on macOS and
+`~/.config/nanoflare/auth.json` on Linux. Set `NANOFLARE_AUTH_STORE` when the
+CLI uses another store.
+It prints `NANOFLARE_PARTNER_INTEGRATION_ID` and a one-time
+`NANOFLARE_PARTNER_SECRET` to export into the external app server environment.
+
+Equivalent API request:
+
+```sh
+curl -s -X POST http://127.0.0.1:8080/v1/partner-integrations \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
   -H "X-Nanoflare-Org-ID: $NANOFLARE_OWNER_ORG_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "External App UI",
-    "redirect_uris": ["http://127.0.0.1:8787/oauth/callback"],
-    "scopes": ["workers:read", "workers:write", "deployments:write", "kv:read", "kv:write"]
+    "allowed_scopes": ["workers:read", "workers:write", "deployments:write", "kv:read", "kv:write"]
   }'
 ```
 
-Then run the browser-based external app with the returned client credentials:
+Start the browser UI with the returned integration ID and one-time secret:
 
 ```sh
-EXTERNAL_APP_CLIENT_ID=... \
-EXTERNAL_APP_CLIENT_SECRET=... \
+NANOFLARE_PARTNER_INTEGRATION_ID=... \
+NANOFLARE_PARTNER_SECRET=... \
 npm --prefix packages/external-app run dev
 ```
 
-Open `http://127.0.0.1:8787`. The UI walks through the full user flow:
+Open `http://127.0.0.1:8787`. The UI walks through the partner flow:
 
-- click **Connect Nanoflare** in the external app;
-- leave the external app and land on Nanoflare's authorization page;
-- approve the connection with Nanoflare credentials;
-- return to the external app callback;
-- provision a worker using the OAuth access token stored by the external app;
+- enter an immutable external workspace ID and organization name;
+- click **Connect workspace** to provision or reconnect the tenant organization;
+- provision a worker using the tenant-scoped token stored by the external app;
 - let the external app generate hostname and external ID internally;
 - inspect token response metadata such as scopes and expiry;
-- refresh or revoke the token.
+- refresh the rotating token pair or disconnect the workspace.
 
-The browser flow does not send Nanoflare user credentials to the external app.
-The external app only stores its own OAuth client credentials and the tokens it
-receives after the user approves access on Nanoflare.
+The browser never receives the partner credential or refresh token. This demo
+keeps its state in memory; use encrypted, tenant-keyed persistent storage in a
+real external platform.
+
+## Existing-organization OAuth
+
+The same UI retains the previous **Connect existing organization** action. To
+enable it, register an OAuth client and start the app with
+`EXTERNAL_APP_CLIENT_ID` and `EXTERNAL_APP_CLIENT_SECRET`.
 
 You can also run the original CLI smoke test:
 
@@ -82,6 +101,9 @@ NANOFLARE_URL=http://127.0.0.1:8080
 NANOFLARE_EMAIL=external-admin@example.com
 NANOFLARE_PASSWORD=secret
 NANOFLARE_ORG_NAME="External App Test"
+NANOFLARE_PARTNER_INTEGRATION_ID=...
+NANOFLARE_PARTNER_SECRET=...
+NANOFLARE_PARTNER_SCOPES="workers:read workers:write deployments:write secrets:write kv:read kv:write db:read db:write objects:read objects:write"
 EXTERNAL_APP_CLIENT_ID=...
 EXTERNAL_APP_CLIENT_SECRET=...
 EXTERNAL_APP_SCOPES="workers:write kv:write"

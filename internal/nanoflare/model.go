@@ -329,12 +329,14 @@ type UserOIDCIdentity struct {
 }
 
 type Organization struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	UsageLevel string    `json:"usage_level"`
-	Role       string    `json:"role,omitempty"`
-	Scopes     []string  `json:"scopes,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	Name                 string    `json:"name"`
+	UsageLevel           string    `json:"usage_level"`
+	PartnerIntegrationID string    `json:"partner_integration_id,omitempty"`
+	ExternalAccountID    string    `json:"external_account_id,omitempty"`
+	Role                 string    `json:"role,omitempty"`
+	Scopes               []string  `json:"scopes,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 type OrganizationMembership struct {

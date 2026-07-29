@@ -52,6 +52,7 @@ type Repository interface {
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
 	GetOrganization(string) (Organization, error)
+	ProvisionPartnerConnection(Organization, PartnerConnection) (Organization, PartnerConnection, bool, error)
 	CountOwnedOrganizationsByUser(userID string) (int, error)
 	UpsertOrganizationMembership(OrganizationMembership) error
 	OrganizationMembership(userID, orgID string) (OrganizationMembership, error)
@@ -81,6 +82,15 @@ type Repository interface {
 	OAuthConnections(userID, orgID string) ([]OAuthConnection, error)
 	RevokeOAuthClientTokens(userID, orgID, clientID string, revokedAt time.Time) error
 	RevokeAllOAuthClientTokens(clientID string, revokedAt time.Time) error
+	CreatePartnerIntegration(PartnerIntegration) error
+	PartnerIntegration(string) (PartnerIntegration, error)
+	PartnerIntegrationsByOwnerOrg(string) ([]PartnerIntegration, error)
+	UpdatePartnerIntegration(PartnerIntegration) error
+	PartnerConnection(string) (PartnerConnection, error)
+	PartnerConnectionsByIntegration(string) ([]PartnerConnection, error)
+	RevokePartnerConnection(string, time.Time) error
+	RestorePartnerConnection(string) error
+	RevokePartnerConnectionTokens(string, time.Time) error
 	CreateApp(App) error
 	CountAppsByOrg(string) (int, error)
 	ListApps() ([]App, error)
@@ -138,61 +148,67 @@ type Repository interface {
 }
 
 type Store struct {
-	mu              sync.RWMutex
-	users           map[string]User
-	usersByEmail    map[string]string
-	oidcIdentities  map[string]UserOIDCIdentity
-	controlRefresh  map[string]ControlRefreshToken
-	pats            map[string]PersonalAccessToken
-	patsByHash      map[string]string
-	organizations   map[string]Organization
-	memberships     map[string]map[string]OrganizationMembership
-	invites         map[string]OrganizationInvite
-	oauthClients    map[string]OAuthClient
-	oauthCodes      map[string]OAuthAuthorizationCode
-	oauthTokens     map[string]OAuthToken
-	oauthRefresh    map[string]string
-	apps            map[string]App
-	kvNamespaces    map[string]KVNamespace
-	databases       map[string]Database
-	dbMetrics       map[string]DatabaseMetrics
-	objectBuckets   map[string]ObjectStorageBucket
-	secrets         map[string]map[string]SecretRecord
-	deployments     map[string][]Deployment
-	active          map[string]map[string]int
-	capabilityToApp map[string]string
-	kv              map[string]map[string][]byte
-	kvMetrics       map[string]KVNamespaceMetrics
-	objectMetrics   map[string]ObjectStorageBucketMetrics
+	mu                  sync.RWMutex
+	users               map[string]User
+	usersByEmail        map[string]string
+	oidcIdentities      map[string]UserOIDCIdentity
+	controlRefresh      map[string]ControlRefreshToken
+	pats                map[string]PersonalAccessToken
+	patsByHash          map[string]string
+	organizations       map[string]Organization
+	memberships         map[string]map[string]OrganizationMembership
+	invites             map[string]OrganizationInvite
+	oauthClients        map[string]OAuthClient
+	oauthCodes          map[string]OAuthAuthorizationCode
+	oauthTokens         map[string]OAuthToken
+	oauthRefresh        map[string]string
+	partnerIntegrations map[string]PartnerIntegration
+	partnerConnections  map[string]PartnerConnection
+	partnerByExternal   map[string]string
+	apps                map[string]App
+	kvNamespaces        map[string]KVNamespace
+	databases           map[string]Database
+	dbMetrics           map[string]DatabaseMetrics
+	objectBuckets       map[string]ObjectStorageBucket
+	secrets             map[string]map[string]SecretRecord
+	deployments         map[string][]Deployment
+	active              map[string]map[string]int
+	capabilityToApp     map[string]string
+	kv                  map[string]map[string][]byte
+	kvMetrics           map[string]KVNamespaceMetrics
+	objectMetrics       map[string]ObjectStorageBucketMetrics
 }
 
 func NewStore() *Store {
 	return &Store{
-		users:           make(map[string]User),
-		usersByEmail:    make(map[string]string),
-		oidcIdentities:  make(map[string]UserOIDCIdentity),
-		controlRefresh:  make(map[string]ControlRefreshToken),
-		pats:            make(map[string]PersonalAccessToken),
-		patsByHash:      make(map[string]string),
-		organizations:   make(map[string]Organization),
-		memberships:     make(map[string]map[string]OrganizationMembership),
-		invites:         make(map[string]OrganizationInvite),
-		oauthClients:    make(map[string]OAuthClient),
-		oauthCodes:      make(map[string]OAuthAuthorizationCode),
-		oauthTokens:     make(map[string]OAuthToken),
-		oauthRefresh:    make(map[string]string),
-		apps:            make(map[string]App),
-		kvNamespaces:    make(map[string]KVNamespace),
-		databases:       make(map[string]Database),
-		dbMetrics:       make(map[string]DatabaseMetrics),
-		objectBuckets:   make(map[string]ObjectStorageBucket),
-		secrets:         make(map[string]map[string]SecretRecord),
-		deployments:     make(map[string][]Deployment),
-		active:          make(map[string]map[string]int),
-		capabilityToApp: make(map[string]string),
-		kv:              make(map[string]map[string][]byte),
-		kvMetrics:       make(map[string]KVNamespaceMetrics),
-		objectMetrics:   make(map[string]ObjectStorageBucketMetrics),
+		users:               make(map[string]User),
+		usersByEmail:        make(map[string]string),
+		oidcIdentities:      make(map[string]UserOIDCIdentity),
+		controlRefresh:      make(map[string]ControlRefreshToken),
+		pats:                make(map[string]PersonalAccessToken),
+		patsByHash:          make(map[string]string),
+		organizations:       make(map[string]Organization),
+		memberships:         make(map[string]map[string]OrganizationMembership),
+		invites:             make(map[string]OrganizationInvite),
+		oauthClients:        make(map[string]OAuthClient),
+		oauthCodes:          make(map[string]OAuthAuthorizationCode),
+		oauthTokens:         make(map[string]OAuthToken),
+		oauthRefresh:        make(map[string]string),
+		partnerIntegrations: make(map[string]PartnerIntegration),
+		partnerConnections:  make(map[string]PartnerConnection),
+		partnerByExternal:   make(map[string]string),
+		apps:                make(map[string]App),
+		kvNamespaces:        make(map[string]KVNamespace),
+		databases:           make(map[string]Database),
+		dbMetrics:           make(map[string]DatabaseMetrics),
+		objectBuckets:       make(map[string]ObjectStorageBucket),
+		secrets:             make(map[string]map[string]SecretRecord),
+		deployments:         make(map[string][]Deployment),
+		active:              make(map[string]map[string]int),
+		capabilityToApp:     make(map[string]string),
+		kv:                  make(map[string]map[string][]byte),
+		kvMetrics:           make(map[string]KVNamespaceMetrics),
+		objectMetrics:       make(map[string]ObjectStorageBucketMetrics),
 	}
 }
 
@@ -375,6 +391,22 @@ func (s *Store) GetOrganization(orgID string) (Organization, error) {
 	}
 	org.UsageLevel = NormalizeUsageLevel(org.UsageLevel)
 	return org, nil
+}
+
+func (s *Store) ProvisionPartnerConnection(org Organization, connection PartnerConnection) (Organization, PartnerConnection, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := connection.IntegrationID + "\x00" + connection.ExternalAccountID
+	if id, ok := s.partnerByExternal[key]; ok {
+		return s.organizations[s.partnerConnections[id].OrgID], clonePartnerConnection(s.partnerConnections[id]), false, nil
+	}
+	if _, exists := s.organizations[org.ID]; exists {
+		return Organization{}, PartnerConnection{}, false, ErrOrganizationExists
+	}
+	s.organizations[org.ID] = org
+	s.partnerConnections[connection.ID] = clonePartnerConnection(connection)
+	s.partnerByExternal[key] = connection.ID
+	return org, clonePartnerConnection(connection), true, nil
 }
 
 func (s *Store) CountOwnedOrganizationsByUser(userID string) (int, error) {
@@ -799,6 +831,109 @@ func (s *Store) RevokeAllOAuthClientTokens(clientID string, revokedAt time.Time)
 		}
 		token.RevokedAt = &revokedAt
 		s.oauthTokens[hash] = cloneOAuthToken(token)
+	}
+	return nil
+}
+
+func (s *Store) CreatePartnerIntegration(integration PartnerIntegration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.partnerIntegrations[integration.ID]; exists {
+		return ErrPartnerIntegrationExists
+	}
+	s.partnerIntegrations[integration.ID] = clonePartnerIntegration(integration)
+	return nil
+}
+
+func (s *Store) PartnerIntegration(id string) (PartnerIntegration, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	integration, ok := s.partnerIntegrations[id]
+	if !ok {
+		return PartnerIntegration{}, ErrPartnerIntegrationNotFound
+	}
+	return clonePartnerIntegration(integration), nil
+}
+
+func (s *Store) PartnerIntegrationsByOwnerOrg(ownerOrgID string) ([]PartnerIntegration, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]PartnerIntegration, 0)
+	for _, integration := range s.partnerIntegrations {
+		if integration.OwnerOrgID == ownerOrgID {
+			result = append(result, clonePartnerIntegration(integration))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
+}
+
+func (s *Store) UpdatePartnerIntegration(integration PartnerIntegration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.partnerIntegrations[integration.ID]; !ok {
+		return ErrPartnerIntegrationNotFound
+	}
+	s.partnerIntegrations[integration.ID] = clonePartnerIntegration(integration)
+	return nil
+}
+
+func (s *Store) PartnerConnection(id string) (PartnerConnection, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	connection, ok := s.partnerConnections[id]
+	if !ok {
+		return PartnerConnection{}, ErrPartnerConnectionNotFound
+	}
+	return clonePartnerConnection(connection), nil
+}
+
+func (s *Store) PartnerConnectionsByIntegration(integrationID string) ([]PartnerConnection, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]PartnerConnection, 0)
+	for _, connection := range s.partnerConnections {
+		if connection.IntegrationID == integrationID {
+			result = append(result, clonePartnerConnection(connection))
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) RevokePartnerConnection(id string, revokedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	connection, ok := s.partnerConnections[id]
+	if !ok {
+		return ErrPartnerConnectionNotFound
+	}
+	connection.Status = PartnerConnectionStatusRevoked
+	connection.RevokedAt = &revokedAt
+	s.partnerConnections[id] = clonePartnerConnection(connection)
+	return nil
+}
+
+func (s *Store) RestorePartnerConnection(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	connection, ok := s.partnerConnections[id]
+	if !ok {
+		return ErrPartnerConnectionNotFound
+	}
+	connection.Status = PartnerConnectionStatusActive
+	connection.RevokedAt = nil
+	s.partnerConnections[id] = clonePartnerConnection(connection)
+	return nil
+}
+
+func (s *Store) RevokePartnerConnectionTokens(connectionID string, revokedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, token := range s.oauthTokens {
+		if token.PartnerConnectionID == connectionID && token.RevokedAt == nil {
+			token.RevokedAt = &revokedAt
+			s.oauthTokens[hash] = cloneOAuthToken(token)
+		}
 	}
 	return nil
 }
@@ -1718,6 +1853,20 @@ func cloneOAuthToken(token OAuthToken) OAuthToken {
 		token.RevokedAt = &revoked
 	}
 	return token
+}
+
+func clonePartnerIntegration(integration PartnerIntegration) PartnerIntegration {
+	integration.AllowedScopes = append([]string(nil), integration.AllowedScopes...)
+	integration.SecretHash = append([]byte(nil), integration.SecretHash...)
+	return integration
+}
+
+func clonePartnerConnection(connection PartnerConnection) PartnerConnection {
+	if connection.RevokedAt != nil {
+		value := *connection.RevokedAt
+		connection.RevokedAt = &value
+	}
+	return connection
 }
 
 func clonePersonalAccessToken(token PersonalAccessToken) PersonalAccessToken {

@@ -34,6 +34,19 @@ func isPublicControlPath(path string) bool {
 	}
 }
 
+func isPartnerMachineRequest(r *http.Request) bool {
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/partner-connections/token" {
+		return true
+	}
+	prefix := "/v1/partner-integrations/"
+	if !strings.HasPrefix(r.URL.Path, prefix) {
+		return false
+	}
+	rest := strings.TrimPrefix(r.URL.Path, prefix)
+	parts := strings.Split(rest, "/")
+	return (r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "connections") || (r.Method == http.MethodDelete && len(parts) == 3 && parts[1] == "connections")
+}
+
 func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 	token := strings.TrimSpace(bearerToken(r))
 	if token == "" {
@@ -128,6 +141,9 @@ func controlActor(r *http.Request) string {
 		return strings.TrimSpace(user.ID)
 	}
 	if access, ok := controlOAuthAccess(r); ok {
+		if access.ConnectionID != "" {
+			return "partner-connection:" + access.ConnectionID
+		}
 		return strings.TrimSpace(access.UserID)
 	}
 	return ""

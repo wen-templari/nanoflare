@@ -242,6 +242,7 @@ func main() {
 	controlAuth := nanoflare.NewControlAuthService(store, *authSecret)
 	oauth := nanoflare.NewOAuthService(store)
 	server := api.NewServerWithRuntimeAndOAuth(service, traefikStore, *traefikToken, authenticator, controlAuth, oauth, runtimeEnsurer)
+	server.SetPartnerService(nanoflare.NewPartnerService(store))
 	if *controlOIDCIssuer != "" && *controlOIDCClientID != "" && *controlOIDCPublic != "" {
 		controlVerifier := oidc.NewConsoleVerifier(*controlOIDCIssuer, *controlOIDCEmail, *controlOIDCClientID, *controlOIDCSecret, *controlOIDCPublic, nil)
 		if err := controlVerifier.ValidateBrowserConfig(); err != nil {

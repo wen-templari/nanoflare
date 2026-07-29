@@ -201,8 +201,10 @@ create` registers the worker and saves its generated worker ID and final hostnam
 locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 `--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
 `http://127.0.0.1:8080`. CLI authentication is stored at
-`~/.config/nanoflare/auth.json` by default; set `NANOFLARE_AUTH_STORE` to an
-alternate file path when you need a different auth store location.
+the OS user-config directory by default (`~/Library/Application Support/nanoflare/auth.json`
+on macOS and `~/.config/nanoflare/auth.json` on Linux); set
+`NANOFLARE_AUTH_STORE` to an alternate file path when you need a different
+auth store location.
 Use `nanoflare deployment output` from a registered project to print captured
 worker output, or pass a worker ID with `nanoflare deployment output <worker-id>`.
 When `NANOFLARE_LOKI_URL` is configured, output is retained in Loki and can be
@@ -294,6 +296,42 @@ When the access token expires, exchange the refresh token with
 `grant_type=refresh_token`. Users can inspect connected external apps with
 `GET /v1/oauth/connections` and disconnect one with
 `DELETE /v1/oauth/connections/{clientID}`.
+
+### Partner-managed tenant connections
+
+For a fully embedded external-platform experience, create a partner integration
+from the owning Nanoflare organization. The returned secret is shown once and
+must be kept by the external platform backend; never send it to a browser.
+
+```sh
+curl -X POST http://127.0.0.1:8080/v1/partner-integrations \
+  -H "Authorization: Bearer $NANOFLARE_TOKEN" \
+  -H "X-Nanoflare-Org-ID: $NANOFLARE_OWNER_ORG_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"External Platform","allowed_scopes":["workers:read","workers:write","deployments:write","secrets:write","kv:read","kv:write","db:read","db:write","objects:read","objects:write"]}'
+```
+
+The external platform backend provisions a tenant organization and receives a
+tenant-scoped rotating token pair. Repeating the request for the same immutable
+`external_account_id` returns the same organization and connection.
+
+```sh
+curl -X POST http://127.0.0.1:8080/v1/partner-integrations/$INTEGRATION_ID/connections \
+  -H "Authorization: Bearer $PARTNER_INTEGRATION_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"external_account_id":"workspace_123","organization_name":"Acme","requested_scopes":["workers:write","deployments:write","kv:write"]}'
+```
+
+Refresh that connection with `POST /v1/partner-connections/token`, supplying
+`connection_id` and `refresh_token`. Disconnect it with
+`DELETE /v1/partner-integrations/{integrationID}/connections/{connectionID}`;
+this revokes all connection tokens while retaining the organization and its
+resources. Repeating provisioning reconnects the retained organization with a
+new token pair. Partner integration owners can list integrations and
+connections, rotate the provisioning secret, or disable an integration through
+the corresponding `/v1/partner-integrations` endpoints.
+See [`packages/external-app`](packages/external-app) for a browser UI backed by
+a server-side external-platform implementation.
 
 The starter project is plain JavaScript and can be deployed immediately. The
 example apps under `examples/` use npm-based build steps first because they
