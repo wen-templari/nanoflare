@@ -305,13 +305,6 @@ func (s *ControlAuthService) CreateOrganization(userID string, input CreateOrgan
 	if name == "" {
 		return Organization{}, errors.New("name is required")
 	}
-	owned, err := s.store.CountOwnedOrganizationsByUser(strings.TrimSpace(userID))
-	if err != nil {
-		return Organization{}, err
-	}
-	if owned >= 1 {
-		return Organization{}, UsageLimitError{Message: "default users are limited to 1 owned organization"}
-	}
 	orgID, err := s.randomID()
 	if err != nil {
 		return Organization{}, err

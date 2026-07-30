@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { Fragment, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { normalizeUsageLevel, usageLevelPaid } from "../../app/org-limits";
+import { normalizeUsageLevel } from "../../app/org-limits";
 import { useWorkspace } from "../../app/workspace-context";
 import { CreateDatabaseDialog } from "../dialogs/create-database-dialog";
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog";
@@ -40,7 +40,6 @@ const navItems = [
   { href: "/settings", match: "/settings", label: "Settings", icon: Settings },
 ];
 
-const defaultOwnedOrganizationLimit = 1;
 const createOrganizationSelectValue = "__create_organization__";
 
 export function ConsoleLayout() {
@@ -85,21 +84,13 @@ export function ConsoleLayout() {
     objectStorageBuckets,
   });
   const hasOrg = Boolean(activeOrgID);
-  const activeOrg = organizations.find((org) => org.id === activeOrgID);
-  const activeUsageLevel = normalizeUsageLevel(activeOrg?.usage_level);
-  const ownedOrganizations = organizations.filter((org) => org.role === "owner");
-  const ownedOrganizationLimitReached =
-    activeUsageLevel !== usageLevelPaid &&
-    ownedOrganizations.length >= defaultOwnedOrganizationLimit;
   const organizationSelectData = [
     ...organizations.map((org) => ({
       value: org.id,
       label: org.name,
       usageLevel: normalizeUsageLevel(org.usage_level),
     })),
-    ...(!ownedOrganizationLimitReached
-      ? [{ value: createOrganizationSelectValue, label: "Create organization", usageLevel: "" }]
-      : []),
+    { value: createOrganizationSelectValue, label: "Create organization", usageLevel: "" },
   ];
 
   function signOut() {
@@ -109,12 +100,6 @@ export function ConsoleLayout() {
 
   async function submitOrganization(event: React.FormEvent) {
     event.preventDefault();
-    if (ownedOrganizationLimitReached) {
-      setOrgError(
-        `Default users are limited to ${defaultOwnedOrganizationLimit} owned organization.`,
-      );
-      return;
-    }
     setOrgSaving(true);
     setOrgError("");
     try {
@@ -281,11 +266,6 @@ export function ConsoleLayout() {
               />
             </div>
             <form className="mt-4 grid gap-4" onSubmit={submitOrganization}>
-              {ownedOrganizationLimitReached && (
-                <Text size="sm" variant="secondary">
-                  Default users are limited to {defaultOwnedOrganizationLimit} owned organization.
-                </Text>
-              )}
               {orgError && (
                 <Text size="sm" variant="error">
                   {orgError}
@@ -299,7 +279,7 @@ export function ConsoleLayout() {
                 />
               </Field>
               <div className="flex justify-end">
-                <Button disabled={ownedOrganizationLimitReached} loading={orgSaving} type="submit">
+                <Button loading={orgSaving} type="submit">
                   <Check className="size-4" />
                   Create organization
                 </Button>

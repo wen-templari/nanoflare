@@ -563,12 +563,12 @@ func TestOpenSignupAndCreateOrganization(t *testing.T) {
 		t.Fatalf("created org = %#v", org)
 	}
 
-	secondCreateRequest := httptest.NewRequest(http.MethodPost, "/v1/orgs", bytes.NewBufferString(`{"name":"Overflow Org"}`))
+	secondCreateRequest := httptest.NewRequest(http.MethodPost, "/v1/orgs", bytes.NewBufferString(`{"name":"Another Org"}`))
 	secondCreateRequest.Header.Set("Content-Type", "application/json")
 	secondCreateRequest.Header.Set("Authorization", "Bearer "+second.Token)
 	secondCreateRecorder := httptest.NewRecorder()
 	server.ServeHTTP(secondCreateRecorder, secondCreateRequest)
-	if secondCreateRecorder.Code != http.StatusPaymentRequired {
+	if secondCreateRecorder.Code != http.StatusCreated {
 		t.Fatalf("second owned org status = %d body = %q", secondCreateRecorder.Code, secondCreateRecorder.Body.String())
 	}
 
