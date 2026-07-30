@@ -120,7 +120,13 @@ func TestOutputBufferForwardsAssembledMultilineOutput(t *testing.T) {
 	defer forwarder.Close()
 	buffer := NewOutputBuffer()
 	buffer.SetForwarder(forwarder)
-	if _, err := buffer.Write([]byte("[[nanoflare-output app=app-one deployment=dep-one]] object {\n  id: 'one'\n}\n")); err != nil {
+	if _, err := buffer.Write([]byte("[[nanoflare-output app=app-one deployment=dep-one]] object {\n")); err != nil {
+		t.Fatal(err)
+	}
+	// Continuations can arrive in later writes. In particular, waiting longer
+	// than the old forwarding delay must not persist an incomplete record.
+	time.Sleep(100 * time.Millisecond)
+	if _, err := buffer.Write([]byte("  id: 'one'\n}\n")); err != nil {
 		t.Fatal(err)
 	}
 	select {
