@@ -798,6 +798,142 @@ func TestRequestRefreshesAuthTokenAndRetries(t *testing.T) {
 	}
 }
 
+func TestEnvironmentCredentialsOverrideStoredAuth(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+	t.Setenv(authTokenEnv, "environment-token")
+	t.Setenv(authOrgIDEnv, "environment-org")
+	if err := writeAuthConfig(AuthConfig{Token: "stored-token", ActiveOrgID: "stored-org"}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Authorization"); got != "Bearer environment-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if got := request.Header.Get("X-Nanoflare-Org-ID"); got != "environment-org" {
+			t.Fatalf("org header = %q", got)
+		}
+		writeJSON(t, w, http.StatusOK, []nanoflare.App{})
+	}))
+	defer server.Close()
+
+	if err := NewRunner(io.Discard, io.Discard).Run([]string{"list", "--api-url", server.URL}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnvironmentTokenWorksWithoutAuthStoreAndPreservesStoredOrg(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	t.Setenv(authStorePathEnv, filepath.Join(t.TempDir(), "missing-auth.json"))
+	t.Setenv(authTokenEnv, "environment-token")
+	t.Setenv(authOrgIDEnv, "")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Authorization"); got != "Bearer environment-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if got := request.Header.Get("X-Nanoflare-Org-ID"); got != "" {
+			t.Fatalf("org header = %q", got)
+		}
+		writeJSON(t, w, http.StatusOK, []nanoflare.App{})
+	}))
+	defer server.Close()
+	if err := NewRunner(io.Discard, io.Discard).Run([]string{"list", "--api-url", server.URL}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeAuthConfig(AuthConfig{Token: "stored-token", ActiveOrgID: "stored-org"}); err != nil {
+		t.Fatal(err)
+	}
+	auth, fromEnvironment, err := resolveAuthConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fromEnvironment || auth.Token != "environment-token" || auth.ActiveOrgID != "stored-org" {
+		t.Fatalf("resolved auth = %#v, fromEnvironment = %t", auth, fromEnvironment)
+	}
+}
+
+func TestEnvironmentOrganizationOverridesStoredAuth(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+	t.Setenv(authTokenEnv, "")
+	t.Setenv(authOrgIDEnv, "environment-org")
+	if err := writeAuthConfig(AuthConfig{Token: "stored-token", ActiveOrgID: "stored-org"}); err != nil {
+		t.Fatal(err)
+	}
+	auth, fromEnvironment, err := resolveAuthConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fromEnvironment || auth.Token != "stored-token" || auth.ActiveOrgID != "environment-org" {
+		t.Fatalf("resolved auth = %#v, fromEnvironment = %t", auth, fromEnvironment)
+	}
+}
+
+func TestEnvironmentTokenDoesNotRefreshOrRewriteAuthStore(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv(authStorePathEnv, authPath)
+	t.Setenv(authTokenEnv, "environment-token")
+	if err := writeAuthConfig(AuthConfig{Token: "stored-token", RefreshToken: "stored-refresh", ActiveOrgID: "stored-org"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/v1/auth/refresh" {
+			t.Fatal("environment token must not be refreshed")
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer environment-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		writeJSON(t, w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+	}))
+	defer server.Close()
+	if err := NewRunner(io.Discard, io.Discard).Run([]string{"list", "--api-url", server.URL}); err == nil {
+		t.Fatal("expected unauthorized request to fail")
+	}
+	after, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("auth store changed:\n%s\nwant:\n%s", after, before)
+	}
+}
+
+func TestAuthCommandsUseEnvironmentCredentials(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	t.Setenv(authStorePathEnv, filepath.Join(t.TempDir(), "missing-auth.json"))
+	t.Setenv(authTokenEnv, "environment-token")
+	t.Setenv(authOrgIDEnv, "environment-org")
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"auth", "whoami"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "environment credentials\norg\tenvironment-org\n" {
+		t.Fatalf("whoami output = %q", got)
+	}
+	stdout.Reset()
+	if err := runner.Run([]string{"auth", "orgs"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "* environment-org\n" {
+		t.Fatalf("orgs output = %q", got)
+	}
+	if err := runner.Run([]string{"auth", "use-org", "other-org"}); err == nil || !strings.Contains(err.Error(), authOrgIDEnv) {
+		t.Fatalf("use-org error = %v", err)
+	}
+}
+
 func TestListWorkers(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

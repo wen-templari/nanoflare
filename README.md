@@ -204,7 +204,22 @@ locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
 the OS user-config directory by default (`~/Library/Application Support/nanoflare/auth.json`
 on macOS and `~/.config/nanoflare/auth.json` on Linux); set
 `NANOFLARE_AUTH_STORE` to an alternate file path when you need a different
-auth store location.
+auth store location. For non-interactive use, set `NANOFLARE_TOKEN` and, when
+the command operates on an organization-scoped resource, `NANOFLARE_ORG_ID`:
+
+```sh
+export NANOFLARED_URL=https://nanoflare.example.com
+export NANOFLARE_TOKEN=your-personal-access-token
+export NANOFLARE_ORG_ID=org_123
+nanoflare deploy
+```
+
+Non-empty environment values override the corresponding value in `auth.json`.
+`NANOFLARE_TOKEN` is never refreshed or written back to the auth store, making
+it appropriate for CI; replace it in the environment when it expires or is
+rotated. `nanoflare auth whoami` and `nanoflare auth orgs` show the configured
+organization without attempting to resolve identity metadata when environment
+credentials are active.
 Use `nanoflare deployment output` from a registered project to print captured
 worker output, or pass a worker ID with `nanoflare deployment output <worker-id>`.
 When `NANOFLARE_LOKI_URL` is configured, output is retained in Loki and can be

@@ -34,6 +34,8 @@ const (
 	defaultAPIURL    = "http://127.0.0.1:8080"
 	authFilename     = "auth.json"
 	authStorePathEnv = "NANOFLARE_AUTH_STORE"
+	authTokenEnv     = "NANOFLARE_TOKEN"
+	authOrgIDEnv     = "NANOFLARE_ORG_ID"
 )
 
 type HTTPClient interface {
@@ -750,9 +752,15 @@ func (r *Runner) authOrgs(args []string) error {
 	if len(args) != 0 {
 		return errors.New("usage: nanoflare auth orgs")
 	}
-	auth, err := loadAuthConfig()
+	auth, _, err := resolveAuthConfig()
 	if err != nil {
 		return err
+	}
+	if environmentCredentialsConfigured() {
+		if auth.ActiveOrgID != "" {
+			fmt.Fprintf(r.Stdout, "* %s\n", auth.ActiveOrgID)
+		}
+		return nil
 	}
 	for _, org := range auth.Orgs {
 		prefix := " "
@@ -767,6 +775,9 @@ func (r *Runner) authOrgs(args []string) error {
 func (r *Runner) authUseOrg(args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: nanoflare auth use-org <org-id>")
+	}
+	if strings.TrimSpace(os.Getenv(authOrgIDEnv)) != "" {
+		return fmt.Errorf("cannot change organization while %s is set", authOrgIDEnv)
 	}
 	auth, err := loadAuthConfig()
 	if err != nil {
@@ -789,9 +800,16 @@ func (r *Runner) authWhoami(args []string) error {
 	if len(args) != 0 {
 		return errors.New("usage: nanoflare auth whoami")
 	}
-	auth, err := loadAuthConfig()
+	auth, _, err := resolveAuthConfig()
 	if err != nil {
 		return err
+	}
+	if environmentCredentialsConfigured() {
+		fmt.Fprintln(r.Stdout, "environment credentials")
+		if auth.ActiveOrgID != "" {
+			fmt.Fprintf(r.Stdout, "org\t%s\n", auth.ActiveOrgID)
+		}
+		return nil
 	}
 	fmt.Fprintf(r.Stdout, "%s\n", auth.User.Email)
 	if auth.ActiveOrgID != "" {
@@ -863,12 +881,12 @@ func (r *Runner) request(method, url string, input, output any) error {
 			return err
 		}
 	}
-	auth, authErr := loadAuthConfig()
+	auth, authFromEnvironment, authErr := resolveAuthConfig()
 	response, err := r.authenticatedRequest(method, url, payload, input != nil, auth)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, url, err)
 	}
-	if response.StatusCode == http.StatusUnauthorized && authErr == nil && auth.RefreshToken != "" {
+	if response.StatusCode == http.StatusUnauthorized && !authFromEnvironment && authErr == nil && auth.RefreshToken != "" {
 		response.Body.Close()
 		refreshed, err := r.refreshAuthConfig(auth)
 		if err != nil {
@@ -1110,6 +1128,34 @@ func loadAuthConfig() (AuthConfig, error) {
 		return AuthConfig{}, fmt.Errorf("decode auth config: %w", err)
 	}
 	return auth, nil
+}
+
+// resolveAuthConfig applies the process-level credential overrides to the stored
+// login. Its boolean result reports whether at least one environment credential
+// was configured, which disables refreshes and auth-store writes for requests.
+func resolveAuthConfig() (AuthConfig, bool, error) {
+	token := strings.TrimSpace(os.Getenv(authTokenEnv))
+	orgID := strings.TrimSpace(os.Getenv(authOrgIDEnv))
+	fromEnvironment := token != "" || orgID != ""
+	auth, err := loadAuthConfig()
+	if err != nil {
+		if !fromEnvironment {
+			return AuthConfig{}, false, err
+		}
+		auth = AuthConfig{}
+	}
+	if token != "" {
+		auth.Token = token
+		auth.RefreshToken = ""
+	}
+	if orgID != "" {
+		auth.ActiveOrgID = orgID
+	}
+	return auth, fromEnvironment, nil
+}
+
+func environmentCredentialsConfigured() bool {
+	return strings.TrimSpace(os.Getenv(authTokenEnv)) != "" || strings.TrimSpace(os.Getenv(authOrgIDEnv)) != ""
 }
 
 func authConfigFromSession(apiURL string, session nanoflare.AuthSession, preferredOrgID string) (AuthConfig, error) {
