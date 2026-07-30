@@ -5,7 +5,6 @@ import {
   Button,
   cn,
   Dialog,
-  Input,
   Label,
   Meter,
   Select as KumoSelect,
@@ -27,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { Input } from "../components/ui/input";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import {
   formatBytes,

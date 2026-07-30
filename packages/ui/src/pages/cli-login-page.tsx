@@ -1,5 +1,5 @@
 import { Banner, Button, Code, LayerCard, Loader, Select, Text } from "@cloudflare/kumo";
-import { Check, Copy, LoaderCircle, Terminal } from "lucide-react";
+import { Check, Command, Copy, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { apiFetch, errorText } from "../app/api";
@@ -77,72 +77,71 @@ export function CLILoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-kumo-base px-5 py-8 md:px-8 md:py-10">
-      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center md:min-h-[calc(100vh-5rem)]">
-        <div className="w-full max-w-[520px]">
-          <div className="flex flex-col gap-6">
-            <div className="flex items-center gap-3">
-              <div className="grid size-10 place-items-center rounded-lg bg-kumo-info/15 text-kumo-info">
-                <Terminal size={20} />
-              </div>
-              <div>
-                <Text as="h1" variant="heading3">
-                  Nanoflare CLI login
-                </Text>
-                <Text size="sm" variant="secondary">
-                  {auth.userEmail}
-                </Text>
-              </div>
+    <div className="grid min-h-screen place-items-center bg-[#f7f7f8] px-5 py-8 md:px-8 md:py-10">
+      <div className="w-full max-w-[520px]">
+        <div className="flex flex-col gap-6">
+          <div className="flex items-center gap-3">
+            <div className="grid size-10 place-items-center rounded-lg bg-kumo-info/15 text-kumo-info">
+              <Command size={20} />
             </div>
-            <LayerCard className="px-5 py-4">
-              <div className="flex flex-col gap-4">
-                {error && <Banner description={error} variant="error" />}
-                {!code && !error && creatingCode && (
-                  <div className="flex items-center gap-3">
-                    <Loader size="sm" />
-                    <Text>Creating login code...</Text>
-                  </div>
-                )}
-                {!code && !error && !creatingCode && auth.organizations.length > 0 && (
-                  <div className="flex flex-col gap-4">
-                    <div className="flex flex-col gap-1.5">
-                      <Text size="sm" variant="secondary">
-                        Choose the organization to use with the CLI.
-                      </Text>
-                    </div>
-                    <Select
-                      aria-label="Organization for CLI login"
-                      items={auth.organizations.map((org) => ({ value: org.id, label: org.name }))}
-                      label="Organization"
-                      onValueChange={(value) => value && setSelectedOrgID(value)}
-                      placeholder="Select an organization"
-                      value={selectedOrgID}
-                    />
+            <div>
+              <Text as="h1" variant="heading3">
+                Nanoflare CLI login
+              </Text>
+              <Text size="sm" variant="secondary">
+                Select organization
+              </Text>
+            </div>
+          </div>
+          <LayerCard className="bg-white px-5 py-4 shadow-none">
+            <div className="flex flex-col gap-4">
+              {error && <Banner description={error} variant="error" />}
+              {!code && !error && creatingCode && (
+                <div className="flex items-center gap-3">
+                  <Loader size="sm" />
+                  <Text>Creating login code...</Text>
+                </div>
+              )}
+              {!code && !error && !creatingCode && auth.organizations.length > 0 && (
+                <div className="flex flex-col gap-4">
+                  <Text size="sm" variant="secondary">
+                    Choose the organization to use with the CLI.
+                  </Text>
+                  <Select
+                    aria-label="Organization for CLI login"
+                    className="w-full"
+                    items={auth.organizations.map((org) => ({ value: org.id, label: org.name }))}
+                    label="Organization"
+                    onValueChange={(value) => value && setSelectedOrgID(value)}
+                    placeholder="Select an organization"
+                    value={selectedOrgID}
+                  />
+                  <div className="flex justify-end">
                     <Button disabled={!selectedOrgID} onClick={() => void createCode()}>
                       Continue
                     </Button>
                   </div>
-                )}
-                {code && callbackURL && sentToCLI && (
-                  <div className="flex items-center gap-3">
-                    <LoaderCircle className="animate-spin" size={16} />
-                    <Text>Returning to Nanoflare CLI...</Text>
-                  </div>
-                )}
-                {code && !callbackURL && (
-                  <>
-                    <Text size="sm" variant="secondary">
-                      Copy this one-time code back into your terminal.
-                    </Text>
-                    <Code.Block code={code} />
-                    <Button icon={copied ? Check : Copy} onClick={copyCode} variant="secondary">
-                      {copied ? "Copied" : "Copy code"}
-                    </Button>
-                  </>
-                )}
-              </div>
-            </LayerCard>
-          </div>
+                </div>
+              )}
+              {code && callbackURL && sentToCLI && (
+                <div className="flex items-center gap-3">
+                  <LoaderCircle className="animate-spin" size={16} />
+                  <Text>Returning to Nanoflare CLI...</Text>
+                </div>
+              )}
+              {code && !callbackURL && (
+                <>
+                  <Text size="sm" variant="secondary">
+                    Copy this one-time code back into your terminal.
+                  </Text>
+                  <Code.Block code={code} />
+                  <Button icon={copied ? Check : Copy} onClick={copyCode} variant="secondary">
+                    {copied ? "Copied" : "Copy code"}
+                  </Button>
+                </>
+              )}
+            </div>
+          </LayerCard>
         </div>
       </div>
     </div>

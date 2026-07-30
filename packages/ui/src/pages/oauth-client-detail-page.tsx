@@ -4,7 +4,6 @@ import {
   Banner,
   Button,
   Dialog,
-  Input,
   InputArea,
   Label,
   LayerCard,
@@ -22,6 +21,7 @@ import { useWorkspace } from "../app/workspace-context";
 import { Badge } from "../components/ui/badge";
 import { Panel } from "../components/shared/primitives";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
+import { Input } from "../components/ui/input";
 
 const oauthScopes = [
   "workers:read",

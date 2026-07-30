@@ -4,7 +4,6 @@ import {
   ChartPalette,
   Dialog,
   DropdownMenu,
-  Input,
   LayerCard,
   Link,
   Table,
@@ -38,6 +37,7 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText, fetchJSON } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
+import { Input } from "../components/ui/input";
 import type {
   ConsoleDeployment,
   WorkerDeployment,

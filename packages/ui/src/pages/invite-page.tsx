@@ -1,10 +1,11 @@
-import { Banner, Button, Input, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
+import { Banner, Button, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
 import { Check, UserPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, errorText } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import type { OrganizationInvite } from "../app/types";
+import { Input } from "../components/ui/input";
 
 export function InvitePage() {
   const { token = "" } = useParams();

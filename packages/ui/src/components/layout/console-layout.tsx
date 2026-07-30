@@ -3,7 +3,6 @@ import {
   Button,
   Dialog,
   Field,
-  Input,
   LayerCard,
   Select,
   Sidebar,
@@ -30,6 +29,7 @@ import { CreateDatabaseDialog } from "../dialogs/create-database-dialog";
 import { CreateKVNamespaceDialog } from "../dialogs/create-kv-namespace-dialog";
 import { CreateObjectStorageBucketDialog } from "../dialogs/create-object-storage-bucket-dialog";
 import { CreateWorkerDialog } from "../dialogs/create-worker-dialog";
+import { Input } from "../ui/input";
 
 const navItems = [
   { href: "/", match: "/", label: "Overview", icon: CircleGauge },
@@ -384,10 +384,12 @@ function OrganizationOnboarding({
                 value={name}
               />
             </Field>
-            <Button loading={saving} type="submit">
-              <Check className="size-4" />
-              Create organization
-            </Button>
+            <div className="flex justify-end">
+              <Button loading={saving} type="submit">
+                <Check className="size-4" />
+                Create organization
+              </Button>
+            </div>
           </form>
         </LayerCard>
       </div>

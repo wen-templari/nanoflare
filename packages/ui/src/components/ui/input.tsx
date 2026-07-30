@@ -16,7 +16,7 @@ export function Input({ className, inputClassName, ...props }: InputProps) {
       {...props}
       {...(unstyled ? { variant: undefined } : {})}
       className={cn(
-        "w-full",
+        "w-full focus:!ring-1.5",
         inputClassName,
         className,
         unstyled && "!border-0 !bg-transparent !shadow-none !ring-0 focus:!ring-0",

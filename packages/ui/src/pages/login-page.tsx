@@ -1,8 +1,9 @@
-import { Banner, Button, Input, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
+import { Banner, Button, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
 import { Boxes, LogIn } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../app/auth-context";
+import { Input } from "../components/ui/input";
 
 type OIDCConfig = {
   directLogin: boolean;
@@ -173,7 +174,7 @@ export function LoginPage() {
                     required
                     value={password}
                   />
-                  <Button className="w-full justify-center" icon={LogIn} loading={submitting} type="submit">
+                  <Button className="w-full justify-center" loading={submitting} type="submit">
                     {signupMode ? "Create account" : "Sign in"}
                   </Button>
                   {oidcConfig.enabled && !signupMode && (
@@ -187,7 +188,6 @@ export function LoginPage() {
                       </div>
                       <Button
                         className="w-full justify-center"
-                        icon={LogIn}
                         loading={oidcLoading}
                         onClick={startOIDCLogin}
                         type="button"
