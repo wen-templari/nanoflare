@@ -1,4 +1,4 @@
-import { Banner, Button, Code, LayerCard, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, Code, LayerCard, Loader, Select, Text } from "@cloudflare/kumo";
 import { Check, Copy, LoaderCircle, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
@@ -15,24 +15,34 @@ export function CLILoginPage() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [sentToCLI, setSentToCLI] = useState(false);
+  const [selectedOrgID, setSelectedOrgID] = useState("");
+  const [creatingCode, setCreatingCode] = useState(false);
 
   useEffect(() => {
-    if (!auth.ready || !auth.signedIn || code || error) return;
-    let cancelled = false;
-    async function createCode() {
-      const response = await apiFetch("/v1/auth/cli/code", { method: "POST" });
-      if (!response.ok) {
-        if (!cancelled) setError(await errorText(response, "Could not create CLI login code"));
-        return;
-      }
+    if (!auth.ready || selectedOrgID || !auth.activeOrgID) return;
+    setSelectedOrgID(auth.activeOrgID);
+  }, [auth.activeOrgID, auth.ready, selectedOrgID]);
+
+  async function createCode() {
+    if (creatingCode || code || error) return;
+    setCreatingCode(true);
+    const response = await apiFetch("/v1/auth/cli/code", {
+      method: "POST",
+      headers: selectedOrgID ? { "X-Nanoflare-Org-ID": selectedOrgID } : undefined,
+    });
+    if (!response.ok) {
+      setError(await errorText(response, "Could not create CLI login code"));
+    } else {
       const payload = (await response.json()) as { code: string };
-      if (!cancelled) setCode(payload.code || "");
+      setCode(payload.code || "");
     }
-    void createCode();
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.ready, auth.signedIn, code, error]);
+    setCreatingCode(false);
+  }
+
+  useEffect(() => {
+    if (!auth.ready || !auth.signedIn || code || error || creatingCode) return;
+    if (auth.organizations.length === 0) void createCode();
+  }, [auth.ready, auth.signedIn, auth.organizations.length, code, error, creatingCode]);
 
   useEffect(() => {
     if (!code || !callbackURL || !state || sentToCLI) return;
@@ -87,10 +97,30 @@ export function CLILoginPage() {
             <LayerCard className="px-5 py-4">
               <div className="flex flex-col gap-4">
                 {error && <Banner description={error} variant="error" />}
-                {!code && !error && (
+                {!code && !error && creatingCode && (
                   <div className="flex items-center gap-3">
                     <Loader size="sm" />
                     <Text>Creating login code...</Text>
+                  </div>
+                )}
+                {!code && !error && !creatingCode && auth.organizations.length > 0 && (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Text size="sm" variant="secondary">
+                        Choose the organization to use with the CLI.
+                      </Text>
+                    </div>
+                    <Select
+                      aria-label="Organization for CLI login"
+                      items={auth.organizations.map((org) => ({ value: org.id, label: org.name }))}
+                      label="Organization"
+                      onValueChange={(value) => value && setSelectedOrgID(value)}
+                      placeholder="Select an organization"
+                      value={selectedOrgID}
+                    />
+                    <Button disabled={!selectedOrgID} onClick={() => void createCode()}>
+                      Continue
+                    </Button>
                   </div>
                 )}
                 {code && callbackURL && sentToCLI && (

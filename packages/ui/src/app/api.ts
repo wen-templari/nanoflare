@@ -29,7 +29,7 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   const token = authToken();
   const orgID = activeOrgID();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (orgID) headers.set("X-Nanoflare-Org-ID", orgID);
+  if (orgID && !headers.has("X-Nanoflare-Org-ID")) headers.set("X-Nanoflare-Org-ID", orgID);
   return fetch(path, { ...init, headers });
 }
 

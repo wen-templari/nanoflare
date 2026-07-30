@@ -384,10 +384,14 @@ func TestControlCLIWebLoginCodeExchangesForSession(t *testing.T) {
 	if err := json.Unmarshal(signupRecorder.Body.Bytes(), &browserSession); err != nil {
 		t.Fatal(err)
 	}
+	selectedOrg, err := controlAuth.CreateOrganization(browserSession.User.ID, nanoflare.CreateOrganizationInput{Name: "Selected Org"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	codeRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/cli/code", nil)
 	codeRequest.Header.Set("Authorization", "Bearer "+browserSession.Token)
-	codeRequest.Header.Set("X-Nanoflare-Org-ID", browserSession.ActiveOrgID)
+	codeRequest.Header.Set("X-Nanoflare-Org-ID", selectedOrg.ID)
 	codeRecorder := httptest.NewRecorder()
 	server.ServeHTTP(codeRecorder, codeRequest)
 	if codeRecorder.Code != http.StatusCreated {
@@ -414,7 +418,7 @@ func TestControlCLIWebLoginCodeExchangesForSession(t *testing.T) {
 	if err := json.Unmarshal(sessionRecorder.Body.Bytes(), &cliSession); err != nil {
 		t.Fatal(err)
 	}
-	if cliSession.Token == "" || cliSession.User.Email != "person@example.com" || cliSession.ActiveOrgID != browserSession.ActiveOrgID {
+	if cliSession.Token == "" || cliSession.User.Email != "person@example.com" || cliSession.ActiveOrgID != selectedOrg.ID {
 		t.Fatalf("cli session = %#v", cliSession)
 	}
 
