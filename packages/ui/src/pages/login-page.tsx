@@ -173,7 +173,7 @@ export function LoginPage() {
                     required
                     value={password}
                   />
-                  <Button className="w-full" icon={LogIn} loading={submitting} type="submit">
+                  <Button className="w-full justify-center" icon={LogIn} loading={submitting} type="submit">
                     {signupMode ? "Create account" : "Sign in"}
                   </Button>
                   {oidcConfig.enabled && !signupMode && (
@@ -186,7 +186,7 @@ export function LoginPage() {
                         <div className="h-px flex-1 bg-kumo-line" />
                       </div>
                       <Button
-                        className="w-full"
+                        className="w-full justify-center"
                         icon={LogIn}
                         loading={oidcLoading}
                         onClick={startOIDCLogin}
@@ -197,7 +197,11 @@ export function LoginPage() {
                       </Button>
                     </>
                   )}
-                  <Button onClick={() => setSignupMode((value) => !value)} variant="ghost">
+                  <Button
+                    className="w-full justify-center"
+                    onClick={() => setSignupMode((value) => !value)}
+                    variant="primary"
+                  >
                     {signupMode ? "Use existing account" : "Create a new account"}
                   </Button>
                 </div>
