@@ -132,8 +132,8 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-kumo-base px-4 py-10">
-      <div className="flex min-h-[calc(100vh-5rem)] items-center justify-center">
+    <div className="min-h-screen bg-kumo-base px-5 py-8 md:px-8 md:py-10">
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center md:min-h-[calc(100vh-5rem)]">
         <div className="w-full max-w-[420px]">
           <div className="flex flex-col gap-6">
             <div className="flex items-center gap-3">
@@ -144,7 +144,7 @@ export function LoginPage() {
                 nanoflare
               </Text>
             </div>
-            <LayerCard>
+            <LayerCard className="px-5 py-4">
               <form onSubmit={submit}>
                 <div className="flex flex-col gap-4">
                   {error && <Banner description={error} variant="error" />}
@@ -173,7 +173,7 @@ export function LoginPage() {
                     required
                     value={password}
                   />
-                  <Button icon={LogIn} loading={submitting} type="submit">
+                  <Button className="w-full" icon={LogIn} loading={submitting} type="submit">
                     {signupMode ? "Create account" : "Sign in"}
                   </Button>
                   {oidcConfig.enabled && !signupMode && (
@@ -186,6 +186,7 @@ export function LoginPage() {
                         <div className="h-px flex-1 bg-kumo-line" />
                       </div>
                       <Button
+                        className="w-full"
                         icon={LogIn}
                         loading={oidcLoading}
                         onClick={startOIDCLogin}

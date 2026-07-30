@@ -60,9 +60,9 @@ export function InvitePage() {
   }
 
   return (
-    <div className="min-h-screen bg-kumo-base px-4 py-10">
-      <div className="flex min-h-[calc(100vh-5rem)] items-center justify-center">
-        <LayerCard className="w-full max-w-[460px]">
+    <div className="min-h-screen bg-kumo-base px-5 py-8 md:px-8 md:py-10">
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center md:min-h-[calc(100vh-5rem)]">
+        <LayerCard className="w-full max-w-[460px] px-5 py-4">
           <form onSubmit={accept}>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3">
