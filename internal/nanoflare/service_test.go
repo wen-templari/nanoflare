@@ -99,6 +99,25 @@ func TestDeployValidatesCronTriggers(t *testing.T) {
 	}
 }
 
+func TestDeployFallsBackFromUnsupportedCompatibilityDate(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deployment, err := service.Deploy(app.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2026-07-31",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deployment.CompatibilityDate != LatestSupportedCompatibilityDate {
+		t.Fatalf("compatibility date = %q, want fallback %q", deployment.CompatibilityDate, LatestSupportedCompatibilityDate)
+	}
+}
+
 func TestObjectStorageBucketObjectsSurviveWorkerRecreate(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()
