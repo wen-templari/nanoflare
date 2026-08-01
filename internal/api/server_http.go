@@ -102,7 +102,7 @@ func writeError(w http.ResponseWriter, status int, err error) {
 		w.Header().Set("Request-Id", requestID)
 	}
 	writeJSON(w, status, map[string]any{
-		"type":     "https://nanoflare.dev/problems/" + http.StatusText(status),
+		"type":     "about:blank",
 		"title":    http.StatusText(status),
 		"status":   status,
 		"detail":   err.Error(),
