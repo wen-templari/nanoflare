@@ -124,7 +124,7 @@ services:
     image: grafana/loki:3.5.0
     command: -config.file=/etc/loki/config.yml
     volumes:
-      - ../loki/loki-config.yml:/etc/loki/config.yml:ro
+      - ./loki/loki-config.yml:/etc/loki/config.yml:ro
       - loki-data:/loki
 
   vector:
@@ -132,7 +132,7 @@ services:
     command: --config /etc/vector/vector.yaml
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ../vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
       - vector-data:/var/lib/vector
       - nanoflare-vector-socket:/var/run/nanoflare
     depends_on:
@@ -147,7 +147,7 @@ services:
       - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
-      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - loki
 
