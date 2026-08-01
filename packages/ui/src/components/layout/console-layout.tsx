@@ -137,7 +137,7 @@ export function ConsoleLayout() {
             </div>
             <Select
               aria-label="Active organization"
-              className="min-w-0 flex-1 !h-8 !justify-start !bg-transparent !px-2 !text-sm !shadow-none !ring-0 hover:!bg-kumo-tint"
+              className="min-w-0 flex-1 h-8! justify-start! bg-transparent! px-2! text-sm! shadow-none! ring-0! hover:bg-kumo-tint!"
               items={organizationSelectData}
               disabled={!organizations.length}
               onValueChange={(value) => {
@@ -217,7 +217,7 @@ export function ConsoleLayout() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-5 md:p-8">
-          <div className="mx-auto w-full max-w-screen-xl">
+          <div className="mx-auto w-full max-w-(--breakpoint-xl)">
             <Outlet />
           </div>
         </main>

@@ -663,7 +663,7 @@ function WorkerConfig({
                     {name}
                   </td>
                   <td className="pr-4 py-3">
-                    <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#5f6863]">
+                    <pre className="overflow-x-auto whitespace-pre-wrap wrap-break-word font-mono text-[11px] leading-5 text-[#5f6863]">
                       <code>{JSON.stringify(value)}</code>
                     </pre>
                   </td>
@@ -1102,7 +1102,7 @@ function WorkerOutput({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Filter output"
-          className="!bg-[#18211f] !border-[#40504b] !text-[#d7e1dc]"
+          className="bg-[#18211f]! border-[#40504b]! text-[#d7e1dc]!"
         />
         <select
           value={deploymentID}
@@ -1130,7 +1130,7 @@ function WorkerOutput({
           variant="outline"
           size="sm"
           onClick={() => setFollow((value) => !value)}
-          className="border-[#40504b] !text-[#c6d0cb]"
+          className="border-[#40504b] text-[#c6d0cb]!"
         >
           {follow ? "Following" : "Paused"}
         </Button>
@@ -1140,7 +1140,7 @@ function WorkerOutput({
           {lines.map(({ timestamp, level, message, deployment_id }, index) => (
             <p
               key={`${timestamp}-${index}`}
-              className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#c6d0cb]"
+              className="whitespace-pre-wrap wrap-break-word font-mono text-[11px] leading-5 text-[#c6d0cb]"
             >
               <span className="mr-3 text-[#71817b]">
                 {new Date(timestamp).toLocaleTimeString()}

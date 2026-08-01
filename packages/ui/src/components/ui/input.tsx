@@ -21,7 +21,7 @@ export function Input({ className, inputClassName, ...props }: InputProps) {
         "w-full focus:!ring-1.5",
         inputClassName,
         className,
-        unstyled && "!border-0 !bg-transparent !shadow-none !ring-0 focus:!ring-0",
+        unstyled && "border-0! bg-transparent! shadow-none! ring-0! focus:ring-0!",
       )}
     />
   );

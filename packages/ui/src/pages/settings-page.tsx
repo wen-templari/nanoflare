@@ -1224,7 +1224,7 @@ export function SettingsPage() {
         {inviteCreated && (
           <div className="grid gap-5">
             <Banner variant="alert">
-              <p className="break-words text-sm">
+              <p className="wrap-break-word text-sm">
                 Share this link with <span className="font-medium">{inviteCreated.email}</span>. It
                 is the only way to accept this invite.
               </p>
