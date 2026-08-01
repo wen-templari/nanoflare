@@ -11,11 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/templates"
 )
 
 func TestMain(m *testing.M) {
@@ -72,6 +75,266 @@ func TestInitDoesNotPersistHostname(t *testing.T) {
 	project := readProject(t, filepath.Join("hello", projectFilename))
 	_ = project
 }
+
+func TestInitListsTemplates(t *testing.T) {
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+
+	if err := runner.Run([]string{"init", "--list-templates"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "starter") || !strings.Contains(got, "basic JavaScript Worker") {
+		t.Fatalf("template listing = %q", got)
+	}
+}
+
+func TestInitTemplateSelection(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantPrompt bool
+	}{
+		{name: "default", input: "\n", wantPrompt: true},
+		{name: "id", input: "starter\n", wantPrompt: true},
+		{name: "number after invalid choice", input: "unknown\n1\n", wantPrompt: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withWorkingDirectory(t, t.TempDir())
+			var stderr bytes.Buffer
+			runner := NewRunner(io.Discard, &stderr)
+			runner.Stdin = strings.NewReader(test.input)
+			runner.IsInteractive = func() bool { return true }
+
+			if err := runner.Run([]string{"init", "project"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join("project", "worker.js")); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(stderr.String(), "Select a template [starter]:") {
+				t.Fatalf("prompt = %q", stderr.String())
+			}
+			if test.name == "number after invalid choice" && !strings.Contains(stderr.String(), "Unknown template") {
+				t.Fatalf("invalid selection was not reported: %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestInitNonInteractiveDefaultsToStarterWithoutReadingInput(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	runner := NewRunner(io.Discard, io.Discard)
+	runner.Stdin = errReader{}
+	runner.IsInteractive = func() bool { return false }
+
+	if err := runner.Run([]string{"init", "project"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join("project", "worker.js")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTypesGeneratesSelfContainedBindings(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{
+		Name:              "typed-worker",
+		Main:              "worker.js",
+		CompatibilityDate: "2026-08-01",
+		Files:             []string{"worker.js"},
+		Vars: map[string]json.RawMessage{
+			"FEATURE_FLAGS": json.RawMessage(`{"beta":true,"regions":["us","jp"]}`),
+			"api-host":      json.RawMessage(`"api.example.test"`),
+		},
+		KVNamespaces: []nanoflare.KVBinding{{Binding: "COUNTER_KV", ID: "kv-123"}},
+		Databases:    []nanoflare.DatabaseBinding{{Binding: "APP_DB", DatabaseID: "db-123"}},
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{
+			Binding:  "OBJECTS",
+			BucketID: "bucket-123",
+		}},
+		Assets: ProjectAssets{Binding: "STATIC"},
+	})
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"types", "bindings.d.ts", "--env-interface", "CloudflareBindings"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile("bindings.d.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(generated)
+	for _, expected := range []string{
+		"interface NanoflareKVNamespace {",
+		"interface CloudflareBindings {",
+		"APP_DB: NanoflareD1Database;",
+		"COUNTER_KV: NanoflareKVNamespace;",
+		"OBJECTS: NanoflareObjectStorageBucket;",
+		"STATIC: NanoflareAssetFetcher;",
+		`"api-host": "api.example.test";`,
+		"FEATURE_FLAGS: { beta: true; regions: [\"us\", \"jp\"] };",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("generated types missing %q:\n%s", expected, content)
+		}
+	}
+	if !strings.Contains(stdout.String(), "Generated TypeScript types at bindings.d.ts") {
+		t.Fatalf("output = %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Add bindings.d.ts to the files or include list in your Worker tsconfig.json.") {
+		t.Fatalf("output = %q", stdout.String())
+	}
+
+	if err := runner.Run([]string{"types", "bindings.d.ts", "--env-interface", "CloudflareBindings"}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.ReadFile("bindings.d.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(generated, again) {
+		t.Fatal("generated types are not deterministic")
+	}
+}
+
+func TestTypesDefaultPathAndCheck(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{Name: "typed-worker", Main: "worker.js", CompatibilityDate: "2026-08-01", Files: []string{"worker.js"}})
+	runner := NewRunner(io.Discard, io.Discard)
+
+	if err := runner.Run([]string{"types"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"types", "--check"}); err != nil {
+		t.Fatalf("check for current types: %v", err)
+	}
+	if err := os.WriteFile(defaultTypesFilename, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"types", "--check"}); err == nil || !strings.Contains(err.Error(), "out of date") {
+		t.Fatalf("stale check error = %v", err)
+	}
+	stale, err := os.ReadFile(defaultTypesFilename)
+	if err != nil || string(stale) != "stale\n" {
+		t.Fatalf("check changed stale file: %q, %v", stale, err)
+	}
+	if err := os.Remove(defaultTypesFilename); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"types", "--check"}); err == nil || !strings.Contains(err.Error(), "out of date") {
+		t.Fatalf("missing check error = %v", err)
+	}
+}
+
+func TestTypesRejectsInvalidOrConflictingBindingsWithoutWriting(t *testing.T) {
+	project := Project{
+		Vars:         map[string]json.RawMessage{"BROKEN": json.RawMessage(`not-json`)},
+		KVNamespaces: []nanoflare.KVBinding{{Binding: "BROKEN", ID: "kv-123"}},
+	}
+	if _, err := generateWorkerTypes(project, "Env"); err == nil || !strings.Contains(err.Error(), "vars.BROKEN") {
+		t.Fatalf("invalid variable error = %v", err)
+	}
+	project.Vars = map[string]json.RawMessage{"DUPLICATE": json.RawMessage(`true`)}
+	project.KVNamespaces = []nanoflare.KVBinding{{Binding: "DUPLICATE", ID: "kv-123"}}
+	if _, err := generateWorkerTypes(project, "Env"); err == nil || !strings.Contains(err.Error(), "both vars and kv_namespaces") {
+		t.Fatalf("duplicate binding error = %v", err)
+	}
+}
+
+func TestGeneratedTypesCompileWithoutNanoflarePackage(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDirectory(t, t.TempDir())
+	generated, err := generateWorkerTypes(Project{
+		KVNamespaces: []nanoflare.KVBinding{{Binding: "KV", ID: "kv-123"}},
+	}, "Env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("worker-configuration.d.ts", generated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("worker.ts", []byte(`declare const env: Env;
+async function readValue() { return env.KV.get("key"); }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("tsconfig.json", []byte(`{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","lib":["ES2022","DOM"],"strict":true,"noEmit":true},"files":["worker-configuration.d.ts","worker.ts"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tsc := filepath.Join(repoRoot, "node_modules", ".bin", "tsc")
+	if _, err := os.Stat(tsc); errors.Is(err, os.ErrNotExist) {
+		t.Skip("TypeScript compiler is not installed")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(tsc, "--project", "tsconfig.json")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated types did not compile: %v\n%s", err, output)
+	}
+}
+
+func TestInitRejectsUnknownTemplateAndNonEmptyDestination(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	runner := NewRunner(io.Discard, io.Discard)
+	if err := runner.Run([]string{"init", "--template", "missing", "project"}); err == nil || !strings.Contains(err.Error(), "available: starter") {
+		t.Fatalf("unknown template error = %v", err)
+	}
+	if _, err := os.Stat("project"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("project directory created after invalid template: %v", err)
+	}
+	if err := os.Mkdir("project", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("project", "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"init", "--template", "starter", "project"}); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("non-empty destination error = %v", err)
+	}
+	if content, err := os.ReadFile(filepath.Join("project", "keep.txt")); err != nil || string(content) != "keep" {
+		t.Fatalf("existing file = %q, %v", content, err)
+	}
+}
+
+func TestInitWritesNestedTemplateFiles(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	runner := NewRunner(io.Discard, io.Discard)
+	runner.Templates = []templates.Template{{
+		ID:          "nested",
+		Description: "Nested test template",
+		Files: fstest.MapFS{
+			"bundle/README.md":    &fstest.MapFile{Data: []byte("# Nested\n")},
+			"bundle/src/index.js": &fstest.MapFile{Data: []byte("export default {}\n")},
+		},
+		Root: "bundle",
+		Project: func() templates.ProjectConfig {
+			return templates.ProjectConfig{Main: "src/index.js", Format: "modules", Files: []string{"src/index.js"}}
+		},
+	}}
+
+	if err := runner.Run([]string{"init", "--template", "nested", "project"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"README.md", "src/index.js"} {
+		if _, err := os.Stat(filepath.Join("project", path)); err != nil {
+			t.Fatalf("template file %s: %v", path, err)
+		}
+	}
+	project := readProject(t, filepath.Join("project", projectFilename))
+	if project.Main != "src/index.js" || !slices.Equal(project.Files, []string{"src/index.js"}) {
+		t.Fatalf("project = %#v", project)
+	}
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("stdin was read") }
 
 func TestCreateAndDeployWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())

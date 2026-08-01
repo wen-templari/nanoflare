@@ -3,13 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "$npm_execpath run nf-typegen && tsc -p tsconfig.json",
+    "nf-typegen": "nanoflare types",
     "deploy": "$npm_execpath run build && nanoflare deploy",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "nanoflare types --check && tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@nanoflare/cli": "^0.1.0",
-    "@nanoflare/workers-types": "file:../../packages/workers-types",
     "typescript": "^5.8.3"
   }
 }

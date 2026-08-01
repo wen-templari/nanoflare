@@ -1,10 +1,10 @@
-import type { AssetFetcher, D1Database, ObjectStorageBucket } from "@nanoflare/workers-types";
-import { drizzle } from "drizzle-orm/d1";
 import { desc, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { describeRoute, openAPIRouteHandler, resolver, validator } from "hono-openapi";
 import mime from "mime";
 import * as v from "valibot";
+
 import { galleryItems } from "./db/schema";
 
 interface GalleryItem {
@@ -17,14 +17,8 @@ interface GalleryItem {
   previewCount: number;
 }
 
-interface GalleryEnv {
-  ASSETS: AssetFetcher;
-  GALLERY_DB: D1Database;
-  OBJECTS: ObjectStorageBucket;
-}
-
 const MAX_ITEMS = 24;
-type AppEnv = { Bindings: GalleryEnv };
+type AppEnv = { Bindings: Env };
 
 const app = new Hono<AppEnv>();
 const galleryItemSchema = v.object({
@@ -154,7 +148,7 @@ app.get(
 );
 
 export default {
-  async fetch(request: Request, env: GalleryEnv): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     if (new URL(request.url).pathname.startsWith("/api/")) {
       return app.fetch(request, env);
     }
@@ -163,8 +157,7 @@ export default {
   },
 };
 
-async function uploadImage(uploaded: File, env: GalleryEnv): Promise<Response> {
-
+async function uploadImage(uploaded: File, env: Env): Promise<Response> {
   const timestamp = Date.now().toString(36);
   const id = crypto.randomUUID().replace(/-/g, "");
   const contentType = mime.getType(uploaded.name) || uploaded.type || "application/octet-stream";
@@ -217,7 +210,7 @@ async function uploadImage(uploaded: File, env: GalleryEnv): Promise<Response> {
   return Response.json({ ok: true, item }, { status: 201 });
 }
 
-async function serveImage(id: string, env: GalleryEnv): Promise<Response> {
+async function serveImage(id: string, env: Env): Promise<Response> {
   if (!id) {
     return new Response("Not found", { status: 404 });
   }
@@ -250,7 +243,7 @@ async function serveImage(id: string, env: GalleryEnv): Promise<Response> {
   });
 }
 
-async function trackPreview(id: string, env: GalleryEnv): Promise<Response> {
+async function trackPreview(id: string, env: Env): Promise<Response> {
   if (!id) {
     return new Response("Not found", { status: 404 });
   }
@@ -269,7 +262,7 @@ async function trackPreview(id: string, env: GalleryEnv): Promise<Response> {
   return Response.json({ ok: true, item });
 }
 
-async function deleteImage(id: string, env: GalleryEnv): Promise<Response> {
+async function deleteImage(id: string, env: Env): Promise<Response> {
   if (!id) {
     return new Response("Not found", { status: 404 });
   }
@@ -285,8 +278,9 @@ async function deleteImage(id: string, env: GalleryEnv): Promise<Response> {
   return Response.json({ ok: true, id });
 }
 
-async function ensureGallerySchema(env: GalleryEnv): Promise<void> {
-  await drizzle(env.GALLERY_DB).run(sql.raw(`
+async function ensureGallerySchema(env: Env): Promise<void> {
+  await drizzle(env.GALLERY_DB).run(
+    sql.raw(`
     CREATE TABLE IF NOT EXISTS gallery_items (
       id text PRIMARY KEY,
       object_key text NOT NULL,
@@ -298,10 +292,11 @@ async function ensureGallerySchema(env: GalleryEnv): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS gallery_items_uploaded_at_idx
       ON gallery_items (uploaded_at DESC);
-  `));
+  `),
+  );
 }
 
-async function readGalleryItems(env: GalleryEnv): Promise<GalleryItem[]> {
+async function readGalleryItems(env: Env): Promise<GalleryItem[]> {
   const rows = await drizzle(env.GALLERY_DB)
     .select()
     .from(galleryItems)
@@ -311,7 +306,7 @@ async function readGalleryItems(env: GalleryEnv): Promise<GalleryItem[]> {
   return rows.map(rowToGalleryItem);
 }
 
-async function readGalleryItem(env: GalleryEnv, id: string): Promise<GalleryItem | null> {
+async function readGalleryItem(env: Env, id: string): Promise<GalleryItem | null> {
   const [row] = await drizzle(env.GALLERY_DB)
     .select()
     .from(galleryItems)

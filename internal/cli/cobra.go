@@ -25,7 +25,15 @@ func (r *Runner) newRootCommand() *cobra.Command {
 	root.SetErr(r.Stderr)
 
 	root.AddCommand(
-		r.leaf("init [directory]", "Create a worker project", r.init, func(c *cobra.Command) { c.Flags().String("name", "", "Name for the new worker") }),
+		r.leaf("init [directory]", "Create a worker project", r.init, func(c *cobra.Command) {
+			c.Flags().String("name", "", "Name for the new worker")
+			c.Flags().String("template", "", "Template to initialize")
+			c.Flags().Bool("list-templates", false, "List available templates")
+		}),
+		r.leaf("types [path]", "Generate TypeScript types for the current worker", r.types, func(c *cobra.Command) {
+			c.Flags().String("env-interface", "Env", "Name of the generated environment interface")
+			c.Flags().Bool("check", false, "Check whether generated types are up to date")
+		}),
 		r.workerLeaf("create", "Create the current worker", r.create, apiURLFlag("")),
 		r.workerLeaf("list", "List workers", r.list, apiURLFlag(envOrDefault("NANOFLARED_URL", defaultAPIURL))),
 		r.workerLeaf("delete [worker-id]", "Delete a worker", r.delete, apiURLFlag("")),

@@ -27,7 +27,8 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
-	starterworker "github.com/clas/nanoflare/templates/starter-worker"
+	"github.com/clas/nanoflare/templates"
+	"github.com/mattn/go-isatty"
 )
 
 const (
@@ -44,11 +45,13 @@ type HTTPClient interface {
 }
 
 type Runner struct {
-	Client HTTPClient
-	Stdout io.Writer
-	Stderr io.Writer
-	Stdin  io.Reader
-	Now    func() time.Time
+	Client        HTTPClient
+	Stdout        io.Writer
+	Stderr        io.Writer
+	Stdin         io.Reader
+	Now           func() time.Time
+	IsInteractive func() bool
+	Templates     []templates.Template
 }
 
 type Project struct {
@@ -107,6 +110,10 @@ func NewRunner(stdout, stderr io.Writer) *Runner {
 		Stderr: stderr,
 		Stdin:  os.Stdin,
 		Now:    time.Now,
+		IsInteractive: func() bool {
+			return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+		},
+		Templates: templates.Catalog,
 	}
 }
 
@@ -120,11 +127,27 @@ func (r *Runner) init(args []string) error {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	name := flags.String("name", "", "worker name")
+	templateID := flags.String("template", "", "template to initialize")
+	listTemplates := flags.Bool("list-templates", false, "list available templates")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	if *listTemplates {
+		if strings.TrimSpace(*templateID) != "" {
+			return errors.New("--list-templates cannot be used with --template")
+		}
+		if flags.NArg() != 0 {
+			return errors.New("usage: nanoflare init --list-templates")
+		}
+		r.printTemplates()
+		return nil
+	}
 	if flags.NArg() > 1 {
 		return errors.New("usage: nanoflare init [flags] [directory]")
+	}
+	template, err := r.selectTemplate(strings.TrimSpace(*templateID))
+	if err != nil {
+		return err
 	}
 	dir := "."
 	if flags.NArg() == 1 {
@@ -134,38 +157,171 @@ func (r *Runner) init(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(absDir, 0o755); err != nil {
-		return fmt.Errorf("create project directory: %w", err)
+	if err := requireEmptyDirectory(absDir); err != nil {
+		return err
 	}
-	projectPath := filepath.Join(absDir, projectFilename)
-	workerPath := filepath.Join(absDir, "worker.js")
-	for _, path := range []string{projectPath, workerPath} {
-		if _, err := os.Stat(path); err == nil {
-			return fmt.Errorf("%s already exists", path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
+	files, err := templateFiles(template)
+	if err != nil {
+		return fmt.Errorf("read template %q: %w", template.ID, err)
 	}
 	projectName := strings.TrimSpace(*name)
 	if projectName == "" {
 		projectName = filepath.Base(absDir)
 	}
+	projectConfig := template.Project()
 	project := Project{
 		Name:              projectName,
-		Main:              "worker.js",
-		Format:            "modules",
+		Main:              projectConfig.Main,
+		Format:            projectConfig.Format,
 		CompatibilityDate: r.Now().UTC().Format("2006-01-02"),
-		Files:             []string{"worker.js"},
+		Files:             append([]string(nil), projectConfig.Files...),
 	}
-	if err := writeProject(projectPath, project, os.O_EXCL); err != nil {
+	if err := os.MkdirAll(absDir, 0o755); err != nil {
+		return fmt.Errorf("create project directory: %w", err)
+	}
+	for _, file := range files {
+		path := filepath.Join(absDir, filepath.FromSlash(file.path))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create template directory: %w", err)
+		}
+		if err := os.WriteFile(path, file.data, 0o644); err != nil {
+			return fmt.Errorf("write template file %s: %w", file.path, err)
+		}
+	}
+	if err := writeProject(filepath.Join(absDir, projectFilename), project, os.O_EXCL); err != nil {
 		return err
-	}
-	if err := os.WriteFile(workerPath, starterworker.WorkerJS, 0o644); err != nil {
-		_ = os.Remove(projectPath)
-		return fmt.Errorf("write starter worker: %w", err)
 	}
 	fmt.Fprintf(r.Stdout, "Initialized worker project in %s\n", absDir)
 	fmt.Fprintln(r.Stdout, "Run `nanoflare create` to register it, then `nanoflare deploy`.")
+	return nil
+}
+
+type templateFile struct {
+	path string
+	data []byte
+}
+
+func (r *Runner) templateCatalog() []templates.Template {
+	if r.Templates != nil {
+		return r.Templates
+	}
+	return templates.Catalog
+}
+
+func (r *Runner) printTemplates() {
+	writer := tabwriter.NewWriter(r.Stdout, 0, 4, 2, ' ', 0)
+	for _, template := range r.templateCatalog() {
+		fmt.Fprintf(writer, "%s\t%s\n", template.ID, template.Description)
+	}
+	_ = writer.Flush()
+}
+
+func (r *Runner) selectTemplate(id string) (templates.Template, error) {
+	catalog := r.templateCatalog()
+	if len(catalog) == 0 {
+		return templates.Template{}, errors.New("no project templates are available")
+	}
+	if id != "" {
+		return findTemplate(catalog, id)
+	}
+	if r.IsInteractive == nil || !r.IsInteractive() {
+		return catalog[0], nil
+	}
+	reader := bufio.NewReader(r.Stdin)
+	for {
+		fmt.Fprintln(r.Stderr, "Available templates:")
+		for index, template := range catalog {
+			fmt.Fprintf(r.Stderr, "  %d) %s — %s\n", index+1, template.ID, template.Description)
+		}
+		fmt.Fprintf(r.Stderr, "Select a template [%s]: ", catalog[0].ID)
+		value, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return templates.Template{}, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return catalog[0], nil
+		}
+		if index, parseErr := strconv.Atoi(value); parseErr == nil && index >= 1 && index <= len(catalog) {
+			return catalog[index-1], nil
+		}
+		if template, findErr := findTemplate(catalog, value); findErr == nil {
+			return template, nil
+		}
+		fmt.Fprintf(r.Stderr, "Unknown template %q. Choose a listed number or ID.\n", value)
+		if errors.Is(err, io.EOF) {
+			return templates.Template{}, fmt.Errorf("unknown template %q", value)
+		}
+	}
+}
+
+func findTemplate(catalog []templates.Template, id string) (templates.Template, error) {
+	for _, template := range catalog {
+		if template.ID == id {
+			return template, nil
+		}
+	}
+	ids := make([]string, 0, len(catalog))
+	for _, template := range catalog {
+		ids = append(ids, template.ID)
+	}
+	return templates.Template{}, fmt.Errorf("unknown template %q (available: %s)", id, strings.Join(ids, ", "))
+}
+
+func requireEmptyDirectory(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("project destination %s is not a directory", path)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("project destination %s is not empty", path)
+	}
+	return nil
+}
+
+func templateFiles(template templates.Template) ([]templateFile, error) {
+	if template.Files == nil || template.Root == "" {
+		return nil, errors.New("template has no embedded files")
+	}
+	files := make([]templateFile, 0)
+	err := fs.WalkDir(template.Files, template.Root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, ok := strings.CutPrefix(path, strings.TrimSuffix(template.Root, "/")+"/")
+		if !ok {
+			return fmt.Errorf("template file %q is outside root %q", path, template.Root)
+		}
+		if err := validateTemplatePath(relative); err != nil {
+			return err
+		}
+		data, err := fs.ReadFile(template.Files, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, templateFile{path: relative, data: data})
+		return nil
+	})
+	return files, err
+}
+
+func validateTemplatePath(path string) error {
+	if path == projectFilename || path == "." || !fs.ValidPath(path) || filepath.IsAbs(path) {
+		return fmt.Errorf("unsafe template path %q", path)
+	}
 	return nil
 }
 
@@ -950,17 +1106,25 @@ func loadProject() (string, Project, error) {
 	if err != nil {
 		return "", Project{}, err
 	}
+	project, err := loadProjectAtPath(path, true)
+	if err != nil {
+		return "", Project{}, err
+	}
+	return path, project, nil
+}
+
+func loadProjectAtPath(path string, migrateAliases bool) (Project, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", Project{}, fmt.Errorf("read %s: %w", path, err)
+		return Project{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var project Project
 	if err := json.Unmarshal(content, &project); err != nil {
-		return "", Project{}, fmt.Errorf("decode %s: %w", path, err)
+		return Project{}, fmt.Errorf("decode %s: %w", path, err)
 	}
 	var alias projectAlias
 	if err := json.Unmarshal(content, &alias); err != nil {
-		return "", Project{}, fmt.Errorf("decode %s aliases: %w", path, err)
+		return Project{}, fmt.Errorf("decode %s aliases: %w", path, err)
 	}
 	if len(project.ObjectStorageBuckets) == 0 || hasEmptyObjectStorageBucketIDs(project.ObjectStorageBuckets) {
 		legacy := alias.ObjectStorageBuckets
@@ -984,15 +1148,15 @@ func loadProject() (string, Project, error) {
 	if project.Main == "" && alias.Entrypoint != "" {
 		project.Main = alias.Entrypoint
 	}
-	if alias.Entrypoint != "" {
+	if migrateAliases && alias.Entrypoint != "" {
 		if err := writeProject(path, project, os.O_TRUNC); err != nil {
-			return "", Project{}, fmt.Errorf("migrate %s: %w", path, err)
+			return Project{}, fmt.Errorf("migrate %s: %w", path, err)
 		}
 	}
 	if project.Name == "" || project.Main == "" || project.CompatibilityDate == "" || len(project.Files) == 0 {
-		return "", Project{}, fmt.Errorf("%s is missing required worker configuration", path)
+		return Project{}, fmt.Errorf("%s is missing required worker configuration", path)
 	}
-	return path, project, nil
+	return project, nil
 }
 
 func hasEmptyObjectStorageBucketIDs(bindings []nanoflare.ObjectStorageBucketBinding) bool {

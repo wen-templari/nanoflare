@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && vite build --config vite.worker.config.ts",
+    "build": "$npm_execpath run nf-typegen && vite build && vite build --config vite.worker.config.ts",
+    "nf-typegen": "nanoflare types",
     "deploy": "$npm_execpath run build && nanoflare deploy",
-    "check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit"
+    "check": "nanoflare types --check && tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit"
   },
   "dependencies": {
     "@hono/standard-validator": "^0.2.3",
@@ -20,9 +21,7 @@
     "valibot": "^1.4.2"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260801.1",
     "@nanoflare/cli": "^0.1.0",
-    "@nanoflare/workers-types": "file:../../packages/workers-types",
     "@tailwindcss/vite": "^4.3.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

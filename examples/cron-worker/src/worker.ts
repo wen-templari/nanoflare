@@ -1,5 +1,3 @@
-interface Env {}
-
 interface ScheduledController {
   cron: string;
   scheduledTime: number;

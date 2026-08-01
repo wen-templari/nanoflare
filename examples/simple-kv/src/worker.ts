@@ -1,9 +1,3 @@
-import type { KVNamespace } from "@nanoflare/workers-types";
-
-interface Env {
-  COUNTER_KV: KVNamespace;
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);

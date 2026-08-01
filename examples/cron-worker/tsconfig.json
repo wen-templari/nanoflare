@@ -6,10 +6,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "rootDir": "src",
-    "outDir": "dist",
-    "paths": {
-      "@nanoflare/workers-types": ["../../packages/workers-types"]
-    }
+    "outDir": "dist"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "worker-configuration.d.ts"]
 }

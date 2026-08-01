@@ -1,5 +1,5 @@
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, _env: Env): Promise<Response> {
     const url = new URL(request.url);
     const authHeaders = {
       jwt: request.headers.get("X-Nanoflare-User-JWT"),

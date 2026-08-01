@@ -6,10 +6,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "paths": {
-      "@nanoflare/workers-types": ["../../packages/workers-types"]
-    }
+    "noEmit": true
   },
-  "include": ["worker/**/*.ts"]
+  "include": ["worker/**/*.ts", "worker-configuration.d.ts"]
 }
