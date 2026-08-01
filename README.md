@@ -188,18 +188,17 @@ Use them alongside standard Worker runtime types to type `env.KV`,
 Initialize, register, and deploy a worker:
 
 ```sh
-./bin/nanoflare init --name "Hello worker" --hostname hello.example.com ./hello-worker
+./bin/nanoflare init --name "Hello worker" ./hello-worker
 cd ./hello-worker
 ../bin/nanoflare create
 ../bin/nanoflare deploy
 ```
 
 `nanoflare init` writes a starter `worker.js` and a `nanoflare.json` project file.
-Pass `--hostname` for an explicit DNS hostname, or omit it to let `nanoflared`
-generate one from the worker name and configured base hostname. `nanoflare
-create` registers the worker and saves its generated worker ID and final hostname
-locally. `nanoflare deploy` uploads each file listed in `nanoflare.json`. Use
-`--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
+`nanoflare create` registers the worker by its configured name; Nanoflare assigns
+its hostname from the configured base hostname. `nanoflare deploy` resolves that
+name in the selected organization and uploads each file listed in `nanoflare.json`.
+Use `--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
 `http://127.0.0.1:8080`. CLI authentication is stored at
 the OS user-config directory by default (`~/Library/Application Support/nanoflare/auth.json`
 on macOS and `~/.config/nanoflare/auth.json` on Linux); set

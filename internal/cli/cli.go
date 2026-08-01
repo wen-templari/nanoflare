@@ -52,10 +52,7 @@ type Runner struct {
 
 type Project struct {
 	Name                 string                                 `json:"name"`
-	Hostname             string                                 `json:"hostname,omitempty"`
-	AppID                string                                 `json:"app_id,omitempty"`
-	APIURL               string                                 `json:"api_url"`
-	Entrypoint           string                                 `json:"entrypoint"`
+	Main                 string                                 `json:"main"`
 	Format               string                                 `json:"format,omitempty"`
 	CompatibilityDate    string                                 `json:"compatibility_date"`
 	CompatibilityFlags   []string                               `json:"compatibility_flags,omitempty"`
@@ -70,6 +67,7 @@ type Project struct {
 }
 
 type projectAlias struct {
+	Entrypoint                string                             `json:"entrypoint,omitempty"`
 	ObjectStorageBuckets      []legacyObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	ObjectStorageBucketLegacy []legacyObjectStorageBucketBinding `json:"object_storage_bucket,omitempty"`
 }
@@ -152,8 +150,6 @@ func (r *Runner) init(args []string) error {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	name := flags.String("name", "", "worker name")
-	hostname := flags.String("hostname", "", "worker DNS hostname")
-	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -184,12 +180,9 @@ func (r *Runner) init(args []string) error {
 	if projectName == "" {
 		projectName = filepath.Base(absDir)
 	}
-	projectHostname := strings.TrimSpace(*hostname)
 	project := Project{
 		Name:              projectName,
-		Hostname:          projectHostname,
-		APIURL:            strings.TrimRight(*apiURL, "/"),
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		Format:            "modules",
 		CompatibilityDate: r.Now().UTC().Format("2006-01-02"),
 		Files:             []string{"worker.js"},
@@ -216,25 +209,21 @@ func (r *Runner) create(args []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("usage: nanoflare create [worker] [flags]")
 	}
-	path, project, err := loadProject()
+	_, project, err := loadProject()
 	if err != nil {
 		return err
 	}
-	if project.AppID != "" {
-		return fmt.Errorf("worker is already registered as %s", project.AppID)
-	}
-	baseURL := projectAPIURL(project, *apiURL)
-	var app nanoflare.App
-	if err := r.request(http.MethodPost, baseURL+"/v1/workers", nanoflare.CreateAppInput{
-		Name:     project.Name,
-		Hostname: project.Hostname,
-		Auth:     nanoflare.AuthConfig{ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...)},
-	}, &app); err != nil {
+	baseURL := projectAPIURL(*apiURL)
+	if _, err := r.projectApp(baseURL, project.Name); err == nil {
+		return fmt.Errorf("worker %q already exists", project.Name)
+	} else if !errors.Is(err, errProjectAppNotFound) {
 		return err
 	}
-	project.AppID = app.ID
-	project.APIURL = baseURL
-	if err := writeProject(path, project, os.O_TRUNC); err != nil {
+	var app nanoflare.App
+	if err := r.request(http.MethodPost, baseURL+"/v1/workers", nanoflare.CreateAppInput{
+		Name: project.Name,
+		Auth: nanoflare.AuthConfig{ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...)},
+	}, &app); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.Stdout, "Created worker %s (%s)\n", app.ID, app.Hostname)
@@ -272,31 +261,25 @@ func (r *Runner) delete(args []string) error {
 		return errors.New("usage: nanoflare delete [worker] [worker-id] [flags]")
 	}
 	appID := ""
-	var projectPath string
 	var project Project
 	if flags.NArg() == 1 {
 		appID = strings.TrimSpace(flags.Arg(0))
 	} else {
 		var err error
-		projectPath, project, err = loadProject()
+		_, project, err = loadProject()
 		if err != nil {
 			return err
 		}
-		if project.AppID == "" {
-			return errors.New("worker is not registered; run `nanoflare create` first")
-		}
-		appID = project.AppID
-	}
-	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodDelete, baseURL+"/v1/workers/"+appID, nil, nil); err != nil {
-		return err
-	}
-	if projectPath != "" && project.AppID == appID {
-		project.AppID = ""
-		project.APIURL = baseURL
-		if err := writeProject(projectPath, project, os.O_TRUNC); err != nil {
+		baseURL := projectAPIURL(*apiURL)
+		app, err := r.projectApp(baseURL, project.Name)
+		if err != nil {
 			return err
 		}
+		appID = app.ID
+	}
+	baseURL := projectAPIURL(*apiURL)
+	if err := r.request(http.MethodDelete, baseURL+"/v1/workers/"+appID, nil, nil); err != nil {
+		return err
 	}
 	fmt.Fprintf(r.Stdout, "Deleted worker %s\n", appID)
 	return nil
@@ -317,15 +300,16 @@ func (r *Runner) deploy(args []string) error {
 	if err != nil {
 		return err
 	}
-	if project.AppID == "" {
-		return errors.New("worker is not registered; run `nanoflare create` first")
-	}
 	date := project.CompatibilityDate
 	if *compatibilityDate != "" {
 		date = *compatibilityDate
 	}
-	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodPatch, baseURL+"/v1/workers/"+project.AppID, nanoflare.UpdateAppInput{
+	baseURL := projectAPIURL(*apiURL)
+	app, err := r.projectApp(baseURL, project.Name)
+	if err != nil {
+		return err
+	}
+	if err := r.request(http.MethodPatch, baseURL+"/v1/workers/"+app.ID, nanoflare.UpdateAppInput{
 		Auth: &nanoflare.AuthConfig{
 			ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...),
 		},
@@ -342,12 +326,12 @@ func (r *Runner) deploy(args []string) error {
 	}
 	commitHash, commitMessage := deploymentGitMetadata(filepath.Dir(projectPath))
 	var deployment nanoflare.Deployment
-	if err := r.request(http.MethodPost, baseURL+"/v1/workers/"+project.AppID+"/deployments", nanoflare.DeployInput{
+	if err := r.request(http.MethodPost, baseURL+"/v1/workers/"+app.ID+"/deployments", nanoflare.DeployInput{
 		CommitHash:           commitHash,
 		CommitMessage:        commitMessage,
 		Files:                files,
 		Assets:               assets,
-		Entrypoint:           project.Entrypoint,
+		Entrypoint:           project.Main,
 		Format:               project.Format,
 		CompatibilityDate:    date,
 		CompatibilityFlags:   append([]string(nil), project.CompatibilityFlags...),
@@ -365,7 +349,7 @@ func (r *Runner) deploy(args []string) error {
 	}, &deployment); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.Stdout, "Deployed worker %s as deployment %s\n", project.AppID, deployment.ID)
+	fmt.Fprintf(r.Stdout, "Deployed worker %s as deployment %s\n", app.ID, deployment.ID)
 	return nil
 }
 
@@ -428,15 +412,16 @@ func (r *Runner) deploymentOutput(args []string) error {
 		if err != nil {
 			return err
 		}
-		if project.AppID == "" {
-			return errors.New("worker is not registered; run `nanoflare create` first")
+		app, err := r.projectApp(projectAPIURL(*apiURL), project.Name)
+		if err != nil {
+			return err
 		}
-		appID = project.AppID
+		appID = app.ID
 	}
 	if appID == "" {
 		return errors.New("app id is required")
 	}
-	baseURL := projectAPIURL(project, *apiURL)
+	baseURL := projectAPIURL(*apiURL)
 	query := url.Values{}
 	if *deploymentID != "" {
 		query.Set("deployment_id", *deploymentID)
@@ -988,7 +973,15 @@ func loadProject() (string, Project, error) {
 			})
 		}
 	}
-	if project.Name == "" || project.Entrypoint == "" || project.CompatibilityDate == "" || len(project.Files) == 0 {
+	if project.Main == "" && alias.Entrypoint != "" {
+		project.Main = alias.Entrypoint
+	}
+	if alias.Entrypoint != "" {
+		if err := writeProject(path, project, os.O_TRUNC); err != nil {
+			return "", Project{}, fmt.Errorf("migrate %s: %w", path, err)
+		}
+	}
+	if project.Name == "" || project.Main == "" || project.CompatibilityDate == "" || len(project.Files) == 0 {
 		return "", Project{}, fmt.Errorf("%s is missing required worker configuration", path)
 	}
 	return path, project, nil
@@ -1219,15 +1212,35 @@ func openBrowser(target string) error {
 	return exec.Command(command, args...).Start()
 }
 
-func projectAPIURL(project Project, override string) string {
+var errProjectAppNotFound = errors.New("worker not found")
+
+func (r *Runner) projectApp(baseURL, name string) (nanoflare.App, error) {
+	var apps []nanoflare.App
+	if err := r.request(http.MethodGet, baseURL+"/v1/workers", nil, &apps); err != nil {
+		return nanoflare.App{}, err
+	}
+	var match *nanoflare.App
+	for i := range apps {
+		if apps[i].Name != name {
+			continue
+		}
+		if match != nil {
+			return nanoflare.App{}, fmt.Errorf("multiple workers named %q; use a unique name", name)
+		}
+		match = &apps[i]
+	}
+	if match == nil {
+		return nanoflare.App{}, fmt.Errorf("%w: %q; run `nanoflare create` first", errProjectAppNotFound, name)
+	}
+	return *match, nil
+}
+
+func projectAPIURL(override string) string {
 	if override != "" {
 		return strings.TrimRight(override, "/")
 	}
 	if value := os.Getenv("NANOFLARED_URL"); value != "" {
 		return strings.TrimRight(value, "/")
-	}
-	if project.APIURL != "" {
-		return strings.TrimRight(project.APIURL, "/")
 	}
 	return defaultAPIURL
 }
@@ -1295,15 +1308,16 @@ func (r *Runner) secretPut(args []string) error {
 	if err != nil {
 		return err
 	}
-	if project.AppID == "" {
-		return errors.New("worker is not registered; run `nanoflare create` first")
-	}
 	secretValue := flags.Arg(1)
 	if secretValue == "" {
 		return errors.New("secret value is required")
 	}
-	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodPut, baseURL+"/v1/workers/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nanoflare.PutSecretInput{Value: secretValue}, nil); err != nil {
+	baseURL := projectAPIURL(*apiURL)
+	app, err := r.projectApp(baseURL, project.Name)
+	if err != nil {
+		return err
+	}
+	if err := r.request(http.MethodPut, baseURL+"/v1/workers/"+app.ID+"/secrets/"+url.PathEscape(flags.Arg(0)), nanoflare.PutSecretInput{Value: secretValue}, nil); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.Stdout, "Updated secret %s\n", flags.Arg(0))
@@ -1324,12 +1338,13 @@ func (r *Runner) secretList(args []string) error {
 	if err != nil {
 		return err
 	}
-	if project.AppID == "" {
-		return errors.New("worker is not registered; run `nanoflare create` first")
-	}
 	var secrets []nanoflare.Secret
-	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodGet, baseURL+"/v1/workers/"+project.AppID+"/secrets", nil, &secrets); err != nil {
+	baseURL := projectAPIURL(*apiURL)
+	app, err := r.projectApp(baseURL, project.Name)
+	if err != nil {
+		return err
+	}
+	if err := r.request(http.MethodGet, baseURL+"/v1/workers/"+app.ID+"/secrets", nil, &secrets); err != nil {
 		return err
 	}
 	for _, secret := range secrets {
@@ -1352,11 +1367,12 @@ func (r *Runner) secretDelete(args []string) error {
 	if err != nil {
 		return err
 	}
-	if project.AppID == "" {
-		return errors.New("worker is not registered; run `nanoflare create` first")
+	baseURL := projectAPIURL(*apiURL)
+	app, err := r.projectApp(baseURL, project.Name)
+	if err != nil {
+		return err
 	}
-	baseURL := projectAPIURL(project, *apiURL)
-	if err := r.request(http.MethodDelete, baseURL+"/v1/workers/"+project.AppID+"/secrets/"+url.PathEscape(flags.Arg(0)), nil, nil); err != nil {
+	if err := r.request(http.MethodDelete, baseURL+"/v1/workers/"+app.ID+"/secrets/"+url.PathEscape(flags.Arg(0)), nil, nil); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.Stdout, "Deleted secret %s\n", flags.Arg(0))

@@ -31,10 +31,10 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	}
 
 	project := readProject(t, filepath.Join("hello", projectFilename))
-	if project.Name != "Hello Worker" || project.Hostname != "" {
+	if project.Name != "Hello Worker" {
 		t.Fatalf("project = %#v", project)
 	}
-	if project.CompatibilityDate != "2026-05-31" || project.Entrypoint != "worker.js" || project.Format != "modules" {
+	if project.CompatibilityDate != "2026-05-31" || project.Main != "worker.js" || project.Format != "modules" {
 		t.Fatalf("project = %#v", project)
 	}
 	content, err := os.ReadFile(filepath.Join("hello", "worker.js"))
@@ -46,21 +46,19 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	}
 }
 
-func TestInitPreservesExplicitHostname(t *testing.T) {
+func TestInitDoesNotPersistHostname(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	runner := NewRunner(io.Discard, io.Discard)
 	runner.Now = func() time.Time {
 		return time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	}
 
-	if err := runner.Run([]string{"init", "--name", "Hello Worker", "--hostname", "hello.example.com", "hello"}); err != nil {
+	if err := runner.Run([]string{"init", "--name", "Hello Worker", "hello"}); err != nil {
 		t.Fatal(err)
 	}
 
 	project := readProject(t, filepath.Join("hello", projectFilename))
-	if project.Hostname != "hello.example.com" {
-		t.Fatalf("hostname = %q", project.Hostname)
-	}
+	_ = project
 }
 
 func TestCreateAndDeployWorker(t *testing.T) {
@@ -68,10 +66,20 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	var created nanoflare.CreateAppInput
 	var updated nanoflare.UpdateAppInput
 	var deployed nanoflare.DeployInput
+	createdOnce := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/workers":
+			if r.Method == http.MethodGet {
+				if createdOnce {
+					writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
+				} else {
+					writeJSON(t, w, http.StatusOK, []nanoflare.App{})
+				}
+				return
+			}
 			decodeRequest(t, r, &created)
+			createdOnce = true
 			writeJSON(t, w, http.StatusCreated, nanoflare.App{ID: "app-123", Hostname: created.Hostname})
 		case "/v1/workers/app-123":
 			if r.Method != http.MethodPatch {
@@ -88,12 +96,11 @@ func TestCreateAndDeployWorker(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 
 	writeProjectFile(t, Project{
 		Name:               "Hello",
-		Hostname:           "hello.example.com",
-		APIURL:             server.URL,
-		Entrypoint:         "worker.js",
+		Main:               "worker.js",
 		CompatibilityDate:  "2025-12-10",
 		CompatibilityFlags: []string{"nodejs_compat"},
 		Triggers:           nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}},
@@ -135,13 +142,8 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 
 	project := readProject(t, projectFilename)
-	if project.AppID != "app-123" {
-		t.Fatalf("app id = %q", project.AppID)
-	}
-	if project.Hostname != "hello.example.com" {
-		t.Fatalf("hostname = %q", project.Hostname)
-	}
-	if created.Name != "Hello" || created.Hostname != "hello.example.com" {
+	_ = project
+	if created.Name != "Hello" || created.Hostname != "" {
 		t.Fatalf("create payload = %#v", created)
 	}
 	if len(created.Auth.ProtectedRoutes) != 1 || created.Auth.ProtectedRoutes[0] != "/admin/*" {
@@ -180,6 +182,8 @@ func TestSecretListAndDelete(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers/app-123/secrets":
 			writeJSON(t, w, http.StatusOK, []nanoflare.Secret{{Name: "DB_URL", UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/workers/app-123/secrets/DB_URL":
@@ -189,13 +193,11 @@ func TestSecretListAndDelete(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 
 	writeProjectFile(t, Project{
 		Name:              "Hello",
-		Hostname:          "hello.example.com",
-		AppID:             "app-123",
-		APIURL:            server.URL,
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
@@ -222,6 +224,8 @@ func TestSecretPutUsesValueArgument(t *testing.T) {
 	var payload nanoflare.PutSecretInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/workers/app-123/secrets/DB_URL":
 			decodeRequest(t, r, &payload)
 			w.WriteHeader(http.StatusNoContent)
@@ -230,13 +234,11 @@ func TestSecretPutUsesValueArgument(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 
 	writeProjectFile(t, Project{
 		Name:              "Hello",
-		Hostname:          "hello.example.com",
-		AppID:             "app-123",
-		APIURL:            server.URL,
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
@@ -258,6 +260,10 @@ func TestCreateDoesNotPersistGeneratedHostname(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	var created nanoflare.CreateAppInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/workers" {
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/workers" {
 			http.NotFound(w, r)
 			return
@@ -266,11 +272,11 @@ func TestCreateDoesNotPersistGeneratedHostname(t *testing.T) {
 		writeJSON(t, w, http.StatusCreated, nanoflare.App{ID: "app-123", Name: created.Name, Hostname: "hello-a1b2c3d4.example.com"})
 	}))
 	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 
 	writeProjectFile(t, Project{
 		Name:              "Hello",
-		APIURL:            server.URL,
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
@@ -282,9 +288,7 @@ func TestCreateDoesNotPersistGeneratedHostname(t *testing.T) {
 	if created.Name != "Hello" || created.Hostname != "" {
 		t.Fatalf("create payload = %#v", created)
 	}
-	if project.AppID != "app-123" || project.Hostname != "" {
-		t.Fatalf("project = %#v", project)
-	}
+	_ = project
 	content, err := os.ReadFile(projectFilename)
 	if err != nil {
 		t.Fatal(err)
@@ -298,6 +302,8 @@ func TestDeploymentOutputUsesProjectWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers/app-123/output":
 			writeJSON(t, w, http.StatusOK, []nanoflare.WorkerOutputLine{
 				{Timestamp: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC), Level: "info", Message: "runtime ready"},
@@ -308,13 +314,11 @@ func TestDeploymentOutputUsesProjectWorker(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 
 	writeProjectFile(t, Project{
 		Name:              "Hello",
-		Hostname:          "hello.example.com",
-		AppID:             "app-123",
-		APIURL:            server.URL,
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
@@ -337,9 +341,9 @@ func TestProjectAssetsRunWorkerFirstJSONShapes(t *testing.T) {
 		always     bool
 		routeCount int
 	}{
-		{name: "true", payload: `{"name":"Hello","hostname":"hello.example.com","api_url":"http://127.0.0.1:8080","entrypoint":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{"run_worker_first":true}}`, always: true},
-		{name: "omitted", payload: `{"name":"Hello","hostname":"hello.example.com","api_url":"http://127.0.0.1:8080","entrypoint":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{}}`},
-		{name: "routes", payload: `{"name":"Hello","hostname":"hello.example.com","api_url":"http://127.0.0.1:8080","entrypoint":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{"run_worker_first":["/api/*","!/api/docs/*"]}}`, routeCount: 2},
+		{name: "true", payload: `{"name":"Hello","main":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{"run_worker_first":true}}`, always: true},
+		{name: "omitted", payload: `{"name":"Hello","main":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{}}`},
+		{name: "routes", payload: `{"name":"Hello","main":"worker.js","compatibility_date":"2025-12-10","files":["worker.js"],"assets":{"run_worker_first":["/api/*","!/api/docs/*"]}}`, routeCount: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var project Project
@@ -958,9 +962,13 @@ func TestListWorkers(t *testing.T) {
 	}
 }
 
-func TestDeleteRegisteredWorkerClearsLocalAppID(t *testing.T) {
+func TestDeleteProjectWorkerResolvesName(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/workers" {
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
+			return
+		}
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/workers/app-123" {
 			http.NotFound(w, r)
 			return
@@ -968,13 +976,11 @@ func TestDeleteRegisteredWorkerClearsLocalAppID(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 
 	writeProjectFile(t, Project{
 		Name:              "Hello",
-		Hostname:          "hello.example.com",
-		AppID:             "app-123",
-		APIURL:            server.URL,
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
@@ -983,10 +989,6 @@ func TestDeleteRegisteredWorkerClearsLocalAppID(t *testing.T) {
 	runner := NewRunner(&stdout, io.Discard)
 	if err := runner.Run([]string{"delete"}); err != nil {
 		t.Fatal(err)
-	}
-	project := readProject(t, projectFilename)
-	if project.AppID != "" {
-		t.Fatalf("app id = %q, want cleared", project.AppID)
 	}
 	if got := stdout.String(); got != "Deleted worker app-123\n" {
 		t.Fatalf("stdout = %q", got)
@@ -1010,13 +1012,20 @@ func TestDeleteWorkerByID(t *testing.T) {
 	}
 }
 
-func TestDeployRequiresRegisteredWorker(t *testing.T) {
+func TestDeployRequiresExistingWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/workers" {
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 	writeProjectFile(t, Project{
 		Name:              "Hello",
-		Hostname:          "hello.example.com",
-		APIURL:            defaultAPIURL,
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
@@ -1030,20 +1039,19 @@ func TestDeployRequiresRegisteredWorker(t *testing.T) {
 func TestCreateReportsNanoflareError(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(t, w, http.StatusConflict, map[string]string{"error": "hostname already exists"})
+		writeJSON(t, w, http.StatusConflict, map[string]string{"error": "worker already exists"})
 	}))
 	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
 	writeProjectFile(t, Project{
 		Name:              "Hello",
-		Hostname:          "hello.example.com",
-		APIURL:            server.URL,
-		Entrypoint:        "worker.js",
+		Main:              "worker.js",
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
 
 	err := NewRunner(io.Discard, io.Discard).Run([]string{"create"})
-	if err == nil || !strings.Contains(err.Error(), "hostname already exists") {
+	if err == nil || !strings.Contains(err.Error(), "worker already exists") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -1147,6 +1155,16 @@ func TestLoadProjectAcceptsLegacyObjectStorageBucketShape(t *testing.T) {
 	}
 	if project.ObjectStorageBuckets[0].Binding != "OBJECTS" || project.ObjectStorageBuckets[0].BucketID != "bucket-123" {
 		t.Fatalf("legacy object storage bucket = %#v", project.ObjectStorageBuckets[0])
+	}
+	if project.Main != "worker.js" {
+		t.Fatalf("main = %q", project.Main)
+	}
+	content, err := os.ReadFile(projectFilename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(content, []byte(`"entrypoint"`)) || !bytes.Contains(content, []byte(`"main"`)) {
+		t.Fatalf("migration output = %s", content)
 	}
 }
 
