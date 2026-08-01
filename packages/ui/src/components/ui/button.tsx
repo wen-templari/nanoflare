@@ -18,7 +18,6 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 export function Button({
   variant = "default",
   size = "default",
-  color,
   children,
   className,
   leftSection,

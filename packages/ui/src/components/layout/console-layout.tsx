@@ -65,9 +65,7 @@ export function ConsoleLayout() {
     namespaceDialogOpen,
     databaseDialogOpen,
     objectStorageBucketDialogOpen,
-    openWorkerDialog,
     closeWorkerDialog,
-    openNamespaceDialog,
     closeNamespaceDialog,
     closeDatabaseDialog,
     closeObjectStorageBucketDialog,
@@ -108,7 +106,7 @@ export function ConsoleLayout() {
       setOrgName("");
       setOrgModalOpen(false);
       notify("Organization created");
-      navigate("/");
+      void navigate("/");
     } catch (err) {
       setOrgError(err instanceof Error ? err.message : "Could not create organization");
     } finally {

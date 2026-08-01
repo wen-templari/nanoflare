@@ -165,7 +165,7 @@ export function OAuthClientDetailPage() {
       );
       if (error) throw new Error(errorMessage(error, "Could not delete OAuth client"));
       notify("OAuth client deleted");
-      navigate("/settings");
+      void navigate("/settings");
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : "Could not delete OAuth client");
     } finally {

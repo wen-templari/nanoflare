@@ -1,5 +1,5 @@
 import { Banner, Button, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
-import { Boxes, LogIn } from "lucide-react";
+import { Boxes } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 
@@ -77,7 +77,7 @@ export function LoginPage() {
       setError("");
       try {
         await auth.loginWithOIDCCode(oidcCode);
-        if (!cancelled) navigate(next, { replace: true });
+        if (!cancelled) void navigate(next, { replace: true });
       } catch (err) {
         if (!cancelled) {
           handledOIDCCode.current = "";
@@ -123,7 +123,7 @@ export function LoginPage() {
     try {
       if (signupMode) await auth.signup(email, password);
       else await auth.login(email, password);
-      navigate(next, { replace: true });
+      void navigate(next, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

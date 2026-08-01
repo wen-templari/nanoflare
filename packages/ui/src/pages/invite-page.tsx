@@ -55,7 +55,7 @@ export function InvitePage() {
       });
       if (error) throw new Error(errorMessage(error, "Could not accept invite"));
       await auth.refresh();
-      navigate("/", { replace: true });
+      void navigate("/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not accept invite");
     } finally {

@@ -6,10 +6,6 @@ import { Navigate, useLocation } from "react-router-dom";
 import { apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
 
-type AuthorizeResponse = {
-  redirect_to: string;
-};
-
 type AuthorizeInfo = {
   client_id: string;
   client_name: string;

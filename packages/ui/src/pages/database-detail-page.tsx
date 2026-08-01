@@ -13,8 +13,6 @@ import {
 } from "@cloudflare/kumo";
 import {
   Activity,
-  BookOpen,
-  CalendarClock,
   Database,
   Gauge,
   HardDrive,
@@ -23,7 +21,6 @@ import {
   Table2,
   Trash2,
   Waypoints,
-  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -397,9 +394,7 @@ function DatabaseDetailContent({
                   }
                 >
                   {queryRuns.length ? (
-                    queryRuns.map((run, index) => (
-                      <QueryRunCard key={run.id} index={index + 1} run={run} />
-                    ))
+                    queryRuns.map((run) => <QueryRunCard key={run.id} run={run} />)
                   ) : (
                     <div className="max-w-sm text-center">
                       <Database className="mx-auto mb-2 size-6" />
@@ -498,7 +493,7 @@ function DatabaseDetailContent({
   );
 }
 
-function QueryRunCard({ index, run }: { index: number; run: QueryRun }) {
+function QueryRunCard({ run }: { run: QueryRun }) {
   const result = run.response?.results?.[0];
   const rows = result?.results ?? [];
   const columns = columnsForRows(rows);
@@ -830,14 +825,10 @@ function mergeTimeseries(series: DatabaseSeries[]) {
     }
   }
   return [...rows.values()].sort(
-    (a, b) => new Date(String(a.timestamp)).getTime() - new Date(String(b.timestamp)).getTime(),
+    (a, b) =>
+      new Date(typeof a.timestamp === "string" ? a.timestamp : "").getTime() -
+      new Date(typeof b.timestamp === "string" ? b.timestamp : "").getTime(),
   );
-}
-
-function formatSeriesValue(series: DatabaseSeries[], key: string, value: number) {
-  const entry = series.find((item) => item.key === key);
-  if (entry?.formatter) return entry.formatter(value);
-  return compactNumber(value);
 }
 
 function formatSeriesTick(timestamp: string) {
@@ -848,18 +839,6 @@ function formatSeriesTick(timestamp: string) {
 
 function formatSeriesTickAt(timestamp: number) {
   return formatSeriesTick(new Date(timestamp).toISOString());
-}
-
-function formatSeriesLabel(timestamp: unknown) {
-  const raw = String(timestamp ?? "");
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function latencyHistogramData(metrics: DatabaseMetrics) {
@@ -957,6 +936,6 @@ function formatCell(value: unknown) {
   try {
     return JSON.stringify(value);
   } catch {
-    return String(value);
+    return "[Unserializable value]";
   }
 }

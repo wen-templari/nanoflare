@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       try {
-        const session = await refresh();
+        await refresh();
         if (cancelled) return;
       } catch {
         if (!cancelled) {

@@ -63,7 +63,7 @@ function KVNamespaceDetailContent({
   const [deleteError, setDeleteError] = useState("");
   const [keys, setKeys] = useState<WorkerKVKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
-  const [keysStatus, setKeysStatus] = useState("");
+  const [_keysStatus, setKeysStatus] = useState("");
   const [metrics, setMetrics] = useState<KVNamespaceMetrics>({
     available: false,
     reads: 0,
@@ -636,7 +636,9 @@ function KVNamespaceDetailContent({
               <p className="font-mono text-[10px]   text-[#727a74]">
                 {activeWorker.name}
               </p>
-              {keysStatus && <p className="font-mono text-[10px]   text-[#8a8f89]">{keysStatus}</p>}
+              {_keysStatus && (
+                <p className="font-mono text-[10px]   text-[#8a8f89]">{_keysStatus}</p>
+              )}
             </div> */}
             </div>
           ) : (

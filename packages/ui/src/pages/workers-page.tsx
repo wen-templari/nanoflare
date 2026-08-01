@@ -1,5 +1,5 @@
 import { Link, Table, Text } from "@cloudflare/kumo";
-import { ChevronRight, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import type { Worker } from "../app/types";

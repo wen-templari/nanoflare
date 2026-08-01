@@ -29,10 +29,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import type {
-  KVNamespaceMetrics,
   OAuthClient,
   OAuthClientCreated,
-  ObjectStorageBucketMetrics,
   OrganizationInvite,
   OrganizationInviteCreated,
   OrganizationMember,
@@ -141,14 +139,6 @@ function Group({ children, ...props }: { children: ReactNode; [key: string]: unk
 function Stack({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
   return (
     <div {...(props as any)} className="flex flex-col gap-4">
-      {children}
-    </div>
-  );
-}
-
-function Center({ children, ...props }: { children: ReactNode; [key: string]: unknown }) {
-  return (
-    <div {...(props as any)} className="flex items-center justify-center">
       {children}
     </div>
   );

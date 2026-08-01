@@ -14,14 +14,12 @@ import {
 } from "@cloudflare/kumo";
 import {
   Activity,
-  AlertTriangle,
   Archive,
   ArrowDown,
   Copy,
   FileCode2,
   FileJson,
   Folder,
-  Gauge,
   GitBranch,
   Globe2,
   MoreHorizontal,
@@ -29,7 +27,6 @@ import {
   Save,
   SlidersHorizontal,
   Terminal,
-  TimerReset,
   X,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
@@ -205,7 +202,6 @@ function WorkerDetailContent({
     };
   }, [activeOrgID, apiConnected, worker]);
 
-  const deployment = detail?.deployment;
   const recentDeployments = [...deployments]
     .sort(
       (left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
@@ -358,7 +354,6 @@ function WorkerOverview({
   traffic: WorkerTraffic;
   worker: WorkerDetailData["app"];
 }) {
-  const bindings = deployment?.bindings ?? [];
   return (
     <div className="space-y-6">
       <LayerCard className="px-5 py-4">
