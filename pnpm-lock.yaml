@@ -27,6 +27,8 @@ importers:
         specifier: 'catalog:'
         version: 0.2.6(@voidzero-dev/vite-plus-core@0.2.6(jiti@2.7.0)(typescript@7.0.2))(jiti@2.7.0)(typescript@7.0.2)
 
+  packages/cli: {}
+
   packages/external-app:
     dependencies:
       '@nanoflare/schema':
