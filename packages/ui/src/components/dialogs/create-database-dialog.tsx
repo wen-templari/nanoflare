@@ -1,5 +1,5 @@
 import { type Dispatch, type FormEvent, type SetStateAction, useState } from "react";
-import { apiFetch, errorText } from "../../app/api";
+import { activeOrgID, apiClient, errorMessage } from "../../app/api";
 import type { Database } from "../../app/types";
 import { sortDatabases } from "../../app/utils";
 import { Field } from "../shared/primitives";
@@ -34,13 +34,12 @@ export function CreateDatabaseDialog({
       created_at: new Date().toISOString(),
     };
     if (apiConnected) {
-      const response = await apiFetch("/v1/db", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+      const { data, error } = await apiClient.POST("/v1/db", {
+        params: { header: { "X-Nanoflare-Org-ID": activeOrgID() } },
+        body: { name: trimmed },
       });
-      if (!response.ok) return notify(await errorText(response, "Database creation failed"));
-      database = (await response.json()) as Database;
+      if (error || !data) return notify(errorMessage(error, "Database creation failed"));
+      database = data;
     }
     setDatabases(sortDatabases([...databases, database]));
     setName("");

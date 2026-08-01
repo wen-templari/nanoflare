@@ -2,7 +2,7 @@ import { Banner, Button, Code, LayerCard, Loader, Select, Text } from "@cloudfla
 import { Check, Command, Copy, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { apiFetch, errorText } from "../app/api";
+import { apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
 
 export function CLILoginPage() {
@@ -26,15 +26,13 @@ export function CLILoginPage() {
   async function createCode() {
     if (creatingCode || code || error) return;
     setCreatingCode(true);
-    const response = await apiFetch("/v1/auth/cli/code", {
-      method: "POST",
+    const { data, error: requestError } = await apiClient.POST("/v1/auth/cli/code", {
       headers: selectedOrgID ? { "X-Nanoflare-Org-ID": selectedOrgID } : undefined,
     });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not create CLI login code"));
+    if (requestError || !data) {
+      setError(errorMessage(requestError, "Could not create CLI login code"));
     } else {
-      const payload = (await response.json()) as { code: string };
-      setCode(payload.code || "");
+      setCode(data.code || "");
     }
     setCreatingCode(false);
   }

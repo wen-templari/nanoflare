@@ -1,13 +1,11 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useAuth } from "./auth-context";
-import { fetchJSON } from "./api";
+import { apiClient } from "./api";
 import type {
   Database,
   KVNamespace,
   ObjectStorageBucket,
   Worker,
-  WorkerDetailData,
-  WorkerTraffic,
   WorkspaceContextValue,
 } from "./types";
 import { sortDatabases, sortNamespaces, sortObjectStorageBuckets } from "./utils";
@@ -39,34 +37,37 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         const [apps, kvNamespaces, dbs, buckets] = await Promise.all([
-          fetchJSON<Worker[] | null>("/v1/workers"),
-          fetchJSON<KVNamespace[] | null>("/v1/kv/namespaces"),
-          fetchJSON<Database[] | null>("/v1/db"),
-          fetchJSON<ObjectStorageBucket[] | null>("/v1/object-storage-buckets"),
+          apiClient.GET("/v1/workers", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
+          apiClient.GET("/v1/kv/namespaces", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
+          apiClient.GET("/v1/db", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
+          apiClient.GET("/v1/object-storage-buckets", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
         ]);
+        if (apps.error || kvNamespaces.error || dbs.error || buckets.error) {
+          throw new Error("Could not load workspace");
+        }
         if (cancelled) return;
         setApiConnected(true);
         const nextWorkers = await Promise.all(
-          (apps ?? []).map(async (app) => {
+          (apps.data ?? []).map(async (app) => {
             const [detail, traffic] = await Promise.all([
-              fetchJSON<WorkerDetailData>(`/v1/workers/${app.id}`).catch(() => undefined),
-              fetchJSON<WorkerTraffic>(`/v1/workers/${app.id}/traffic`).catch(() => undefined),
+              apiClient.GET("/v1/workers/{workerID}", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID }, path: { workerID: app.id } } }),
+              apiClient.GET("/v1/workers/{workerID}/traffic", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID }, path: { workerID: app.id } } }),
             ]);
 
             return {
               ...app,
-              status: detail?.deployment ? ("live" as const) : ("draft" as const),
-              requests: traffic?.available ? formatCount(traffic.invocations) : "unavailable",
-              deployment: detail?.deployment?.id ?? "awaiting deploy",
-              bindings: detail?.deployment?.bindings ?? [],
+              status: detail.data?.deployment ? ("live" as const) : ("draft" as const),
+              requests: traffic.data?.available ? formatCount(traffic.data.invocations) : "unavailable",
+              deployment: detail.data?.deployment?.id ?? "awaiting deploy",
+              bindings: detail.data?.deployment?.bindings ?? [],
             };
           }),
         );
         if (cancelled) return;
-        setWorkers(nextWorkers);
-        setNamespaces(sortNamespaces(kvNamespaces ?? []));
-        setDatabases(sortDatabases(dbs ?? []));
-        setObjectStorageBuckets(sortObjectStorageBuckets(buckets ?? []));
+        setWorkers(nextWorkers as Worker[]);
+        setNamespaces(sortNamespaces(kvNamespaces.data ?? []));
+        setDatabases(sortDatabases(dbs.data ?? []));
+        setObjectStorageBuckets(sortObjectStorageBuckets(buckets.data ?? []));
         setWorkspaceReady(true);
       } catch {
         if (cancelled) return;

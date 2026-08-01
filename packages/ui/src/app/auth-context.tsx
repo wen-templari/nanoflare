@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { apiFetch, authToken, clearAuth, saveActiveOrg, saveAuth } from "./api";
+import { apiClient, authToken, clearAuth, saveActiveOrg, saveAuth } from "./api";
 import type { AuthSession, Organization } from "./types";
 
 type AuthContextValue = {
@@ -58,9 +58,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function refresh() {
-    const response = await apiFetch("/v1/auth/me");
-    if (!response.ok) throw new Error("auth expired");
-    const session = (await response.json()) as AuthSession;
+    const { data, error } = await apiClient.GET("/v1/auth/me");
+    if (error || !data) throw new Error("auth expired");
+    // The server currently documents this legacy endpoint as an object map.
+    const session: AuthSession = {
+      ...data,
+      organizations: (data.organizations ?? []).map((organization) => ({
+        ...organization,
+        scopes: organization.scopes ?? undefined,
+      })),
+    };
     const currentOrgID = window.localStorage.getItem("nanoflare.auth.active_org_id") || "";
     const savedOrgID =
       currentOrgID && session.organizations.some((org) => org.id === currentOrgID)
@@ -75,17 +82,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return session;
   }
 
-  async function authenticate(path: string, email: string, password: string) {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({ error: "Login failed" }));
-      throw new Error(body.error || "Login failed");
-    }
-    const session = (await response.json()) as AuthSession;
+  async function authenticate(path: "/v1/auth/login" | "/v1/auth/signup", email: string, password: string) {
+    const result =
+      path === "/v1/auth/login"
+        ? await apiClient.POST("/v1/auth/login", { body: { email, password } })
+        : await apiClient.POST("/v1/auth/signup", { body: { email, password } });
+    if (result.error || !result.data) throw new Error(result.error?.error || "Login failed");
+    const session = result.data as AuthSession;
     const orgID = session.active_org_id || session.organizations[0]?.id || "";
     saveAuth(session.token, orgID);
     setUserEmail(session.user.email);
@@ -98,16 +101,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function loginWithOIDCCode(code: string) {
-    const response = await fetch("/v1/auth/oidc/session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code }),
+    const { data, error } = await apiClient.POST("/v1/auth/oidc/session", {
+      body: { code },
     });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({ error: "OIDC login failed" }));
-      throw new Error(body.error || "OIDC login failed");
-    }
-    const session = (await response.json()) as AuthSession;
+    if (error || !data) throw new Error(error?.error || "OIDC login failed");
+    const session = data as AuthSession;
     const orgID = session.active_org_id || session.organizations[0]?.id || "";
     saveAuth(session.token, orgID);
     setUserEmail(session.user.email);
@@ -120,16 +118,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function createOrganization(name: string) {
-    const response = await apiFetch("/v1/orgs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({ error: "Could not create organization" }));
-      throw new Error(body.error || "Could not create organization");
-    }
-    const org = (await response.json()) as Organization;
+    const { data, error } = await apiClient.POST("/v1/orgs", { body: { name } });
+    if (error || !data) throw new Error(error?.error || "Could not create organization");
+    const org = data as Organization;
     const nextOrgs = [...organizations.filter((item) => item.id !== org.id), org].sort((a, b) =>
       a.name.localeCompare(b.name),
     );

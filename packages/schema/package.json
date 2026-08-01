@@ -1,0 +1,24 @@
+{
+  "name": "@nanoflare/schema",
+  "version": "1.0.0",
+  "description": "Generated TypeScript contract for the Nanoflare OpenAPI endpoint.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/openapi.ts"
+    }
+  },
+  "scripts": {
+    "generate": "go run ../../cmd/nanoflare-openapi ./openapi.json && openapi-typescript ./openapi.json -o ./src/openapi.ts",
+    "check": "tsc --noEmit",
+    "test": "pnpm run check"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.11.0",
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.8.3"
+  }
+}

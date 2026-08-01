@@ -1,5 +1,5 @@
 import { type Dispatch, type FormEvent, type SetStateAction, useState } from "react";
-import { apiFetch, errorText } from "../../app/api";
+import { activeOrgID, apiClient, errorMessage } from "../../app/api";
 import type { KVNamespace } from "../../app/types";
 import { sortNamespaces } from "../../app/utils";
 import { Dialog } from "../ui/dialog";
@@ -34,13 +34,12 @@ export function CreateKVNamespaceDialog({
       created_at: new Date().toISOString(),
     };
     if (apiConnected) {
-      const response = await apiFetch("/v1/kv/namespaces", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+      const { data, error } = await apiClient.POST("/v1/kv/namespaces", {
+        params: { header: { "X-Nanoflare-Org-ID": activeOrgID() } },
+        body: { name: trimmed },
       });
-      if (!response.ok) return notify(await errorText(response, "Namespace creation failed"));
-      namespace = (await response.json()) as KVNamespace;
+      if (error || !data) return notify(errorMessage(error, "Namespace creation failed"));
+      namespace = data;
     }
     setNamespaces(sortNamespaces([...namespaces, namespace]));
     setName("");

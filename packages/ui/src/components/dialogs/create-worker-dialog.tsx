@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { apiFetch } from "../../app/api";
+import { activeOrgID, apiClient } from "../../app/api";
 import type { Worker } from "../../app/types";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -45,15 +45,12 @@ export function CreateWorkerDialog({
     };
     if (apiConnected) {
       const trimmedHostname = hostname.trim();
-      const response = await apiFetch("/v1/workers", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          trimmedHostname ? { name, hostname: trimmedHostname, auth } : { name, auth },
-        ),
+      const { data, error } = await apiClient.POST("/v1/workers", {
+        params: { header: { "X-Nanoflare-Org-ID": activeOrgID() } },
+        body: { name, hostname: trimmedHostname, auth },
       });
-      if (!response.ok) return notify("Worker registration failed");
-      worker = { ...worker, ...((await response.json()) as Worker) };
+      if (error || !data) return notify("Worker registration failed");
+      worker = { ...worker, ...data, auth: { protected_routes: data.auth?.protected_routes ?? undefined } };
     }
     setWorkers([...workers, worker]);
     setName("");

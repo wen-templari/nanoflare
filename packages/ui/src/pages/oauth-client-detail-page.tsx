@@ -14,7 +14,7 @@ import {
 } from "@cloudflare/kumo";
 import { Check, Copy, PlugZap, Settings, SquarePen, Trash2, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+import { apiClient, errorMessage } from "../app/api";
 import type { OAuthClient, OAuthClientConnection } from "../app/types";
 import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
@@ -63,10 +63,15 @@ export function OAuthClientDetailPage() {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [nextClient, nextConnections] = await Promise.all([
-        fetchJSON<OAuthClient>(`/v1/oauth/clients/${clientId}`),
-        fetchJSON<OAuthClientConnection[] | null>(`/v1/oauth/clients/${clientId}/connections`),
+      const [clientResult, connectionsResult] = await Promise.all([
+        apiClient.GET("/v1/oauth/clients/{clientID}", { params: { path: { clientID: clientId } } }),
+        apiClient.GET("/v1/oauth/clients/{clientID}/connections", { params: { path: { clientID: clientId } } }),
       ]);
+      if (clientResult.error || !clientResult.data || connectionsResult.error) {
+        throw new Error(errorMessage(clientResult.error || connectionsResult.error, "Could not load OAuth client"));
+      }
+      const nextClient = clientResult.data as OAuthClient;
+      const nextConnections = connectionsResult.data as OAuthClientConnection[] | null;
       if (nextClient.disabled) {
         setClient(null);
         setConnections([]);
@@ -113,12 +118,11 @@ export function OAuthClientDetailPage() {
       scopes: form.scopes,
     };
     try {
-      const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const { error } = await apiClient.PATCH("/v1/oauth/clients/{clientID}", {
+        params: { path: { clientID: client.client_id } },
+        body: payload,
       });
-      if (!response.ok) throw new Error(await errorText(response, "Could not update OAuth client"));
+      if (error) throw new Error(errorMessage(error, "Could not update OAuth client"));
       setFormOpen(false);
       notify("OAuth client updated");
       await refresh();
@@ -134,8 +138,10 @@ export function OAuthClientDetailPage() {
     setDeleting(true);
     setDeleteError("");
     try {
-      const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error(await errorText(response, "Could not delete OAuth client"));
+      const { error } = await apiClient.DELETE("/v1/oauth/clients/{clientID}", {
+        params: { path: { clientID: client.client_id } },
+      });
+      if (error) throw new Error(errorMessage(error, "Could not delete OAuth client"));
       notify("OAuth client deleted");
       navigate("/settings");
     } catch (error) {

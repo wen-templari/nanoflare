@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import type { components } from "@nanoflare/schema";
 
 export type Section = "overview" | "workers" | "kv" | "databases" | "object-storage";
 export type WorkerAuth = { protected_routes?: string[] };
@@ -66,7 +67,7 @@ export type WorkerDeployment = {
   traffic_percent: number;
 };
 
-export type WorkerSecret = { name: string; created_at: string; updated_at: string };
+export type WorkerSecret = components["schemas"]["Secret"];
 export type WorkerDetailData = {
   app: Worker;
   deployment?: WorkerDeployment;
@@ -91,25 +92,12 @@ export type ConsoleDeployment = {
   created_at: string;
 };
 
-export type WorkerFile = { name: string; path: string; size: number; content: string };
-export type WorkerOutputLine = {
-  timestamp: string;
-  level: string;
-  message: string;
-  app_id?: string;
-  deployment_id?: string;
-};
-export type WorkerKVKey = { key: string; size: number };
-export type ObjectStorageBucket = { id: string; name: string; created_at: string };
-export type Database = { id: string; name: string; created_at: string };
-export type ObjectStorageObject = {
-  key: string;
-  size: number;
-  etag?: string;
-  httpEtag?: string;
-  uploaded: string;
-  httpMetadata?: { contentType?: string };
-};
+export type WorkerFile = components["schemas"]["WorkerFile"];
+export type WorkerOutputLine = components["schemas"]["WorkerOutputLine"];
+export type WorkerKVKey = components["schemas"]["WorkerKVKey"];
+export type ObjectStorageBucket = components["schemas"]["ObjectStorageBucket"];
+export type Database = components["schemas"]["Database"];
+export type ObjectStorageObject = components["schemas"]["ObjectInfo"];
 
 export type WorkerTraffic = {
   available: boolean;
@@ -165,7 +153,7 @@ export type DatabaseMetrics = {
   duration_bucket_1000: number;
   duration_bucket_inf: number;
 };
-export type MetricPoint = { timestamp: string; value: number };
+export type MetricPoint = components["schemas"]["MetricPoint"];
 export type DatabaseMetricsTimeseries = {
   available: boolean;
   queries: MetricPoint[];
@@ -180,7 +168,7 @@ export type DatabaseMetricsTimeseries = {
   p99_latency_ms: MetricPoint[];
 };
 
-export type KVNamespace = { id: string; name: string; created_at: string };
+export type KVNamespace = components["schemas"]["KVNamespace"];
 export type OAuthClient = {
   client_id: string;
   owner_org_id?: string;

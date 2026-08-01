@@ -1,5 +1,22 @@
+import createClient from "openapi-fetch";
+import type { paths } from "@nanoflare/schema";
+
 const tokenKey = "nanoflare.auth.token";
 const activeOrgKey = "nanoflare.auth.active_org_id";
+
+/** Generated OpenAPI client for new control-plane requests. */
+export const apiClient = createClient<paths>();
+
+apiClient.use({
+  onRequest({ request }) {
+    const headers = new Headers(request.headers);
+    const token = authToken();
+    const orgID = activeOrgID();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (orgID && !headers.has("X-Nanoflare-Org-ID")) headers.set("X-Nanoflare-Org-ID", orgID);
+    return new Request(request, { headers });
+  },
+});
 
 export function authToken() {
   return window.localStorage.getItem(tokenKey) || "";
@@ -46,4 +63,8 @@ export async function errorText(response: Response, fallback: string) {
   } catch {
     return fallback;
   }
+}
+
+export function errorMessage(error: { error?: string } | undefined, fallback: string) {
+  return error?.error || fallback;
 }

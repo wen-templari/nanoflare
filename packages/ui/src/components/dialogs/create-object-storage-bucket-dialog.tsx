@@ -1,5 +1,5 @@
 import { type Dispatch, type FormEvent, type SetStateAction, useState } from "react";
-import { apiFetch, errorText } from "../../app/api";
+import { activeOrgID, apiClient, errorMessage } from "../../app/api";
 import type { ObjectStorageBucket } from "../../app/types";
 import { sortObjectStorageBuckets } from "../../app/utils";
 import { Field } from "../shared/primitives";
@@ -34,13 +34,12 @@ export function CreateObjectStorageBucketDialog({
       created_at: new Date().toISOString(),
     };
     if (apiConnected) {
-      const response = await apiFetch("/v1/object-storage-buckets", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+      const { data, error } = await apiClient.POST("/v1/object-storage-buckets", {
+        params: { header: { "X-Nanoflare-Org-ID": activeOrgID() } },
+        body: { name: trimmed },
       });
-      if (!response.ok) return notify(await errorText(response, "Bucket creation failed"));
-      bucket = (await response.json()) as ObjectStorageBucket;
+      if (error || !data) return notify(errorMessage(error, "Bucket creation failed"));
+      bucket = data;
     }
     setBuckets(sortObjectStorageBuckets([...buckets, bucket]));
     setName("");

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import createClient from "openapi-fetch";
+
 const baseURL = (process.env.NANOFLARE_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
 const email = process.env.NANOFLARE_EMAIL || "external-admin@example.com";
 const password = process.env.NANOFLARE_PASSWORD || "secret";
@@ -7,6 +9,9 @@ const organizationName = process.env.NANOFLARE_ORG_NAME || "External App Test";
 const redirectURI =
   process.env.EXTERNAL_APP_REDIRECT_URI || "https://external.example.com/oauth/callback";
 const workerHostname = process.env.EXTERNAL_WORKER_HOSTNAME || `external-${Date.now()}.example.com`;
+/** @typedef {import("@nanoflare/schema").paths} NanoflarePaths */
+/** @type {ReturnType<typeof createClient<NanoflarePaths>>} */
+const api = createClient({ baseUrl: baseURL });
 
 const defaultScopes = ["workers:write", "kv:write"];
 const requestedScopes = (process.env.EXTERNAL_APP_SCOPES || defaultScopes.join(" "))
@@ -59,20 +64,24 @@ async function main() {
 }
 
 async function signIn() {
-  const login = await request("POST", "/v1/auth/login", {
+  const login = await api.POST("/v1/auth/login", {
     body: { email, password },
-    allowStatus: [200, 401],
   });
-  if (login.status === 200) {
-    return login.json;
+  if (login.response.status === 200 && login.data) {
+    return login.data;
+  }
+  if (login.response.status !== 401) {
+    throw requestError("POST /v1/auth/login", login.response, login.error);
   }
 
-  const signup = await request("POST", "/v1/setup/signup", {
+  const signup = await api.POST("/v1/setup/signup", {
     body: { email, password, organization_name: organizationName },
-    allowStatus: [201, 409],
   });
-  if (signup.status === 201) {
-    return signup.json;
+  if (signup.response.status === 201 && signup.data) {
+    return signup.data;
+  }
+  if (signup.response.status !== 409) {
+    throw requestError("POST /v1/setup/signup", signup.response, signup.error);
   }
 
   throw new Error(
@@ -81,9 +90,7 @@ async function signIn() {
 }
 
 async function createOAuthClient(token, orgID) {
-  const response = await request("POST", "/v1/oauth/clients", {
-    token,
-    headers: { "X-Nanoflare-Org-ID": orgID },
+  const { data, error, response } = await api.POST("/v1/oauth/clients", {
     body: {
       name: "External Platform Smoke Test",
       redirect_uris: [redirectURI],
@@ -98,14 +105,15 @@ async function createOAuthClient(token, orgID) {
         "secrets:write",
       ],
     },
-    wantStatus: 201,
+    headers: { Authorization: `Bearer ${token}`, "X-Nanoflare-Org-ID": orgID },
   });
-  return response.json;
+  if (response.status !== 201 || !data) throw requestError("POST /v1/oauth/clients", response, error);
+  return data;
 }
 
 async function authorizeClient(token, orgID, clientID) {
-  const response = await request("POST", "/v1/oauth/authorize", {
-    token,
+  const { data, error, response } = await api.POST("/v1/oauth/authorize", {
+    headers: { Authorization: `Bearer ${token}` },
     body: {
       client_id: clientID,
       redirect_uri: redirectURI,
@@ -113,13 +121,13 @@ async function authorizeClient(token, orgID, clientID) {
       org_id: orgID,
       state: "external-app-smoke-test",
     },
-    wantStatus: 200,
   });
-  return response.json;
+  if (!response.ok || !data) throw requestError("POST /v1/oauth/authorize", response, error);
+  return data;
 }
 
 async function exchangeAuthorizationCode(client, code) {
-  const response = await request("POST", "/v1/oauth/token", {
+  const { data, error, response } = await api.POST("/v1/oauth/token", {
     body: {
       grant_type: "authorization_code",
       client_id: client.client_id,
@@ -127,84 +135,65 @@ async function exchangeAuthorizationCode(client, code) {
       code,
       redirect_uri: redirectURI,
     },
-    wantStatus: 200,
   });
-  return response.json;
+  if (!response.ok || !data) throw requestError("POST /v1/oauth/token", response, error);
+  return data;
 }
 
 async function createManagedWorker(accessToken) {
-  const response = await request("POST", "/v1/workers", {
-    token: accessToken,
+  const { data, error, response } = await api.POST("/v1/workers", {
+    headers: { Authorization: `Bearer ${accessToken}` },
     body: {
       name: "External Managed Worker",
       hostname: workerHostname,
       external_id: `external-worker-${Date.now()}`,
     },
-    wantStatus: 201,
   });
-  return response.json;
+  if (response.status !== 201 || !data) throw requestError("POST /v1/workers", response, error);
+  return data;
 }
 
 async function expectMissingReadScope(accessToken) {
-  await request("GET", "/v1/workers", {
-    token: accessToken,
-    wantStatus: requestedScopes.includes("workers:read") ? 200 : 403,
+  const { error, response } = await api.GET("/v1/workers", {
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
+  const expectedStatus = requestedScopes.includes("workers:read") ? 200 : 403;
+  if (response.status !== expectedStatus) throw requestError("GET /v1/workers", response, error);
 }
 
 async function refreshToken(client, refreshTokenValue) {
-  const response = await request("POST", "/v1/oauth/token", {
+  const { data, error, response } = await api.POST("/v1/oauth/token", {
     body: {
       grant_type: "refresh_token",
       client_id: client.client_id,
       client_secret: client.client_secret,
       refresh_token: refreshTokenValue,
     },
-    wantStatus: 200,
   });
-  return response.json;
+  if (!response.ok || !data) throw requestError("POST /v1/oauth/token", response, error);
+  return data;
 }
 
 async function revokeToken(token) {
-  await request("POST", "/v1/oauth/revoke", {
+  const { error, response } = await api.POST("/v1/oauth/revoke", {
     body: { token },
-    wantStatus: 204,
   });
+  if (response.status !== 204) throw requestError("POST /v1/oauth/revoke", response, error);
 }
 
 async function expectRevokedToken(accessToken) {
-  await request("POST", "/v1/workers", {
-    token: accessToken,
+  const { error, response } = await api.POST("/v1/workers", {
+    headers: { Authorization: `Bearer ${accessToken}` },
     body: {
       name: "Should Not Be Created",
       hostname: `revoked-${Date.now()}.example.com`,
     },
-    wantStatus: 401,
   });
+  if (response.status !== 401) throw requestError("POST /v1/workers", response, error);
 }
 
-async function request(method, path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (options.body !== undefined) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (options.token) {
-    headers.set("Authorization", `Bearer ${options.token}`);
-  }
-
-  const response = await fetch(`${baseURL}${path}`, {
-    method,
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : undefined;
-  const allowed = options.allowStatus || [options.wantStatus || 200];
-  if (!allowed.includes(response.status)) {
-    throw new Error(`${method} ${path} returned ${response.status}: ${text}`);
-  }
-  return { status: response.status, json };
+function requestError(operation, response, error) {
+  return new Error(`${operation} returned ${response.status}: ${JSON.stringify(error)}`);
 }
 
 main().catch((error) => {

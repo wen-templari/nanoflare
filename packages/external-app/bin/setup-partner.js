@@ -3,6 +3,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import createClient from "openapi-fetch";
 
 const authStore = process.env.NANOFLARE_AUTH_STORE || defaultAuthStore();
 const integrationName = process.env.NANOFLARE_PARTNER_NAME || process.argv[2] || "External App UI";
@@ -16,18 +17,17 @@ if (!auth.api_url || !auth.token || !auth.active_org_id) {
   throw new Error(`Auth store ${authStore} must contain api_url, token, and active_org_id. Run ./bin/nanoflare auth login first.`);
 }
 
-const response = await fetch(`${auth.api_url.replace(/\/$/, "")}/v1/partner-integrations`, {
-  method: "POST",
+/** @typedef {import("@nanoflare/schema").paths} NanoflarePaths */
+/** @type {ReturnType<typeof createClient<NanoflarePaths>>} */
+const api = createClient({ baseUrl: auth.api_url.replace(/\/$/, "") });
+const { data: integration, error, response } = await api.POST("/v1/partner-integrations", {
   headers: {
     Authorization: `Bearer ${auth.token}`,
     "X-Nanoflare-Org-ID": auth.active_org_id,
-    "Content-Type": "application/json",
   },
-  body: JSON.stringify({ name: integrationName, allowed_scopes: allowedScopes }),
+  body: { name: integrationName, allowed_scopes: allowedScopes },
 });
-const text = await response.text();
-if (!response.ok) throw new Error(`Creating partner integration failed (${response.status}): ${text}`);
-const integration = JSON.parse(text);
+if (!response.ok || !integration) throw new Error(`Creating partner integration failed (${response.status}): ${JSON.stringify(error)}`);
 
 console.log("Partner integration created for the CLI active organization.");
 console.log("Store this one-time secret in your server-side secret manager:");

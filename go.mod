@@ -3,6 +3,7 @@ module github.com/clas/nanoflare
 go 1.25.0
 
 require (
+	github.com/danielgtaylor/huma/v2 v2.34.1
 	github.com/lib/pq v1.10.9
 	github.com/minio/minio-go/v7 v7.0.95
 )

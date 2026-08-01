@@ -10,10 +10,17 @@
   "type": "module",
   "scripts": {
     "test": "node --check ./bin/external-app.js",
-    "check": "node --check ./bin/external-app.js && node --check ./bin/server.js && node --check ./bin/setup-partner.js",
+    "check": "tsc --noEmit && node --check ./bin/external-app.js && node --check ./bin/server.js && node --check ./bin/setup-partner.js",
     "run": "node ./bin/external-app.js",
     "dev": "node ./bin/server.js",
     "setup-partner": "node ./bin/setup-partner.js"
+  },
+  "dependencies": {
+    "@nanoflare/schema": "workspace:*",
+    "openapi-fetch": "^0.15.0"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
   },
   "engines": {
     "node": ">=18"

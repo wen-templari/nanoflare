@@ -2,7 +2,7 @@ import { Banner, Button, LayerCard, Select, Text } from "@cloudflare/kumo";
 import { Boxes, Check, ShieldCheck } from "lucide-react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { apiFetch, errorText } from "../app/api";
+import { apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
 
 type AuthorizeResponse = {
@@ -40,17 +40,12 @@ export function OAuthAuthorizePage() {
     async function verifyClient() {
       setLoadingInfo(true);
       setError("");
-      const query = new URLSearchParams();
-      query.set("client_id", clientID);
-      query.set("redirect_uri", redirectURI);
-      query.set("scope", scopes.join(" "));
       try {
-        const response = await fetch(`/v1/oauth/authorize?${query.toString()}`, {
-          headers: { accept: "application/json" },
+        const { data, error } = await apiClient.GET("/v1/oauth/authorize", {
+          params: { query: { client_id: clientID, redirect_uri: redirectURI, scope: scopes.join(" ") } },
         });
-        if (!response.ok)
-          throw new Error(await errorText(response, "Could not verify external app"));
-        const info = (await response.json()) as AuthorizeInfo;
+        if (error || !data) throw new Error(errorMessage(error, "Could not verify external app"));
+        const info = data as AuthorizeInfo;
         if (!cancelled) setClientInfo(info);
       } catch (err) {
         if (!cancelled) {
@@ -79,20 +74,17 @@ export function OAuthAuthorizePage() {
     setSubmitting(true);
     setError("");
     try {
-      const response = await apiFetch("/v1/oauth/authorize", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+      const { data, error } = await apiClient.POST("/v1/oauth/authorize", {
+        body: {
           client_id: clientID,
           redirect_uri: redirectURI,
           scopes: clientInfo?.scopes ?? scopes,
           state,
           org_id: orgID,
-        }),
+        },
       });
-      if (!response.ok) throw new Error(await errorText(response, "Could not approve connection"));
-      const payload = (await response.json()) as AuthorizeResponse;
-      window.location.assign(payload.redirect_to);
+      if (error || !data) throw new Error(errorMessage(error, "Could not approve connection"));
+      window.location.assign(data.redirect_to);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not approve connection");
     } finally {

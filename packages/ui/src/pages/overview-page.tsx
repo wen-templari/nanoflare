@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchJSON } from "../app/api";
+import { activeOrgID, apiClient } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import { useWorkspace } from "../app/workspace-context";
 import type { WorkerTraffic } from "../app/types";
@@ -32,9 +32,9 @@ export function OverviewPage() {
 
       const results = await Promise.all(
         workers.map((worker) =>
-          fetchJSON<WorkerTraffic>(`/v1/workers/${encodeURIComponent(worker.id)}/traffic`).catch(
-            () => undefined,
-          ),
+          apiClient
+            .GET("/v1/workers/{workerID}/traffic", { params: { header: { "X-Nanoflare-Org-ID": activeOrgID() }, path: { workerID: worker.id } } })
+            .then(({ data }) => data),
         ),
       );
       if (!cancelled) setTraffic(results.filter((item): item is WorkerTraffic => Boolean(item)));

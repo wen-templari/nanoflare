@@ -2,6 +2,7 @@ import { Banner, Button, LayerCard, SensitiveInput, Text } from "@cloudflare/kum
 import { Boxes, LogIn } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { apiClient } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import { Input } from "../components/ui/input";
 
@@ -37,14 +38,17 @@ export function LoginPage() {
   useEffect(() => {
     let cancelled = false;
     async function loadOIDCConfig() {
-      const response = await fetch("/v1/auth/oidc/config").catch(() => null);
-      if (!response?.ok) {
+      let data: { direct_login?: boolean; enabled?: boolean } | undefined;
+      try {
+        ({ data } = await apiClient.GET("/v1/auth/oidc/config"));
+      } catch {
+        data = undefined;
+      }
+      if (!data) {
         if (!cancelled) setOIDCConfig({ directLogin: false, enabled: false, loading: false });
         return;
       }
-      const config = (await response
-        .json()
-        .catch(() => ({ direct_login: false, enabled: false }))) as {
+      const config = data as {
         direct_login?: boolean;
         enabled?: boolean;
       };

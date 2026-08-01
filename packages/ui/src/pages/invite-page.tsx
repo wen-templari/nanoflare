@@ -2,7 +2,7 @@ import { Banner, Button, LayerCard, SensitiveInput, Text } from "@cloudflare/kum
 import { Check, UserPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { apiFetch, errorText } from "../app/api";
+import { apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import type { OrganizationInvite } from "../app/types";
 import { Input } from "../components/ui/input";
@@ -20,12 +20,14 @@ export function InvitePage() {
   useEffect(() => {
     let cancelled = false;
     async function loadInvite() {
-      const response = await fetch(`/v1/invites/${token}`);
-      if (!response.ok) {
-        setError(await errorText(response, "Invite is not available"));
+      const { data, error } = await apiClient.GET("/v1/invites/{token}", {
+        params: { path: { token } },
+      });
+      if (error || !data) {
+        setError(errorMessage(error, "Invite is not available"));
         return;
       }
-      const nextInvite = (await response.json()) as OrganizationInvite;
+      const nextInvite: OrganizationInvite = { ...data, scopes: data.scopes ?? [] };
       if (!cancelled) {
         setInvite(nextInvite);
         setEmail(nextInvite.email);
@@ -45,12 +47,11 @@ export function InvitePage() {
     setError("");
     try {
       if (!auth.signedIn) await auth.signup(email, password);
-      const response = await apiFetch(`/v1/invites/${token}/accept`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
+      const { error } = await apiClient.POST("/v1/invites/{token}/accept", {
+        params: { path: { token } },
+        body: {},
       });
-      if (!response.ok) throw new Error(await errorText(response, "Could not accept invite"));
+      if (error) throw new Error(errorMessage(error, "Could not accept invite"));
       await auth.refresh();
       navigate("/", { replace: true });
     } catch (err) {

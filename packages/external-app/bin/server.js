@@ -2,8 +2,12 @@
 
 import http from "node:http";
 import crypto from "node:crypto";
+import createClient from "openapi-fetch";
 
 const nanoflareURL = (process.env.NANOFLARE_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
+/** @typedef {import("@nanoflare/schema").paths} NanoflarePaths */
+/** @type {ReturnType<typeof createClient<NanoflarePaths>>} */
+const api = createClient({ baseUrl: nanoflareURL });
 const nanoflareUIURL = (process.env.NANOFLARE_UI_URL || "http://127.0.0.1:5173").replace(
   /\/+$/,
   "",
@@ -109,25 +113,23 @@ async function ensureOAuthClient() {
 async function exchangeCode(code) {
   if (!code) throw new Error("Nanoflare callback did not include a code.");
   if (!state.client) throw new Error("OAuth client was not initialized.");
-  const response = await nf(
-    "POST",
-    "/v1/oauth/token",
-    {
+  const { data, error, response } = await api.POST("/v1/oauth/token", {
+    body: {
       grant_type: "authorization_code",
       client_id: state.client.client_id,
       client_secret: state.client.client_secret,
       code,
       redirect_uri: redirectURI,
     },
-    { wantStatus: 200 },
-  );
-  state.accessToken = response.json.access_token;
-  state.refreshToken = response.json.refresh_token;
-  state.tokenScope = response.json.scope;
-  state.tokenType = response.json.token_type;
+  });
+  if (!response.ok || !data) throw requestError("POST /v1/oauth/token", response, error);
+  state.accessToken = data.access_token;
+  state.refreshToken = data.refresh_token;
+  state.tokenScope = data.scope;
+  state.tokenType = data.token_type;
   state.tokenIssuedAt = new Date();
   state.tokenExpiresAt = new Date(
-    state.tokenIssuedAt.getTime() + Number(response.json.expires_in || 0) * 1000,
+    state.tokenIssuedAt.getTime() + Number(data.expires_in || 0) * 1000,
   );
 }
 
@@ -137,18 +139,17 @@ async function provisionWorker(form) {
   const suffix = Date.now();
   const hostname = `external-${suffix}.example.com`;
   const externalID = `external-worker-${suffix}`;
-  const response = await nf(
-    "POST",
-    "/v1/workers",
-    {
+  const { data, error, response } = await api.POST("/v1/workers", {
+    headers: { Authorization: `Bearer ${state.accessToken}` },
+    body: {
       name,
       hostname,
       external_id: externalID,
     },
-    { token: state.accessToken, wantStatus: 201 },
-  );
-  state.lastApp = response.json;
-  logEvent(`Provisioned worker ${response.json.id}.`);
+  });
+  if (response.status !== 201 || !data) throw requestError("POST /v1/workers", response, error);
+  state.lastApp = data;
+  logEvent(`Provisioned worker ${data.id}.`);
 }
 
 async function connectPartnerWorkspace(form) {
@@ -158,15 +159,20 @@ async function connectPartnerWorkspace(form) {
   const externalAccountID = (form.get("external_account_id") || "").trim();
   const organizationName = (form.get("organization_name") || "").trim();
   if (!externalAccountID || !organizationName) throw new Error("Workspace ID and organization name are required.");
-  const response = await nf(
-    "POST",
-    `/v1/partner-integrations/${encodeURIComponent(partnerIntegrationID)}/connections`,
-    { external_account_id: externalAccountID, organization_name: organizationName, requested_scopes: partnerScopes },
-    { token: partnerSecret, allowStatus: [200, 201] },
+  const { data, error, response } = await api.POST(
+    "/v1/partner-integrations/{integrationID}/connections",
+    {
+      params: { path: { integrationID: partnerIntegrationID } },
+      headers: { Authorization: `Bearer ${partnerSecret}` },
+      body: { external_account_id: externalAccountID, organization_name: organizationName, requested_scopes: partnerScopes },
+    },
   );
-  applyPartnerToken(response.json);
-  state.partner = { connectionID: response.json.connection_id, organization: response.json.organization, externalAccountID };
-  logEvent(`Connected workspace ${externalAccountID} to Nanoflare organization ${response.json.organization.id}.`);
+  if (![200, 201].includes(response.status) || !data) {
+    throw requestError("POST /v1/partner-integrations/{integrationID}/connections", response, error);
+  }
+  applyPartnerToken(data);
+  state.partner = { connectionID: data.connection_id, organization: data.organization, externalAccountID };
+  logEvent(`Connected workspace ${externalAccountID} to Nanoflare organization ${data.organization.id}.`);
 }
 
 function applyPartnerToken(token) {
@@ -179,41 +185,54 @@ function applyPartnerToken(token) {
 }
 
 async function refreshToken() {
-	if (state.partner) {
-		const response = await nf("POST", "/v1/partner-connections/token", { connection_id: state.partner.connectionID, refresh_token: state.refreshToken }, { wantStatus: 200 });
-		applyPartnerToken(response.json);
-		return;
-	}
-	if (!state.refreshToken || !state.client) throw new Error("No refresh token is available.");
-  const response = await nf(
-    "POST",
-    "/v1/oauth/token",
-    {
+  if (state.partner) {
+    const { data, error, response } = await api.POST("/v1/partner-connections/token", {
+      body: { connection_id: state.partner.connectionID, refresh_token: state.refreshToken },
+    });
+    if (!response.ok || !data) throw requestError("POST /v1/partner-connections/token", response, error);
+    applyPartnerToken(data);
+    return;
+  }
+  if (!state.refreshToken || !state.client) throw new Error("No refresh token is available.");
+  const { data, error, response } = await api.POST("/v1/oauth/token", {
+    body: {
       grant_type: "refresh_token",
       client_id: state.client.client_id,
       client_secret: state.client.client_secret,
       refresh_token: state.refreshToken,
     },
-    { wantStatus: 200 },
-  );
-  state.accessToken = response.json.access_token;
-  state.refreshToken = response.json.refresh_token;
-  state.tokenScope = response.json.scope;
-  state.tokenType = response.json.token_type;
+  });
+  if (!response.ok || !data) throw requestError("POST /v1/oauth/token", response, error);
+  state.accessToken = data.access_token;
+  state.refreshToken = data.refresh_token;
+  state.tokenScope = data.scope;
+  state.tokenType = data.token_type;
   state.tokenIssuedAt = new Date();
   state.tokenExpiresAt = new Date(
-    state.tokenIssuedAt.getTime() + Number(response.json.expires_in || 0) * 1000,
+    state.tokenIssuedAt.getTime() + Number(data.expires_in || 0) * 1000,
   );
 }
 
 async function revokeToken() {
-	if (!state.accessToken) throw new Error("No access token is available.");
-	if (state.partner) {
-		await nf("DELETE", `/v1/partner-integrations/${encodeURIComponent(partnerIntegrationID)}/connections/${encodeURIComponent(state.partner.connectionID)}`, undefined, { token: partnerSecret, wantStatus: 204 });
-		state.partner = null;
-	} else {
-	await nf("POST", "/v1/oauth/revoke", { token: state.accessToken }, { wantStatus: 204 });
-	}
+  if (!state.accessToken) throw new Error("No access token is available.");
+  if (state.partner) {
+    const { error, response } = await api.DELETE(
+      "/v1/partner-integrations/{integrationID}/connections/{connectionID}",
+      {
+        params: { path: { integrationID: partnerIntegrationID, connectionID: state.partner.connectionID } },
+        headers: { Authorization: `Bearer ${partnerSecret}` },
+      },
+    );
+    if (response.status !== 204) {
+      throw requestError("DELETE /v1/partner-integrations/{integrationID}/connections/{connectionID}", response, error);
+    }
+    state.partner = null;
+  } else {
+    const { error, response } = await api.POST("/v1/oauth/revoke", {
+      body: { token: state.accessToken },
+    });
+    if (response.status !== 204) throw requestError("POST /v1/oauth/revoke", response, error);
+  }
   state.accessToken = "";
   state.refreshToken = "";
   state.tokenScope = "";
@@ -222,22 +241,8 @@ async function revokeToken() {
   state.tokenExpiresAt = null;
 }
 
-async function nf(method, path, body, options = {}) {
-  const headers = new Headers();
-  if (body !== undefined) headers.set("Content-Type", "application/json");
-  if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
-  const response = await fetch(`${nanoflareURL}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : undefined;
-  const allowed = options.allowStatus || [options.wantStatus || 200];
-  if (!allowed.includes(response.status)) {
-    throw new Error(`${method} ${path} returned ${response.status}: ${text}`);
-  }
-  return { status: response.status, json };
+function requestError(operation, response, error) {
+  return new Error(`${operation} returned ${response.status}: ${JSON.stringify(error)}`);
 }
 
 async function readForm(request) {

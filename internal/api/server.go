@@ -13,6 +13,7 @@ import (
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtime"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 type Server struct {
@@ -32,6 +33,7 @@ type Server struct {
 	workerClient           *http.Client
 	workerGatewayMetrics   workerGatewayMetrics
 	mux                    *http.ServeMux
+	openAPI                huma.API
 }
 
 type workerGatewayMetrics struct {
@@ -131,7 +133,8 @@ func (s *Server) SetPartnerService(partner *nanoflare.PartnerService) {
 }
 
 func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer, oauth *nanoflare.OAuthService) *Server {
-	return &Server{
+	mux := http.NewServeMux()
+	server := &Server{
 		service:      service,
 		traefik:      traefik,
 		traefikToken: token,
@@ -140,8 +143,10 @@ func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token st
 		oauth:        oauth,
 		runtime:      runtime,
 		workerClient: newWorkerGatewayClient(),
-		mux:          http.NewServeMux(),
+		mux:          mux,
 	}
+	server.openAPI = newOpenAPI(mux)
+	return server
 }
 
 func newWorkerGatewayClient() *http.Client {
@@ -199,4 +204,5 @@ func (s *Server) routes() {
 		s.registerOAuthRoutes()
 	}
 	s.registerInternalRoutes()
+	s.registerOpenAPIOperations()
 }
