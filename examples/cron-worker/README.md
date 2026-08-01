@@ -14,9 +14,8 @@
 From this directory:
 
 ```sh
-pnpm add --global @nanoflare/cli
 pnpm install
-nanoflare create
+pnpm exec nanoflare create
 pnpm run deploy
 ```
 

@@ -19,11 +19,10 @@
 From this directory:
 
 ```sh
-pnpm add --global @nanoflare/cli
 pnpm install
-nanoflare create
-nanoflare db create gallery-metadata
-nanoflare object-storage bucket create gallery-images
+pnpm exec nanoflare create
+pnpm exec nanoflare db create gallery-metadata
+pnpm exec nanoflare object-storage bucket create gallery-images
 ```
 
 Update [nanoflare.json](nanoflare.json) so the database id and object storage

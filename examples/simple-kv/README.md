@@ -13,10 +13,9 @@
 From this directory:
 
 ```sh
-pnpm add --global @nanoflare/cli
 pnpm install
-nanoflare create
-nanoflare kv namespace create simple-kv-counter
+pnpm exec nanoflare create
+pnpm exec nanoflare kv namespace create simple-kv-counter
 ```
 
 Update [nanoflare.json](nanoflare.json) so `kv_namespaces[0].id` matches the
