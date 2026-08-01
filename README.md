@@ -173,6 +173,13 @@ Build the CLI:
 go build -o ./bin/nanoflare ./cmd/nanoflare
 ```
 
+Or install the prebuilt CLI from npm:
+
+```sh
+npm install -g @nanoflare/cli
+nanoflare --help
+```
+
 Build all distributable packages with Docker:
 
 ```sh

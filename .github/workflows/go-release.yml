@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build:
@@ -27,6 +28,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
 
       - name: Build release archives
         run: |
@@ -64,7 +71,46 @@ jobs:
           build_platform windows amd64 "nanoflare"
           build_platform windows arm64 "nanoflare"
 
-          (cd dist && shasum -a 256 *.tar.gz > checksums.txt)
+      - name: Prepare npm packages
+        if: env.RELEASE_TAG != ''
+        run: |
+          set -eu
+          ./scripts/build-npm-cli-binaries.sh
+          node ./scripts/prepare-npm-cli-release.mjs "$RELEASE_TAG"
+
+          mkdir -p dist/npm-tarballs
+          for package in dist/npm/*; do
+            (cd "$package" && npm pack --dry-run && npm pack --pack-destination ../../npm-tarballs)
+          done
+
+      - name: Create checksums
+        run: |
+          set -eu
+          if [ -d dist/npm-tarballs ]; then
+            shasum -a 256 dist/*.tar.gz dist/npm-tarballs/*.tgz > dist/checksums.txt
+          else
+            (cd dist && shasum -a 256 *.tar.gz > checksums.txt)
+          fi
+
+      - name: Test packed npm CLI
+        if: env.RELEASE_TAG != ''
+        run: |
+          set -eu
+          test_dir="$(mktemp -d)"
+          npm init --yes --prefix "$test_dir" >/dev/null
+          npm install --ignore-scripts --prefix "$test_dir" \
+            dist/npm-tarballs/nanoflare-cli-[0-9]*.tgz \
+            dist/npm-tarballs/nanoflare-cli-linux-x64-*.tgz
+          "$test_dir/node_modules/.bin/nanoflare" --help
+
+      - name: Publish npm packages
+        if: env.RELEASE_TAG != ''
+        run: |
+          set -eu
+          for package in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+            (cd "dist/npm/$package" && npm publish --access public --provenance)
+          done
+          (cd dist/npm/cli && npm publish --access public --provenance)
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -73,6 +119,7 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/checksums.txt
+            dist/npm-tarballs/*.tgz
 
       - name: Upload assets to GitHub release
         if: env.RELEASE_TAG != ''
