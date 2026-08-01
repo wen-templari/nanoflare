@@ -14,10 +14,10 @@
 From this directory:
 
 ```sh
-npm install
-npm run build
+pnpm add --global @nanoflare/cli
+pnpm install
 nanoflare create
-nanoflare deploy
+pnpm run deploy
 ```
 
 The configured cron runs every five minutes in UTC:

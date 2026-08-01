@@ -13,8 +13,8 @@
 From this directory:
 
 ```sh
-npm install
-npm run build
+pnpm add --global @nanoflare/cli
+pnpm install
 nanoflare create
 nanoflare kv namespace create simple-kv-counter
 ```
@@ -23,7 +23,7 @@ Update [nanoflare.json](nanoflare.json) so `kv_namespaces[0].id` matches the
 namespace id returned by the create command, then deploy:
 
 ```sh
-nanoflare deploy
+pnpm run deploy
 ```
 
 ## Routes To Try

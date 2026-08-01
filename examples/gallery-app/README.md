@@ -19,22 +19,22 @@
 From this directory:
 
 ```sh
-npm install
+pnpm add --global @nanoflare/cli
+pnpm install
 nanoflare create
 nanoflare db create gallery-metadata
 nanoflare object-storage bucket create gallery-images
-npm run build
 ```
 
 Update [nanoflare.json](nanoflare.json) so the database id and object storage
 bucket id match what the CLI returned, then deploy:
 
 ```sh
-nanoflare deploy
+pnpm run deploy
 ```
 
-`npm run build` now bundles both the React client and the Worker. The deploy
-artifacts are written to `dist/`, so rerun the build after changing either the
+`pnpm run deploy` bundles both the React client and the Worker before deploying.
+It writes deploy artifacts to `dist/`, so rerun the build after changing either the
 frontend or the Worker. TypeScript validation is split between
 `tsconfig.app.json` for the UI and `tsconfig.worker.json` for the Worker.
 

@@ -7,6 +7,7 @@ Minimal Worker target for k6 load tests.
 Start `nanoflared`, then create a KV namespace:
 
 ```sh
+pnpm add --global @nanoflare/cli
 nanoflare kv namespace create load-test-kv
 ```
 

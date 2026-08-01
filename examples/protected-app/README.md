@@ -14,10 +14,10 @@
 From this directory:
 
 ```sh
-npm install
-npm run build
+pnpm add --global @nanoflare/cli
+pnpm install
 nanoflare create
-nanoflare deploy
+pnpm run deploy
 ```
 
 To exercise the protected route meaningfully, run `nanoflared` with OIDC or send
