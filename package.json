@@ -7,7 +7,8 @@
     "schema:generate": "pnpm --filter @nanoflare/schema generate",
     "lint": "vp lint packages",
     "format": "vp format packages",
-    "typecheck": "vp lint --type-check packages"
+    "typecheck": "vp lint --type-check packages",
+    "dev:ui": "vp run @nanoflare/ui#dev"
   },
   "devDependencies": {
     "vite": "catalog:",
