@@ -205,6 +205,7 @@ cd ./hello-worker
 `nanoflare create` registers the worker by its configured name; Nanoflare assigns
 its hostname from the configured base hostname. `nanoflare deploy` resolves that
 name in the selected organization and uploads each file listed in `nanoflare.json`.
+After a successful deployment, it prints the worker's public URL.
 Use `--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
 `http://127.0.0.1:8080`. CLI authentication is stored at
 the OS user-config directory by default (`~/Library/Application Support/nanoflare/auth.json`
@@ -432,10 +433,18 @@ export default {
 For one-shot SQL and migrations:
 
 ```sh
-nanoflare db execute db_123 --command "CREATE TABLE messages (body text)"
+nanoflare db execute db_123 --command "CREATE TABLE messages (id integer primary key, body text)"
+nanoflare db execute db_123 --command "INSERT INTO messages (body) VALUES ('hello')"
+nanoflare db execute db_123 --command "SELECT id, body FROM messages"
+nanoflare db execute db_123 --file query.sql
+nanoflare db execute db_123 --command "SELECT id, body FROM messages" --json
 nanoflare db migrations create add_messages
 nanoflare db migrations apply db_123
 ```
+
+`db execute` runs exactly one SQL statement. Query results are printed as a
+table by default; use `--json` when scripting. Use `--file` for one statement
+saved in a file, and use migrations for multi-statement schema changes.
 
 `nanoflared` stores SQLite files under `-db-dir`, defaulting to
 `<config-dir>/db`. Litestream can be enabled with `-litestream-enabled`.

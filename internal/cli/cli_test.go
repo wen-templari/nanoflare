@@ -18,6 +18,18 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "nanoflare-cli-test-auth-")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	_ = os.Setenv(authStorePathEnv, filepath.Join(dir, "auth.json"))
+	_ = os.Unsetenv(authTokenEnv)
+	_ = os.Unsetenv(authOrgIDEnv)
+	os.Exit(m.Run())
+}
+
 func TestInitCreatesStarterProject(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	var stdout bytes.Buffer
@@ -72,7 +84,7 @@ func TestCreateAndDeployWorker(t *testing.T) {
 		case "/v1/workers":
 			if r.Method == http.MethodGet {
 				if createdOnce {
-					writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
+					writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello", Hostname: "hello.example.com"}})
 				} else {
 					writeJSON(t, w, http.StatusOK, []nanoflare.App{})
 				}
@@ -133,12 +145,16 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	runGit(t, ".", "commit", "-m", "Deploy hello worker")
 	commitHash := strings.TrimSpace(runGit(t, ".", "rev-parse", "HEAD"))
 
-	runner := NewRunner(io.Discard, io.Discard)
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
 	if err := runner.Run([]string{"create", "worker"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := runner.Run([]string{"deploy", "worker"}); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "Worker URL: https://hello.example.com\n") {
+		t.Fatalf("deployment output = %q", stdout.String())
 	}
 
 	project := readProject(t, projectFilename)
@@ -361,39 +377,143 @@ func TestProjectAssetsRunWorkerFirstJSONShapes(t *testing.T) {
 }
 
 func TestHelpIncludesCommandUsage(t *testing.T) {
-	var stderr bytes.Buffer
-	runner := NewRunner(io.Discard, &stderr)
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
 
 	if err := runner.Run([]string{"help"}); err != nil {
 		t.Fatal(err)
 	}
 
-	usage := stderr.String()
+	usage := stdout.String()
 	for _, want := range []string{
-		"nanoflare init [flags] [directory]",
-		"nanoflare create [worker] [flags]",
-		"nanoflare list [worker] [flags]",
-		"nanoflare delete [worker] [worker-id] [flags]",
-		"nanoflare deploy [worker] [flags]",
-		"nanoflare deployment output [worker-id] [flags]",
-		"nanoflare auth login [flags]",
-		"nanoflare auth orgs",
-		"nanoflare auth use-org <org-id>",
-		"nanoflare auth whoami",
-		"nanoflare auth logout",
-		"nanoflare secret put [flags] <name> <value>",
-		"nanoflare secret list [flags]",
-		"nanoflare secret delete [flags] <name>",
-		"nanoflare kv namespace create [flags] <name>",
-		"nanoflare kv namespace list [flags]",
-		"nanoflare kv namespace delete [flags] <namespace-id>",
-		"nanoflare object-storage bucket create [flags] <name>",
-		"nanoflare object-storage bucket list [flags]",
-		"nanoflare object-storage bucket delete [flags] <bucket-id>",
+		"Available Commands:",
+		"init", "create", "list", "delete", "deploy", "deployment", "auth", "secret", "kv", "db", "object-storage",
 	} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("help output missing %q:\n%s", want, usage)
 		}
+	}
+}
+
+func TestCommandGroupsPrintContextualHelpWhenEmpty(t *testing.T) {
+	for _, args := range [][]string{
+		nil,
+		{"auth"},
+		{"db"},
+		{"db", "migrations"},
+		{"kv"},
+		{"kv", "namespace"},
+		{"object-storage"},
+		{"object-storage", "bucket"},
+		{"deployment"},
+	} {
+		t.Run(strings.Join(args, "/"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if err := NewRunner(&stdout, &stderr).Run(args); err != nil {
+				t.Fatalf("Run(%q) = %v", args, err)
+			}
+			if !strings.Contains(stdout.String(), "Usage:") || stderr.Len() != 0 {
+				t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestNestedHelpIncludesFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	if err := runner.Run([]string{"db", "execute", "--help"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Usage:", "nanoflare db execute <database-id>", "--api-url", "--command", "--file"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("help output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestCommandTreeRejectsUnknownCommandsAndArguments(t *testing.T) {
+	runner := NewRunner(io.Discard, io.Discard)
+	if err := runner.Run([]string{"wat"}); err == nil || !strings.Contains(err.Error(), "unknown command \"wat\"") {
+		t.Fatalf("unknown command error = %v", err)
+	}
+	if err := runner.Run([]string{"db", "list", "unexpected"}); err == nil {
+		t.Fatalf("argument error = %v", err)
+	}
+	if err := runner.Run([]string{"completion"}); err == nil || !strings.Contains(err.Error(), "unknown command \"completion\"") {
+		t.Fatalf("completion error = %v", err)
+	}
+}
+
+func TestDBExecutePrintsQueryResultsAndJSON(t *testing.T) {
+	var request struct {
+		Statements []nanoflare.DBStatementRequest `json:"statements"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/db/db-123/execute" {
+			http.NotFound(w, r)
+			return
+		}
+		decodeRequest(t, r, &request)
+		writeJSON(t, w, http.StatusOK, nanoflare.DBQueryResponse{Results: []nanoflare.D1Result{{
+			Success: true,
+			Columns: []string{"id", "body"},
+			Results: []map[string]any{{"id": float64(7), "body": "hello"}},
+		}}})
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"db", "execute", "--api-url", server.URL, "db-123", "--command", "SELECT id, body FROM messages"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "id  body\n7   hello\n"; got != want {
+		t.Fatalf("table output = %q, want %q", got, want)
+	}
+	if len(request.Statements) != 1 || request.Statements[0].SQL != "SELECT id, body FROM messages" {
+		t.Fatalf("request = %#v", request)
+	}
+
+	stdout.Reset()
+	if err := runner.Run([]string{"db", "execute", "--api-url", server.URL, "db-123", "--command", "SELECT id, body FROM messages", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"columns":["id","body"]`) || !strings.Contains(stdout.String(), `"body":"hello"`) {
+		t.Fatalf("JSON output = %s", stdout.String())
+	}
+}
+
+func TestDBExecuteReportsWritesAndRejectsMultipleStatements(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, nanoflare.DBQueryResponse{Results: []nanoflare.D1Result{{
+			Success: true,
+			Meta:    nanoflare.D1Meta{Duration: 3, Changes: 2},
+		}}})
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"db", "execute", "--api-url", server.URL, "db-123", "--command", "UPDATE messages SET body = 'updated'"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "Statement completed in 3ms; 2 row(s) affected.\n"; got != want {
+		t.Fatalf("write output = %q, want %q", got, want)
+	}
+	if err := runner.Run([]string{"db", "execute", "--api-url", server.URL, "db-123", "--command", "SELECT 1; SELECT 2"}); err == nil || !strings.Contains(err.Error(), "exactly one SQL statement") {
+		t.Fatalf("multiple statements error = %v", err)
+	}
+	if err := runner.Run([]string{"db", "execute", "--api-url", server.URL, "db-123"}); err == nil || !strings.Contains(err.Error(), "exactly one of --command or --file") {
+		t.Fatalf("missing SQL error = %v", err)
+	}
+}
+
+func TestWriteDBResultPrintsEmptyQueryHeaders(t *testing.T) {
+	var output bytes.Buffer
+	writeDBResult(&output, nanoflare.D1Result{Columns: []string{"id", "body"}, Results: []map[string]any{}})
+	if got, want := output.String(), "id  body\n(0 rows)\n"; got != want {
+		t.Fatalf("empty result output = %q, want %q", got, want)
 	}
 }
 
@@ -735,7 +855,7 @@ func TestRequestRefreshesAuthTokenAndRetries(t *testing.T) {
 	appRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/org-123/workers":
 			appRequests++
 			if appRequests == 1 {
 				writeJSON(t, w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
@@ -743,9 +863,6 @@ func TestRequestRefreshesAuthTokenAndRetries(t *testing.T) {
 			}
 			if got := r.Header.Get("Authorization"); got != "Bearer refreshed-token" {
 				t.Fatalf("authorization = %q", got)
-			}
-			if got := r.Header.Get("X-Nanoflare-Org-ID"); got != "org-123" {
-				t.Fatalf("org header = %q", got)
 			}
 			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello", Hostname: "hello.example.com"}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/refresh":
@@ -816,8 +933,8 @@ func TestEnvironmentCredentialsOverrideStoredAuth(t *testing.T) {
 		if got := request.Header.Get("Authorization"); got != "Bearer environment-token" {
 			t.Fatalf("authorization = %q", got)
 		}
-		if got := request.Header.Get("X-Nanoflare-Org-ID"); got != "environment-org" {
-			t.Fatalf("org header = %q", got)
+		if request.URL.Path != "/v1/organizations/environment-org/workers" {
+			t.Fatalf("path = %q", request.URL.Path)
 		}
 		writeJSON(t, w, http.StatusOK, []nanoflare.App{})
 	}))

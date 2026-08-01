@@ -19,5 +19,5 @@
   "editor.codeActionsOnSave": {
     "source.fixAll.oxc": "explicit"
   },
-  "cSpell.words": ["kumo", "nanoflare"]
+  "cSpell.words": ["kumo", "nanoflare", "nanoflared"]
 }

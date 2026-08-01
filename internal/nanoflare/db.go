@@ -38,7 +38,7 @@ type D1Result struct {
 	Success bool             `json:"success"`
 	Meta    D1Meta           `json:"meta"`
 	Results []map[string]any `json:"results"`
-	Columns []string         `json:"-"`
+	Columns []string         `json:"columns,omitempty"`
 }
 
 // MarshalJSON preserves SQLite's result-column order in the encoded row
@@ -53,8 +53,9 @@ func (r D1Result) MarshalJSON() ([]byte, error) {
 		Success bool            `json:"success"`
 		Meta    D1Meta          `json:"meta"`
 		Results json.RawMessage `json:"results"`
+		Columns []string        `json:"columns,omitempty"`
 	}
-	return json.Marshal(wireResult{Success: r.Success, Meta: r.Meta, Results: results})
+	return json.Marshal(wireResult{Success: r.Success, Meta: r.Meta, Results: results, Columns: r.Columns})
 }
 
 func marshalD1Rows(rows []map[string]any, columns []string) ([]byte, error) {

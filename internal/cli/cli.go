@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -110,40 +111,9 @@ func NewRunner(stdout, stderr io.Writer) *Runner {
 }
 
 func (r *Runner) Run(args []string) error {
-	if len(args) == 0 {
-		r.usage()
-		return errors.New("command is required")
-	}
-	switch args[0] {
-	case "init":
-		return r.init(args[1:])
-	case "create":
-		return r.create(withoutWorkerNoun(args[1:]))
-	case "list":
-		return r.list(withoutWorkerNoun(args[1:]))
-	case "delete":
-		return r.delete(withoutWorkerNoun(args[1:]))
-	case "deploy":
-		return r.deploy(withoutWorkerNoun(args[1:]))
-	case "deployment":
-		return r.deployment(args[1:])
-	case "kv":
-		return r.kv(args[1:])
-	case "db":
-		return r.db(args[1:])
-	case "object-storage":
-		return r.objectStorage(args[1:])
-	case "auth":
-		return r.auth(args[1:])
-	case "secret":
-		return r.secret(args[1:])
-	case "help", "-h", "--help":
-		r.usage()
-		return nil
-	default:
-		r.usage()
-		return fmt.Errorf("unknown command %q", args[0])
-	}
+	command := r.newRootCommand()
+	command.SetArgs(args)
+	return command.Execute()
 }
 
 func (r *Runner) init(args []string) error {
@@ -353,6 +323,9 @@ func (r *Runner) deploy(args []string) error {
 		fmt.Fprintf(r.Stderr, "Warning: compatibility date %s is not supported by the server; using %s instead\n", date, deployment.CompatibilityDate)
 	}
 	fmt.Fprintf(r.Stdout, "Deployed worker %s as deployment %s\n", app.ID, deployment.ID)
+	if hostname := strings.TrimSpace(app.Hostname); hostname != "" {
+		fmt.Fprintf(r.Stdout, "Worker URL: https://%s\n", hostname)
+	}
 	return nil
 }
 
@@ -1303,6 +1276,121 @@ func sqlFromFlags(command, file string) (string, error) {
 	return string(content), nil
 }
 
+func hasOneSQLStatement(sql string) bool {
+	statementCount := 0
+	inSingleQuote, inDoubleQuote, inBacktick, inBracket := false, false, false, false
+	inLineComment, inBlockComment := false, false
+	hasContent := false
+	for i := 0; i < len(sql); i++ {
+		char := sql[i]
+		next := byte(0)
+		if i+1 < len(sql) {
+			next = sql[i+1]
+		}
+		if inLineComment {
+			if char == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			if char == '*' && next == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+		if !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket {
+			if char == '-' && next == '-' {
+				inLineComment = true
+				i++
+				continue
+			}
+			if char == '/' && next == '*' {
+				inBlockComment = true
+				i++
+				continue
+			}
+		}
+		switch char {
+		case '\'':
+			if !inDoubleQuote && !inBacktick && !inBracket {
+				if inSingleQuote && next == '\'' {
+					i++
+					continue
+				}
+				inSingleQuote = !inSingleQuote
+			}
+		case '"':
+			if !inSingleQuote && !inBacktick && !inBracket {
+				if inDoubleQuote && next == '"' {
+					i++
+					continue
+				}
+				inDoubleQuote = !inDoubleQuote
+			}
+		case '`':
+			if !inSingleQuote && !inDoubleQuote && !inBracket {
+				inBacktick = !inBacktick
+			}
+		case '[':
+			if !inSingleQuote && !inDoubleQuote && !inBacktick {
+				inBracket = true
+			}
+		case ']':
+			if inBracket {
+				inBracket = false
+			}
+		case ';':
+			if !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && hasContent {
+				statementCount++
+				hasContent = false
+			}
+		default:
+			if !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !strings.ContainsRune(" \t\r\n", rune(char)) {
+				hasContent = true
+			}
+		}
+	}
+	if hasContent {
+		statementCount++
+	}
+	return statementCount == 1
+}
+
+func writeDBResult(output io.Writer, result nanoflare.D1Result) {
+	if len(result.Columns) == 0 {
+		fmt.Fprintf(output, "Statement completed in %.0fms", result.Meta.Duration)
+		if result.Meta.Changes > 0 {
+			fmt.Fprintf(output, "; %d row(s) affected", result.Meta.Changes)
+		}
+		fmt.Fprintln(output, ".")
+		return
+	}
+	writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(writer, strings.Join(result.Columns, "\t"))
+	for _, row := range result.Results {
+		values := make([]string, len(result.Columns))
+		for index, column := range result.Columns {
+			values[index] = formatDBValue(row[column])
+		}
+		fmt.Fprintln(writer, strings.Join(values, "\t"))
+	}
+	_ = writer.Flush()
+	if len(result.Results) == 0 {
+		fmt.Fprintln(output, "(0 rows)")
+	}
+}
+
+func formatDBValue(value any) string {
+	if value == nil {
+		return "NULL"
+	}
+	text := fmt.Sprint(value)
+	text = strings.ReplaceAll(text, "\t", " ")
+	return strings.ReplaceAll(text, "\n", "\\n")
+}
+
 func migrationFilename(now time.Time, name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	var out strings.Builder
@@ -1414,60 +1502,6 @@ func (r *Runner) secretDelete(args []string) error {
 	return nil
 }
 
-func (r *Runner) secret(args []string) error {
-	if len(args) == 0 {
-		r.usage()
-		return errors.New("secret command is required")
-	}
-	switch args[0] {
-	case "put":
-		return r.secretPut(args[1:])
-	case "list":
-		return r.secretList(args[1:])
-	case "delete":
-		return r.secretDelete(args[1:])
-	default:
-		r.usage()
-		return fmt.Errorf("unknown secret command %q", args[0])
-	}
-}
-
-func (r *Runner) kv(args []string) error {
-	if len(args) == 0 {
-		r.usage()
-		return errors.New("kv command is required")
-	}
-	switch args[0] {
-	case "namespace":
-		return r.kvNamespace(args[1:])
-	default:
-		r.usage()
-		return fmt.Errorf("unknown kv command %q", args[0])
-	}
-}
-
-func (r *Runner) db(args []string) error {
-	if len(args) == 0 {
-		r.usage()
-		return errors.New("db command is required")
-	}
-	switch args[0] {
-	case "create":
-		return r.dbCreate(args[1:])
-	case "list":
-		return r.dbList(args[1:])
-	case "delete":
-		return r.dbDelete(args[1:])
-	case "execute":
-		return r.dbExecute(args[1:])
-	case "migrations":
-		return r.dbMigrations(args[1:])
-	default:
-		r.usage()
-		return fmt.Errorf("unknown db command %q", args[0])
-	}
-}
-
 func (r *Runner) dbCreate(args []string) error {
 	flags := flag.NewFlagSet("db create", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
@@ -1528,8 +1562,9 @@ func (r *Runner) dbExecute(args []string) error {
 	flags := flag.NewFlagSet("db execute", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
-	command := flags.String("command", "", "SQL command to execute")
-	file := flags.String("file", "", "SQL file to execute")
+	command := flags.String("command", "", "SQL statement to run")
+	file := flags.String("file", "", "Path to a file containing one SQL statement")
+	jsonOutput := flags.Bool("json", false, "Print the complete response as JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -1540,31 +1575,28 @@ func (r *Runner) dbExecute(args []string) error {
 	if err != nil {
 		return err
 	}
+	if !hasOneSQLStatement(sqlText) {
+		return errors.New("db execute accepts exactly one SQL statement; use migrations for multi-statement schema changes")
+	}
 	var response nanoflare.DBQueryResponse
 	endpoint := strings.TrimRight(*apiURL, "/") + "/v1/db/" + url.PathEscape(flags.Arg(0)) + "/execute"
-	if err := r.request(http.MethodPost, endpoint, map[string]string{"sql": sqlText}, &response); err != nil {
+	input := map[string]any{"statements": []nanoflare.DBStatementRequest{{SQL: sqlText}}}
+	if err := r.request(http.MethodPost, endpoint, input, &response); err != nil {
 		return err
+	}
+	if *jsonOutput {
+		return json.NewEncoder(r.Stdout).Encode(response)
+	}
+	if len(response.Results) > 0 {
+		writeDBResult(r.Stdout, response.Results[0])
+		return nil
 	}
 	if response.Exec != nil {
 		fmt.Fprintf(r.Stdout, "Executed %d statement(s) in %.0fms\n", response.Exec.Count, response.Exec.Duration)
 		return nil
 	}
-	_ = json.NewEncoder(r.Stdout).Encode(response)
+	fmt.Fprintln(r.Stdout, "Statement completed.")
 	return nil
-}
-
-func (r *Runner) dbMigrations(args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: nanoflare db migrations <create|apply>")
-	}
-	switch args[0] {
-	case "create":
-		return r.dbMigrationsCreate(args[1:])
-	case "apply":
-		return r.dbMigrationsApply(args[1:])
-	default:
-		return fmt.Errorf("unknown db migrations command %q", args[0])
-	}
 }
 
 func (r *Runner) dbMigrationsCreate(args []string) error {
@@ -1624,56 +1656,6 @@ func (r *Runner) dbMigrationsApply(args []string) error {
 		}
 	}
 	return nil
-}
-
-func (r *Runner) objectStorage(args []string) error {
-	if len(args) == 0 {
-		r.usage()
-		return errors.New("object-storage command is required")
-	}
-	switch args[0] {
-	case "bucket":
-		return r.objectStorageBucket(args[1:])
-	default:
-		r.usage()
-		return fmt.Errorf("unknown object-storage command %q", args[0])
-	}
-}
-
-func (r *Runner) objectStorageBucket(args []string) error {
-	if len(args) == 0 {
-		r.usage()
-		return errors.New("object-storage bucket command is required")
-	}
-	switch args[0] {
-	case "create":
-		return r.objectStorageBucketCreate(args[1:])
-	case "list":
-		return r.objectStorageBucketList(args[1:])
-	case "delete":
-		return r.objectStorageBucketDelete(args[1:])
-	default:
-		r.usage()
-		return fmt.Errorf("unknown object-storage bucket command %q", args[0])
-	}
-}
-
-func (r *Runner) kvNamespace(args []string) error {
-	if len(args) == 0 {
-		r.usage()
-		return errors.New("kv namespace command is required")
-	}
-	switch args[0] {
-	case "create":
-		return r.kvNamespaceCreate(args[1:])
-	case "list":
-		return r.kvNamespaceList(args[1:])
-	case "delete":
-		return r.kvNamespaceDelete(args[1:])
-	default:
-		r.usage()
-		return fmt.Errorf("unknown kv namespace command %q", args[0])
-	}
 }
 
 func (r *Runner) kvNamespaceCreate(args []string) error {
@@ -1796,49 +1778,4 @@ func (r *Runner) objectStorageBucketDelete(args []string) error {
 	}
 	fmt.Fprintf(r.Stdout, "Deleted object storage bucket %s\n", bucketID)
 	return nil
-}
-
-func slug(value string) string {
-	var result strings.Builder
-	dash := false
-	for _, char := range strings.ToLower(value) {
-		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' {
-			result.WriteRune(char)
-			dash = false
-		} else if result.Len() > 0 && !dash {
-			result.WriteByte('-')
-			dash = true
-		}
-	}
-	return strings.Trim(result.String(), "-")
-}
-
-func (r *Runner) usage() {
-	fmt.Fprintln(r.Stderr, `Usage:
-  nanoflare init [flags] [directory]
-  nanoflare create [worker] [flags]
-  nanoflare list [worker] [flags]
-  nanoflare delete [worker] [worker-id] [flags]
-  nanoflare deploy [worker] [flags]
-  nanoflare deployment output [worker-id] [flags]
-  nanoflare auth login [flags]
-  nanoflare auth orgs
-  nanoflare auth use-org <org-id>
-  nanoflare auth whoami
-  nanoflare auth logout
-  nanoflare secret put [flags] <name> <value>
-  nanoflare secret list [flags]
-  nanoflare secret delete [flags] <name>
-  nanoflare kv namespace create [flags] <name>
-  nanoflare kv namespace list [flags]
-  nanoflare kv namespace delete [flags] <namespace-id>
-  nanoflare db create [flags] <name>
-  nanoflare db list [flags]
-  nanoflare db delete [flags] <database-id>
-  nanoflare db execute [flags] <database-id>
-  nanoflare db migrations create [flags] <name>
-  nanoflare db migrations apply [flags] <database-id>
-  nanoflare object-storage bucket create [flags] <name>
-  nanoflare object-storage bucket list [flags]
-  nanoflare object-storage bucket delete [flags] <bucket-id>`)
 }

@@ -114,6 +114,9 @@ func TestSQLiteManagerAllEncodesObjectsInSelectColumnOrder(t *testing.T) {
 	if !strings.Contains(string(encoded), `"results":[{"name":"seven","id":7}]`) {
 		t.Fatalf("encoded response does not preserve SELECT column order: %s", encoded)
 	}
+	if !strings.Contains(string(encoded), `"columns":["name","id"]`) {
+		t.Fatalf("encoded response does not include SELECT columns: %s", encoded)
+	}
 }
 
 func TestDurationMillisecondsKeepsSubMillisecondPrecision(t *testing.T) {
