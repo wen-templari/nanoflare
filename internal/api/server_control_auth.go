@@ -48,7 +48,20 @@ func isPartnerMachineRequest(r *http.Request) bool {
 }
 
 func organizationIDFromPath(r *http.Request) string {
-	return strings.TrimSpace(r.PathValue("orgID"))
+	if orgID := strings.TrimSpace(r.PathValue("orgID")); orgID != "" {
+		return orgID
+	}
+
+	// Control authentication is performed before the request reaches the
+	// ServeMux, so path values have not been populated yet. Extract the
+	// organization segment directly for org-scoped routes in that phase.
+	const prefix = "/v1/organizations/"
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	if path == r.URL.Path {
+		return ""
+	}
+	orgID, _, _ := strings.Cut(path, "/")
+	return strings.TrimSpace(orgID)
 }
 
 func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {

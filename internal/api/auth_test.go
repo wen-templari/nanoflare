@@ -527,6 +527,21 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 	}
 }
 
+func TestControlAuthAcceptsOrganizationIDFromRoutedPath(t *testing.T) {
+	store := nanoflare.NewStore()
+	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-control-secret"))
+	session := signupControlUser(t, server)
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+session.ActiveOrgID+"/databases", nil)
+	request.Header.Set("Authorization", "Bearer "+session.Token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list databases status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestOpenSignupAndCreateOrganization(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})
