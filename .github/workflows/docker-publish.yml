@@ -95,7 +95,7 @@ jobs:
       - name: Build and optionally push UI image
         uses: docker/build-push-action@v6
         with:
-          context: ./packages/ui
+          context: .
           file: ./packages/ui/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
