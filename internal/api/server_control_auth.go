@@ -361,13 +361,20 @@ func (s *Server) controlCLICode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	activeOrgID := strings.TrimSpace(r.Header.Get("X-Nanoflare-Org-ID"))
+	if activeOrgID != "" {
+		if _, err := s.controlAuth.Membership(user.ID, activeOrgID); err != nil {
+			writeError(w, http.StatusForbidden, errors.New("user is not a member of the selected organization"))
+			return
+		}
+	}
 	s.controlOIDCMu.Lock()
 	if s.controlCLICodes == nil {
 		s.controlCLICodes = make(map[string]controlCLICode)
 	}
 	s.controlCLICodes[code] = controlCLICode{
 		UserID:      user.ID,
-		ActiveOrgID: strings.TrimSpace(controlOrgID(r)),
+		ActiveOrgID: activeOrgID,
 		ExpiresAt:   time.Now().UTC().Add(5 * time.Minute),
 	}
 	s.controlOIDCMu.Unlock()

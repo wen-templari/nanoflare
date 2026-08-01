@@ -47,7 +47,7 @@ func TestRuntimeKVRejectsInvalidRequests(t *testing.T) {
 func TestRuntimeTokenSurvivesRedeployAndIsNotPublic(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, discardWriter{})
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Stable Token", "stable.example.com")
 	first := deploy(t, server, app.ID)
 	token := runtimeTokens(t, store)[app.ID]

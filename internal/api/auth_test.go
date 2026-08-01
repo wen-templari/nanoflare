@@ -25,7 +25,7 @@ func TestUpdateAppPersistsProtectedRoutes(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Secure", "secure.example.com")
 
 	body := bytes.NewBufferString(`{"auth":{"protected_routes":["/admin/*","/reports"]}}`)
@@ -53,7 +53,7 @@ func TestVerifyAuthForwardsJWTAndEmail(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServerWithAuth(service, nil, "", fakeAuthenticator{
+	server := newTestServerWithAuth(service, nil, "", fakeAuthenticator{
 		userInfoResult: AuthResult{
 			Valid:     true,
 			Subject:   "user-123",
@@ -78,7 +78,7 @@ func TestVerifyAuthForwardsJWTAndEmail(t *testing.T) {
 }
 
 func TestVerifyAuthRedirectsBrowserWithoutBearerToken(t *testing.T) {
-	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		beginAuthURL: "https://issuer.example.com/oauth2/authorize",
 	})
 	request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
@@ -97,7 +97,7 @@ func TestVerifyAuthRedirectsBrowserWithoutBearerToken(t *testing.T) {
 }
 
 func TestVerifyAuthUsesBrowserSession(t *testing.T) {
-	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		sessionResult: AuthResult{Valid: true, Subject: "user-123", Email: "browser@example.com"},
 		sessionToken:  "session-token",
 		sessionOK:     true,
@@ -118,7 +118,7 @@ func TestVerifyAuthUsesBrowserSession(t *testing.T) {
 }
 
 func TestAuthCallbackDelegatesToBrowserAuthenticator(t *testing.T) {
-	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		callbackRedirectURL: "https://worker.example.com/preview/logo.svg",
 	})
 	request := httptest.NewRequest(http.MethodGet, "/internal/auth/callback?state=abc&code=xyz", nil)
@@ -134,7 +134,7 @@ func TestAuthCallbackDelegatesToBrowserAuthenticator(t *testing.T) {
 
 func TestAuthAPIsReturnNormalizedResponses(t *testing.T) {
 	expiresAt := timePointer(time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC))
-	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		validateResult: AuthResult{Valid: true, Subject: "user-123", Email: "person@example.com", ExpiresAt: expiresAt, Claims: map[string]any{"scope": "openid"}},
 		userInfoResult: AuthResult{Valid: true, Subject: "user-123", Email: "person@example.com", ExpiresAt: expiresAt, Claims: map[string]any{"scope": "openid"}},
 		userInfoRaw:    map[string]any{"sub": "user-123", "email": "person@example.com"},
@@ -158,7 +158,7 @@ func TestAuthAPIsReturnNormalizedResponses(t *testing.T) {
 
 func TestControlOIDCConfigReportsDisabled(t *testing.T) {
 	store := nanoflare.NewStore()
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
 	server.SetControlOIDCDirectLogin(true)
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/config", nil)
@@ -184,7 +184,7 @@ func TestControlOIDCConfigReportsDisabled(t *testing.T) {
 
 func TestControlOIDCConfigReportsEnabledWithoutDirectLogin(t *testing.T) {
 	store := nanoflare.NewStore()
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
 	server.SetControlOIDC(fakeControlOIDC{enabled: true})
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/config", nil)
@@ -210,7 +210,7 @@ func TestControlOIDCConfigReportsEnabledWithoutDirectLogin(t *testing.T) {
 
 func TestControlOIDCConfigReportsDirectLogin(t *testing.T) {
 	store := nanoflare.NewStore()
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
 	server.SetControlOIDC(fakeControlOIDC{enabled: true})
 	server.SetControlOIDCDirectLogin(true)
 
@@ -238,7 +238,7 @@ func TestControlOIDCConfigReportsDirectLogin(t *testing.T) {
 func TestControlOIDCSessionRejectsReusedAndExpiredCodes(t *testing.T) {
 	store := nanoflare.NewStore()
 	controlAuth := nanoflare.NewControlAuthService(store, "test-secret")
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
 	server.SetControlOIDC(fakeControlOIDC{
 		enabled: true,
 		issuer:  "https://issuer.example.com",
@@ -303,7 +303,7 @@ func TestControlOIDCSessionRejectsReusedAndExpiredCodes(t *testing.T) {
 func TestControlOIDCCallbackCanRedirectToCLICompletionPage(t *testing.T) {
 	store := nanoflare.NewStore()
 	controlAuth := nanoflare.NewControlAuthService(store, "test-secret")
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
 	server.SetControlOIDC(fakeControlOIDC{
 		enabled: true,
 		issuer:  "https://issuer.example.com",
@@ -335,7 +335,7 @@ func TestControlOIDCCallbackCanRedirectToCLICompletionPage(t *testing.T) {
 
 func TestControlOIDCLogoutRedirectsToProviderLogout(t *testing.T) {
 	store := nanoflare.NewStore()
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
 	server.SetControlOIDC(fakeControlOIDC{
 		enabled:   true,
 		logoutURL: "https://issuer.example.com/logout?post_logout_redirect_uri=https%3A%2F%2Fconsole.example.com%2Flogin%3Fsso_logged_out%3D1",
@@ -354,7 +354,7 @@ func TestControlOIDCLogoutRedirectsToProviderLogout(t *testing.T) {
 
 func TestControlOIDCLogoutFallsBackToLoginWhenDisabled(t *testing.T) {
 	store := nanoflare.NewStore()
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-secret"))
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/logout", nil)
 	recorder := httptest.NewRecorder()
@@ -370,7 +370,7 @@ func TestControlOIDCLogoutFallsBackToLoginWhenDisabled(t *testing.T) {
 func TestControlCLIWebLoginCodeExchangesForSession(t *testing.T) {
 	store := nanoflare.NewStore()
 	controlAuth := nanoflare.NewControlAuthService(store, "test-secret")
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, controlAuth)
 
 	signupBody := bytes.NewBufferString(`{"email":"person@example.com","password":"secret","organization_name":"Acme"}`)
 	signupRequest := httptest.NewRequest(http.MethodPost, "/v1/setup/signup", signupBody)
@@ -438,7 +438,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
-	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(service, nil, "", nil, controlAuth)
 
 	signupBody := bytes.NewBufferString(`{"email":"admin@example.com","password":"secret","organization_name":"Acme"}`)
 	signupRequest := httptest.NewRequest(http.MethodPost, "/v1/setup/signup", signupBody)
@@ -529,7 +529,7 @@ func TestControlAuthProtectsOrgScopedAPIs(t *testing.T) {
 
 func TestControlAuthAcceptsOrganizationIDFromRoutedPath(t *testing.T) {
 	store := nanoflare.NewStore()
-	server := NewServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-control-secret"))
+	server := newTestServerWithControlAuth(nanoflare.NewService(store, &noopWriter{}), nil, "", nil, nanoflare.NewControlAuthService(store, "test-control-secret"))
 	session := signupControlUser(t, server)
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+session.ActiveOrgID+"/databases", nil)
@@ -546,7 +546,7 @@ func TestOpenSignupAndCreateOrganization(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
-	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(service, nil, "", nil, controlAuth)
 
 	first := signupControlUser(t, server)
 	signupBody := bytes.NewBufferString(`{"email":"second@example.com","password":"secret"}`)
@@ -605,7 +605,7 @@ func TestInvitesGrantScopedOrgAccess(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
-	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(service, nil, "", nil, controlAuth)
 
 	owner := signupControlUser(t, server)
 	inviteBody := bytes.NewBufferString(`{"email":"viewer@example.com","role":"viewer"}`)
@@ -679,7 +679,7 @@ func TestPendingInviteCanBeRevoked(t *testing.T) {
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
-	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(service, nil, "", nil, controlAuth)
 
 	owner := signupControlUser(t, server)
 	inviteBody := bytes.NewBufferString(`{"email":"pending@example.com","role":"member"}`)
@@ -721,7 +721,7 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
 	oauth := nanoflare.NewOAuthService(store)
-	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+	server := newTestServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-resources")
@@ -730,10 +730,9 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	token := authorizeOAuthClient(t, server, session.Token, paidOrgID, client, []string{"workers:write", "kv:write"})
 
 	createBody := bytes.NewBufferString(`{"name":"External App","hostname":"external.example.com","external_id":"ext-app-1"}`)
-	createRequest := httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+paidOrgID+"/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	createRequest.Header.Set("X-Nanoflare-Org-ID", "ignored-org")
 	createRecorder := httptest.NewRecorder()
 	server.ServeHTTP(createRecorder, createRequest)
 	if createRecorder.Code != http.StatusCreated {
@@ -747,7 +746,7 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 		t.Fatalf("oauth app metadata = %#v, session org = %q client = %q", app, paidOrgID, client.ClientID)
 	}
 
-	readRequest := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
+	readRequest := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+paidOrgID+"/workers", nil)
 	readRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	readRecorder := httptest.NewRecorder()
 	server.ServeHTTP(readRecorder, readRequest)
@@ -756,7 +755,7 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 	}
 
 	namespaceBody := bytes.NewBufferString(`{"name":"external-cache","external_id":"ext-kv-1"}`)
-	namespaceRequest := httptest.NewRequest(http.MethodPost, "/v1/kv/namespaces", namespaceBody)
+	namespaceRequest := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+paidOrgID+"/kv-namespaces", namespaceBody)
 	namespaceRequest.Header.Set("Content-Type", "application/json")
 	namespaceRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	namespaceRecorder := httptest.NewRecorder()
@@ -793,9 +792,9 @@ func TestOAuthAppCanManageApprovedOrgResources(t *testing.T) {
 		t.Fatalf("refresh did not rotate tokens: before=%#v after=%#v", token, refreshed)
 	}
 
-	revokeBody := bytes.NewBufferString(`{"token":` + strconv.Quote(refreshed.AccessToken) + `}`)
-	revokeRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/revoke", revokeBody)
-	revokeRequest.Header.Set("Content-Type", "application/json")
+	revokeBody := url.Values{"token": {refreshed.AccessToken}}.Encode()
+	revokeRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/revoke", strings.NewReader(revokeBody))
+	revokeRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	revokeRecorder := httptest.NewRecorder()
 	server.ServeHTTP(revokeRecorder, revokeRequest)
 	if revokeRecorder.Code != http.StatusNoContent {
@@ -818,7 +817,7 @@ func TestPartnerConnectionProvisionsTenantAndManagesResources(t *testing.T) {
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
 	oauth := nanoflare.NewOAuthService(store)
-	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+	server := newTestServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 	server.SetPartnerService(nanoflare.NewPartnerService(store))
 	session := signupControlUser(t, server)
 
@@ -840,9 +839,9 @@ func TestPartnerConnectionProvisionsTenantAndManagesResources(t *testing.T) {
 	}
 
 	provision := func() partnerConnectionResponse {
-		request := httptest.NewRequest(http.MethodPost, "/v1/partner-integrations/"+integration.ID+"/connections", bytes.NewBufferString(`{"external_account_id":"workspace-123","organization_name":"Acme","requested_scopes":["workers:write","kv:write"]}`))
+		request := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+session.ActiveOrgID+"/partner-integrations/"+integration.ID+"/connections", bytes.NewBufferString(`{"external_account_id":"workspace-123","organization_name":"Acme","requested_scopes":["workers:write","kv:write"]}`))
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Authorization", "Bearer "+integration.Secret)
+		request.SetBasicAuth(integration.ID, integration.Secret)
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusCreated && recorder.Code != http.StatusOK {
@@ -863,7 +862,7 @@ func TestPartnerConnectionProvisionsTenantAndManagesResources(t *testing.T) {
 		t.Fatalf("provisioning was not idempotent: %#v %#v", connected, repeated)
 	}
 
-	createWorker := httptest.NewRequest(http.MethodPost, "/v1/workers", bytes.NewBufferString(`{"name":"Managed","hostname":"partner-managed.example.com","external_id":"worker-123"}`))
+	createWorker := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+connected.Organization.ID+"/workers", bytes.NewBufferString(`{"name":"Managed","hostname":"partner-managed.example.com","external_id":"worker-123"}`))
 	createWorker.Header.Set("Content-Type", "application/json")
 	createWorker.Header.Set("Authorization", "Bearer "+connected.AccessToken)
 	workerRecorder := httptest.NewRecorder()
@@ -879,8 +878,9 @@ func TestPartnerConnectionProvisionsTenantAndManagesResources(t *testing.T) {
 		t.Fatalf("machine worker metadata = %#v", worker)
 	}
 
-	refreshRequest := httptest.NewRequest(http.MethodPost, "/v1/partner-connections/token", bytes.NewBufferString(`{"connection_id":`+strconv.Quote(connected.ConnectionID)+`,"refresh_token":`+strconv.Quote(connected.RefreshToken)+`}`))
+	refreshRequest := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+session.ActiveOrgID+"/partner-integrations/"+integration.ID+"/token", bytes.NewBufferString(`{"connection_id":`+strconv.Quote(connected.ConnectionID)+`,"refresh_token":`+strconv.Quote(connected.RefreshToken)+`}`))
 	refreshRequest.Header.Set("Content-Type", "application/json")
+	refreshRequest.SetBasicAuth(integration.ID, integration.Secret)
 	refreshRecorder := httptest.NewRecorder()
 	server.ServeHTTP(refreshRecorder, refreshRequest)
 	if refreshRecorder.Code != http.StatusOK {
@@ -894,8 +894,8 @@ func TestPartnerConnectionProvisionsTenantAndManagesResources(t *testing.T) {
 		t.Fatalf("machine tokens did not rotate")
 	}
 
-	revokeRequest := httptest.NewRequest(http.MethodDelete, "/v1/partner-integrations/"+integration.ID+"/connections/"+connected.ConnectionID, nil)
-	revokeRequest.Header.Set("Authorization", "Bearer "+integration.Secret)
+	revokeRequest := httptest.NewRequest(http.MethodDelete, "/v1/organizations/"+session.ActiveOrgID+"/partner-integrations/"+integration.ID+"/connections/"+connected.ConnectionID, nil)
+	revokeRequest.SetBasicAuth(integration.ID, integration.Secret)
 	revokeRecorder := httptest.NewRecorder()
 	server.ServeHTTP(revokeRecorder, revokeRequest)
 	if revokeRecorder.Code != http.StatusNoContent {
@@ -928,7 +928,7 @@ func TestOAuthClientManagementIsOrgOwned(t *testing.T) {
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
 	oauth := nanoflare.NewOAuthService(store)
-	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+	server := newTestServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
 	defaultClientBody := bytes.NewBufferString(`{"name":"Default External Platform","redirect_uris":["https://external.example.com/oauth/callback"],"scopes":["workers:write"]}`)
@@ -1024,7 +1024,7 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
 	oauth := nanoflare.NewOAuthService(store)
-	server := NewServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
+	server := newTestServerWithRuntimeAndOAuth(service, nil, "", nil, controlAuth, oauth, nil)
 
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-oauth-secret")
@@ -1049,20 +1049,17 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 	if rotated.ClientID != client.ClientID || rotated.ClientSecret == "" || rotated.ClientSecret == client.ClientSecret {
 		t.Fatalf("rotated = %#v", rotated)
 	}
-	oldRefreshBody, err := json.Marshal(map[string]string{
-		"grant_type":    "refresh_token",
-		"client_id":     client.ClientID,
-		"client_secret": client.ClientSecret,
-		"refresh_token": token.RefreshToken,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldRefreshRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", bytes.NewReader(oldRefreshBody))
-	oldRefreshRequest.Header.Set("Content-Type", "application/json")
+	oldRefreshBody := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {client.ClientID},
+		"client_secret": {client.ClientSecret},
+		"refresh_token": {token.RefreshToken},
+	}.Encode()
+	oldRefreshRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", strings.NewReader(oldRefreshBody))
+	oldRefreshRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	oldRefreshRecorder := httptest.NewRecorder()
 	server.ServeHTTP(oldRefreshRecorder, oldRefreshRequest)
-	if oldRefreshRecorder.Code != http.StatusUnauthorized {
+	if oldRefreshRecorder.Code != http.StatusBadRequest {
 		t.Fatalf("old secret refresh status = %d body = %q", oldRefreshRecorder.Code, oldRefreshRecorder.Body.String())
 	}
 
@@ -1117,7 +1114,7 @@ func TestOAuthClientSecretRotationAndDisable(t *testing.T) {
 
 	restoredToken := authorizeOAuthClient(t, server, session.Token, paidOrgID, oauthClientFixture{ClientID: client.ClientID, ClientSecret: rotated.ClientSecret}, []string{"workers:write"})
 	createBody = bytes.NewBufferString(`{"name":"Restored Client App","hostname":"restored-client.example.com"}`)
-	createRequest = httptest.NewRequest(http.MethodPost, "/v1/workers", createBody)
+	createRequest = httptest.NewRequest(http.MethodPost, "/v1/organizations/"+paidOrgID+"/workers", createBody)
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Authorization", "Bearer "+restoredToken.AccessToken)
 	createRecorder = httptest.NewRecorder()
@@ -1132,7 +1129,7 @@ func TestPersonalAccessTokenAPIsAndAuth(t *testing.T) {
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
 	controlAuth.SetTestHashCost(4)
-	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(service, nil, "", nil, controlAuth)
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-pat")
 
@@ -1214,7 +1211,7 @@ func TestUserScopedPersonalAccessTokenUsesOrgHeader(t *testing.T) {
 	service := nanoflare.NewService(store, &noopWriter{})
 	controlAuth := nanoflare.NewControlAuthService(store, "test-control-secret")
 	controlAuth.SetTestHashCost(4)
-	server := NewServerWithControlAuth(service, nil, "", nil, controlAuth)
+	server := newTestServerWithControlAuth(service, nil, "", nil, controlAuth)
 	session := signupControlUser(t, server)
 	paidOrgID := addPaidOrgForSession(t, store, session, "org-paid-user-pat")
 
@@ -1381,18 +1378,15 @@ func authorizeOAuthClient(t *testing.T, server http.Handler, sessionToken, orgID
 		t.Fatalf("authorize response = %#v", authorize)
 	}
 
-	tokenBody, err := json.Marshal(map[string]string{
-		"grant_type":    "authorization_code",
-		"client_id":     client.ClientID,
-		"client_secret": client.ClientSecret,
-		"code":          authorize.Code,
-		"redirect_uri":  "https://external.example.com/oauth/callback",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tokenRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", bytes.NewReader(tokenBody))
-	tokenRequest.Header.Set("Content-Type", "application/json")
+	tokenBody := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {client.ClientID},
+		"client_secret": {client.ClientSecret},
+		"code":          {authorize.Code},
+		"redirect_uri":  {"https://external.example.com/oauth/callback"},
+	}.Encode()
+	tokenRequest := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", strings.NewReader(tokenBody))
+	tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenRecorder := httptest.NewRecorder()
 	server.ServeHTTP(tokenRecorder, tokenRequest)
 	if tokenRecorder.Code != http.StatusOK {
@@ -1410,17 +1404,14 @@ func authorizeOAuthClient(t *testing.T, server http.Handler, sessionToken, orgID
 
 func refreshOAuthToken(t *testing.T, server http.Handler, client oauthClientFixture, refreshToken string) nanoflare.OAuthTokenResponse {
 	t.Helper()
-	body, err := json.Marshal(map[string]string{
-		"grant_type":    "refresh_token",
-		"client_id":     client.ClientID,
-		"client_secret": client.ClientSecret,
-		"refresh_token": refreshToken,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", bytes.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
+	body := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {client.ClientID},
+		"client_secret": {client.ClientSecret},
+		"refresh_token": {refreshToken},
+	}.Encode()
+	request := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -1545,7 +1536,7 @@ func timePointer(value time.Time) *time.Time {
 }
 
 func TestVerifyAuthRejectsInvalidToken(t *testing.T) {
-	server := NewServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
+	server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", fakeAuthenticator{
 		userInfoErr: errors.New("invalid token: signature mismatch"),
 	})
 	request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)

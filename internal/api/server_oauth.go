@@ -32,6 +32,7 @@ func (s *Server) registerOAuthRoutes() {
 	s.mux.HandleFunc("PATCH "+clients+"/{clientID}", s.updateOAuthClient)
 	s.mux.HandleFunc("POST "+clients+"/{clientID}/client-secrets", s.rotateOAuthClientSecret)
 	s.mux.HandleFunc("DELETE "+clients+"/{clientID}", s.disableOAuthClient)
+	s.mux.HandleFunc("POST "+clients+"/{clientID}/restore", s.restoreOAuthClient)
 	s.mux.HandleFunc("GET /v1/oauth/authorize", s.oauthAuthorizeInfo)
 	s.mux.HandleFunc("POST /v1/oauth/authorize", s.oauthAuthorize)
 	s.mux.HandleFunc("POST /v1/oauth/token", s.oauthToken)

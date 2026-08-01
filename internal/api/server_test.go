@@ -19,6 +19,117 @@ import (
 	"github.com/clas/nanoflare/internal/runtime"
 )
 
+// testServer routes the pre-organization test fixtures through the current
+// organization-scoped API. Production requests never use this adapter; it
+// keeps the fixtures focused on behavior rather than repeating a test org ID.
+type testServer struct{ *Server }
+
+func newTestServer(service *nanoflare.Service) *testServer {
+	return &testServer{NewServer(service)}
+}
+
+func newTestServerWithAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator) *testServer {
+	return &testServer{NewServerWithAuth(service, traefik, token, auth)}
+}
+
+func newTestServerWithTraefik(service *nanoflare.Service, traefik TraefikConfigReader, token string) *testServer {
+	return &testServer{NewServerWithTraefik(service, traefik, token)}
+}
+
+func newTestServerWithControlAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService) *testServer {
+	return &testServer{NewServerWithControlAuth(service, traefik, token, auth, controlAuth)}
+}
+
+func newTestServerWithRuntime(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer) *testServer {
+	return &testServer{NewServerWithRuntime(service, traefik, token, auth, controlAuth, runtime)}
+}
+
+func newTestServerWithRuntimeAndOAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, oauth *nanoflare.OAuthService, runtime RuntimeEnsurer) *testServer {
+	return &testServer{NewServerWithRuntimeAndOAuth(service, traefik, token, auth, controlAuth, oauth, runtime)}
+}
+
+func (s *testServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	orgID := strings.TrimSpace(r.Header.Get("X-Nanoflare-Org-ID"))
+	globalPath := r.URL.Path == "/v1/orgs" || strings.HasPrefix(r.URL.Path, "/v1/orgs/") || strings.HasPrefix(r.URL.Path, "/v1/pats")
+	if orgID == "" && s.controlAuth == nil {
+		orgID = "test-org"
+	}
+	if orgID != "" || globalPath {
+		if scoped := scopedTestPath(orgID, r.URL.Path); scoped != r.URL.Path {
+			r = r.Clone(r.Context())
+			url := *r.URL
+			r.URL = &url
+			r.URL.Path = scoped
+		}
+	}
+	s.Server.ServeHTTP(w, r)
+}
+
+func scopedTestPath(orgID, requestPath string) string {
+	base := "/v1/organizations/" + orgID
+	if strings.HasPrefix(requestPath, "/v1/workers/") {
+		rest := strings.TrimPrefix(requestPath, "/v1/workers/")
+		if strings.HasSuffix(rest, "/deployments/traffic") {
+			return base + "/workers/" + strings.TrimSuffix(rest, "/deployments/traffic") + "/deployment-traffic"
+		}
+		if strings.HasSuffix(rest, "/traffic") {
+			return base + "/workers/" + strings.TrimSuffix(rest, "/traffic") + "/analytics/traffic"
+		}
+		if before, after, ok := strings.Cut(rest, "/kv/namespaces/"); ok {
+			if namespaceID, key, ok := strings.Cut(after, "/"); ok {
+				return base + "/workers/" + before + "/kv-namespaces/" + namespaceID + "/values/" + key
+			}
+			return base + "/workers/" + before + "/kv-namespaces/" + after + "/values"
+		}
+		if before, after, ok := strings.Cut(rest, "/object-storage-buckets/"); ok {
+			return base + "/workers/" + before + "/object-storage-buckets/" + strings.Replace(after, "/", "/objects/", 1)
+		}
+		return base + "/workers/" + rest
+	}
+	if requestPath == "/v1/workers" {
+		return base + "/workers"
+	}
+	if strings.HasPrefix(requestPath, "/v1/kv/namespaces") {
+		rest := strings.TrimPrefix(requestPath, "/v1/kv/namespaces")
+		rest = strings.Replace(rest, "/metrics", "/analytics", 1)
+		return base + "/kv-namespaces" + rest
+	}
+	if strings.HasPrefix(requestPath, "/v1/db/") {
+		rest := strings.TrimPrefix(requestPath, "/v1/db/")
+		rest = strings.Replace(rest, "/execute", "/queries", 1)
+		rest = strings.Replace(rest, "/metrics", "/analytics", 1)
+		return base + "/databases/" + rest
+	}
+	if strings.HasPrefix(requestPath, "/v1/object-storage-buckets") {
+		rest := strings.TrimPrefix(requestPath, "/v1/object-storage-buckets")
+		rest = strings.Replace(rest, "/metrics", "/analytics", 1)
+		return base + "/object-storage-buckets" + rest
+	}
+	if strings.HasPrefix(requestPath, "/v1/oauth/clients") {
+		rest := strings.TrimPrefix(requestPath, "/v1/oauth/clients")
+		rest = strings.Replace(rest, "/secret", "/client-secrets", 1)
+		return base + "/oauth-clients" + rest
+	}
+	if strings.HasPrefix(requestPath, "/v1/oauth/connections") {
+		return base + "/oauth-connections" + strings.TrimPrefix(requestPath, "/v1/oauth/connections")
+	}
+	if strings.HasPrefix(requestPath, "/v1/partner-integrations") {
+		rest := strings.TrimPrefix(requestPath, "/v1/partner-integrations")
+		rest = strings.Replace(rest, "/secret", "/client-secrets", 1)
+		return base + "/partner-integrations" + rest
+	}
+	if strings.HasPrefix(requestPath, "/v1/pats") {
+		return "/v1/me/personal-access-tokens" + strings.TrimPrefix(requestPath, "/v1/pats")
+	}
+	if requestPath == "/v1/orgs" {
+		return "/v1/organizations"
+	}
+	if strings.HasPrefix(requestPath, "/v1/orgs/") {
+		return "/v1/organizations/" + strings.TrimPrefix(requestPath, "/v1/orgs/")
+	}
+	return requestPath
+}
+
 func TestCreateDeployAndScopedKV(t *testing.T) {
 	dir := t.TempDir()
 	store := nanoflare.NewStore()
@@ -28,7 +139,7 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 
 	appOne := createApp(t, server, "App One", "one.example.com")
 	appTwo := createApp(t, server, "App Two", "two.example.com")
@@ -63,7 +174,7 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), nil, outputBuffer, fakeTraffic{})
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Console App", "console.example.com")
 	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
 
@@ -109,7 +220,7 @@ func TestWorkerOutputRejectsInvalidLimit(t *testing.T) {
 	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), config.NewWriter(
 		filepath.Join(t.TempDir(), "workerd.capnp"), filepath.Join(t.TempDir(), "traefik.yml"), "http://nanoflared/internal/auth/verify", "127.0.0.1",
 	), nil, runtime.NewOutputBuffer(), fakeTraffic{})
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Output App", "output.example.com")
 	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/output?limit=1001", http.StatusBadRequest, &map[string]string{})
 }
@@ -127,7 +238,7 @@ func TestSecretAPIsReturnMetadataOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.SetSecretCodec(codec)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Console App", "console.example.com")
 
 	requestJSONBytes(t, server, http.MethodPut, "/v1/workers/"+app.ID+"/secrets/DB_URL", []byte(`{"value":"postgres://secret"}`), http.StatusNoContent, nil)
@@ -153,7 +264,7 @@ func TestWorkerConsoleKV(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	appOne := createApp(t, server, "Console KV One", "console-kv-one.example.com")
 	appTwo := createApp(t, server, "Console KV Two", "console-kv-two.example.com")
 	namespaceOne := createKVNamespace(t, server, "console-one")
@@ -191,7 +302,7 @@ func TestConsoleKVWriteOverOrgStorageLimitReturns402(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	if err := store.CreateOrganization(nanoflare.Organization{ID: "org-console-kv-limit", Name: "Console KV Limit"}); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +346,7 @@ func TestRuntimeKVWriteOverOrgStorageLimitReturns402(t *testing.T) {
 
 func TestKVNamespaceAPIs(t *testing.T) {
 	service := nanoflare.NewService(nanoflare.NewStore(), discardWriter{})
-	server := NewServer(service)
+	server := newTestServer(service)
 
 	namespace := createKVNamespace(t, server, "shared-cache")
 	var namespaces []nanoflare.KVNamespace
@@ -278,7 +389,7 @@ func TestKVNamespaceAPIs(t *testing.T) {
 
 func TestPrometheusMetricsExportsRuntimeAggregates(t *testing.T) {
 	service := nanoflare.NewService(nanoflare.NewStore(), discardWriter{})
-	server := NewServer(service)
+	server := newTestServer(service)
 	namespace := createKVNamespace(t, server, "metrics-cache")
 	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "metrics-objects"})
 	if err != nil {
@@ -325,7 +436,7 @@ func TestDatabaseMetricsAPIAndPrometheusExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.SetDBExecutor(dbRuntime)
-	server := NewServer(service)
+	server := newTestServer(service)
 	db, err := service.CreateDatabase(nanoflare.CreateDatabaseInput{Name: "metrics-db"})
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +485,7 @@ func TestDatabaseMetricsAPIAndPrometheusExport(t *testing.T) {
 
 func TestDatabaseMetricsTimeseriesAPI(t *testing.T) {
 	service := nanoflare.NewServiceWithConsole(nanoflare.NewStore(), discardWriter{}, nil, nil, fakeTraffic{})
-	server := NewServer(service)
+	server := newTestServer(service)
 	db, err := service.CreateDatabase(nanoflare.CreateDatabaseInput{Name: "series-db"})
 	if err != nil {
 		t.Fatal(err)
@@ -397,7 +508,7 @@ func TestCreateAppGeneratesHostnameWhenOmitted(t *testing.T) {
 	if err := service.SetBaseHostname("workers.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(service)
+	server := newTestServer(service)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/workers", strings.NewReader(`{"name":"Hello Worker"}`))
@@ -423,7 +534,7 @@ func TestDeleteAppRemovesWorker(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Delete App", "delete.example.com")
 	deploy(t, server, app.ID)
 
@@ -447,7 +558,7 @@ func TestWorkerConsoleAPIsWithObjectBackedDeployment(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects, fakeOutput{}, fakeTraffic{})
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Object App", "object.example.com")
 	bundle := `export default { async fetch() { return new Response("ok"); } }`
 	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: bundle}}, "")
@@ -482,7 +593,7 @@ func TestWorkerConsoleAPIsForRegisteredWorkerWithoutDeployment(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Draft App", "draft.example.com")
 
 	var detail nanoflare.WorkerDetail
@@ -506,7 +617,7 @@ func TestListWorkerDeploymentsIncludesInactiveRecords(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Ledger App", "ledger.example.com")
 	first := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "first.js", Content: "first"}}, "")
 	second := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "second.js", Content: "second"}}, "")
@@ -534,7 +645,7 @@ func TestSetWorkerDeploymentTraffic(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Ledger App", "ledger.example.com")
 	first := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "first.js", Content: "first"}}, "")
 	second := deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "second.js", Content: "second"}}, "")
@@ -568,7 +679,7 @@ func TestTraefikConfigRequiresToken(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServerWithTraefik(service, staticTraefikConfig("http:\n  routers: {}\n"), "secret")
+	server := newTestServerWithTraefik(service, staticTraefikConfig("http:\n  routers: {}\n"), "secret")
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/internal/traefik/config", nil))
@@ -598,7 +709,7 @@ func TestAppGatewayServesAttachedAsset(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssets(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -623,7 +734,7 @@ func TestAppGatewayPreservesEscapedSlashes(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Registry", "registry.example.com")
 	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}}, "")
 
@@ -663,7 +774,7 @@ func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployment := deployWithAssets(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -701,7 +812,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Objects", "objects.example.com")
 	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "objects"})
 	if err != nil {
@@ -794,7 +905,7 @@ func TestRuntimeObjectWriteOverOrgStorageLimitReturns402(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	if err := store.CreateOrganization(nanoflare.Organization{ID: "org-runtime-object-limit", Name: "Runtime Object Limit"}); err != nil {
 		t.Fatal(err)
 	}
@@ -839,7 +950,7 @@ func TestConsoleObjectWriteOverOrgStorageLimitReturns402(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	if err := store.CreateOrganization(nanoflare.Organization{ID: "org-console-object-limit", Name: "Console Object Limit"}); err != nil {
 		t.Fatal(err)
 	}
@@ -882,7 +993,7 @@ func TestObjectStorageMetricsReconcileExistingObjects(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Existing Objects", "existing-objects.example.com")
 	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "existing-objects"})
 	if err != nil {
@@ -921,7 +1032,7 @@ func TestGatewayFallsBackToWorkerWhenAssetMissing(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssets(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -967,7 +1078,7 @@ func TestGatewayRunWorkerFirstTrueProxiesBeforeAssets(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssetsConfig(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -992,7 +1103,7 @@ func TestGatewayReusesWorkerConnections(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	))
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Gateway Reuse", "reuse.example.com")
 	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}}, "")
 	workerPort := startTestWorker(t, "worker")
@@ -1024,7 +1135,7 @@ func TestGatewayUsesStickyDeploymentCookie(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	first := deployWithAssets(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("first"); } }`}},
@@ -1060,7 +1171,7 @@ func TestGatewayAssetHitDoesNotEnsureLazyRuntime(t *testing.T) {
 		"127.0.0.1",
 	), objects)
 	lazy := &recordingRuntime{}
-	server := NewServerWithRuntime(service, nil, "", nil, nil, lazy)
+	server := newTestServerWithRuntime(service, nil, "", nil, nil, lazy)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssets(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -1089,7 +1200,7 @@ func TestGatewayAssetMissEnsuresLazyRuntime(t *testing.T) {
 		"127.0.0.1",
 	), objects)
 	lazy := &recordingRuntime{port: startTestWorker(t, "worker")}
-	server := NewServerWithRuntime(service, nil, "", nil, nil, lazy)
+	server := newTestServerWithRuntime(service, nil, "", nil, nil, lazy)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssets(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -1117,7 +1228,7 @@ func TestGatewayRunWorkerFirstRoutesOnlyMatchingPaths(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssetsConfig(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -1154,7 +1265,7 @@ func TestGatewayRunWorkerFirstNegativeRouteServesAsset(t *testing.T) {
 		"http://nanoflared/internal/auth/verify",
 		"127.0.0.1",
 	), objects)
-	server := NewServer(service)
+	server := newTestServer(service)
 	app := createApp(t, server, "Assets", "assets.example.com")
 	deployWithAssetsConfig(t, server, app.ID,
 		[]nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("worker"); } }`}},
@@ -1360,8 +1471,10 @@ func requestJSON(t *testing.T, server http.Handler, method, path string, wantSta
 	if recorder.Code != wantStatus {
 		t.Fatalf("%s %s status = %d, body = %s", method, path, recorder.Code, recorder.Body.String())
 	}
-	if err := json.NewDecoder(recorder.Body).Decode(target); err != nil {
-		t.Fatal(err)
+	if target != nil && wantStatus < http.StatusBadRequest {
+		if err := json.NewDecoder(recorder.Body).Decode(target); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -1374,7 +1487,7 @@ func requestJSONBytes(t *testing.T, server http.Handler, method, path string, bo
 	if recorder.Code != wantStatus {
 		t.Fatalf("%s %s status = %d, body = %s", method, path, recorder.Code, recorder.Body.String())
 	}
-	if target != nil {
+	if target != nil && wantStatus < http.StatusBadRequest {
 		if err := json.NewDecoder(recorder.Body).Decode(target); err != nil {
 			t.Fatal(err)
 		}
