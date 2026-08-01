@@ -1,36 +1,21 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { components } from "@nanoflare/schema";
 
-export type Section = "overview" | "workers" | "kv" | "databases" | "object-storage";
-export type WorkerAuth = { protected_routes?: string[] };
-export type WorkerKVNamespaceBinding = { binding: string; id: string; preview_id?: string };
-export type WorkerDatabaseBinding = { binding: string; database_id: string };
-export type WorkerObjectStorageBucketBinding = { binding: string; bucket_id: string };
-export type WorkerAssetConfig = {
-  binding?: string;
-  html_handling?: string;
-  not_found_handling?: string;
-  run_worker_first?: true | string[];
-};
-export type WorkerTriggerConfig = { crons?: string[] };
-export type WorkerBinding = {
-  kind: "kv" | "db" | "asset" | "object_storage_bucket";
-  binding: string;
-  namespace_id?: string;
-  namespace_name?: string;
-  database_id?: string;
-  database_name?: string;
-  bucket_id?: string;
-  bucket_name?: string;
-  asset_count?: number;
+type Normalized<T, Keys extends keyof T> = Omit<T, Keys> & {
+  [Key in Keys]-?: NonNullable<T[Key]>;
 };
 
-export type Worker = {
-  id: string;
-  name: string;
-  hostname: string;
-  created_at: string;
-  created_by?: string;
+export type Section = "overview" | "workers" | "kv" | "databases" | "object-storage";
+export type WorkerAuth = Omit<components["schemas"]["AuthConfig"], "protected_routes"> & {
+  protected_routes?: string[];
+};
+export type WorkerKVNamespaceBinding = components["schemas"]["KVBinding"];
+export type WorkerDatabaseBinding = components["schemas"]["DatabaseBinding"];
+export type WorkerObjectStorageBucketBinding = components["schemas"]["ObjectStorageBucketBinding"];
+export type WorkerTriggerConfig = components["schemas"]["TriggerConfig"];
+export type WorkerBinding = components["schemas"]["Binding"];
+
+export type Worker = Omit<components["schemas"]["App"], "auth"> & {
   auth?: WorkerAuth;
   status?: "live" | "draft";
   requests?: string;
@@ -46,25 +31,14 @@ export type WorkerDetailTab =
   | "output"
   | "settings";
 
-export type WorkerDeployment = {
-  id: string;
-  commit_hash?: string;
-  commit_message?: string;
-  created_by?: string;
-  entrypoint: string;
-  bundle_size: number;
-  asset_count?: number;
-  asset_config?: WorkerAssetConfig;
-  compatibility_date: string;
-  compatibility_flags?: string[];
-  triggers?: WorkerTriggerConfig;
-  vars?: Record<string, unknown>;
-  created_at: string;
+export type WorkerDeployment = Normalized<
+  components["schemas"]["WorkerDeployment"],
+  "bindings" | "compatibility_flags" | "kv_namespaces" | "db" | "object_storage_buckets"
+> & {
+  bindings?: WorkerBinding[];
   kv_namespaces?: WorkerKVNamespaceBinding[];
   db?: WorkerDatabaseBinding[];
   object_storage_buckets?: WorkerObjectStorageBucketBinding[];
-  bindings?: WorkerBinding[];
-  traffic_percent: number;
 };
 
 export type WorkerSecret = components["schemas"]["Secret"];
@@ -74,22 +48,11 @@ export type WorkerDetailData = {
   secrets?: WorkerSecret[];
 };
 
-export type ConsoleDeployment = {
-  id: string;
-  app_id: string;
-  app_name: string;
-  hostname: string;
-  commit_hash?: string;
-  commit_message?: string;
-  created_by?: string;
-  entrypoint: string;
-  bundle_size: number;
-  compatibility_date: string;
-  compatibility_flags?: string[];
+export type ConsoleDeployment = Omit<
+  Normalized<components["schemas"]["ConsoleDeployment"], "compatibility_flags">,
+  "triggers"
+> & {
   triggers?: WorkerTriggerConfig;
-  state: "active" | "inactive";
-  traffic_percent: number;
-  created_at: string;
 };
 
 export type WorkerFile = components["schemas"]["WorkerFile"];
@@ -99,153 +62,70 @@ export type ObjectStorageBucket = components["schemas"]["ObjectStorageBucket"];
 export type Database = components["schemas"]["Database"];
 export type ObjectStorageObject = components["schemas"]["ObjectInfo"];
 
-export type WorkerTraffic = {
-  available: boolean;
-  requests_per_second: number;
-  p95_latency: number;
-  error_rate: number;
-  invocations: number;
-  errors: number;
-  bundle_size: number;
-  traffic: number[];
-  duration_ms_avg: number;
-  duration_ms_p95: number;
-  duration_ms_per_second: number;
-  duration_series: number[];
-  status_codes: { code: string; value: number }[];
-};
+export type WorkerTraffic = Normalized<
+  components["schemas"]["WorkerTraffic"],
+  "traffic" | "duration_series" | "status_codes"
+>;
 
-export type KVNamespaceMetrics = {
-  available: boolean;
-  reads: number;
-  writes: number;
-  size: number;
-};
-export type ObjectStorageBucketMetrics = {
-  available: boolean;
-  reads: number;
-  writes: number;
-  size: number;
-};
-export type DatabaseMetrics = {
-  available: boolean;
-  queries: number;
-  read_queries: number;
-  write_queries: number;
-  rows_read: number;
-  rows_returned: number;
-  rows_written: number;
-  storage_bytes: number;
-  table_count: number;
-  total_duration_ms: number;
-  p50_duration_ms: number;
-  p99_duration_ms: number;
-  duration_bucket_0_5: number;
-  duration_bucket_1: number;
-  duration_bucket_2_5: number;
-  duration_bucket_5: number;
-  duration_bucket_10: number;
-  duration_bucket_25: number;
-  duration_bucket_50: number;
-  duration_bucket_100: number;
-  duration_bucket_250: number;
-  duration_bucket_500: number;
-  duration_bucket_1000: number;
-  duration_bucket_inf: number;
-};
+export type KVNamespaceMetrics = components["schemas"]["KVNamespaceMetrics"];
+export type ObjectStorageBucketMetrics = components["schemas"]["ObjectStorageBucketMetrics"];
+export type DatabaseMetrics = components["schemas"]["DatabaseMetrics"];
 export type MetricPoint = components["schemas"]["MetricPoint"];
-export type DatabaseMetricsTimeseries = {
-  available: boolean;
-  queries: MetricPoint[];
-  read_queries: MetricPoint[];
-  write_queries: MetricPoint[];
-  rows_read: MetricPoint[];
-  rows_written: MetricPoint[];
-  storage_bytes: MetricPoint[];
-  table_count: MetricPoint[];
-  p50_latency_ms: MetricPoint[];
-  p95_latency_ms: MetricPoint[];
-  p99_latency_ms: MetricPoint[];
-};
+export type DatabaseMetricsTimeseries = Normalized<
+  components["schemas"]["DatabaseMetricsTimeseries"],
+  | "queries"
+  | "read_queries"
+  | "write_queries"
+  | "rows_read"
+  | "rows_written"
+  | "storage_bytes"
+  | "table_count"
+  | "p50_latency_ms"
+  | "p95_latency_ms"
+  | "p99_latency_ms"
+>;
 
 export type KVNamespace = components["schemas"]["KVNamespace"];
-export type OAuthClient = {
-  client_id: string;
-  owner_org_id?: string;
-  name: string;
-  redirect_uris: string[];
-  scopes: string[];
-  disabled?: boolean;
-  created_at: string;
-  updated_at: string;
-};
-export type OAuthClientCreated = OAuthClient & { client_secret: string };
-export type OAuthConnection = {
-  client_id: string;
-  name: string;
-  scopes: string[];
-  created_at: string;
-};
-export type OAuthClientConnection = {
-  client_id: string;
-  user_id: string;
-  user_email: string;
-  org_id: string;
-  org_name: string;
-  scopes: string[];
-  created_at: string;
-};
-export type PersonalAccessToken = {
-  id: string;
-  name: string;
-  user_id: string;
-  org_id?: string;
-  scope_type: "user" | "org";
-  scopes: string[];
-  expires_at?: string;
-  last_used_at?: string;
-  revoked_at?: string;
-  created_at: string;
-};
-export type PersonalAccessTokenCreated = PersonalAccessToken & { token: string };
-export type Organization = {
-  id: string;
-  name: string;
-  usage_level: string;
-  role?: string;
+export type OAuthClient = Normalized<
+  components["schemas"]["OAuthClient"],
+  "redirect_uris" | "scopes"
+>;
+export type OAuthClientCreated = Normalized<
+  components["schemas"]["OAuthClientCreated"],
+  "redirect_uris" | "scopes"
+>;
+export type OAuthConnection = Normalized<components["schemas"]["OAuthConnection"], "scopes">;
+export type OAuthClientConnection = Normalized<
+  components["schemas"]["OAuthClientConnection"],
+  "scopes"
+>;
+export type PersonalAccessToken = Omit<
+  Normalized<components["schemas"]["PersonalAccessToken"], "scopes">,
+  "scope_type"
+> & { scope_type: "user" | "org" };
+export type PersonalAccessTokenCreated = Omit<
+  Normalized<components["schemas"]["PersonalAccessTokenCreated"], "scopes">,
+  "scope_type"
+> & { scope_type: "user" | "org" };
+export type Organization = Omit<components["schemas"]["Organization"], "scopes"> & {
   scopes?: string[];
-  created_at: string;
 };
-export type ControlUser = { id: string; email: string; created_at: string };
-export type AuthSession = {
-  token: string;
-  user: ControlUser;
+export type ControlUser = components["schemas"]["User"];
+export type AuthSession = Omit<components["schemas"]["AuthSession"], "organizations" | "user"> & {
   organizations: Organization[];
-  active_org_id?: string;
+  user: ControlUser;
 };
-export type OrganizationMember = {
-  user_id: string;
+export type OrganizationMember = Normalized<
+  components["schemas"]["OrganizationMembership"],
+  "scopes"
+> & {
   user_email: string;
-  org_id: string;
-  role: string;
-  scopes: string[];
-  created_at: string;
 };
-export type OrganizationInvite = {
-  id: string;
-  org_id: string;
-  org_name?: string;
-  email: string;
-  role: string;
-  scopes: string[];
-  inviter_id: string;
-  inviter_email?: string;
-  expires_at: string;
-  accepted_at?: string;
-  revoked_at?: string;
-  created_at: string;
-};
-export type OrganizationInviteCreated = OrganizationInvite & { token: string; invite_url: string };
+export type OrganizationInvite = Normalized<components["schemas"]["OrganizationInvite"], "scopes">;
+export type OrganizationInviteCreated = Normalized<
+  components["schemas"]["InviteCreated"],
+  "scopes"
+>;
 export type KVNamespaceOption = { id: string; label: string };
 export type ObjectStorageBucketOption = { id: string; label: string };
 export type DatabaseOption = { id: string; label: string };

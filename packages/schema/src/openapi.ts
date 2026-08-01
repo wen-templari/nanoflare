@@ -1155,7 +1155,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AcceptInviteInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AcceptInviteInput.json
+             */
+            readonly $schema?: string;
+            email?: string;
+            password?: string;
+        };
+        AcceptInviteResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AcceptInviteResponse.json
+             */
+            readonly $schema?: string;
+            membership: components["schemas"]["OrganizationMembership"];
+            session?: components["schemas"]["AuthSession"];
+        };
         App: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/App.json
+             */
+            readonly $schema?: string;
             auth?: components["schemas"]["AuthConfig"];
             /** Format: date-time */
             created_at: string;
@@ -1184,7 +1210,38 @@ export interface components {
         AuthConfig: {
             protected_routes?: string[] | null;
         };
+        AuthRefreshRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AuthRefreshRequest.json
+             */
+            readonly $schema?: string;
+            refresh_token: string;
+        };
+        AuthResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AuthResult.json
+             */
+            readonly $schema?: string;
+            claims?: {
+                [key: string]: unknown;
+            };
+            email?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            subject?: string;
+            valid: boolean;
+        };
         AuthSession: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AuthSession.json
+             */
+            readonly $schema?: string;
             active_org_id?: string;
             /** Format: int64 */
             expires_in?: number;
@@ -1192,6 +1249,42 @@ export interface components {
             refresh_token?: string;
             token: string;
             user: components["schemas"]["User"];
+        };
+        AuthTokenRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AuthTokenRequest.json
+             */
+            readonly $schema?: string;
+            token: string;
+        };
+        AuthUserInfoResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AuthUserInfoResponse.json
+             */
+            readonly $schema?: string;
+            claims?: {
+                [key: string]: unknown;
+            };
+            email?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            raw?: {
+                [key: string]: unknown;
+            };
+            subject?: string;
+            valid: boolean;
+        };
+        BinaryBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BinaryBody.json
+             */
+            readonly $schema?: string;
         };
         Binding: {
             /** Format: int64 */
@@ -1201,9 +1294,138 @@ export interface components {
             bucket_name?: string;
             database_id?: string;
             database_name?: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "kv" | "db" | "asset" | "object_storage_bucket";
             namespace_id?: string;
             namespace_name?: string;
+        };
+        CliCodeResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CliCodeResponse.json
+             */
+            readonly $schema?: string;
+            code: string;
+        };
+        ConsoleDeployment: {
+            app_id: string;
+            app_name: string;
+            /** Format: int64 */
+            asset_count?: number;
+            /** Format: int64 */
+            bundle_size: number;
+            commit_hash?: string;
+            commit_message?: string;
+            compatibility_date: string;
+            compatibility_flags?: string[] | null;
+            /** Format: date-time */
+            created_at: string;
+            created_by?: string;
+            entrypoint: string;
+            format: string;
+            hostname: string;
+            id: string;
+            /** @enum {string} */
+            state: "active" | "inactive";
+            /** Format: int64 */
+            traffic_percent: number;
+            triggers?: components["schemas"]["TriggerConfig"];
+        };
+        CreateAppInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreateAppInput.json
+             */
+            readonly $schema?: string;
+            auth?: components["schemas"]["AuthConfig"];
+            external_id?: string;
+            hostname: string;
+            name: string;
+        };
+        CreateDatabaseInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreateDatabaseInput.json
+             */
+            readonly $schema?: string;
+            name: string;
+        };
+        CreateInviteInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreateInviteInput.json
+             */
+            readonly $schema?: string;
+            email: string;
+            role: string;
+        };
+        CreateKVNamespaceInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreateKVNamespaceInput.json
+             */
+            readonly $schema?: string;
+            external_id?: string;
+            name: string;
+        };
+        CreateOAuthClientInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreateOAuthClientInput.json
+             */
+            readonly $schema?: string;
+            name: string;
+            redirect_uris: string[] | null;
+            scopes: string[] | null;
+        };
+        CreateObjectStorageBucketInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreateObjectStorageBucketInput.json
+             */
+            readonly $schema?: string;
+            external_id?: string;
+            name: string;
+        };
+        CreateOrganizationInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreateOrganizationInput.json
+             */
+            readonly $schema?: string;
+            name: string;
+        };
+        CreatePartnerIntegrationInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreatePartnerIntegrationInput.json
+             */
+            readonly $schema?: string;
+            allowed_scopes: string[] | null;
+            name: string;
+        };
+        CreatePersonalAccessTokenInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CreatePersonalAccessTokenInput.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            name: string;
+            org_id?: string;
+            scope_type: string;
+            scopes?: string[] | null;
         };
         D1ExecResult: {
             /** Format: int64 */
@@ -1235,11 +1457,40 @@ export interface components {
             }[] | null;
             success: boolean;
         };
+        DBMigrationResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/DBMigrationResult.json
+             */
+            readonly $schema?: string;
+            applied: boolean;
+            name: string;
+        };
+        DBQueryResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/DBQueryResponse.json
+             */
+            readonly $schema?: string;
+            bookmark?: string;
+            exec?: components["schemas"]["D1ExecResult"];
+            first?: unknown;
+            raw?: (unknown[] | null)[] | null;
+            results?: components["schemas"]["D1Result"][] | null;
+        };
         DBStatementRequest: {
             params?: unknown[] | null;
             sql: string;
         };
         Database: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/Database.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             created_at: string;
             id: string;
@@ -1250,10 +1501,154 @@ export interface components {
             binding: string;
             database_id: string;
         };
+        DatabaseMetrics: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/DatabaseMetrics.json
+             */
+            readonly $schema?: string;
+            available: boolean;
+            /** Format: int64 */
+            duration_bucket_0_5: number;
+            /** Format: int64 */
+            duration_bucket_1: number;
+            /** Format: int64 */
+            duration_bucket_10: number;
+            /** Format: int64 */
+            duration_bucket_100: number;
+            /** Format: int64 */
+            duration_bucket_1000: number;
+            /** Format: int64 */
+            duration_bucket_25: number;
+            /** Format: int64 */
+            duration_bucket_250: number;
+            /** Format: int64 */
+            duration_bucket_2_5: number;
+            /** Format: int64 */
+            duration_bucket_5: number;
+            /** Format: int64 */
+            duration_bucket_50: number;
+            /** Format: int64 */
+            duration_bucket_500: number;
+            /** Format: int64 */
+            duration_bucket_inf: number;
+            /** Format: double */
+            p50_duration_ms: number;
+            /** Format: double */
+            p99_duration_ms: number;
+            /** Format: int64 */
+            queries: number;
+            /** Format: int64 */
+            read_queries: number;
+            /** Format: int64 */
+            rows_read: number;
+            /** Format: int64 */
+            rows_returned: number;
+            /** Format: int64 */
+            rows_written: number;
+            /** Format: int64 */
+            storage_bytes: number;
+            /** Format: int64 */
+            table_count: number;
+            /** Format: double */
+            total_duration_ms: number;
+            /** Format: int64 */
+            write_queries: number;
+        };
+        DatabaseMetricsTimeseries: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/DatabaseMetricsTimeseries.json
+             */
+            readonly $schema?: string;
+            available: boolean;
+            p50_latency_ms: components["schemas"]["MetricPoint"][] | null;
+            p95_latency_ms: components["schemas"]["MetricPoint"][] | null;
+            p99_latency_ms: components["schemas"]["MetricPoint"][] | null;
+            queries: components["schemas"]["MetricPoint"][] | null;
+            read_queries: components["schemas"]["MetricPoint"][] | null;
+            rows_read: components["schemas"]["MetricPoint"][] | null;
+            rows_written: components["schemas"]["MetricPoint"][] | null;
+            storage_bytes: components["schemas"]["MetricPoint"][] | null;
+            table_count: components["schemas"]["MetricPoint"][] | null;
+            write_queries: components["schemas"]["MetricPoint"][] | null;
+        };
+        DbExecuteInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/DbExecuteInput.json
+             */
+            readonly $schema?: string;
+            name?: string;
+            sql: string;
+            statements?: components["schemas"]["DBStatementRequest"][] | null;
+        };
+        DeployInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/DeployInput.json
+             */
+            readonly $schema?: string;
+            asset_config?: components["schemas"]["AssetConfig"];
+            assets?: components["schemas"]["AssetFile"][] | null;
+            commit_hash?: string;
+            commit_message?: string;
+            compatibility_date: string;
+            compatibility_flags?: string[] | null;
+            db?: components["schemas"]["DatabaseBinding"][] | null;
+            entrypoint?: string;
+            files: components["schemas"]["WorkerFile"][] | null;
+            format?: string;
+            kv_namespaces?: components["schemas"]["KVBinding"][] | null;
+            object_storage_buckets?: components["schemas"]["ObjectStorageBucketBinding"][] | null;
+            triggers?: components["schemas"]["TriggerConfig"];
+            vars?: {
+                [key: string]: unknown;
+            };
+        };
         DeploymentTraffic: {
             id: string;
             /** Format: int64 */
             traffic_percent: number;
+        };
+        DeploymentTrafficRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/DeploymentTrafficRequest.json
+             */
+            readonly $schema?: string;
+            deployments: components["schemas"]["DeploymentTraffic"][] | null;
+        };
+        InviteCreated: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/InviteCreated.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            accepted_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            email: string;
+            /** Format: date-time */
+            expires_at: string;
+            id: string;
+            invite_url: string;
+            inviter_email?: string;
+            inviter_id: string;
+            org_id: string;
+            org_name?: string;
+            /** Format: date-time */
+            revoked_at?: string;
+            role: string;
+            scopes: string[] | null;
+            token: string;
         };
         KVBinding: {
             binding: string;
@@ -1261,6 +1656,12 @@ export interface components {
             preview_id?: string;
         };
         KVNamespace: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/KVNamespace.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             created_at: string;
             external_id?: string;
@@ -1269,13 +1670,68 @@ export interface components {
             oauth_client_id?: string;
             org_id?: string;
         };
+        KVNamespaceMetrics: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/KVNamespaceMetrics.json
+             */
+            readonly $schema?: string;
+            available: boolean;
+            /** Format: int64 */
+            reads: number;
+            /** Format: int64 */
+            size: number;
+            /** Format: int64 */
+            writes: number;
+        };
+        LoginInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/LoginInput.json
+             */
+            readonly $schema?: string;
+            email: string;
+            password: string;
+        };
         MetricPoint: {
             /** Format: date-time */
             timestamp: string;
             /** Format: double */
             value: number;
         };
+        OAuthAuthorizeInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OAuthAuthorizeInput.json
+             */
+            readonly $schema?: string;
+            client_id: string;
+            org_id: string;
+            redirect_uri: string;
+            scopes: string[] | null;
+            state?: string;
+        };
+        OAuthAuthorizeResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OAuthAuthorizeResponse.json
+             */
+            readonly $schema?: string;
+            code: string;
+            redirect_to: string;
+            state?: string;
+        };
         OAuthClient: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OAuthClient.json
+             */
+            readonly $schema?: string;
             client_id: string;
             /** Format: date-time */
             created_at: string;
@@ -1297,6 +1753,25 @@ export interface components {
             user_email: string;
             user_id: string;
         };
+        OAuthClientCreated: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OAuthClientCreated.json
+             */
+            readonly $schema?: string;
+            client_id: string;
+            client_secret: string;
+            /** Format: date-time */
+            created_at: string;
+            disabled?: boolean;
+            name: string;
+            owner_org_id?: string;
+            redirect_uris: string[] | null;
+            scopes: string[] | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
         OAuthConnection: {
             client_id: string;
             /** Format: date-time */
@@ -1304,10 +1779,66 @@ export interface components {
             name: string;
             scopes: string[] | null;
         };
+        OAuthTokenResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OAuthTokenResponse.json
+             */
+            readonly $schema?: string;
+            access_token: string;
+            /** Format: int64 */
+            expires_in: number;
+            refresh_token?: string;
+            scope: string;
+            token_type: string;
+        };
+        OauthAuthorizeInfoResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OauthAuthorizeInfoResponse.json
+             */
+            readonly $schema?: string;
+            client_id?: string;
+            client_name?: string;
+            redirect_uri?: string;
+            scopes?: string[] | null;
+            user?: components["schemas"]["User"];
+        };
+        OauthRevokeRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OauthRevokeRequest.json
+             */
+            readonly $schema?: string;
+            token: string;
+        };
+        OauthTokenRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OauthTokenRequest.json
+             */
+            readonly $schema?: string;
+            client_id: string;
+            client_secret: string;
+            code?: string;
+            grant_type: string;
+            redirect_uri?: string;
+            refresh_token?: string;
+        };
         ObjectHTTPMetadata: {
             contentType?: string;
         };
         ObjectInfo: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ObjectInfo.json
+             */
+            readonly $schema?: string;
             etag?: string;
             httpEtag?: string;
             httpMetadata?: components["schemas"]["ObjectHTTPMetadata"];
@@ -1318,6 +1849,12 @@ export interface components {
             uploaded: string;
         };
         ObjectStorageBucket: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ObjectStorageBucket.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             created_at: string;
             external_id?: string;
@@ -1330,7 +1867,56 @@ export interface components {
             binding: string;
             bucket_id: string;
         };
+        ObjectStorageBucketMetrics: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ObjectStorageBucketMetrics.json
+             */
+            readonly $schema?: string;
+            available: boolean;
+            /** Format: int64 */
+            reads: number;
+            /** Format: int64 */
+            size: number;
+            /** Format: int64 */
+            writes: number;
+        };
+        OidcConfigResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OidcConfigResponse.json
+             */
+            readonly $schema?: string;
+            direct_login: boolean;
+            enabled: boolean;
+        };
+        OidcSessionRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OidcSessionRequest.json
+             */
+            readonly $schema?: string;
+            code: string;
+        };
+        OpenAPIError: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OpenAPIError.json
+             */
+            readonly $schema?: string;
+            error: string;
+        };
         Organization: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/Organization.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             created_at: string;
             external_account_id?: string;
@@ -1342,6 +1928,12 @@ export interface components {
             usage_level: string;
         };
         OrganizationInvite: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrganizationInvite.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             accepted_at?: string;
             /** Format: date-time */
@@ -1360,6 +1952,12 @@ export interface components {
             scopes: string[] | null;
         };
         OrganizationMembership: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrganizationMembership.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             created_at: string;
             org_id: string;
@@ -1379,6 +1977,22 @@ export interface components {
             revoked_at?: string;
             status: string;
         };
+        PartnerConnectionResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PartnerConnectionResponse.json
+             */
+            readonly $schema?: string;
+            access_token: string;
+            connection_id: string;
+            /** Format: int64 */
+            expires_in: number;
+            organization: components["schemas"]["Organization"];
+            refresh_token: string;
+            scope: string;
+            token_type: string;
+        };
         PartnerIntegration: {
             allowed_scopes: string[] | null;
             /** Format: date-time */
@@ -1389,6 +2003,43 @@ export interface components {
             owner_org_id: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        PartnerIntegrationCreated: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PartnerIntegrationCreated.json
+             */
+            readonly $schema?: string;
+            allowed_scopes: string[] | null;
+            /** Format: date-time */
+            created_at: string;
+            disabled?: boolean;
+            id: string;
+            name: string;
+            owner_org_id: string;
+            secret: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PartnerRefreshRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PartnerRefreshRequest.json
+             */
+            readonly $schema?: string;
+            connection_id: string;
+            refresh_token: string;
+        };
+        PatSessionRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PatSessionRequest.json
+             */
+            readonly $schema?: string;
+            token: string;
         };
         PersonalAccessToken: {
             /** Format: date-time */
@@ -1406,15 +2057,122 @@ export interface components {
             scopes: string[] | null;
             user_id: string;
         };
+        PersonalAccessTokenCreated: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalAccessTokenCreated.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at?: string;
+            id: string;
+            /** Format: date-time */
+            last_used_at?: string;
+            name: string;
+            org_id?: string;
+            /** Format: date-time */
+            revoked_at?: string;
+            scope_type: string;
+            scopes: string[] | null;
+            token: string;
+            user_id: string;
+        };
+        ProvisionPartnerConnectionInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ProvisionPartnerConnectionInput.json
+             */
+            readonly $schema?: string;
+            external_account_id: string;
+            organization_name: string;
+            requested_scopes: string[] | null;
+        };
+        PutSecretInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PutSecretInput.json
+             */
+            readonly $schema?: string;
+            value: string;
+        };
         Secret: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/Secret.json
+             */
+            readonly $schema?: string;
             /** Format: date-time */
             created_at: string;
             name: string;
             /** Format: date-time */
             updated_at: string;
         };
+        SignupInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/SignupInput.json
+             */
+            readonly $schema?: string;
+            email: string;
+            organization_name?: string;
+            password: string;
+        };
         TriggerConfig: {
             crons?: string[] | null;
+        };
+        UpdateAppInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/UpdateAppInput.json
+             */
+            readonly $schema?: string;
+            auth?: components["schemas"]["AuthConfig"];
+        };
+        UpdateKVNamespaceInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/UpdateKVNamespaceInput.json
+             */
+            readonly $schema?: string;
+            name: string;
+        };
+        UpdateMembershipInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/UpdateMembershipInput.json
+             */
+            readonly $schema?: string;
+            role: string;
+        };
+        UpdateOAuthClientInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/UpdateOAuthClientInput.json
+             */
+            readonly $schema?: string;
+            name: string;
+            redirect_uris: string[] | null;
+            scopes: string[] | null;
+        };
+        UpdateObjectStorageBucketInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/UpdateObjectStorageBucketInput.json
+             */
+            readonly $schema?: string;
+            name: string;
         };
         User: {
             /** Format: date-time */
@@ -1423,6 +2181,12 @@ export interface components {
             id: string;
         };
         WorkerDeployment: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/WorkerDeployment.json
+             */
+            readonly $schema?: string;
             asset_config?: components["schemas"]["AssetConfig"];
             /** Format: int64 */
             asset_count?: number;
@@ -1451,6 +2215,17 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        WorkerDetail: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/WorkerDetail.json
+             */
+            readonly $schema?: string;
+            app: components["schemas"]["App"];
+            deployment?: components["schemas"]["WorkerDeployment"];
+            secrets?: components["schemas"]["Secret"][] | null;
+        };
         WorkerFile: {
             content: string;
             name: string;
@@ -1476,6 +2251,36 @@ export interface components {
             /** Format: double */
             value: number;
         };
+        WorkerTraffic: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/WorkerTraffic.json
+             */
+            readonly $schema?: string;
+            available: boolean;
+            /** Format: int64 */
+            bundle_size: number;
+            /** Format: double */
+            duration_ms_avg: number;
+            /** Format: double */
+            duration_ms_p95: number;
+            /** Format: double */
+            duration_ms_per_second: number;
+            duration_series: number[] | null;
+            /** Format: double */
+            error_rate: number;
+            /** Format: double */
+            errors: number;
+            /** Format: double */
+            invocations: number;
+            /** Format: double */
+            p95_latency: number;
+            /** Format: double */
+            requests_per_second: number;
+            status_codes: components["schemas"]["WorkerStatusCode"][] | null;
+            traffic: number[] | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -1500,9 +2305,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        code: string;
-                    };
+                    "application/json": components["schemas"]["CliCodeResponse"];
                 };
             };
             /** @description Error */
@@ -1511,9 +2314,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1522,9 +2323,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1533,9 +2332,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1544,9 +2341,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1555,9 +2350,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -1571,9 +2364,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    code: string;
-                };
+                "application/json": components["schemas"]["OidcSessionRequest"];
             };
         };
         responses: {
@@ -1583,15 +2374,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -1600,9 +2383,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1611,9 +2392,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1622,9 +2401,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -1638,10 +2415,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    email: string;
-                    password: string;
-                };
+                "application/json": components["schemas"]["LoginInput"];
             };
         };
         responses: {
@@ -1651,15 +2425,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -1668,9 +2434,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1679,9 +2443,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1690,9 +2452,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -1712,15 +2472,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -1729,9 +2481,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1740,9 +2490,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1751,9 +2499,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1762,9 +2508,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1773,9 +2517,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -1804,9 +2546,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1815,9 +2555,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1826,9 +2564,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -1859,9 +2595,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1870,9 +2604,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1881,9 +2613,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -1903,10 +2633,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        direct_login: boolean;
-                        enabled: boolean;
-                    };
+                    "application/json": components["schemas"]["OidcConfigResponse"];
                 };
             };
             /** @description Error */
@@ -1915,9 +2642,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1926,9 +2651,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1937,9 +2660,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -1970,9 +2691,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1981,9 +2700,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -1992,9 +2709,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2008,9 +2723,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    code: string;
-                };
+                "application/json": components["schemas"]["OidcSessionRequest"];
             };
         };
         responses: {
@@ -2020,15 +2733,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -2037,9 +2742,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2048,9 +2751,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2059,9 +2760,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2092,9 +2791,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2103,9 +2800,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2114,9 +2809,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2130,9 +2823,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    token: string;
-                };
+                "application/json": components["schemas"]["PatSessionRequest"];
             };
         };
         responses: {
@@ -2142,15 +2833,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -2159,9 +2842,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2170,9 +2851,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2181,9 +2860,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2197,9 +2874,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    refresh_token: string;
-                };
+                "application/json": components["schemas"]["AuthRefreshRequest"];
             };
         };
         responses: {
@@ -2209,15 +2884,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -2226,9 +2893,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2237,9 +2902,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2248,9 +2911,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2264,11 +2925,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    email: string;
-                    organization_name?: string;
-                    password: string;
-                };
+                "application/json": components["schemas"]["SignupInput"];
             };
         };
         responses: {
@@ -2278,15 +2935,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -2295,9 +2944,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2306,9 +2953,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2317,9 +2962,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2333,9 +2976,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    token: string;
-                };
+                "application/json": components["schemas"]["AuthTokenRequest"];
             };
         };
         responses: {
@@ -2345,19 +2986,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        claims?: {
-                            [key: string]: unknown;
-                        };
-                        email?: string;
-                        /** Format: date-time */
-                        expires_at?: string;
-                        raw?: {
-                            [key: string]: unknown;
-                        };
-                        subject?: string;
-                        valid: boolean;
-                    };
+                    "application/json": components["schemas"]["AuthUserInfoResponse"];
                 };
             };
             /** @description Error */
@@ -2366,9 +2995,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2377,9 +3004,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2388,9 +3013,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2404,9 +3027,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    token: string;
-                };
+                "application/json": components["schemas"]["AuthTokenRequest"];
             };
         };
         responses: {
@@ -2416,16 +3037,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        claims?: {
-                            [key: string]: unknown;
-                        };
-                        email?: string;
-                        /** Format: date-time */
-                        expires_at?: string;
-                        subject?: string;
-                        valid: boolean;
-                    };
+                    "application/json": components["schemas"]["AuthResult"];
                 };
             };
             /** @description Error */
@@ -2434,9 +3046,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2445,9 +3055,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2456,9 +3064,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2489,9 +3095,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2500,9 +3104,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2511,9 +3113,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2522,9 +3122,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2533,9 +3131,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2551,9 +3147,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name: string;
-                };
+                "application/json": components["schemas"]["CreateDatabaseInput"];
             };
         };
         responses: {
@@ -2563,13 +3157,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        id: string;
-                        name: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["Database"];
                 };
             };
             /** @description Error */
@@ -2578,9 +3166,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2589,9 +3175,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2600,9 +3184,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2611,9 +3193,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2622,9 +3202,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2655,9 +3233,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2666,9 +3242,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2677,9 +3251,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2688,9 +3260,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2699,9 +3269,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2719,11 +3287,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name?: string;
-                    sql: string;
-                    statements?: components["schemas"]["DBStatementRequest"][] | null;
-                };
+                "application/json": components["schemas"]["DbExecuteInput"];
             };
         };
         responses: {
@@ -2733,13 +3297,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        bookmark?: string;
-                        exec?: components["schemas"]["D1ExecResult"];
-                        first?: unknown;
-                        raw?: (unknown[] | null)[] | null;
-                        results?: components["schemas"]["D1Result"][] | null;
-                    };
+                    "application/json": components["schemas"]["DBQueryResponse"];
                 };
             };
             /** @description Error */
@@ -2748,9 +3306,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2759,9 +3315,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2770,9 +3324,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2781,9 +3333,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2792,9 +3342,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2818,55 +3366,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        available: boolean;
-                        /** Format: int64 */
-                        duration_bucket_0_5: number;
-                        /** Format: int64 */
-                        duration_bucket_1: number;
-                        /** Format: int64 */
-                        duration_bucket_10: number;
-                        /** Format: int64 */
-                        duration_bucket_100: number;
-                        /** Format: int64 */
-                        duration_bucket_1000: number;
-                        /** Format: int64 */
-                        duration_bucket_25: number;
-                        /** Format: int64 */
-                        duration_bucket_250: number;
-                        /** Format: int64 */
-                        duration_bucket_2_5: number;
-                        /** Format: int64 */
-                        duration_bucket_5: number;
-                        /** Format: int64 */
-                        duration_bucket_50: number;
-                        /** Format: int64 */
-                        duration_bucket_500: number;
-                        /** Format: int64 */
-                        duration_bucket_inf: number;
-                        /** Format: double */
-                        p50_duration_ms: number;
-                        /** Format: double */
-                        p99_duration_ms: number;
-                        /** Format: int64 */
-                        queries: number;
-                        /** Format: int64 */
-                        read_queries: number;
-                        /** Format: int64 */
-                        rows_read: number;
-                        /** Format: int64 */
-                        rows_returned: number;
-                        /** Format: int64 */
-                        rows_written: number;
-                        /** Format: int64 */
-                        storage_bytes: number;
-                        /** Format: int64 */
-                        table_count: number;
-                        /** Format: double */
-                        total_duration_ms: number;
-                        /** Format: int64 */
-                        write_queries: number;
-                    };
+                    "application/json": components["schemas"]["DatabaseMetrics"];
                 };
             };
             /** @description Error */
@@ -2875,9 +3375,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2886,9 +3384,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2897,9 +3393,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2908,9 +3402,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2919,9 +3411,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -2945,19 +3435,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        available: boolean;
-                        p50_latency_ms: components["schemas"]["MetricPoint"][] | null;
-                        p95_latency_ms: components["schemas"]["MetricPoint"][] | null;
-                        p99_latency_ms: components["schemas"]["MetricPoint"][] | null;
-                        queries: components["schemas"]["MetricPoint"][] | null;
-                        read_queries: components["schemas"]["MetricPoint"][] | null;
-                        rows_read: components["schemas"]["MetricPoint"][] | null;
-                        rows_written: components["schemas"]["MetricPoint"][] | null;
-                        storage_bytes: components["schemas"]["MetricPoint"][] | null;
-                        table_count: components["schemas"]["MetricPoint"][] | null;
-                        write_queries: components["schemas"]["MetricPoint"][] | null;
-                    };
+                    "application/json": components["schemas"]["DatabaseMetricsTimeseries"];
                 };
             };
             /** @description Error */
@@ -2966,9 +3444,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2977,9 +3453,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2988,9 +3462,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -2999,9 +3471,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3010,9 +3480,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3030,11 +3498,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name?: string;
-                    sql: string;
-                    statements?: components["schemas"]["DBStatementRequest"][] | null;
-                };
+                "application/json": components["schemas"]["DbExecuteInput"];
             };
         };
         responses: {
@@ -3044,10 +3508,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        applied: boolean;
-                        name: string;
-                    };
+                    "application/json": components["schemas"]["DBMigrationResult"];
                 };
             };
             /** @description Error */
@@ -3056,9 +3517,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3067,9 +3526,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3078,9 +3535,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3089,9 +3544,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3100,9 +3553,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3124,24 +3575,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        accepted_at?: string;
-                        /** Format: date-time */
-                        created_at: string;
-                        email: string;
-                        /** Format: date-time */
-                        expires_at: string;
-                        id: string;
-                        inviter_email?: string;
-                        inviter_id: string;
-                        org_id: string;
-                        org_name?: string;
-                        /** Format: date-time */
-                        revoked_at?: string;
-                        role: string;
-                        scopes: string[] | null;
-                    };
+                    "application/json": components["schemas"]["OrganizationInvite"];
                 };
             };
             /** @description Error */
@@ -3150,9 +3584,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3161,9 +3593,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3172,9 +3602,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3190,10 +3618,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    email?: string;
-                    password?: string;
-                };
+                "application/json": components["schemas"]["AcceptInviteInput"];
             };
         };
         responses: {
@@ -3203,10 +3628,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        membership: components["schemas"]["OrganizationMembership"];
-                        session?: components["schemas"]["AuthSession"];
-                    };
+                    "application/json": components["schemas"]["AcceptInviteResponse"];
                 };
             };
             /** @description Error */
@@ -3215,9 +3637,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3226,9 +3646,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3237,9 +3655,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3270,9 +3686,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3281,9 +3695,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3292,9 +3704,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3303,9 +3713,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3314,9 +3722,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3332,10 +3738,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    external_id?: string;
-                    name: string;
-                };
+                "application/json": components["schemas"]["CreateKVNamespaceInput"];
             };
         };
         responses: {
@@ -3345,15 +3748,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        external_id?: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["KVNamespace"];
                 };
             };
             /** @description Error */
@@ -3362,9 +3757,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3373,9 +3766,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3384,9 +3775,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3395,9 +3784,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3406,9 +3793,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3432,15 +3817,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        external_id?: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["KVNamespace"];
                 };
             };
             /** @description Error */
@@ -3449,9 +3826,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3460,9 +3835,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3471,9 +3844,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3482,9 +3853,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3493,9 +3862,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3526,9 +3893,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3537,9 +3902,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3548,9 +3911,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3559,9 +3920,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3570,9 +3929,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3590,9 +3947,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name: string;
-                };
+                "application/json": components["schemas"]["UpdateKVNamespaceInput"];
             };
         };
         responses: {
@@ -3602,15 +3957,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        external_id?: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["KVNamespace"];
                 };
             };
             /** @description Error */
@@ -3619,9 +3966,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3630,9 +3975,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3641,9 +3984,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3652,9 +3993,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3663,9 +4002,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3689,15 +4026,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        available: boolean;
-                        /** Format: int64 */
-                        reads: number;
-                        /** Format: int64 */
-                        size: number;
-                        /** Format: int64 */
-                        writes: number;
-                    };
+                    "application/json": components["schemas"]["KVNamespaceMetrics"];
                 };
             };
             /** @description Error */
@@ -3706,9 +4035,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3717,9 +4044,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3728,9 +4053,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3739,9 +4062,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3750,9 +4071,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3776,13 +4095,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        client_id?: string;
-                        client_name?: string;
-                        redirect_uri?: string;
-                        scopes?: string[] | null;
-                        user?: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["OauthAuthorizeInfoResponse"];
                 };
             };
             /** @description Error */
@@ -3791,9 +4104,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3802,9 +4113,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3813,9 +4122,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3829,13 +4136,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    client_id: string;
-                    org_id: string;
-                    redirect_uri: string;
-                    scopes: string[] | null;
-                    state?: string;
-                };
+                "application/json": components["schemas"]["OAuthAuthorizeInput"];
             };
         };
         responses: {
@@ -3845,11 +4146,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        code: string;
-                        redirect_to: string;
-                        state?: string;
-                    };
+                    "application/json": components["schemas"]["OAuthAuthorizeResponse"];
                 };
             };
             /** @description Error */
@@ -3858,9 +4155,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3869,9 +4164,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3880,9 +4173,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3911,9 +4202,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3922,9 +4211,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3933,9 +4220,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3944,9 +4229,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -3955,9 +4238,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -3971,11 +4252,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name: string;
-                    redirect_uris: string[] | null;
-                    scopes: string[] | null;
-                };
+                "application/json": components["schemas"]["CreateOAuthClientInput"];
             };
         };
         responses: {
@@ -3985,19 +4262,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        client_id: string;
-                        client_secret: string;
-                        /** Format: date-time */
-                        created_at: string;
-                        disabled?: boolean;
-                        name: string;
-                        owner_org_id?: string;
-                        redirect_uris: string[] | null;
-                        scopes: string[] | null;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["OAuthClientCreated"];
                 };
             };
             /** @description Error */
@@ -4006,9 +4271,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4017,9 +4280,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4028,9 +4289,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4039,9 +4298,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4050,9 +4307,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4074,18 +4329,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        client_id: string;
-                        /** Format: date-time */
-                        created_at: string;
-                        disabled?: boolean;
-                        name: string;
-                        owner_org_id?: string;
-                        redirect_uris: string[] | null;
-                        scopes: string[] | null;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["OAuthClient"];
                 };
             };
             /** @description Error */
@@ -4094,9 +4338,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4105,9 +4347,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4116,9 +4356,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4127,9 +4365,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4138,9 +4374,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4169,9 +4403,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4180,9 +4412,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4191,9 +4421,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4202,9 +4430,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4213,9 +4439,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4231,11 +4455,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name: string;
-                    redirect_uris: string[] | null;
-                    scopes: string[] | null;
-                };
+                "application/json": components["schemas"]["UpdateOAuthClientInput"];
             };
         };
         responses: {
@@ -4245,18 +4465,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        client_id: string;
-                        /** Format: date-time */
-                        created_at: string;
-                        disabled?: boolean;
-                        name: string;
-                        owner_org_id?: string;
-                        redirect_uris: string[] | null;
-                        scopes: string[] | null;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["OAuthClient"];
                 };
             };
             /** @description Error */
@@ -4265,9 +4474,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4276,9 +4483,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4287,9 +4492,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4298,9 +4501,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4309,9 +4510,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4342,9 +4541,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4353,9 +4550,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4364,9 +4559,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4375,9 +4568,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4386,9 +4577,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4410,18 +4599,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        client_id: string;
-                        /** Format: date-time */
-                        created_at: string;
-                        disabled?: boolean;
-                        name: string;
-                        owner_org_id?: string;
-                        redirect_uris: string[] | null;
-                        scopes: string[] | null;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["OAuthClient"];
                 };
             };
             /** @description Error */
@@ -4430,9 +4608,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4441,9 +4617,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4452,9 +4626,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4463,9 +4635,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4474,9 +4644,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4498,19 +4666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        client_id: string;
-                        client_secret: string;
-                        /** Format: date-time */
-                        created_at: string;
-                        disabled?: boolean;
-                        name: string;
-                        owner_org_id?: string;
-                        redirect_uris: string[] | null;
-                        scopes: string[] | null;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["OAuthClientCreated"];
                 };
             };
             /** @description Error */
@@ -4519,9 +4675,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4530,9 +4684,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4541,9 +4693,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4552,9 +4702,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4563,9 +4711,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4594,9 +4740,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4605,9 +4749,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4616,9 +4758,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4627,9 +4767,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4638,9 +4776,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4669,9 +4805,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4680,9 +4814,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4691,9 +4823,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4702,9 +4832,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4713,9 +4841,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4729,9 +4855,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    token: string;
-                };
+                "application/json": components["schemas"]["OauthRevokeRequest"];
             };
         };
         responses: {
@@ -4748,9 +4872,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4759,9 +4881,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4770,9 +4890,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4786,14 +4904,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    client_id: string;
-                    client_secret: string;
-                    code?: string;
-                    grant_type: string;
-                    redirect_uri?: string;
-                    refresh_token?: string;
-                };
+                "application/json": components["schemas"]["OauthTokenRequest"];
             };
         };
         responses: {
@@ -4803,14 +4914,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        access_token: string;
-                        /** Format: int64 */
-                        expires_in: number;
-                        refresh_token?: string;
-                        scope: string;
-                        token_type: string;
-                    };
+                    "application/json": components["schemas"]["OAuthTokenResponse"];
                 };
             };
             /** @description Error */
@@ -4819,9 +4923,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4830,9 +4932,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4841,9 +4941,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4874,9 +4972,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4885,9 +4981,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4896,9 +4990,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4907,9 +4999,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4918,9 +5008,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -4936,10 +5024,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    external_id?: string;
-                    name: string;
-                };
+                "application/json": components["schemas"]["CreateObjectStorageBucketInput"];
             };
         };
         responses: {
@@ -4949,15 +5034,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        external_id?: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["ObjectStorageBucket"];
                 };
             };
             /** @description Error */
@@ -4966,9 +5043,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4977,9 +5052,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4988,9 +5061,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -4999,9 +5070,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5010,9 +5079,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5036,15 +5103,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        external_id?: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["ObjectStorageBucket"];
                 };
             };
             /** @description Error */
@@ -5053,9 +5112,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5064,9 +5121,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5075,9 +5130,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5086,9 +5139,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5097,9 +5148,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5130,9 +5179,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5141,9 +5188,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5152,9 +5197,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5163,9 +5206,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5174,9 +5215,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5194,9 +5233,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name: string;
-                };
+                "application/json": components["schemas"]["UpdateObjectStorageBucketInput"];
             };
         };
         responses: {
@@ -5206,15 +5243,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        external_id?: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["ObjectStorageBucket"];
                 };
             };
             /** @description Error */
@@ -5223,9 +5252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5234,9 +5261,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5245,9 +5270,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5256,9 +5279,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5267,9 +5288,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5293,15 +5312,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        available: boolean;
-                        /** Format: int64 */
-                        reads: number;
-                        /** Format: int64 */
-                        size: number;
-                        /** Format: int64 */
-                        writes: number;
-                    };
+                    "application/json": components["schemas"]["ObjectStorageBucketMetrics"];
                 };
             };
             /** @description Error */
@@ -5310,9 +5321,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5321,9 +5330,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5332,9 +5339,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5343,9 +5348,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5354,9 +5357,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5370,9 +5371,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    name: string;
-                };
+                "application/json": components["schemas"]["CreateOrganizationInput"];
             };
         };
         responses: {
@@ -5382,17 +5381,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        external_account_id?: string;
-                        id: string;
-                        name: string;
-                        partner_integration_id?: string;
-                        role?: string;
-                        scopes?: string[] | null;
-                        usage_level: string;
-                    };
+                    "application/json": components["schemas"]["Organization"];
                 };
             };
             /** @description Error */
@@ -5401,9 +5390,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5412,9 +5399,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5423,9 +5408,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5434,9 +5417,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5445,9 +5426,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5480,9 +5459,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5491,9 +5468,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5502,9 +5477,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5513,9 +5486,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5524,9 +5495,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5544,10 +5513,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    email: string;
-                    role: string;
-                };
+                "application/json": components["schemas"]["CreateInviteInput"];
             };
         };
         responses: {
@@ -5557,26 +5523,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        accepted_at?: string;
-                        /** Format: date-time */
-                        created_at: string;
-                        email: string;
-                        /** Format: date-time */
-                        expires_at: string;
-                        id: string;
-                        invite_url: string;
-                        inviter_email?: string;
-                        inviter_id: string;
-                        org_id: string;
-                        org_name?: string;
-                        /** Format: date-time */
-                        revoked_at?: string;
-                        role: string;
-                        scopes: string[] | null;
-                        token: string;
-                    };
+                    "application/json": components["schemas"]["InviteCreated"];
                 };
             };
             /** @description Error */
@@ -5585,9 +5532,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5596,9 +5541,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5607,9 +5550,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5618,9 +5559,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5629,9 +5568,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5663,9 +5600,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5674,9 +5609,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5685,9 +5618,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5696,9 +5627,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5707,9 +5636,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5742,9 +5669,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5753,9 +5678,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5764,9 +5687,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5775,9 +5696,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5786,9 +5705,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5820,9 +5737,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5831,9 +5746,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5842,9 +5755,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5853,9 +5764,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5864,9 +5773,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5885,9 +5792,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    role: string;
-                };
+                "application/json": components["schemas"]["UpdateMembershipInput"];
             };
         };
         responses: {
@@ -5897,15 +5802,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        org_id: string;
-                        role: string;
-                        scopes: string[] | null;
-                        user_email?: string;
-                        user_id: string;
-                    };
+                    "application/json": components["schemas"]["OrganizationMembership"];
                 };
             };
             /** @description Error */
@@ -5914,9 +5811,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5925,9 +5820,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5936,9 +5829,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5947,9 +5838,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -5958,9 +5847,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -5974,10 +5861,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    connection_id: string;
-                    refresh_token: string;
-                };
+                "application/json": components["schemas"]["PartnerRefreshRequest"];
             };
         };
         responses: {
@@ -5987,16 +5871,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        access_token: string;
-                        connection_id: string;
-                        /** Format: int64 */
-                        expires_in: number;
-                        organization: components["schemas"]["Organization"];
-                        refresh_token: string;
-                        scope: string;
-                        token_type: string;
-                    };
+                    "application/json": components["schemas"]["PartnerConnectionResponse"];
                 };
             };
             /** @description Error */
@@ -6005,9 +5880,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6016,9 +5889,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6027,9 +5898,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6058,9 +5927,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6069,9 +5936,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6080,9 +5945,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6091,9 +5954,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6102,9 +5963,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6118,10 +5977,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    allowed_scopes: string[] | null;
-                    name: string;
-                };
+                "application/json": components["schemas"]["CreatePartnerIntegrationInput"];
             };
         };
         responses: {
@@ -6131,18 +5987,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        allowed_scopes: string[] | null;
-                        /** Format: date-time */
-                        created_at: string;
-                        disabled?: boolean;
-                        id: string;
-                        name: string;
-                        owner_org_id: string;
-                        secret: string;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["PartnerIntegrationCreated"];
                 };
             };
             /** @description Error */
@@ -6151,9 +5996,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6162,9 +6005,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6173,9 +6014,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6184,9 +6023,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6195,9 +6032,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6226,9 +6061,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6237,9 +6070,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6248,9 +6079,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6259,9 +6088,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6270,9 +6097,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6303,9 +6128,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6314,9 +6137,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6325,9 +6146,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6336,9 +6155,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6347,9 +6164,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6365,11 +6180,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    external_account_id: string;
-                    organization_name: string;
-                    requested_scopes: string[] | null;
-                };
+                "application/json": components["schemas"]["ProvisionPartnerConnectionInput"];
             };
         };
         responses: {
@@ -6379,16 +6190,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        access_token: string;
-                        connection_id: string;
-                        /** Format: int64 */
-                        expires_in: number;
-                        organization: components["schemas"]["Organization"];
-                        refresh_token: string;
-                        scope: string;
-                        token_type: string;
-                    };
+                    "application/json": components["schemas"]["PartnerConnectionResponse"];
                 };
             };
             /** @description Error */
@@ -6397,9 +6199,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6408,9 +6208,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6419,9 +6217,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6430,9 +6226,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6441,9 +6235,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6473,9 +6265,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6484,9 +6274,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6495,9 +6283,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6506,9 +6292,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6517,9 +6301,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6541,18 +6323,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        allowed_scopes: string[] | null;
-                        /** Format: date-time */
-                        created_at: string;
-                        disabled?: boolean;
-                        id: string;
-                        name: string;
-                        owner_org_id: string;
-                        secret: string;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["PartnerIntegrationCreated"];
                 };
             };
             /** @description Error */
@@ -6561,9 +6332,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6572,9 +6341,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6583,9 +6350,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6594,9 +6359,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6605,9 +6368,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6636,9 +6397,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6647,9 +6406,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6658,9 +6415,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6669,9 +6424,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6680,9 +6433,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6696,14 +6447,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    /** Format: date-time */
-                    expires_at?: string;
-                    name: string;
-                    org_id?: string;
-                    scope_type: string;
-                    scopes?: string[] | null;
-                };
+                "application/json": components["schemas"]["CreatePersonalAccessTokenInput"];
             };
         };
         responses: {
@@ -6713,23 +6457,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        /** Format: date-time */
-                        expires_at?: string;
-                        id: string;
-                        /** Format: date-time */
-                        last_used_at?: string;
-                        name: string;
-                        org_id?: string;
-                        /** Format: date-time */
-                        revoked_at?: string;
-                        scope_type: string;
-                        scopes: string[] | null;
-                        token: string;
-                        user_id: string;
-                    };
+                    "application/json": components["schemas"]["PersonalAccessTokenCreated"];
                 };
             };
             /** @description Error */
@@ -6738,9 +6466,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6749,9 +6475,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6760,9 +6484,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6771,9 +6493,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6782,9 +6502,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6815,9 +6533,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6826,9 +6542,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6837,9 +6551,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6848,9 +6560,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6859,9 +6569,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6875,11 +6583,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    email: string;
-                    organization_name?: string;
-                    password: string;
-                };
+                "application/json": components["schemas"]["SignupInput"];
             };
         };
         responses: {
@@ -6889,15 +6593,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        active_org_id?: string;
-                        /** Format: int64 */
-                        expires_in?: number;
-                        organizations: components["schemas"]["Organization"][] | null;
-                        refresh_token?: string;
-                        token: string;
-                        user: components["schemas"]["User"];
-                    };
+                    "application/json": components["schemas"]["AuthSession"];
                 };
             };
             /** @description Error */
@@ -6906,9 +6602,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6917,9 +6611,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6928,9 +6620,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -6961,9 +6651,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6972,9 +6660,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6983,9 +6669,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -6994,9 +6678,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7005,9 +6687,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7023,12 +6703,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    auth?: components["schemas"]["AuthConfig"];
-                    external_id?: string;
-                    hostname: string;
-                    name: string;
-                };
+                "application/json": components["schemas"]["CreateAppInput"];
             };
         };
         responses: {
@@ -7038,18 +6713,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        auth?: components["schemas"]["AuthConfig"];
-                        /** Format: date-time */
-                        created_at: string;
-                        created_by?: string;
-                        external_id?: string;
-                        hostname: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["App"];
                 };
             };
             /** @description Error */
@@ -7058,9 +6722,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7069,9 +6731,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7080,9 +6740,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7091,9 +6749,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7102,9 +6758,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7128,11 +6782,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        app: components["schemas"]["App"];
-                        deployment?: components["schemas"]["WorkerDeployment"];
-                        secrets?: components["schemas"]["Secret"][] | null;
-                    };
+                    "application/json": components["schemas"]["WorkerDetail"];
                 };
             };
             /** @description Error */
@@ -7141,9 +6791,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7152,9 +6800,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7163,9 +6809,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7174,9 +6818,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7185,9 +6827,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7218,9 +6858,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7229,9 +6867,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7240,9 +6876,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7251,9 +6885,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7262,9 +6894,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7282,9 +6912,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    auth?: components["schemas"]["AuthConfig"];
-                };
+                "application/json": components["schemas"]["UpdateAppInput"];
             };
         };
         responses: {
@@ -7294,18 +6922,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        auth?: components["schemas"]["AuthConfig"];
-                        /** Format: date-time */
-                        created_at: string;
-                        created_by?: string;
-                        external_id?: string;
-                        hostname: string;
-                        id: string;
-                        name: string;
-                        oauth_client_id?: string;
-                        org_id?: string;
-                    };
+                    "application/json": components["schemas"]["App"];
                 };
             };
             /** @description Error */
@@ -7314,9 +6931,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7325,9 +6940,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7336,9 +6949,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7347,9 +6958,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7358,9 +6967,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7384,7 +6991,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerDeployment"][] | null;
+                    "application/json": components["schemas"]["ConsoleDeployment"][] | null;
                 };
             };
             /** @description Error */
@@ -7393,9 +7000,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7404,9 +7009,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7415,9 +7018,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7426,9 +7027,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7437,9 +7036,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7457,24 +7054,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    asset_config?: components["schemas"]["AssetConfig"];
-                    assets?: components["schemas"]["AssetFile"][] | null;
-                    commit_hash?: string;
-                    commit_message?: string;
-                    compatibility_date: string;
-                    compatibility_flags?: string[] | null;
-                    db?: components["schemas"]["DatabaseBinding"][] | null;
-                    entrypoint?: string;
-                    files: components["schemas"]["WorkerFile"][] | null;
-                    format?: string;
-                    kv_namespaces?: components["schemas"]["KVBinding"][] | null;
-                    object_storage_buckets?: components["schemas"]["ObjectStorageBucketBinding"][] | null;
-                    triggers?: components["schemas"]["TriggerConfig"];
-                    vars?: {
-                        [key: string]: unknown;
-                    };
-                };
+                "application/json": components["schemas"]["DeployInput"];
             };
         };
         responses: {
@@ -7484,35 +7064,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        asset_config?: components["schemas"]["AssetConfig"];
-                        /** Format: int64 */
-                        asset_count?: number;
-                        bindings?: components["schemas"]["Binding"][] | null;
-                        /** Format: int64 */
-                        bundle_size: number;
-                        commit_hash?: string;
-                        commit_message?: string;
-                        compatibility_date: string;
-                        compatibility_flags?: string[] | null;
-                        /** Format: date-time */
-                        created_at: string;
-                        created_by?: string;
-                        db?: components["schemas"]["DatabaseBinding"][] | null;
-                        entrypoint: string;
-                        format: string;
-                        id: string;
-                        kv_namespaces?: components["schemas"]["KVBinding"][] | null;
-                        object_storage_buckets?: components["schemas"]["ObjectStorageBucketBinding"][] | null;
-                        /** Format: int64 */
-                        port: number;
-                        /** Format: int64 */
-                        traffic_percent: number;
-                        triggers?: components["schemas"]["TriggerConfig"];
-                        vars?: {
-                            [key: string]: unknown;
-                        };
-                    };
+                    "application/json": components["schemas"]["WorkerDeployment"];
                 };
             };
             /** @description Error */
@@ -7521,9 +7073,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7532,9 +7082,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7543,9 +7091,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7554,9 +7100,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7565,9 +7109,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7585,9 +7127,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    deployments: components["schemas"]["DeploymentTraffic"][] | null;
-                };
+                "application/json": components["schemas"]["DeploymentTrafficRequest"];
             };
         };
         responses: {
@@ -7597,7 +7137,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentTraffic"][] | null;
+                    "application/json": components["schemas"]["ConsoleDeployment"][] | null;
                 };
             };
             /** @description Error */
@@ -7606,9 +7146,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7617,9 +7155,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7628,9 +7164,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7639,9 +7173,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7650,9 +7182,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7685,9 +7215,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7696,9 +7224,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7707,9 +7233,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7718,9 +7242,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7729,9 +7251,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7765,9 +7285,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7776,9 +7294,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7787,9 +7303,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7798,9 +7312,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7809,9 +7321,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7846,9 +7356,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7857,9 +7365,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7868,9 +7374,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7879,9 +7383,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7890,9 +7392,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -7912,7 +7412,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": Record<string, never>;
+                "application/json": components["schemas"]["BinaryBody"];
             };
         };
         responses: {
@@ -7929,9 +7429,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7940,9 +7438,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7951,9 +7447,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7962,9 +7456,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -7973,9 +7465,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8008,9 +7498,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8019,9 +7507,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8030,9 +7516,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8041,9 +7525,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8052,9 +7534,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8088,9 +7568,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8099,9 +7577,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8110,9 +7586,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8121,9 +7595,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8132,9 +7604,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8169,9 +7639,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8180,9 +7648,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8191,9 +7657,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8202,9 +7666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8213,9 +7675,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8235,7 +7695,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": Record<string, never>;
+                "application/json": components["schemas"]["BinaryBody"];
             };
         };
         responses: {
@@ -8245,16 +7705,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        etag?: string;
-                        httpEtag?: string;
-                        httpMetadata?: components["schemas"]["ObjectHTTPMetadata"];
-                        key: string;
-                        /** Format: int64 */
-                        size: number;
-                        /** Format: date-time */
-                        uploaded: string;
-                    };
+                    "application/json": components["schemas"]["ObjectInfo"];
                 };
             };
             /** @description Error */
@@ -8263,9 +7714,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8274,9 +7723,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8285,9 +7732,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8296,9 +7741,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8307,9 +7750,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8342,9 +7783,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8353,9 +7792,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8364,9 +7801,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8375,9 +7810,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8386,9 +7819,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8428,9 +7859,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8439,9 +7868,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8450,9 +7877,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8461,9 +7886,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8472,9 +7895,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8507,9 +7928,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8518,9 +7937,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8529,9 +7946,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8540,9 +7955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8551,9 +7964,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8572,9 +7983,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    value: string;
-                };
+                "application/json": components["schemas"]["PutSecretInput"];
             };
         };
         responses: {
@@ -8584,13 +7993,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        created_at: string;
-                        name: string;
-                        /** Format: date-time */
-                        updated_at: string;
-                    };
+                    "application/json": components["schemas"]["Secret"];
                 };
             };
             /** @description Error */
@@ -8599,9 +8002,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8610,9 +8011,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8621,9 +8020,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8632,9 +8029,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8643,9 +8038,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8677,9 +8070,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8688,9 +8079,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8699,9 +8088,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8710,9 +8097,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8721,9 +8106,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };
@@ -8747,30 +8130,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        available: boolean;
-                        /** Format: int64 */
-                        bundle_size: number;
-                        /** Format: double */
-                        duration_ms_avg: number;
-                        /** Format: double */
-                        duration_ms_p95: number;
-                        /** Format: double */
-                        duration_ms_per_second: number;
-                        duration_series: number[] | null;
-                        /** Format: double */
-                        error_rate: number;
-                        /** Format: double */
-                        errors: number;
-                        /** Format: double */
-                        invocations: number;
-                        /** Format: double */
-                        p95_latency: number;
-                        /** Format: double */
-                        requests_per_second: number;
-                        status_codes: components["schemas"]["WorkerStatusCode"][] | null;
-                        traffic: number[] | null;
-                    };
+                    "application/json": components["schemas"]["WorkerTraffic"];
                 };
             };
             /** @description Error */
@@ -8779,9 +8139,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8790,9 +8148,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8801,9 +8157,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8812,9 +8166,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
             /** @description Error */
@@ -8823,9 +8175,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["OpenAPIError"];
                 };
             };
         };

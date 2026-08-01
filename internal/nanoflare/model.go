@@ -170,21 +170,30 @@ type ConsoleDeployment struct {
 	CompatibilityDate  string        `json:"compatibility_date"`
 	CompatibilityFlags []string      `json:"compatibility_flags,omitempty"`
 	Triggers           TriggerConfig `json:"triggers,omitempty"`
-	State              string        `json:"state"`
+	State              string        `json:"state" enum:"active,inactive"`
 	TrafficPercent     int           `json:"traffic_percent"`
 	CreatedAt          time.Time     `json:"created_at"`
 }
 
+type BindingKind string
+
+const (
+	BindingKindKV                  BindingKind = "kv"
+	BindingKindDatabase            BindingKind = "db"
+	BindingKindAsset               BindingKind = "asset"
+	BindingKindObjectStorageBucket BindingKind = "object_storage_bucket"
+)
+
 type Binding struct {
-	Kind          string `json:"kind"`
-	Binding       string `json:"binding"`
-	NamespaceID   string `json:"namespace_id,omitempty"`
-	NamespaceName string `json:"namespace_name,omitempty"`
-	DatabaseID    string `json:"database_id,omitempty"`
-	DatabaseName  string `json:"database_name,omitempty"`
-	BucketID      string `json:"bucket_id,omitempty"`
-	BucketName    string `json:"bucket_name,omitempty"`
-	AssetCount    int    `json:"asset_count,omitempty"`
+	Kind          BindingKind `json:"kind" enum:"kv,db,asset,object_storage_bucket"`
+	Binding       string      `json:"binding"`
+	NamespaceID   string      `json:"namespace_id,omitempty"`
+	NamespaceName string      `json:"namespace_name,omitempty"`
+	DatabaseID    string      `json:"database_id,omitempty"`
+	DatabaseName  string      `json:"database_name,omitempty"`
+	BucketID      string      `json:"bucket_id,omitempty"`
+	BucketName    string      `json:"bucket_name,omitempty"`
+	AssetCount    int         `json:"asset_count,omitempty"`
 }
 
 type Secret struct {
