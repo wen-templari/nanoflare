@@ -34,7 +34,8 @@ import {
   X,
 } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+import { activeOrgID, apiClient, errorMessage } from "../app/api";
+import { useAuth } from "../app/auth-context";
 import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
 import { Input } from "../components/ui/input";
@@ -124,6 +125,7 @@ function WorkerDetailContent({
   notify: (text: string) => void;
   apiConnected: boolean;
 }) {
+  const { activeOrgID } = useAuth();
   const navigate = useNavigate();
   const { databases, namespaces } = useWorkspace();
   const [tab, setTab] = useQueryTab<WorkerDetailTab>(workerDetailTabs, "overview");
@@ -151,13 +153,35 @@ function WorkerDetailContent({
         return;
       }
 
-      const [nextDetail, nextFiles, nextDeployments, nextOutput, nextTraffic] = await Promise.all([
-        fetchJSON<WorkerDetailData>(`/v1/workers/${worker.id}`).catch(() => undefined),
-        fetchJSON<WorkerFile[]>(`/v1/workers/${worker.id}/files`).catch(() => []),
-        fetchJSON<ConsoleDeployment[]>(`/v1/workers/${worker.id}/deployments`).catch(() => []),
-        fetchJSON<WorkerOutputLine[]>(`/v1/workers/${worker.id}/output`).catch(() => []),
-        fetchJSON<WorkerTraffic>(`/v1/workers/${worker.id}/traffic`).catch(() => emptyTraffic),
-      ]);
+      const path = { orgID: activeOrgID, workerID: worker.id };
+      const [detailResult, filesResult, deploymentsResult, outputResult, trafficResult] =
+        await Promise.all([
+          apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}", {
+            params: { path },
+            parseAs: "json",
+          }),
+          apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/files", {
+            params: { path },
+            parseAs: "json",
+          }),
+          apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/deployments", {
+            params: { path },
+            parseAs: "json",
+          }),
+          apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/output", {
+            params: { path },
+            parseAs: "json",
+          }),
+          apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/analytics/traffic", {
+            params: { path },
+            parseAs: "json",
+          }),
+        ]);
+      const nextDetail = detailResult.data;
+      const nextFiles = filesResult.data ?? [];
+      const nextDeployments = deploymentsResult.data ?? [];
+      const nextOutput = outputResult.data ?? [];
+      const nextTraffic = trafficResult.data ?? emptyTraffic;
       if (cancelled) return;
       setDetail(nextDetail);
       setFiles(nextFiles);
@@ -177,7 +201,7 @@ function WorkerDetailContent({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [apiConnected, worker]);
+  }, [activeOrgID, apiConnected, worker]);
 
   const deployment = detail?.deployment;
   const recentDeployments = [...deployments]
@@ -241,7 +265,9 @@ function WorkerDetailContent({
         {tab === "files" && (
           <WorkerFileViewer files={files} selectedFile={selectedFile} onSelect={setSelectedFile} />
         )}
-        {tab === "output" && <WorkerOutput workerID={worker.id} deployments={deployments} initialLines={output} />}
+        {tab === "output" && (
+          <WorkerOutput workerID={worker.id} deployments={deployments} initialLines={output} />
+        )}
         {tab === "settings" && (
           <WorkerConfig
             detail={detail}
@@ -262,16 +288,16 @@ function WorkerMetrics({ traffic }: { traffic: WorkerTraffic }) {
         title="Worker traffic"
         eyebrow={traffic.available ? "Last 24 hours" : "Prometheus unavailable"}
       >
-        <MiniTrafficChart values={traffic.traffic} />
+        <MiniTrafficChart values={traffic.traffic ?? []} />
       </Panel>
       <Panel
         title="Handler duration"
-        eyebrow={traffic.duration_series.length ? "Last 24 hours" : "Waiting for runtime timings"}
+        eyebrow={(traffic.duration_series ?? []).length ? "Last 24 hours" : "Waiting for runtime timings"}
       >
-        <MiniTrafficChart values={traffic.duration_series} />
+        <MiniTrafficChart values={traffic.duration_series ?? []} />
       </Panel>
       <Panel title="Response codes" eyebrow="5 minute rate">
-        <StatusCodeMix values={traffic.status_codes} />
+        <StatusCodeMix values={traffic.status_codes ?? []} />
       </Panel>
       <LayerCard>
         <LayerCard.Secondary>
@@ -328,7 +354,7 @@ function WorkerOverview({
   traffic: WorkerTraffic;
   worker: WorkerDetailData["app"];
 }) {
-  const bindings = deployment?.bindings ?? worker.bindings ?? [];
+  const bindings = deployment?.bindings ?? [];
   return (
     <div className="space-y-6">
       <LayerCard className="px-5 py-4">
@@ -549,12 +575,12 @@ function WorkerConfig({
         .split("\n")
         .map((route) => route.trim())
         .filter(Boolean);
-      const response = await apiFetch(`/v1/workers/${workerID}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ auth: { protected_routes } }),
+      const { error } = await apiClient.PATCH("/v1/organizations/{orgID}/workers/{workerID}", {
+        params: { path: { orgID: activeOrgID(), workerID } },
+        body: { auth: { protected_routes } },
+        parseAs: "json",
       });
-      if (!response.ok) throw new Error(`Config update failed (${response.status})`);
+      if (error) throw new Error(errorMessage(error, "Could not update worker configuration"));
       notify("Protected routes updated");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Config update failed");
@@ -783,13 +809,16 @@ function WorkerDeployments({
     }
     setSaving(true);
     try {
-      const response = await apiFetch(`/v1/workers/${workerID}/deployments/traffic`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deployments: next }),
-      });
-      if (!response.ok) throw new Error(await errorText(response, "Could not save traffic split"));
-      const updated = (await response.json()) as ConsoleDeployment[];
+      const { data, error } = await apiClient.PUT(
+        "/v1/organizations/{orgID}/workers/{workerID}/deployment-traffic",
+        {
+          params: { path: { orgID: activeOrgID(), workerID } },
+          body: { deployments: next },
+          parseAs: "json",
+        },
+      );
+      if (error || !data) throw new Error(errorMessage(error, "Could not save traffic split"));
+      const updated = data;
       onSaved(updated);
       notify(successMessage);
       setSplitOpen(false);
@@ -874,7 +903,7 @@ function WorkerDeployments({
                     {traffic.duration_ms_avg ? formatMilliseconds(traffic.duration_ms_avg) : "0 ms"}
                   </Table.Cell>
                   <Table.Cell>
-                    <MiniInlineChart values={traffic.traffic} />
+                    <MiniInlineChart values={traffic.traffic ?? []} />
                   </Table.Cell>
                 </Table.Row>
               ))}
@@ -950,7 +979,9 @@ function WorkerDeployments({
       <Dialog.Root open={splitOpen} onOpenChange={(open) => !open && setSplitOpen(false)}>
         <Dialog className="p-6" size="xl">
           <div className="flex items-start justify-between gap-4">
-            <Dialog.Title className="text-lg font-semibold">Split deployment across versions</Dialog.Title>
+            <Dialog.Title className="text-lg font-semibold">
+              Split deployment across versions
+            </Dialog.Title>
             <Dialog.Close
               render={(props) => (
                 <Button {...props} aria-label="Close" shape="square" size="sm" variant="ghost">
@@ -1031,20 +1062,34 @@ function WorkerOutput({
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const params = new URLSearchParams({ limit: "500" });
-      if (deploymentID) params.set("deployment_id", deploymentID);
-      if (level) params.set("level", level);
-      if (search.trim()) params.set("q", search.trim());
-      const next = await fetchJSON<WorkerOutputLine[]>(`/v1/workers/${workerID}/output?${params}`).catch(() => []);
+      const { data } = await apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/output", {
+        params: {
+          path: { orgID: activeOrgID(), workerID },
+          query: {
+            limit: 500,
+            deployment_id: deploymentID || undefined,
+            level: level || undefined,
+            q: search.trim() || undefined,
+          },
+        },
+        parseAs: "json",
+      });
+      const next = data ?? [];
       if (!cancelled) {
         setLines(next);
         setLoading(false);
       }
     }
     void load();
-    if (!follow) return () => { cancelled = true; };
+    if (!follow)
+      return () => {
+        cancelled = true;
+      };
     const timer = window.setInterval(() => void load(), 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [workerID, deploymentID, level, search, follow]);
 
   return (
@@ -1054,15 +1099,42 @@ function WorkerOutput({
         Deployment output {loading && <span className="text-[#9fb0aa]">syncing</span>}
       </div>
       <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px_auto]">
-        <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter output" className="!bg-[#18211f] !border-[#40504b] !text-[#d7e1dc]" />
-        <select value={deploymentID} onChange={(event) => setDeploymentID(event.target.value)} className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]">
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Filter output"
+          className="!bg-[#18211f] !border-[#40504b] !text-[#d7e1dc]"
+        />
+        <select
+          value={deploymentID}
+          onChange={(event) => setDeploymentID(event.target.value)}
+          className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]"
+        >
           <option value="">All deployments</option>
-          {deployments.map((deployment) => <option key={deployment.id} value={deployment.id}>{shortDeploymentID(deployment.id)}</option>)}
+          {deployments.map((deployment) => (
+            <option key={deployment.id} value={deployment.id}>
+              {shortDeploymentID(deployment.id)}
+            </option>
+          ))}
         </select>
-        <select value={level} onChange={(event) => setLevel(event.target.value)} className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]">
-          <option value="">All levels</option><option value="error">Error</option><option value="warn">Warn</option><option value="info">Info</option>
+        <select
+          value={level}
+          onChange={(event) => setLevel(event.target.value)}
+          className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]"
+        >
+          <option value="">All levels</option>
+          <option value="error">Error</option>
+          <option value="warn">Warn</option>
+          <option value="info">Info</option>
         </select>
-        <Button variant="outline" size="sm" onClick={() => setFollow((value) => !value)} className="border-[#40504b] !text-[#c6d0cb]">{follow ? "Following" : "Paused"}</Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setFollow((value) => !value)}
+          className="border-[#40504b] !text-[#c6d0cb]"
+        >
+          {follow ? "Following" : "Paused"}
+        </Button>
       </div>
       {lines.length ? (
         <div className="space-y-1.5">

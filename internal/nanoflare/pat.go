@@ -184,7 +184,7 @@ func (s *ControlAuthService) SessionForPersonalAccessToken(tokenValue string) (A
 	used := now
 	record.LastUsedAt = &used
 	_ = s.store.UpdatePersonalAccessToken(record)
-	return AuthSession{Token: strings.TrimSpace(tokenValue), User: safeUser(user), Organizations: orgs, ActiveOrgID: activeOrgID}, nil
+	return AuthSession{Token: strings.TrimSpace(tokenValue), TokenType: "Bearer", User: safeUser(user), Organizations: orgs, ActiveOrgID: activeOrgID}, nil
 }
 
 func AllowedControlScopes() []string {

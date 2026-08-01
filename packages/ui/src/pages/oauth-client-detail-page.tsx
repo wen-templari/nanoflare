@@ -64,11 +64,22 @@ export function OAuthClientDetailPage() {
     setLoading(true);
     try {
       const [clientResult, connectionsResult] = await Promise.all([
-        apiClient.GET("/v1/oauth/clients/{clientID}", { params: { path: { clientID: clientId } } }),
-        apiClient.GET("/v1/oauth/clients/{clientID}/connections", { params: { path: { clientID: clientId } } }),
+        apiClient.GET("/v1/organizations/{orgID}/oauth-clients/{clientID}", {
+          params: { path: { orgID: activeOrgID, clientID: clientId } },
+          parseAs: "json",
+        }),
+        apiClient.GET("/v1/organizations/{orgID}/oauth-clients/{clientID}/connections", {
+          params: { path: { orgID: activeOrgID, clientID: clientId } },
+          parseAs: "json",
+        }),
       ]);
       if (clientResult.error || !clientResult.data || connectionsResult.error) {
-        throw new Error(errorMessage(clientResult.error || connectionsResult.error, "Could not load OAuth client"));
+        throw new Error(
+          errorMessage(
+            clientResult.error || connectionsResult.error,
+            "Could not load OAuth client",
+          ),
+        );
       }
       const nextClient = clientResult.data as OAuthClient;
       const nextConnections = connectionsResult.data as OAuthClientConnection[] | null;
@@ -99,8 +110,8 @@ export function OAuthClientDetailPage() {
     if (!client) return;
     setForm({
       name: client.name,
-      redirectURIs: client.redirect_uris.join("\n"),
-      scopes: client.scopes,
+      redirectURIs: (client.redirect_uris ?? []).join("\n"),
+      scopes: client.scopes ?? [],
     });
     setError("");
     setFormOpen(true);
@@ -118,10 +129,14 @@ export function OAuthClientDetailPage() {
       scopes: form.scopes,
     };
     try {
-      const { error } = await apiClient.PATCH("/v1/oauth/clients/{clientID}", {
-        params: { path: { clientID: client.client_id } },
-        body: payload,
-      });
+      const { error } = await apiClient.PATCH(
+        "/v1/organizations/{orgID}/oauth-clients/{clientID}",
+        {
+          params: { path: { orgID: activeOrgID, clientID: client.client_id } },
+          body: payload,
+          parseAs: "json",
+        },
+      );
       if (error) throw new Error(errorMessage(error, "Could not update OAuth client"));
       setFormOpen(false);
       notify("OAuth client updated");
@@ -138,9 +153,13 @@ export function OAuthClientDetailPage() {
     setDeleting(true);
     setDeleteError("");
     try {
-      const { error } = await apiClient.DELETE("/v1/oauth/clients/{clientID}", {
-        params: { path: { clientID: client.client_id } },
-      });
+      const { error } = await apiClient.DELETE(
+        "/v1/organizations/{orgID}/oauth-clients/{clientID}",
+        {
+          params: { path: { orgID: activeOrgID, clientID: client.client_id } },
+          parseAs: "json",
+        },
+      );
       if (error) throw new Error(errorMessage(error, "Could not delete OAuth client"));
       notify("OAuth client deleted");
       navigate("/settings");
@@ -187,14 +206,14 @@ export function OAuthClientDetailPage() {
                     Updated {new Date(client.updated_at).toLocaleString()}
                   </Text>
                 </Panel>
-                <Panel title="Scopes" eyebrow={`${client.scopes.length} allowed`}>
-                  <ScopeBadges scopes={client.scopes} />
+                <Panel title="Scopes" eyebrow={`${(client.scopes ?? []).length} allowed`}>
+                  <ScopeBadges scopes={client.scopes ?? []} />
                 </Panel>
               </div>
 
-              <Panel title="Redirect URIs" eyebrow={`${client.redirect_uris.length} configured`}>
+              <Panel title="Redirect URIs" eyebrow={`${(client.redirect_uris ?? []).length} configured`}>
                 <div className="flex flex-col gap-2">
-                  {client.redirect_uris.map((uri) => (
+                  {(client.redirect_uris ?? []).map((uri) => (
                     <div className="flex min-w-0 items-center gap-2" key={uri}>
                       <Text DANGEROUS_className="min-w-0 truncate text-xs" variant="mono-secondary">
                         {uri}
@@ -241,7 +260,7 @@ export function OAuthClientDetailPage() {
                             </Text>
                           </Table.Cell>
                           <Table.Cell className="w-[28%]">
-                            <ScopeBadges scopes={connection.scopes} />
+                            <ScopeBadges scopes={connection.scopes ?? []} />
                           </Table.Cell>
                           <Table.Cell className="w-[12%]">
                             <Text DANGEROUS_className="truncate" size="sm" variant="secondary">
@@ -277,8 +296,8 @@ export function OAuthClientDetailPage() {
                     ["Status", "Active"],
                     ["Created", new Date(client.created_at).toLocaleString()],
                     ["Updated", new Date(client.updated_at).toLocaleString()],
-                    ["Redirect URIs", String(client.redirect_uris.length)],
-                    ["Allowed scopes", String(client.scopes.length)],
+                    ["Redirect URIs", String((client.redirect_uris ?? []).length)],
+                    ["Allowed scopes", String((client.scopes ?? []).length)],
                   ].map(([label, value]) => (
                     <div
                       key={label}

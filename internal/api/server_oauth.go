@@ -23,20 +23,21 @@ type oauthRevokeRequest struct {
 }
 
 func (s *Server) registerOAuthRoutes() {
-	s.mux.HandleFunc("GET /v1/oauth/clients", s.oauthClients)
-	s.mux.HandleFunc("POST /v1/oauth/clients", s.createOAuthClient)
-	s.mux.HandleFunc("GET /v1/oauth/clients/{clientID}", s.oauthClient)
-	s.mux.HandleFunc("GET /v1/oauth/clients/{clientID}/connections", s.oauthClientConnections)
-	s.mux.HandleFunc("PATCH /v1/oauth/clients/{clientID}", s.updateOAuthClient)
-	s.mux.HandleFunc("POST /v1/oauth/clients/{clientID}/secret", s.rotateOAuthClientSecret)
-	s.mux.HandleFunc("POST /v1/oauth/clients/{clientID}/restore", s.restoreOAuthClient)
-	s.mux.HandleFunc("DELETE /v1/oauth/clients/{clientID}", s.disableOAuthClient)
+	base := "/v1/organizations/{orgID}"
+	clients := base + "/oauth-clients"
+	s.mux.HandleFunc("GET "+clients, s.oauthClients)
+	s.mux.HandleFunc("POST "+clients, s.createOAuthClient)
+	s.mux.HandleFunc("GET "+clients+"/{clientID}", s.oauthClient)
+	s.mux.HandleFunc("GET "+clients+"/{clientID}/connections", s.oauthClientConnections)
+	s.mux.HandleFunc("PATCH "+clients+"/{clientID}", s.updateOAuthClient)
+	s.mux.HandleFunc("POST "+clients+"/{clientID}/client-secrets", s.rotateOAuthClientSecret)
+	s.mux.HandleFunc("DELETE "+clients+"/{clientID}", s.disableOAuthClient)
 	s.mux.HandleFunc("GET /v1/oauth/authorize", s.oauthAuthorizeInfo)
 	s.mux.HandleFunc("POST /v1/oauth/authorize", s.oauthAuthorize)
 	s.mux.HandleFunc("POST /v1/oauth/token", s.oauthToken)
 	s.mux.HandleFunc("POST /v1/oauth/revoke", s.oauthRevoke)
-	s.mux.HandleFunc("GET /v1/oauth/connections", s.oauthConnections)
-	s.mux.HandleFunc("DELETE /v1/oauth/connections/{clientID}", s.oauthDisconnect)
+	s.mux.HandleFunc("GET "+base+"/oauth-connections", s.oauthConnections)
+	s.mux.HandleFunc("DELETE "+base+"/oauth-connections/{clientID}", s.oauthDisconnect)
 }
 
 func (s *Server) oauthClients(w http.ResponseWriter, r *http.Request) {
@@ -297,46 +298,71 @@ func (s *Server) oauthAuthorizeForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
-	var input oauthTokenRequest
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	input, err := oauthTokenInput(r)
+	if err != nil {
+		writeOAuthProtocolError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	switch strings.TrimSpace(input.GrantType) {
 	case "authorization_code":
 		response, err := s.oauth.ExchangeAuthorizationCode(input.ClientID, input.ClientSecret, input.Code, input.RedirectURI)
 		if err != nil {
-			writeOAuthError(w, err)
+			writeOAuthProtocolError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, response)
 	case "refresh_token":
 		response, err := s.oauth.Refresh(input.ClientID, input.ClientSecret, input.RefreshToken)
 		if err != nil {
-			writeOAuthError(w, err)
+			writeOAuthProtocolError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, response)
 	default:
-		writeError(w, http.StatusBadRequest, errors.New("unsupported grant_type"))
+		writeOAuthProtocolError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type is not supported")
 	}
 }
 
+func oauthTokenInput(r *http.Request) (oauthTokenRequest, error) {
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		return oauthTokenRequest{}, errors.New("Content-Type must be application/x-www-form-urlencoded")
+	}
+	if err := r.ParseForm(); err != nil {
+		return oauthTokenRequest{}, err
+	}
+	input := oauthTokenRequest{GrantType: r.Form.Get("grant_type"), ClientID: r.Form.Get("client_id"), ClientSecret: r.Form.Get("client_secret"), Code: r.Form.Get("code"), RedirectURI: r.Form.Get("redirect_uri"), RefreshToken: r.Form.Get("refresh_token")}
+	if clientID, clientSecret, ok := r.BasicAuth(); ok {
+		input.ClientID, input.ClientSecret = clientID, clientSecret
+	}
+	if strings.TrimSpace(input.ClientID) == "" || strings.TrimSpace(input.ClientSecret) == "" {
+		return oauthTokenRequest{}, errors.New("client authentication is required")
+	}
+	return input, nil
+}
+
 func (s *Server) oauthRevoke(w http.ResponseWriter, r *http.Request) {
-	var input oauthRevokeRequest
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		writeOAuthProtocolError(w, http.StatusBadRequest, "invalid_request", "Content-Type must be application/x-www-form-urlencoded")
 		return
 	}
-	if strings.TrimSpace(input.Token) == "" {
-		writeError(w, http.StatusBadRequest, errors.New("token is required"))
+	if err := r.ParseForm(); err != nil {
+		writeOAuthProtocolError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if err := s.oauth.Revoke(input.Token); err != nil {
+	token := strings.TrimSpace(r.Form.Get("token"))
+	if token == "" {
+		writeOAuthProtocolError(w, http.StatusBadRequest, "invalid_request", "token is required")
+		return
+	}
+	if err := s.oauth.Revoke(token); err != nil {
 		writeOAuthError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeOAuthProtocolError(w http.ResponseWriter, status int, code, description string) {
+	writeJSON(w, status, map[string]string{"error": code, "error_description": description})
 }
 
 func (s *Server) oauthConnections(w http.ResponseWriter, r *http.Request) {

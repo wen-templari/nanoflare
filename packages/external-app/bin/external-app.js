@@ -31,11 +31,11 @@ async function main() {
           client_id: process.env.EXTERNAL_APP_CLIENT_ID,
           client_secret: process.env.EXTERNAL_APP_CLIENT_SECRET,
         }
-      : await createOAuthClient(session.token, session.active_org_id);
+      : await createOAuthClient(session.access_token, session.active_org_id);
   console.log(`Using OAuth client ${client.client_id}`);
 
   const authorization = await authorizeClient(
-    session.token,
+    session.access_token,
     session.active_org_id,
     client.client_id,
   );
@@ -44,20 +44,20 @@ async function main() {
   const token = await exchangeAuthorizationCode(client, authorization.code);
   console.log(`Received access token with scopes: ${token.scope}`);
 
-  const app = await createManagedWorker(token.access_token);
+  const app = await createManagedWorker(token.access_token, session.active_org_id);
   console.log(`Created managed worker ${app.id} (${app.hostname})`);
   console.log(
     `External metadata: external_id=${app.external_id} oauth_client_id=${app.oauth_client_id}`,
   );
 
-  await expectMissingReadScope(token.access_token);
+  await expectMissingReadScope(token.access_token, session.active_org_id);
   console.log("Confirmed workers:read is required for listing workers");
 
   const refreshed = await refreshToken(client, token.refresh_token);
   console.log("Refreshed token and rotated refresh token");
 
   await revokeToken(refreshed.access_token);
-  await expectRevokedToken(refreshed.access_token);
+  await expectRevokedToken(refreshed.access_token, session.active_org_id);
   console.log("Revoked token is rejected");
 
   console.log("External app OAuth smoke test completed successfully.");
@@ -90,7 +90,7 @@ async function signIn() {
 }
 
 async function createOAuthClient(token, orgID) {
-  const { data, error, response } = await api.POST("/v1/oauth/clients", {
+  const { data, error, response } = await api.POST("/v1/organizations/{orgID}/oauth-clients", {
     body: {
       name: "External Platform Smoke Test",
       redirect_uris: [redirectURI],
@@ -105,9 +105,11 @@ async function createOAuthClient(token, orgID) {
         "secrets:write",
       ],
     },
-    headers: { Authorization: `Bearer ${token}`, "X-Nanoflare-Org-ID": orgID },
+    params: { path: { orgID } },
+    headers: { Authorization: `Bearer ${token}` },
   });
-  if (response.status !== 201 || !data) throw requestError("POST /v1/oauth/clients", response, error);
+  if (response.status !== 201 || !data)
+    throw requestError("POST /v1/organizations/{orgID}/oauth-clients", response, error);
   return data;
 }
 
@@ -127,21 +129,12 @@ async function authorizeClient(token, orgID, clientID) {
 }
 
 async function exchangeAuthorizationCode(client, code) {
-  const { data, error, response } = await api.POST("/v1/oauth/token", {
-    body: {
-      grant_type: "authorization_code",
-      client_id: client.client_id,
-      client_secret: client.client_secret,
-      code,
-      redirect_uri: redirectURI,
-    },
-  });
-  if (!response.ok || !data) throw requestError("POST /v1/oauth/token", response, error);
-  return data;
+  return oauthToken(client, { grant_type: "authorization_code", code, redirect_uri: redirectURI });
 }
 
-async function createManagedWorker(accessToken) {
-  const { data, error, response } = await api.POST("/v1/workers", {
+async function createManagedWorker(accessToken, orgID) {
+  const { data, error, response } = await api.POST("/v1/organizations/{orgID}/workers", {
+    params: { path: { orgID } },
     headers: { Authorization: `Bearer ${accessToken}` },
     body: {
       name: "External Managed Worker",
@@ -153,8 +146,9 @@ async function createManagedWorker(accessToken) {
   return data;
 }
 
-async function expectMissingReadScope(accessToken) {
-  const { error, response } = await api.GET("/v1/workers", {
+async function expectMissingReadScope(accessToken, orgID) {
+  const { error, response } = await api.GET("/v1/organizations/{orgID}/workers", {
+    params: { path: { orgID } },
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const expectedStatus = requestedScopes.includes("workers:read") ? 200 : 403;
@@ -162,27 +156,36 @@ async function expectMissingReadScope(accessToken) {
 }
 
 async function refreshToken(client, refreshTokenValue) {
-  const { data, error, response } = await api.POST("/v1/oauth/token", {
-    body: {
-      grant_type: "refresh_token",
-      client_id: client.client_id,
-      client_secret: client.client_secret,
-      refresh_token: refreshTokenValue,
+  return oauthToken(client, { grant_type: "refresh_token", refresh_token: refreshTokenValue });
+}
+
+async function oauthToken(client, values) {
+  const response = await fetch(`${baseURL}/v1/oauth/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
     },
+    body: new URLSearchParams(values),
   });
-  if (!response.ok || !data) throw requestError("POST /v1/oauth/token", response, error);
+  const data = await response.json();
+  if (!response.ok) throw requestError("POST /v1/oauth/token", response, data);
   return data;
 }
 
 async function revokeToken(token) {
-  const { error, response } = await api.POST("/v1/oauth/revoke", {
-    body: { token },
+  const response = await fetch(`${baseURL}/v1/oauth/revoke`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token }),
   });
-  if (response.status !== 204) throw requestError("POST /v1/oauth/revoke", response, error);
+  if (response.status !== 204)
+    throw requestError("POST /v1/oauth/revoke", response, await response.json());
 }
 
-async function expectRevokedToken(accessToken) {
-  const { error, response } = await api.POST("/v1/workers", {
+async function expectRevokedToken(accessToken, orgID) {
+  const { error, response } = await api.POST("/v1/organizations/{orgID}/workers", {
+    params: { path: { orgID } },
     headers: { Authorization: `Bearer ${accessToken}` },
     body: {
       name: "Should Not Be Created",

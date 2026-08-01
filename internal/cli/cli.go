@@ -905,6 +905,10 @@ func (r *Runner) request(method, url string, input, output any) error {
 }
 
 func (r *Runner) authenticatedRequest(method, target string, payload []byte, hasInput bool, auth AuthConfig) (*http.Response, error) {
+	target, err := organizationScopedURL(target, auth.ActiveOrgID)
+	if err != nil {
+		return nil, err
+	}
 	var body io.Reader
 	if payload != nil {
 		body = bytes.NewReader(payload)
@@ -918,11 +922,39 @@ func (r *Runner) authenticatedRequest(method, target string, payload []byte, has
 	}
 	if auth.Token != "" {
 		request.Header.Set("Authorization", "Bearer "+auth.Token)
-		if auth.ActiveOrgID != "" {
-			request.Header.Set("X-Nanoflare-Org-ID", auth.ActiveOrgID)
-		}
 	}
 	return r.Client.Do(request)
+}
+
+func organizationScopedURL(target, orgID string) (string, error) {
+	parsed, err := url.Parse(target)
+	if err != nil || strings.TrimSpace(orgID) == "" || strings.HasPrefix(parsed.Path, "/v1/organizations/") {
+		return target, err
+	}
+	for _, prefix := range []string{"/v1/workers", "/v1/kv/namespaces", "/v1/db", "/v1/object-storage-buckets"} {
+		if strings.HasPrefix(parsed.Path, prefix) {
+			rest := strings.TrimPrefix(parsed.Path, prefix)
+			resource := strings.TrimPrefix(prefix, "/v1/")
+			switch resource {
+			case "kv/namespaces":
+				resource = "kv-namespaces"
+			case "db":
+				resource = "databases"
+			}
+			if resource == "workers" {
+				rest = strings.Replace(rest, "/deployments/traffic", "/deployment-traffic", 1)
+				rest = strings.Replace(rest, "/traffic", "/analytics/traffic", 1)
+			}
+			if resource == "databases" {
+				rest = strings.Replace(rest, "/execute", "/queries", 1)
+				rest = strings.Replace(rest, "/metrics/timeseries", "/analytics/timeseries", 1)
+				rest = strings.Replace(rest, "/metrics", "/analytics", 1)
+			}
+			parsed.Path = "/v1/organizations/" + url.PathEscape(orgID) + "/" + resource + rest
+			return parsed.String(), nil
+		}
+	}
+	return target, nil
 }
 
 func (r *Runner) refreshAuthConfig(auth AuthConfig) (AuthConfig, error) {

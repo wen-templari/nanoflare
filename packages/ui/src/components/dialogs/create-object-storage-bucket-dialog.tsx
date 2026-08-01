@@ -34,10 +34,14 @@ export function CreateObjectStorageBucketDialog({
       created_at: new Date().toISOString(),
     };
     if (apiConnected) {
-      const { data, error } = await apiClient.POST("/v1/object-storage-buckets", {
-        params: { header: { "X-Nanoflare-Org-ID": activeOrgID() } },
-        body: { name: trimmed },
-      });
+      const { data, error } = await apiClient.POST(
+        "/v1/organizations/{orgID}/object-storage-buckets",
+        {
+          params: { path: { orgID: activeOrgID() } },
+          body: { name: trimmed },
+          parseAs: "json",
+        },
+      );
       if (error || !data) return notify(errorMessage(error, "Bucket creation failed"));
       bucket = data;
     }

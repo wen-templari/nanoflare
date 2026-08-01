@@ -152,7 +152,9 @@ export function ConsoleLayout() {
               placeholder="No organization"
               renderValue={(value) => {
                 const organization = organizationSelectData.find((item) => item.value === value);
-                return <span className="block truncate">{organization?.label ?? "No organization"}</span>;
+                return (
+                  <span className="block truncate">{organization?.label ?? "No organization"}</span>
+                );
               }}
               size="sm"
               value={activeOrgID}

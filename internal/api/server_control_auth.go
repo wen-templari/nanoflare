@@ -19,7 +19,6 @@ const (
 	controlOAuthKey  controlContextKey = "controlOAuth"
 	controlPATKey    controlContextKey = "controlPAT"
 	controlScopesKey controlContextKey = "controlScopes"
-	orgHeaderName                      = "X-Nanoflare-Org-ID"
 )
 
 func isPublicControlPath(path string) bool {
@@ -35,16 +34,21 @@ func isPublicControlPath(path string) bool {
 }
 
 func isPartnerMachineRequest(r *http.Request) bool {
-	if r.Method == http.MethodPost && r.URL.Path == "/v1/partner-connections/token" {
-		return true
-	}
-	prefix := "/v1/partner-integrations/"
+	prefix := "/v1/organizations/"
 	if !strings.HasPrefix(r.URL.Path, prefix) {
 		return false
 	}
-	rest := strings.TrimPrefix(r.URL.Path, prefix)
-	parts := strings.Split(rest, "/")
-	return (r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "connections") || (r.Method == http.MethodDelete && len(parts) == 3 && parts[1] == "connections")
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
+	if len(parts) < 4 || parts[1] != "partner-integrations" {
+		return false
+	}
+	rest := strings.Join(parts[2:], "/")
+	segments := strings.Split(rest, "/")
+	return (r.Method == http.MethodPost && len(segments) == 2 && segments[1] == "connections") || (r.Method == http.MethodDelete && len(segments) == 3 && segments[1] == "connections") || (r.Method == http.MethodPost && len(segments) == 2 && segments[1] == "token")
+}
+
+func organizationIDFromPath(r *http.Request) string {
+	return strings.TrimSpace(r.PathValue("orgID"))
 }
 
 func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
@@ -56,13 +60,17 @@ func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Reque
 	if s.oauth != nil && !isUserSessionOnlyOAuthPath(r.URL.Path) {
 		access, err := s.oauth.ValidateAccessToken(token)
 		if err == nil {
+			if orgID := organizationIDFromPath(r); orgID != "" && orgID != access.OrgID {
+				writeError(w, http.StatusForbidden, errors.New("access token does not grant access to this organization"))
+				return nil, false
+			}
 			ctx := context.WithValue(r.Context(), controlOrgKey, access.OrgID)
 			ctx = context.WithValue(ctx, controlOAuthKey, access)
 			return r.WithContext(ctx), true
 		}
 	}
 	if !isUserSessionOnlyControlPath(r.URL.Path) {
-		access, err := s.controlAuth.ValidatePersonalAccessToken(token, r.Header.Get(orgHeaderName))
+		access, err := s.controlAuth.ValidatePersonalAccessToken(token, organizationIDFromPath(r))
 		if err == nil {
 			ctx := context.WithValue(r.Context(), controlUserKey, access.User)
 			ctx = context.WithValue(ctx, controlOrgKey, access.OrgID)
@@ -76,10 +84,10 @@ func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, err)
 		return nil, false
 	}
-	orgID := strings.TrimSpace(r.Header.Get(orgHeaderName))
+	orgID := organizationIDFromPath(r)
 	if r.URL.Path != "/v1/auth/me" && !isNoOrgControlPath(r.URL.Path) {
 		if orgID == "" {
-			writeError(w, http.StatusBadRequest, errors.New("X-Nanoflare-Org-ID is required"))
+			writeError(w, http.StatusBadRequest, errors.New("organization_id is required in the request path"))
 			return nil, false
 		}
 		membership, err := s.controlAuth.Membership(user.ID, orgID)
@@ -102,15 +110,15 @@ func (s *Server) authenticateControlRequest(w http.ResponseWriter, r *http.Reque
 }
 
 func isUserSessionOnlyOAuthPath(path string) bool {
-	return path == "/v1/oauth/authorize" || path == "/v1/oauth/clients" || strings.HasPrefix(path, "/v1/oauth/clients/") || path == "/v1/oauth/connections" || strings.HasPrefix(path, "/v1/oauth/connections/")
+	return path == "/v1/oauth/authorize" || strings.Contains(path, "/oauth-clients") || strings.Contains(path, "/oauth-connections")
 }
 
 func isUserSessionOnlyControlPath(path string) bool {
-	return isUserSessionOnlyOAuthPath(path) || path == "/v1/auth/me" || path == "/v1/auth/cli/code" || path == "/v1/orgs" || path == "/v1/pats" || strings.HasPrefix(path, "/v1/pats/")
+	return isUserSessionOnlyOAuthPath(path) || path == "/v1/auth/me" || path == "/v1/auth/cli/code" || path == "/v1/organizations" || path == "/v1/me/personal-access-tokens" || strings.HasPrefix(path, "/v1/me/personal-access-tokens/")
 }
 
 func isNoOrgControlPath(path string) bool {
-	return path == "/v1/oauth/authorize" || path == "/v1/orgs" || path == "/v1/auth/cli/code" || path == "/v1/pats" || strings.HasPrefix(path, "/v1/pats/")
+	return path == "/v1/oauth/authorize" || path == "/v1/organizations" || path == "/v1/auth/cli/code" || path == "/v1/me/personal-access-tokens" || strings.HasPrefix(path, "/v1/me/personal-access-tokens/")
 }
 
 func controlOrgID(r *http.Request) string {
@@ -198,16 +206,16 @@ func (s *Server) registerControlAuthRoutes() {
 	s.mux.HandleFunc("POST /v1/auth/cli/code", s.controlCLICode)
 	s.mux.HandleFunc("POST /v1/auth/cli/session", s.controlCLISession)
 	s.mux.HandleFunc("GET /v1/auth/me", s.controlMe)
-	s.mux.HandleFunc("GET /v1/pats", s.personalAccessTokens)
-	s.mux.HandleFunc("POST /v1/pats", s.createPersonalAccessToken)
-	s.mux.HandleFunc("DELETE /v1/pats/{patID}", s.revokePersonalAccessToken)
-	s.mux.HandleFunc("POST /v1/orgs", s.createOrganization)
-	s.mux.HandleFunc("GET /v1/orgs/{orgID}/members", s.organizationMembers)
-	s.mux.HandleFunc("PATCH /v1/orgs/{orgID}/members/{userID}", s.updateOrganizationMember)
-	s.mux.HandleFunc("DELETE /v1/orgs/{orgID}/members/{userID}", s.deleteOrganizationMember)
-	s.mux.HandleFunc("POST /v1/orgs/{orgID}/invites", s.createOrganizationInvite)
-	s.mux.HandleFunc("GET /v1/orgs/{orgID}/invites", s.organizationInvites)
-	s.mux.HandleFunc("DELETE /v1/orgs/{orgID}/invites/{inviteID}", s.revokeOrganizationInvite)
+	s.mux.HandleFunc("GET /v1/me/personal-access-tokens", s.personalAccessTokens)
+	s.mux.HandleFunc("POST /v1/me/personal-access-tokens", s.createPersonalAccessToken)
+	s.mux.HandleFunc("DELETE /v1/me/personal-access-tokens/{patID}", s.revokePersonalAccessToken)
+	s.mux.HandleFunc("POST /v1/organizations", s.createOrganization)
+	s.mux.HandleFunc("GET /v1/organizations/{orgID}/members", s.organizationMembers)
+	s.mux.HandleFunc("PATCH /v1/organizations/{orgID}/members/{userID}", s.updateOrganizationMember)
+	s.mux.HandleFunc("DELETE /v1/organizations/{orgID}/members/{userID}", s.deleteOrganizationMember)
+	s.mux.HandleFunc("POST /v1/organizations/{orgID}/invites", s.createOrganizationInvite)
+	s.mux.HandleFunc("GET /v1/organizations/{orgID}/invites", s.organizationInvites)
+	s.mux.HandleFunc("DELETE /v1/organizations/{orgID}/invites/{inviteID}", s.revokeOrganizationInvite)
 	s.mux.HandleFunc("GET /v1/invites/{token}", s.inviteInfo)
 	s.mux.HandleFunc("POST /v1/invites/{token}/accept", s.acceptInvite)
 }

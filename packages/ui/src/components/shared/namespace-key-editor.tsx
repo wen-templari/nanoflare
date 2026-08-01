@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react";
-import { apiFetch, fetchJSON } from "../../app/api";
+import { activeOrgID, apiClient, apiFetch, errorMessage } from "../../app/api";
 import type { KVNamespaceOption, WorkerKVKey } from "../../app/types";
 import { formatBytes } from "../../app/utils";
 import { Input } from "../ui/input";
@@ -27,11 +27,7 @@ export function NamespaceKeyEditor({
   const [value, setValue] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const namespaceBase = namespaceID
-    ? `/v1/workers/${workerID}/kv/namespaces/${encodeURIComponent(namespaceID)}`
-    : "";
-  const path =
-    key.trim() && namespaceBase ? `${namespaceBase}/${encodeURIComponent(key.trim())}` : "";
+  const requestPath = namespaceID ? { orgID: activeOrgID(), workerID, namespaceID } : undefined;
 
   useEffect(() => {
     setKeys([]);
@@ -41,7 +37,7 @@ export function NamespaceKeyEditor({
   }, [workerID, namespaceID]);
 
   async function refreshKeys() {
-    if (!namespaceBase) {
+    if (!requestPath) {
       setKeys([]);
       setStatus(namespaces.length ? "Select a KV namespace" : "No KV namespaces bound");
       return;
@@ -49,7 +45,12 @@ export function NamespaceKeyEditor({
     setLoading(true);
     setStatus("");
     try {
-      setKeys(await fetchJSON<WorkerKVKey[]>(namespaceBase));
+      const { data, error } = await apiClient.GET(
+        "/v1/organizations/{orgID}/workers/{workerID}/kv-namespaces/{namespaceID}/values",
+        { params: { path: requestPath }, parseAs: "json" },
+      );
+      if (error || !data) throw new Error(errorMessage(error, "KV list failed"));
+      setKeys(data);
       setStatus("Keys refreshed");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "KV list failed");
@@ -59,19 +60,17 @@ export function NamespaceKeyEditor({
   }
 
   async function readKey(nextKey = key.trim()) {
-    if (!nextKey || !namespaceBase) return;
+    if (!nextKey || !requestPath) return;
     setLoading(true);
     setStatus("");
     try {
       setKey(nextKey);
-      const response = await apiFetch(`${namespaceBase}/${encodeURIComponent(nextKey)}`);
-      if (response.status === 404) {
-        setValue("");
-        setStatus("Key not found");
-        return;
-      }
-      if (!response.ok) throw new Error(`KV read failed (${response.status})`);
-      setValue(await response.text());
+      const { data, error } = await apiClient.GET(
+        "/v1/organizations/{orgID}/workers/{workerID}/kv-namespaces/{namespaceID}/values/{key}",
+        { params: { path: { ...requestPath, key: nextKey } }, parseAs: "text" },
+      );
+      if (error || data === undefined) throw new Error(errorMessage(error, "KV read failed"));
+      setValue(data);
       setStatus("Value loaded");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "KV read failed");
@@ -82,17 +81,20 @@ export function NamespaceKeyEditor({
 
   useEffect(() => {
     void refreshKeys();
-  }, [workerID, namespaceBase]);
+  }, [workerID, namespaceID]);
 
   async function writeKey() {
-    if (!path) return;
+    if (!requestPath || !key.trim()) return;
     setLoading(true);
     setStatus("");
     try {
-      const response = await apiFetch(path, { method: "PUT", body: value });
+      const response = await apiFetch(
+        `/v1/organizations/${encodeURIComponent(requestPath.orgID)}/workers/${encodeURIComponent(requestPath.workerID)}/kv-namespaces/${encodeURIComponent(requestPath.namespaceID)}/values/${encodeURIComponent(key.trim())}`,
+        { method: "PUT", body: value },
+      );
       if (!response.ok) throw new Error(`KV write failed (${response.status})`);
       setStatus("Value saved");
-      setKeys(await fetchJSON<WorkerKVKey[]>(namespaceBase));
+      await refreshKeys();
       notify(`${key.trim()} saved`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "KV write failed");
@@ -102,15 +104,18 @@ export function NamespaceKeyEditor({
   }
 
   async function deleteKey() {
-    if (!path) return;
+    if (!requestPath || !key.trim()) return;
     setLoading(true);
     setStatus("");
     try {
-      const response = await apiFetch(path, { method: "DELETE" });
-      if (!response.ok) throw new Error(`KV delete failed (${response.status})`);
+      const { error } = await apiClient.DELETE(
+        "/v1/organizations/{orgID}/workers/{workerID}/kv-namespaces/{namespaceID}/values/{key}",
+        { params: { path: { ...requestPath, key: key.trim() } }, parseAs: "text" },
+      );
+      if (error) throw new Error(errorMessage(error, "KV delete failed"));
       setValue("");
       setStatus("Key deleted");
-      setKeys(await fetchJSON<WorkerKVKey[]>(namespaceBase));
+      await refreshKeys();
       notify(`${key.trim()} deleted`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "KV delete failed");

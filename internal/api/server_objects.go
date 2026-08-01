@@ -19,16 +19,19 @@ type objectRequest struct {
 }
 
 func (s *Server) registerObjectRoutes() {
-	s.mux.HandleFunc("GET /v1/object-storage-buckets", s.listObjectStorageBuckets)
-	s.mux.HandleFunc("POST /v1/object-storage-buckets", s.createObjectStorageBucket)
-	s.mux.HandleFunc("GET /v1/object-storage-buckets/{bucketID}", s.getObjectStorageBucket)
-	s.mux.HandleFunc("PATCH /v1/object-storage-buckets/{bucketID}", s.updateObjectStorageBucket)
-	s.mux.HandleFunc("DELETE /v1/object-storage-buckets/{bucketID}", s.deleteObjectStorageBucket)
-	s.mux.HandleFunc("GET /v1/object-storage-buckets/{bucketID}/metrics", s.objectStorageBucketMetrics)
-	s.mux.HandleFunc("GET /v1/workers/{workerID}/object-storage-buckets/{bucketID}", s.workerObjectList)
-	s.mux.HandleFunc("GET /v1/workers/{workerID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectGet)
-	s.mux.HandleFunc("PUT /v1/workers/{workerID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectPut)
-	s.mux.HandleFunc("DELETE /v1/workers/{workerID}/object-storage-buckets/{bucketID}/{key...}", s.workerObjectDelete)
+	base := "/v1/organizations/{orgID}"
+	buckets := base + "/object-storage-buckets"
+	s.mux.HandleFunc("GET "+buckets, s.listObjectStorageBuckets)
+	s.mux.HandleFunc("POST "+buckets, s.createObjectStorageBucket)
+	s.mux.HandleFunc("GET "+buckets+"/{bucketID}", s.getObjectStorageBucket)
+	s.mux.HandleFunc("PATCH "+buckets+"/{bucketID}", s.updateObjectStorageBucket)
+	s.mux.HandleFunc("DELETE "+buckets+"/{bucketID}", s.deleteObjectStorageBucket)
+	s.mux.HandleFunc("GET "+buckets+"/{bucketID}/analytics", s.objectStorageBucketMetrics)
+	objects := base + "/workers/{workerID}/object-storage-buckets/{bucketID}/objects"
+	s.mux.HandleFunc("GET "+objects, s.workerObjectList)
+	s.mux.HandleFunc("GET "+objects+"/{key...}", s.workerObjectGet)
+	s.mux.HandleFunc("PUT "+objects+"/{key...}", s.workerObjectPut)
+	s.mux.HandleFunc("DELETE "+objects+"/{key...}", s.workerObjectDelete)
 	s.mux.HandleFunc("GET /internal/runtime/objects/{key...}", s.runtimeObjectGet)
 	s.mux.HandleFunc("HEAD /internal/runtime/objects/{key...}", s.runtimeObjectHead)
 	s.mux.HandleFunc("PUT /internal/runtime/objects/{key...}", s.runtimeObjectPut)

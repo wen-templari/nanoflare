@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function refresh() {
-    const { data, error } = await apiClient.GET("/v1/auth/me");
+    const { data, error } = await apiClient.GET("/v1/auth/me", { parseAs: "json" });
     if (error || !data) throw new Error("auth expired");
     // The server currently documents this legacy endpoint as an object map.
     const session: AuthSession = {
@@ -82,15 +82,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return session;
   }
 
-  async function authenticate(path: "/v1/auth/login" | "/v1/auth/signup", email: string, password: string) {
+  async function authenticate(
+    path: "/v1/auth/login" | "/v1/auth/signup",
+    email: string,
+    password: string,
+  ) {
     const result =
       path === "/v1/auth/login"
-        ? await apiClient.POST("/v1/auth/login", { body: { email, password } })
-        : await apiClient.POST("/v1/auth/signup", { body: { email, password } });
+        ? await apiClient.POST("/v1/auth/login", { body: { email, password }, parseAs: "json" })
+        : await apiClient.POST("/v1/auth/signup", { body: { email, password }, parseAs: "json" });
     if (result.error || !result.data) throw new Error(result.error?.error || "Login failed");
     const session = result.data as AuthSession;
     const orgID = session.active_org_id || session.organizations[0]?.id || "";
-    saveAuth(session.token, orgID);
+    saveAuth(session.access_token, orgID);
     setUserEmail(session.user.email);
     setOrganizations(session.organizations);
     setActiveOrgIDState(orgID);
@@ -103,11 +107,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function loginWithOIDCCode(code: string) {
     const { data, error } = await apiClient.POST("/v1/auth/oidc/session", {
       body: { code },
+      parseAs: "json",
     });
     if (error || !data) throw new Error(error?.error || "OIDC login failed");
     const session = data as AuthSession;
     const orgID = session.active_org_id || session.organizations[0]?.id || "";
-    saveAuth(session.token, orgID);
+    saveAuth(session.access_token, orgID);
     setUserEmail(session.user.email);
     setOrganizations(session.organizations);
     setActiveOrgIDState(orgID);
@@ -118,7 +123,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function createOrganization(name: string) {
-    const { data, error } = await apiClient.POST("/v1/orgs", { body: { name } });
+    const { data, error } = await apiClient.POST("/v1/organizations", {
+      body: { name },
+      parseAs: "json",
+    });
     if (error || !data) throw new Error(error?.error || "Could not create organization");
     const org = data as Organization;
     const nextOrgs = [...organizations.filter((item) => item.id !== org.id), org].sort((a, b) =>

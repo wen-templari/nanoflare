@@ -26,24 +26,24 @@ export function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/cli-login" element={<CLILoginPage />} />
-          <Route path="/invites/:token" element={<InvitePage />} />
-          <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
-          <Route element={<ProtectedConsole />}>
-            <Route index element={<OverviewPage />} />
-            <Route path="workers" element={<WorkersPage />} />
-            <Route path="workers/:workerId" element={<WorkerDetailPage />} />
-            <Route path="kv" element={<KVNamespacesPage />} />
-            <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />
-            <Route path="databases" element={<DatabasesPage />} />
-            <Route path="databases/:databaseId" element={<DatabaseDetailPage />} />
-            <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
-            <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="settings/oauth-clients/:clientId" element={<OAuthClientDetailPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/cli-login" element={<CLILoginPage />} />
+            <Route path="/invites/:token" element={<InvitePage />} />
+            <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
+            <Route element={<ProtectedConsole />}>
+              <Route index element={<OverviewPage />} />
+              <Route path="workers" element={<WorkersPage />} />
+              <Route path="workers/:workerId" element={<WorkerDetailPage />} />
+              <Route path="kv" element={<KVNamespacesPage />} />
+              <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />
+              <Route path="databases" element={<DatabasesPage />} />
+              <Route path="databases/:databaseId" element={<DatabaseDetailPage />} />
+              <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
+              <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="settings/oauth-clients/:clientId" element={<OAuthClientDetailPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
           </Routes>
         </BrowserRouter>
       </AuthProvider>

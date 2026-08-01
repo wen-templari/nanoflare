@@ -14,13 +14,14 @@ type dbExecuteInput struct {
 }
 
 func (s *Server) registerDBRoutes() {
-	s.mux.HandleFunc("GET /v1/db", s.listDatabases)
-	s.mux.HandleFunc("POST /v1/db", s.createDatabase)
-	s.mux.HandleFunc("DELETE /v1/db/{databaseID}", s.deleteDatabase)
-	s.mux.HandleFunc("GET /v1/db/{databaseID}/metrics", s.databaseMetrics)
-	s.mux.HandleFunc("GET /v1/db/{databaseID}/metrics/timeseries", s.databaseMetricsTimeseries)
-	s.mux.HandleFunc("POST /v1/db/{databaseID}/execute", s.executeDatabase)
-	s.mux.HandleFunc("POST /v1/db/{databaseID}/migrations", s.applyDatabaseMigration)
+	base := "/v1/organizations/{orgID}/databases"
+	s.mux.HandleFunc("GET "+base, s.listDatabases)
+	s.mux.HandleFunc("POST "+base, s.createDatabase)
+	s.mux.HandleFunc("DELETE "+base+"/{databaseID}", s.deleteDatabase)
+	s.mux.HandleFunc("GET "+base+"/{databaseID}/analytics", s.databaseMetrics)
+	s.mux.HandleFunc("GET "+base+"/{databaseID}/analytics/timeseries", s.databaseMetricsTimeseries)
+	s.mux.HandleFunc("POST "+base+"/{databaseID}/queries", s.executeDatabase)
+	s.mux.HandleFunc("POST "+base+"/{databaseID}/migrations", s.applyDatabaseMigration)
 }
 
 func (s *Server) listDatabases(w http.ResponseWriter, r *http.Request) {

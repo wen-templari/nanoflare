@@ -169,6 +169,7 @@ func (s *Server) SetControlOIDCDirectLogin(enabled bool) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Request-Id", newRequestID())
 	if s.controlAuth != nil && strings.HasPrefix(r.URL.Path, "/v1/") && !isPublicControlPath(r.URL.Path) && !isPartnerMachineRequest(r) {
 		next, ok := s.authenticateControlRequest(w, r)
 		if !ok {

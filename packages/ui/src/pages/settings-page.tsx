@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Input } from "../components/ui/input";
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+import { apiClient, errorMessage } from "../app/api";
 import {
   formatBytes,
   normalizeUsageLevel,
@@ -367,7 +367,7 @@ export function SettingsPage() {
       ? controlScopes.filter((scope) => activeOrg?.scopes?.includes(scope))
       : controlScopes;
   const pendingInvites = useMemo(() => {
-    const memberEmails = new Set(members.map((member) => member.user_email.toLowerCase()));
+    const memberEmails = new Set(members.flatMap((member) => (member.user_email ? [member.user_email.toLowerCase()] : [])));
     return invites.filter(
       (invite) =>
         !invite.accepted_at && !invite.revoked_at && !memberEmails.has(invite.email.toLowerCase()),
@@ -387,16 +387,20 @@ export function SettingsPage() {
       const [kvMetrics, bucketMetrics] = await Promise.all([
         Promise.all(
           namespaces.map((namespace) =>
-            fetchJSON<KVNamespaceMetrics>(
-              `/v1/kv/namespaces/${encodeURIComponent(namespace.id)}/metrics`,
-            ).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 })),
+            apiClient
+              .GET("/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/analytics", {
+                params: { path: { orgID: activeOrgID, namespaceID: namespace.id } },
+              })
+              .then(({ data }) => data ?? { available: false, reads: 0, writes: 0, size: 0 }),
           ),
         ),
         Promise.all(
           objectStorageBuckets.map((bucket) =>
-            fetchJSON<ObjectStorageBucketMetrics>(
-              `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}/metrics`,
-            ).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 })),
+            apiClient
+              .GET("/v1/organizations/{orgID}/object-storage-buckets/{bucketID}/analytics", {
+                params: { path: { orgID: activeOrgID, bucketID: bucket.id } },
+              })
+              .then(({ data }) => data ?? { available: false, reads: 0, writes: 0, size: 0 }),
           ),
         ),
       ]);
@@ -422,23 +426,34 @@ export function SettingsPage() {
     setLoading(true);
     try {
       const [nextClients, nextPATs, nextMembers, nextInvites] = await Promise.all([
-        fetchJSON<OAuthClient[] | null>("/v1/oauth/clients").catch(() => []),
-        fetchJSON<PersonalAccessToken[] | null>("/v1/pats").catch(() => []),
+        apiClient
+          .GET("/v1/organizations/{orgID}/oauth-clients", {
+            params: { path: { orgID: activeOrgID } },
+            parseAs: "json",
+          })
+          .then(({ data }) => data ?? []),
+        apiClient
+          .GET("/v1/me/personal-access-tokens", { parseAs: "json" })
+          .then(({ data }) => data ?? []),
         canReadMembers
-          ? fetchJSON<OrganizationMember[] | null>(`/v1/orgs/${activeOrgID}/members`).catch(
-              () => [],
-            )
+          ? apiClient
+              .GET("/v1/organizations/{orgID}/members", {
+                params: { path: { orgID: activeOrgID } },
+              })
+              .then(({ data }) => data ?? [])
           : Promise.resolve([]),
         canReadMembers
-          ? fetchJSON<OrganizationInvite[] | null>(`/v1/orgs/${activeOrgID}/invites`).catch(
-              () => [],
-            )
+          ? apiClient
+              .GET("/v1/organizations/{orgID}/invites", {
+                params: { path: { orgID: activeOrgID } },
+              })
+              .then(({ data }) => data ?? [])
           : Promise.resolve([]),
       ]);
-      setClients((nextClients ?? []).filter((client) => !client.disabled));
-      setPats((nextPATs ?? []).filter((token) => !token.revoked_at));
-      setMembers(nextMembers ?? []);
-      setInvites(nextInvites ?? []);
+      setClients(nextClients.filter((client) => !client.disabled));
+      setPats(nextPATs.filter((token) => !token.revoked_at));
+      setMembers(nextMembers);
+      setInvites(nextInvites);
       setError("");
     } catch (err) {
       setClients([]);
@@ -462,8 +477,8 @@ export function SettingsPage() {
     setEditingClient(client);
     setForm({
       name: client.name,
-      redirectURIs: client.redirect_uris.join("\n"),
-      scopes: client.scopes,
+      redirectURIs: (client.redirect_uris ?? []).join("\n"),
+      scopes: client.scopes ?? [],
     });
     setError("");
     setFormOpen(true);
@@ -480,17 +495,25 @@ export function SettingsPage() {
       scopes: form.scopes,
     };
     try {
-      const response = await apiFetch(
-        editingClient ? `/v1/oauth/clients/${editingClient.client_id}` : "/v1/oauth/clients",
-        {
-          method: editingClient ? "PATCH" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
-      );
-      if (!response.ok) throw new Error(await errorText(response, "Could not save OAuth client"));
-      const saved = (await response.json()) as OAuthClient | OAuthClientCreated;
-      if ("client_secret" in saved) setOneTimeSecret(saved);
+      if (editingClient) {
+        const { data, error } = await apiClient.PATCH(
+          "/v1/organizations/{orgID}/oauth-clients/{clientID}",
+          {
+            params: { path: { orgID: activeOrgID, clientID: editingClient.client_id } },
+            body: payload,
+            parseAs: "json",
+          },
+        );
+        if (error || !data) throw new Error(errorMessage(error, "Could not save OAuth client"));
+      } else {
+        const { data, error } = await apiClient.POST("/v1/organizations/{orgID}/oauth-clients", {
+          params: { path: { orgID: activeOrgID } },
+          body: payload,
+          parseAs: "json",
+        });
+        if (error || !data) throw new Error(errorMessage(error, "Could not save OAuth client"));
+        setOneTimeSecret(data);
+      }
       setFormOpen(false);
       notify(editingClient ? "OAuth client updated" : "OAuth client created");
       await refresh();
@@ -502,22 +525,26 @@ export function SettingsPage() {
   }
 
   async function rotateSecret(client: OAuthClient) {
-    const response = await apiFetch(`/v1/oauth/clients/${client.client_id}/secret`, {
-      method: "POST",
-    });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not rotate client secret"));
+    const { data, error } = await apiClient.POST(
+      "/v1/organizations/{orgID}/oauth-clients/{clientID}/client-secrets",
+      { params: { path: { orgID: activeOrgID, clientID: client.client_id } }, parseAs: "json" },
+    );
+    if (error || !data) {
+      setError(errorMessage(error, "Could not rotate client secret"));
       return;
     }
-    setOneTimeSecret((await response.json()) as OAuthClientCreated);
+    setOneTimeSecret(data);
     notify("OAuth client secret rotated");
     await refresh();
   }
 
   async function deleteClient(client: OAuthClient) {
-    const response = await apiFetch(`/v1/oauth/clients/${client.client_id}`, { method: "DELETE" });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not delete OAuth client"));
+    const { error } = await apiClient.DELETE("/v1/organizations/{orgID}/oauth-clients/{clientID}", {
+      params: { path: { orgID: activeOrgID, clientID: client.client_id } },
+      parseAs: "json",
+    });
+    if (error) {
+      setError(errorMessage(error, "Could not delete OAuth client"));
       return;
     }
     notify("OAuth client deleted");
@@ -549,14 +576,12 @@ export function SettingsPage() {
       expires_at: expiresAt,
     };
     try {
-      const response = await apiFetch("/v1/pats", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const { data: created, error } = await apiClient.POST("/v1/me/personal-access-tokens", {
+        body: payload,
+        parseAs: "json",
       });
-      if (!response.ok)
-        throw new Error(await errorText(response, "Could not create personal access token"));
-      const created = (await response.json()) as PersonalAccessTokenCreated;
+      if (error || !created)
+        throw new Error(errorMessage(error, "Could not create personal access token"));
       setOneTimePAT(created);
       setPats((current) => [created, ...current.filter((token) => token.id !== created.id)]);
       setPATOpen(false);
@@ -571,9 +596,12 @@ export function SettingsPage() {
   }
 
   async function revokePAT(token: PersonalAccessToken) {
-    const response = await apiFetch(`/v1/pats/${token.id}`, { method: "DELETE" });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not revoke personal access token"));
+    const { error } = await apiClient.DELETE("/v1/me/personal-access-tokens/{patID}", {
+      params: { path: { patID: token.id } },
+      parseAs: "json",
+    });
+    if (error) {
+      setError(errorMessage(error, "Could not revoke personal access token"));
       return;
     }
     notify("Personal access token revoked");
@@ -581,16 +609,15 @@ export function SettingsPage() {
   }
 
   async function submitInvite() {
-    const response = await apiFetch(`/v1/orgs/${activeOrgID}/invites`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+    const { data: invite, error } = await apiClient.POST("/v1/organizations/{orgID}/invites", {
+      params: { path: { orgID: activeOrgID } },
+      body: { email: inviteEmail, role: inviteRole },
+      parseAs: "json",
     });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not create invite"));
+    if (error || !invite) {
+      setError(errorMessage(error, "Could not create invite"));
       return;
     }
-    const invite = (await response.json()) as OrganizationInviteCreated;
     setInviteCreated(invite);
     setInviteOpen(false);
     setInviteEmail("");
@@ -600,13 +627,13 @@ export function SettingsPage() {
   }
 
   async function updateMember(member: OrganizationMember, role: string) {
-    const response = await apiFetch(`/v1/orgs/${activeOrgID}/members/${member.user_id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role }),
+    const { error } = await apiClient.PATCH("/v1/organizations/{orgID}/members/{userID}", {
+      params: { path: { orgID: activeOrgID, userID: member.user_id } },
+      body: { role },
+      parseAs: "json",
     });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not update member"));
+    if (error) {
+      setError(errorMessage(error, "Could not update member"));
       return;
     }
     notify("Member updated");
@@ -614,11 +641,12 @@ export function SettingsPage() {
   }
 
   async function removeMember(member: OrganizationMember) {
-    const response = await apiFetch(`/v1/orgs/${activeOrgID}/members/${member.user_id}`, {
-      method: "DELETE",
+    const { error } = await apiClient.DELETE("/v1/organizations/{orgID}/members/{userID}", {
+      params: { path: { orgID: activeOrgID, userID: member.user_id } },
+      parseAs: "json",
     });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not remove member"));
+    if (error) {
+      setError(errorMessage(error, "Could not remove member"));
       return;
     }
     notify("Member removed");
@@ -626,11 +654,12 @@ export function SettingsPage() {
   }
 
   async function revokeInvite(invite: OrganizationInvite) {
-    const response = await apiFetch(`/v1/orgs/${activeOrgID}/invites/${invite.id}`, {
-      method: "DELETE",
+    const { error } = await apiClient.DELETE("/v1/organizations/{orgID}/invites/{inviteID}", {
+      params: { path: { orgID: activeOrgID, inviteID: invite.id } },
+      parseAs: "json",
     });
-    if (!response.ok) {
-      setError(await errorText(response, "Could not remove invite"));
+    if (error) {
+      setError(errorMessage(error, "Could not remove invite"));
       return;
     }
     notify("Invite removed");
@@ -670,10 +699,7 @@ export function SettingsPage() {
       )}
 
       <div className="flex flex-col gap-8">
-        <Panel
-          title="Usage"
-          eyebrow={usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}
-        >
+        <Panel title="Usage" eyebrow={usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}>
           <div className="grid gap-3 sm:grid-cols-2">
             <LimitRow current={workers.length} label="Workers" limit={limits.workers} />
             <LimitRow
@@ -751,7 +777,7 @@ export function SettingsPage() {
                             {token.scope_type === "org" ? "Organization" : "User"}
                           </Badge>
                           <Text c="dimmed" size="sm">
-                            {token.scopes.length}
+                            {(token.scopes ?? []).length}
                           </Text>
                         </div>
                       </Table.Td>
@@ -973,7 +999,7 @@ export function SettingsPage() {
                         </Table.Td>
                         <Table.Td className="w-[18%]">
                           <Stack gap={4}>
-                            {client.redirect_uris.map((uri) => (
+                            {(client.redirect_uris ?? []).map((uri) => (
                               <Text c="dimmed" ff="monospace" key={uri} size="xs" truncate>
                                 {uri}
                               </Text>
@@ -1008,7 +1034,7 @@ export function SettingsPage() {
                                 aria-label="Rotate secret"
                                 onClick={(event: MouseEvent<HTMLButtonElement>) => {
                                   event.stopPropagation();
-                                  rotateSecret(client);
+                                  void rotateSecret(client);
                                 }}
                                 shape="square"
                                 variant="ghost"
@@ -1021,7 +1047,7 @@ export function SettingsPage() {
                                 aria-label="Delete client"
                                 onClick={(event: MouseEvent<HTMLButtonElement>) => {
                                   event.stopPropagation();
-                                  deleteClient(client);
+                                  void deleteClient(client);
                                 }}
                                 shape="square"
                                 variant="destructive"
@@ -1178,11 +1204,11 @@ export function SettingsPage() {
             <div className="grid gap-2">
               <Label>Personal access token</Label>
               <Code className="block max-w-full rounded-lg bg-kumo-tint px-4 py-3 break-all">
-                {oneTimePAT.token}
+                {oneTimePAT.access_token}
               </Code>
             </div>
             <div className="flex justify-end gap-2">
-              <Button onClick={() => copy(oneTimePAT.token, "Personal access token")}>
+              <Button onClick={() => copy(oneTimePAT.access_token, "Personal access token")}>
                 <Copy className="size-4" />
                 Copy token
               </Button>
@@ -1204,8 +1230,8 @@ export function SettingsPage() {
           <div className="grid gap-5">
             <Banner variant="alert">
               <p className="break-words text-sm">
-                Share this link with <span className="font-medium">{inviteCreated.email}</span>. It is the
-                only way to accept this invite.
+                Share this link with <span className="font-medium">{inviteCreated.email}</span>. It
+                is the only way to accept this invite.
               </p>
             </Banner>
             <div className="grid gap-2">
@@ -1246,7 +1272,7 @@ export function SettingsPage() {
             <div className="grid gap-2">
               <Label>Allowed scopes</Label>
               <div className="flex flex-wrap gap-1.5">
-                {selectedPAT.scopes.map((scope) => (
+                {(selectedPAT.scopes ?? []).map((scope) => (
                   <Badge key={scope} tone="blue">
                     {scope}
                   </Badge>

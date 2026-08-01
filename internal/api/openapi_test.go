@@ -87,7 +87,7 @@ func TestOpenAPISuccessResponsesAndWorkerOutputQueryAreTyped(t *testing.T) {
 			}
 		}
 	}
-	for _, parameter := range spec.Paths["/v1/workers/{workerID}/output"]["get"].Parameters {
+	for _, parameter := range spec.Paths["/v1/organizations/{orgID}/workers/{workerID}/output"]["get"].Parameters {
 		if parameter.In == "query" && parameter.Name == "limit" {
 			return
 		}

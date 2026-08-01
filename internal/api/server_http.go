@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -86,11 +88,34 @@ func decodeJSON(r *http.Request, target any) error {
 }
 
 func bearerToken(r *http.Request) string {
-	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	value := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(value) < len("Bearer ") || !strings.EqualFold(value[:len("Bearer ")], "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(value[len("Bearer "):])
 }
 
 func writeError(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	requestID := w.Header().Get("Request-Id")
+	if requestID == "" {
+		requestID = newRequestID()
+		w.Header().Set("Request-Id", requestID)
+	}
+	writeJSON(w, status, map[string]any{
+		"type":     "https://nanoflare.dev/problems/" + http.StatusText(status),
+		"title":    http.StatusText(status),
+		"status":   status,
+		"detail":   err.Error(),
+		"instance": requestID,
+	})
+}
+
+func newRequestID() string {
+	value := make([]byte, 12)
+	if _, err := rand.Read(value); err != nil {
+		return "request-id-unavailable"
+	}
+	return hex.EncodeToString(value)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

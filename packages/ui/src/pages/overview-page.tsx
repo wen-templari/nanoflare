@@ -1,10 +1,5 @@
 import { ChartPalette, LayerCard, Text, TimeseriesChart } from "@cloudflare/kumo";
-import {
-  ArrowUpRight,
-  DatabaseZap,
-  KeyRound,
-  Waypoints,
-} from "lucide-react";
+import { ArrowUpRight, DatabaseZap, KeyRound, Waypoints } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { activeOrgID, apiClient } from "../app/api";
@@ -33,7 +28,10 @@ export function OverviewPage() {
       const results = await Promise.all(
         workers.map((worker) =>
           apiClient
-            .GET("/v1/workers/{workerID}/traffic", { params: { header: { "X-Nanoflare-Org-ID": activeOrgID() }, path: { workerID: worker.id } } })
+            .GET("/v1/organizations/{orgID}/workers/{workerID}/analytics/traffic", {
+              params: { path: { orgID: activeOrgID(), workerID: worker.id } },
+              parseAs: "json",
+            })
             .then(({ data }) => data),
         ),
       );
@@ -235,7 +233,9 @@ function OverviewTrafficChart({ label, values }: { label: string; values: number
       height={192}
       tooltipValueFormat={(value) => value.toFixed(1)}
       xAxisTickFormat={(timestamp) =>
-        timestamp === lastTimestamp ? "Now" : `${Math.round((lastTimestamp - timestamp) / 3_600_000)}h`
+        timestamp === lastTimestamp
+          ? "Now"
+          : `${Math.round((lastTimestamp - timestamp) / 3_600_000)}h`
       }
       yAxisTickFormat={formatCount}
     />
@@ -255,10 +255,11 @@ function aggregateTraffic(items: WorkerTraffic[]) {
     errorRate: invocations ? errors / invocations : 0,
     requestsPerSecond: reporting.reduce((sum, item) => sum + item.requests_per_second, 0),
     durationAverage: durationWeight
-      ? reporting.reduce((sum, item) => sum + item.duration_ms_avg * item.invocations, 0) / durationWeight
+      ? reporting.reduce((sum, item) => sum + item.duration_ms_avg * item.invocations, 0) /
+        durationWeight
       : 0,
     durationP95: reporting.reduce((maximum, item) => Math.max(maximum, item.duration_ms_p95), 0),
-    traffic: sumSeries(reporting.map((item) => item.traffic)),
+    traffic: sumSeries(reporting.map((item) => item.traffic ?? [])),
   };
 }
 

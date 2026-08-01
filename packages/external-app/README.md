@@ -40,9 +40,8 @@ It prints `NANOFLARE_PARTNER_INTEGRATION_ID` and a one-time
 Equivalent API request:
 
 ```sh
-curl -s -X POST http://127.0.0.1:8080/v1/partner-integrations \
+curl -s -X POST http://127.0.0.1:8080/v1/organizations/$NANOFLARE_OWNER_ORG_ID/partner-integrations \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H "X-Nanoflare-Org-ID: $NANOFLARE_OWNER_ORG_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "External App UI",

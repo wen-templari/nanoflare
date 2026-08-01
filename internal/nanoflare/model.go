@@ -232,7 +232,7 @@ type PersonalAccessToken struct {
 
 type PersonalAccessTokenCreated struct {
 	PersonalAccessToken
-	Token string `json:"token"`
+	Token string `json:"access_token"`
 }
 
 type PutSecretInput struct {

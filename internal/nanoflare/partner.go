@@ -71,6 +71,13 @@ func NewPartnerService(store Repository) *PartnerService {
 	return &PartnerService{store: store, now: time.Now, randomID: randomToken, hashCost: bcrypt.DefaultCost}
 }
 
+// AuthenticateIntegration validates the one-time-issued client secret for a
+// partner integration without creating or changing a connection.
+func (s *PartnerService) AuthenticateIntegration(integrationID, secret string) error {
+	_, err := s.authenticate(integrationID, secret)
+	return err
+}
+
 func (s *PartnerService) CreateIntegration(input CreatePartnerIntegrationInput) (PartnerIntegrationCreated, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {

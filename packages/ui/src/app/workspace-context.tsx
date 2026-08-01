@@ -37,10 +37,22 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         const [apps, kvNamespaces, dbs, buckets] = await Promise.all([
-          apiClient.GET("/v1/workers", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
-          apiClient.GET("/v1/kv/namespaces", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
-          apiClient.GET("/v1/db", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
-          apiClient.GET("/v1/object-storage-buckets", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID } } }),
+          apiClient.GET("/v1/organizations/{orgID}/workers", {
+            params: { path: { orgID: auth.activeOrgID } },
+            parseAs: "json",
+          }),
+          apiClient.GET("/v1/organizations/{orgID}/kv-namespaces", {
+            params: { path: { orgID: auth.activeOrgID } },
+            parseAs: "json",
+          }),
+          apiClient.GET("/v1/organizations/{orgID}/databases", {
+            params: { path: { orgID: auth.activeOrgID } },
+            parseAs: "json",
+          }),
+          apiClient.GET("/v1/organizations/{orgID}/object-storage-buckets", {
+            params: { path: { orgID: auth.activeOrgID } },
+            parseAs: "json",
+          }),
         ]);
         if (apps.error || kvNamespaces.error || dbs.error || buckets.error) {
           throw new Error("Could not load workspace");
@@ -50,21 +62,27 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const nextWorkers = await Promise.all(
           (apps.data ?? []).map(async (app) => {
             const [detail, traffic] = await Promise.all([
-              apiClient.GET("/v1/workers/{workerID}", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID }, path: { workerID: app.id } } }),
-              apiClient.GET("/v1/workers/{workerID}/traffic", { params: { header: { "X-Nanoflare-Org-ID": auth.activeOrgID }, path: { workerID: app.id } } }),
+              apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}", {
+                params: { path: { orgID: auth.activeOrgID, workerID: app.id } },
+              }),
+              apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/analytics/traffic", {
+                params: { path: { orgID: auth.activeOrgID, workerID: app.id } },
+              }),
             ]);
 
             return {
               ...app,
               status: detail.data?.deployment ? ("live" as const) : ("draft" as const),
-              requests: traffic.data?.available ? formatCount(traffic.data.invocations) : "unavailable",
+              requests: traffic.data?.available
+                ? formatCount(traffic.data.invocations)
+                : "unavailable",
               deployment: detail.data?.deployment?.id ?? "awaiting deploy",
               bindings: detail.data?.deployment?.bindings ?? [],
             };
           }),
         );
         if (cancelled) return;
-        setWorkers(nextWorkers as Worker[]);
+        setWorkers(nextWorkers);
         setNamespaces(sortNamespaces(kvNamespaces.data ?? []));
         setDatabases(sortDatabases(dbs.data ?? []));
         setObjectStorageBuckets(sortObjectStorageBuckets(buckets.data ?? []));

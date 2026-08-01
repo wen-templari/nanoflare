@@ -128,5 +128,3 @@ export interface NanoflareEnv {
   OBJECTS: ObjectStorageBucket;
   IDENTITY: IdentityBinding;
 }
-
-export {};

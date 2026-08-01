@@ -248,13 +248,12 @@ token login.
 
 External platforms can integrate through Nanoflare's OAuth control-plane flow.
 First create an OAuth client while signed in as a Nanoflare control-plane user.
-The client is owned by the organization in `X-Nanoflare-Org-ID`; any member of
-that owner organization can manage its redirect URIs, scopes, and secrets:
+The client is owned by the organization identified in the request URL; any
+member of that owner organization can manage its redirect URIs, scopes, and secrets:
 
 ```sh
-curl -X POST http://127.0.0.1:8080/v1/oauth/clients \
+curl -X POST http://127.0.0.1:8080/v1/organizations/$NANOFLARE_OWNER_ORG_ID/oauth-clients \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H "X-Nanoflare-Org-ID: $NANOFLARE_OWNER_ORG_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "External Platform",
@@ -300,7 +299,7 @@ Use the returned access token with existing `/v1` resource APIs. Nanoflare
 derives the organization from the OAuth token and enforces the granted scopes:
 
 ```sh
-curl -X POST http://127.0.0.1:8080/v1/workers \
+curl -X POST http://127.0.0.1:8080/v1/organizations/$NANOFLARE_ORG_ID/workers \
   -H "Authorization: Bearer $NANOFLARE_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Managed Worker","hostname":"managed.example.com","external_id":"external-worker-123"}'
@@ -318,9 +317,8 @@ from the owning Nanoflare organization. The returned secret is shown once and
 must be kept by the external platform backend; never send it to a browser.
 
 ```sh
-curl -X POST http://127.0.0.1:8080/v1/partner-integrations \
+curl -X POST http://127.0.0.1:8080/v1/organizations/$NANOFLARE_OWNER_ORG_ID/partner-integrations \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H "X-Nanoflare-Org-ID: $NANOFLARE_OWNER_ORG_ID" \
   -H "Content-Type: application/json" \
   -d '{"name":"External Platform","allowed_scopes":["workers:read","workers:write","deployments:write","secrets:write","kv:read","kv:write","db:read","db:write","objects:read","objects:write"]}'
 ```
@@ -330,15 +328,16 @@ tenant-scoped rotating token pair. Repeating the request for the same immutable
 `external_account_id` returns the same organization and connection.
 
 ```sh
-curl -X POST http://127.0.0.1:8080/v1/partner-integrations/$INTEGRATION_ID/connections \
-  -H "Authorization: Bearer $PARTNER_INTEGRATION_SECRET" \
+curl -X POST http://127.0.0.1:8080/v1/organizations/$NANOFLARE_OWNER_ORG_ID/partner-integrations/$INTEGRATION_ID/connections \
+  -u "$INTEGRATION_ID:$PARTNER_INTEGRATION_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"external_account_id":"workspace_123","organization_name":"Acme","requested_scopes":["workers:write","deployments:write","kv:write"]}'
 ```
 
-Refresh that connection with `POST /v1/partner-connections/token`, supplying
-`connection_id` and `refresh_token`. Disconnect it with
-`DELETE /v1/partner-integrations/{integrationID}/connections/{connectionID}`;
+Refresh that connection with `POST /v1/organizations/{organization_id}/partner-integrations/{integration_id}/token`, supplying
+`connection_id` and `refresh_token` with the same HTTP Basic client authentication.
+Disconnect it with
+`DELETE /v1/organizations/{organization_id}/partner-integrations/{integration_id}/connections/{connection_id}`;
 this revokes all connection tokens while retaining the organization and its
 resources. Repeating provisioning reconnects the retained organization with a
 new token pair. Partner integration owners can list integrations and

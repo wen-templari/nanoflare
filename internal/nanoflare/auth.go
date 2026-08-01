@@ -42,7 +42,8 @@ type OIDCLoginInput struct {
 }
 
 type AuthSession struct {
-	Token         string         `json:"token"`
+	Token         string         `json:"access_token"`
+	TokenType     string         `json:"token_type"`
 	RefreshToken  string         `json:"refresh_token,omitempty"`
 	ExpiresIn     int64          `json:"expires_in,omitempty"`
 	User          User           `json:"user"`
@@ -471,6 +472,7 @@ func (s *ControlAuthService) sessionForUser(user User) (AuthSession, error) {
 	}
 	return AuthSession{
 		Token:         token,
+		TokenType:     "Bearer",
 		RefreshToken:  refreshToken,
 		ExpiresIn:     int64(s.tokenTTL.Seconds()),
 		User:          safeUser(user),

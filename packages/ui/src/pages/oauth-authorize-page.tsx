@@ -42,7 +42,9 @@ export function OAuthAuthorizePage() {
       setError("");
       try {
         const { data, error } = await apiClient.GET("/v1/oauth/authorize", {
-          params: { query: { client_id: clientID, redirect_uri: redirectURI, scope: scopes.join(" ") } },
+          params: {
+            query: { client_id: clientID, redirect_uri: redirectURI, scope: scopes.join(" ") },
+          },
         });
         if (error || !data) throw new Error(errorMessage(error, "Could not verify external app"));
         const info = data as AuthorizeInfo;

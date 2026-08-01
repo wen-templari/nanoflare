@@ -24,14 +24,15 @@ type partnerRefreshRequest struct {
 }
 
 func (s *Server) registerPartnerRoutes() {
-	s.mux.HandleFunc("GET /v1/partner-integrations", s.partnerIntegrations)
-	s.mux.HandleFunc("POST /v1/partner-integrations", s.createPartnerIntegration)
-	s.mux.HandleFunc("POST /v1/partner-integrations/{integrationID}/secret", s.rotatePartnerIntegrationSecret)
-	s.mux.HandleFunc("DELETE /v1/partner-integrations/{integrationID}", s.disablePartnerIntegration)
-	s.mux.HandleFunc("GET /v1/partner-integrations/{integrationID}/connections", s.partnerConnections)
-	s.mux.HandleFunc("POST /v1/partner-integrations/{integrationID}/connections", s.provisionPartnerConnection)
-	s.mux.HandleFunc("DELETE /v1/partner-integrations/{integrationID}/connections/{connectionID}", s.revokePartnerConnection)
-	s.mux.HandleFunc("POST /v1/partner-connections/token", s.refreshPartnerConnection)
+	base := "/v1/organizations/{orgID}/partner-integrations"
+	s.mux.HandleFunc("GET "+base, s.partnerIntegrations)
+	s.mux.HandleFunc("POST "+base, s.createPartnerIntegration)
+	s.mux.HandleFunc("POST "+base+"/{integrationID}/client-secrets", s.rotatePartnerIntegrationSecret)
+	s.mux.HandleFunc("DELETE "+base+"/{integrationID}", s.disablePartnerIntegration)
+	s.mux.HandleFunc("GET "+base+"/{integrationID}/connections", s.partnerConnections)
+	s.mux.HandleFunc("POST "+base+"/{integrationID}/connections", s.provisionPartnerConnection)
+	s.mux.HandleFunc("DELETE "+base+"/{integrationID}/connections/{connectionID}", s.revokePartnerConnection)
+	s.mux.HandleFunc("POST "+base+"/{integrationID}/token", s.refreshPartnerConnection)
 }
 
 func (s *Server) rotatePartnerIntegrationSecret(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +114,16 @@ func (s *Server) provisionPartnerConnection(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	provisioned, err := s.partner.Provision(r.PathValue("integrationID"), bearerToken(r), input)
+	secret, err := partnerClientSecret(r)
+	if err != nil {
+		writePartnerError(w, err)
+		return
+	}
+	if _, err := s.partner.Integration(r.PathValue("orgID"), r.PathValue("integrationID")); err != nil {
+		writePartnerError(w, err)
+		return
+	}
+	provisioned, err := s.partner.Provision(r.PathValue("integrationID"), secret, input)
 	if err != nil {
 		writePartnerError(w, err)
 		return
@@ -131,14 +141,44 @@ func (s *Server) provisionPartnerConnection(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) revokePartnerConnection(w http.ResponseWriter, r *http.Request) {
-	if err := s.partner.Revoke(r.PathValue("integrationID"), bearerToken(r), r.PathValue("connectionID")); err != nil {
+	secret, err := partnerClientSecret(r)
+	if err != nil {
+		writePartnerError(w, err)
+		return
+	}
+	if _, err := s.partner.Integration(r.PathValue("orgID"), r.PathValue("integrationID")); err != nil {
+		writePartnerError(w, err)
+		return
+	}
+	if err := s.partner.Revoke(r.PathValue("integrationID"), secret, r.PathValue("connectionID")); err != nil {
 		writePartnerError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func partnerClientSecret(r *http.Request) (string, error) {
+	clientID, secret, ok := r.BasicAuth()
+	if !ok || strings.TrimSpace(secret) == "" || clientID != r.PathValue("integrationID") {
+		return "", errors.New("partner client authentication is required")
+	}
+	return secret, nil
+}
+
 func (s *Server) refreshPartnerConnection(w http.ResponseWriter, r *http.Request) {
+	secret, err := partnerClientSecret(r)
+	if err != nil {
+		writePartnerError(w, err)
+		return
+	}
+	if _, err := s.partner.Integration(r.PathValue("orgID"), r.PathValue("integrationID")); err != nil {
+		writePartnerError(w, err)
+		return
+	}
+	if err := s.partner.AuthenticateIntegration(r.PathValue("integrationID"), secret); err != nil {
+		writePartnerError(w, err)
+		return
+	}
 	var input partnerRefreshRequest
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)

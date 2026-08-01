@@ -26,7 +26,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+import { apiClient, errorMessage } from "../app/api";
+import type { components } from "@nanoflare/schema";
 import type { DatabaseMetrics, DatabaseMetricsTimeseries, MetricPoint } from "../app/types";
 import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortDatabases } from "../app/utils";
@@ -35,25 +36,8 @@ import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
 import { echarts } from "../lib/kumo-echarts";
 
-type D1Meta = {
-  duration?: number;
-  changes?: number;
-  last_row_id?: number;
-  changed_db?: boolean;
-  rows_read?: number;
-  rows_written?: number;
-};
-
-type D1Result = {
-  success: boolean;
-  meta?: D1Meta;
-  results?: Record<string, unknown>[];
-};
-
-type DBQueryResponse = {
-  results?: D1Result[];
-  bookmark?: string;
-};
+type DBQueryResponse = components["schemas"]["DBQueryResponse"];
+type D1Result = components["schemas"]["D1Result"];
 
 type QueryRun = {
   id: string;
@@ -82,7 +66,17 @@ function helpQueryRun(): QueryRun {
       results: [
         {
           success: true,
-          meta: { duration: 0, changes: 0 },
+          meta: {
+            changed_db: false,
+            changes: 0,
+            duration: 0,
+            last_row_id: 0,
+            rows_read: 0,
+            rows_written: 0,
+            served_by: "",
+            served_by_primary: false,
+            size_after: 0,
+          },
           results: slashCommands.map(({ command, description }) => ({ command, description })),
         },
       ],
@@ -109,7 +103,7 @@ function DatabaseDetailContent({
   database: { id: string; name: string; created_at: string };
   onBack: () => void;
 }) {
-  const { apiConnected, notify, setDatabases, workers } = useWorkspace();
+  const { activeOrgID, apiConnected, notify, setDatabases, workers } = useWorkspace();
   const [tab, setTab] = useQueryTab<(typeof databaseDetailTabs)[number]>(
     databaseDetailTabs,
     "overview",
@@ -145,12 +139,8 @@ function DatabaseDetailContent({
     let cancelled = false;
     async function loadMetrics() {
       const [nextMetrics, nextSeries] = await Promise.all([
-        fetchJSON<DatabaseMetrics>(`/v1/db/${encodeURIComponent(database.id)}/metrics`).catch(() =>
-          emptyDatabaseMetrics(),
-        ),
-        fetchJSON<DatabaseMetricsTimeseries>(
-          `/v1/db/${encodeURIComponent(database.id)}/metrics/timeseries`,
-        ).catch(() => emptyDatabaseMetricsTimeseries()),
+        apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" }).then(({ data }) => data ?? emptyDatabaseMetrics()),
+        apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" }).then(({ data }) => data ?? emptyDatabaseMetricsTimeseries()),
       ]);
       if (!cancelled) setMetrics(nextMetrics);
       if (!cancelled) setSeries(nextSeries);
@@ -161,7 +151,7 @@ function DatabaseDetailContent({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [apiConnected, database.id]);
+  }, [activeOrgID, apiConnected, database.id]);
 
   async function deleteDatabase() {
     if (bindings.length) return notify("Remove worker bindings before deleting this database");
@@ -169,11 +159,8 @@ function DatabaseDetailContent({
     setDeleteError("");
     try {
       if (apiConnected) {
-        const response = await apiFetch(`/v1/db/${encodeURIComponent(database.id)}`, {
-          method: "DELETE",
-        });
-        if (!response.ok)
-          throw new Error(await errorText(response, `Database delete failed (${response.status})`));
+        const { error } = await apiClient.DELETE("/v1/organizations/{orgID}/databases/{databaseID}", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" });
+        if (error) throw new Error(errorMessage(error, "Database delete failed"));
       }
       setDatabases((current) => sortDatabases(current.filter((item) => item.id !== database.id)));
       notify(`${database.name} deleted`);
@@ -228,26 +215,19 @@ function DatabaseDetailContent({
       createdAt: new Date().toISOString(),
     };
     try {
-      const response = await apiFetch(`/v1/db/${encodeURIComponent(database.id)}/execute`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ statements: [{ sql: statement }] }),
-      });
-      if (!response.ok)
-        throw new Error(await errorText(response, `Query failed (${response.status})`));
-      run.response = (await response.json()) as DBQueryResponse;
+      const { data, error } = await apiClient.POST("/v1/organizations/{orgID}/databases/{databaseID}/queries", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, body: { sql: statement, statements: [{ sql: statement }] }, parseAs: "json" });
+      if (error || !data) throw new Error(errorMessage(error, "Query failed"));
+      run.response = data;
     } catch (error) {
       run.error = error instanceof Error ? error.message : "Query failed";
     } finally {
       setQueryRuns((current) => [...current, run]);
       if (apiConnected) {
-        void fetchJSON<DatabaseMetrics>(`/v1/db/${encodeURIComponent(database.id)}/metrics`)
-          .then(setMetrics)
+        void apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" })
+          .then(({ data }) => data && setMetrics(data))
           .catch(() => undefined);
-        void fetchJSON<DatabaseMetricsTimeseries>(
-          `/v1/db/${encodeURIComponent(database.id)}/metrics/timeseries`,
-        )
-          .then(setSeries)
+        void apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" })
+          .then(({ data }) => data && setSeries(data))
           .catch(() => undefined);
       }
       setQuerying(false);
@@ -636,9 +616,9 @@ function DatabaseQueryMixChart({ series }: { series: DatabaseMetricsTimeseries }
     <DatabaseMetricTimeseriesLines
       emptyCopy="Run read or write queries while Prometheus is scraping to populate query series."
       series={[
-        { key: "total", label: "Total", points: series.queries },
-        { key: "read", label: "Read", points: series.read_queries },
-        { key: "write", label: "Write", points: series.write_queries },
+        { key: "total", label: "Total", points: series.queries ?? [] },
+        { key: "read", label: "Read", points: series.read_queries ?? [] },
+        { key: "write", label: "Write", points: series.write_queries ?? [] },
       ]}
       valueLabel="Queries"
     />
@@ -650,8 +630,8 @@ function DatabaseRowsChart({ series }: { series: DatabaseMetricsTimeseries }) {
     <DatabaseMetricTimeseriesLines
       emptyCopy="Run queries that read or write rows while Prometheus is scraping to populate row series."
       series={[
-        { key: "read", label: "Read", points: series.rows_read },
-        { key: "written", label: "Written", points: series.rows_written },
+        { key: "read", label: "Read", points: series.rows_read ?? [] },
+        { key: "written", label: "Written", points: series.rows_written ?? [] },
       ]}
       valueLabel="Rows"
     />
@@ -663,8 +643,8 @@ function DatabaseStorageChart({ series }: { series: DatabaseMetricsTimeseries })
     <DatabaseMetricTimeseriesLines
       emptyCopy="Create tables or write data while Prometheus is scraping to populate storage and schema series."
       series={[
-        { key: "storage", label: "Storage", points: series.storage_bytes, formatter: formatBytes },
-        { key: "tables", label: "Tables", points: series.table_count },
+        { key: "storage", label: "Storage", points: series.storage_bytes ?? [], formatter: formatBytes },
+        { key: "tables", label: "Tables", points: series.table_count ?? [] },
       ]}
       valueLabel="Value"
     />
@@ -676,9 +656,9 @@ function DatabaseLatencySeriesChart({ series }: { series: DatabaseMetricsTimeser
     <DatabaseTimeseriesLines
       emptyCopy="Run queries while Prometheus is scraping to populate latency percentiles."
       series={[
-        { key: "p50", label: "P50", points: series.p50_latency_ms, formatter: formatQueryDuration },
-        { key: "p95", label: "P95", points: series.p95_latency_ms, formatter: formatQueryDuration },
-        { key: "p99", label: "P99", points: series.p99_latency_ms, formatter: formatQueryDuration },
+        { key: "p50", label: "P50", points: series.p50_latency_ms ?? [], formatter: formatQueryDuration },
+        { key: "p95", label: "P95", points: series.p95_latency_ms ?? [], formatter: formatQueryDuration },
+        { key: "p99", label: "P99", points: series.p99_latency_ms ?? [], formatter: formatQueryDuration },
       ]}
       valueLabel="Latency"
     />

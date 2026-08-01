@@ -34,9 +34,10 @@ export function CreateKVNamespaceDialog({
       created_at: new Date().toISOString(),
     };
     if (apiConnected) {
-      const { data, error } = await apiClient.POST("/v1/kv/namespaces", {
-        params: { header: { "X-Nanoflare-Org-ID": activeOrgID() } },
+      const { data, error } = await apiClient.POST("/v1/organizations/{orgID}/kv-namespaces", {
+        params: { path: { orgID: activeOrgID() } },
         body: { name: trimmed },
+        parseAs: "json",
       });
       if (error || !data) return notify(errorMessage(error, "Namespace creation failed"));
       namespace = data;

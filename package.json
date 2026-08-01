@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "ready": "vp check && vp run -r test && vp run -r build",
     "schema:generate": "pnpm --filter @nanoflare/schema generate",
-    "dev": "vp run website#dev",
-    "dev:ui": "vp run @nanoflare/ui#dev"
+    "lint": "vp lint packages",
+    "format": "vp format packages",
+    "typecheck": "vp lint --type-check packages"
   },
   "devDependencies": {
     "vite": "catalog:",

@@ -9,16 +9,18 @@ import (
 )
 
 func (s *Server) registerKVRoutes() {
-	s.mux.HandleFunc("GET /v1/kv/namespaces", s.listKVNamespaces)
-	s.mux.HandleFunc("POST /v1/kv/namespaces", s.createKVNamespace)
-	s.mux.HandleFunc("GET /v1/kv/namespaces/{namespaceID}", s.getKVNamespace)
-	s.mux.HandleFunc("PATCH /v1/kv/namespaces/{namespaceID}", s.updateKVNamespace)
-	s.mux.HandleFunc("DELETE /v1/kv/namespaces/{namespaceID}", s.deleteKVNamespace)
-	s.mux.HandleFunc("GET /v1/kv/namespaces/{namespaceID}/metrics", s.kvNamespaceMetrics)
-	s.mux.HandleFunc("GET /v1/workers/{workerID}/kv/namespaces/{namespaceID}", s.workerKVList)
-	s.mux.HandleFunc("GET /v1/workers/{workerID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVGet)
-	s.mux.HandleFunc("PUT /v1/workers/{workerID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVPut)
-	s.mux.HandleFunc("DELETE /v1/workers/{workerID}/kv/namespaces/{namespaceID}/{key...}", s.workerKVDelete)
+	base := "/v1/organizations/{orgID}"
+	s.mux.HandleFunc("GET "+base+"/kv-namespaces", s.listKVNamespaces)
+	s.mux.HandleFunc("POST "+base+"/kv-namespaces", s.createKVNamespace)
+	s.mux.HandleFunc("GET "+base+"/kv-namespaces/{namespaceID}", s.getKVNamespace)
+	s.mux.HandleFunc("PATCH "+base+"/kv-namespaces/{namespaceID}", s.updateKVNamespace)
+	s.mux.HandleFunc("DELETE "+base+"/kv-namespaces/{namespaceID}", s.deleteKVNamespace)
+	s.mux.HandleFunc("GET "+base+"/kv-namespaces/{namespaceID}/analytics", s.kvNamespaceMetrics)
+	workerBase := base + "/workers/{workerID}/kv-namespaces/{namespaceID}/values"
+	s.mux.HandleFunc("GET "+workerBase, s.workerKVList)
+	s.mux.HandleFunc("GET "+workerBase+"/{key...}", s.workerKVGet)
+	s.mux.HandleFunc("PUT "+workerBase+"/{key...}", s.workerKVPut)
+	s.mux.HandleFunc("DELETE "+workerBase+"/{key...}", s.workerKVDelete)
 }
 
 func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {

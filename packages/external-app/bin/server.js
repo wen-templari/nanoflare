@@ -24,7 +24,10 @@ const scopes = (process.env.EXTERNAL_APP_SCOPES || "workers:write kv:write")
   .filter(Boolean);
 const partnerIntegrationID = process.env.NANOFLARE_PARTNER_INTEGRATION_ID || "";
 const partnerSecret = process.env.NANOFLARE_PARTNER_SECRET || "";
-const partnerScopes = (process.env.NANOFLARE_PARTNER_SCOPES || "workers:read workers:write deployments:write secrets:write kv:read kv:write db:read db:write objects:read objects:write")
+const partnerScopes = (
+  process.env.NANOFLARE_PARTNER_SCOPES ||
+  "workers:read workers:write deployments:write secrets:write kv:read kv:write db:read db:write objects:read objects:write"
+)
   .split(/[,\s]+/)
   .map((scope) => scope.trim())
   .filter(Boolean);
@@ -154,25 +157,42 @@ async function provisionWorker(form) {
 
 async function connectPartnerWorkspace(form) {
   if (!partnerIntegrationID || !partnerSecret) {
-    throw new Error("Set NANOFLARE_PARTNER_INTEGRATION_ID and NANOFLARE_PARTNER_SECRET to use partner-managed connections.");
+    throw new Error(
+      "Set NANOFLARE_PARTNER_INTEGRATION_ID and NANOFLARE_PARTNER_SECRET to use partner-managed connections.",
+    );
   }
   const externalAccountID = (form.get("external_account_id") || "").trim();
   const organizationName = (form.get("organization_name") || "").trim();
-  if (!externalAccountID || !organizationName) throw new Error("Workspace ID and organization name are required.");
+  if (!externalAccountID || !organizationName)
+    throw new Error("Workspace ID and organization name are required.");
   const { data, error, response } = await api.POST(
     "/v1/partner-integrations/{integrationID}/connections",
     {
       params: { path: { integrationID: partnerIntegrationID } },
       headers: { Authorization: `Bearer ${partnerSecret}` },
-      body: { external_account_id: externalAccountID, organization_name: organizationName, requested_scopes: partnerScopes },
+      body: {
+        external_account_id: externalAccountID,
+        organization_name: organizationName,
+        requested_scopes: partnerScopes,
+      },
     },
   );
   if (![200, 201].includes(response.status) || !data) {
-    throw requestError("POST /v1/partner-integrations/{integrationID}/connections", response, error);
+    throw requestError(
+      "POST /v1/partner-integrations/{integrationID}/connections",
+      response,
+      error,
+    );
   }
   applyPartnerToken(data);
-  state.partner = { connectionID: data.connection_id, organization: data.organization, externalAccountID };
-  logEvent(`Connected workspace ${externalAccountID} to Nanoflare organization ${data.organization.id}.`);
+  state.partner = {
+    connectionID: data.connection_id,
+    organization: data.organization,
+    externalAccountID,
+  };
+  logEvent(
+    `Connected workspace ${externalAccountID} to Nanoflare organization ${data.organization.id}.`,
+  );
 }
 
 function applyPartnerToken(token) {
@@ -181,7 +201,9 @@ function applyPartnerToken(token) {
   state.tokenScope = token.scope;
   state.tokenType = token.token_type;
   state.tokenIssuedAt = new Date();
-  state.tokenExpiresAt = new Date(state.tokenIssuedAt.getTime() + Number(token.expires_in || 0) * 1000);
+  state.tokenExpiresAt = new Date(
+    state.tokenIssuedAt.getTime() + Number(token.expires_in || 0) * 1000,
+  );
 }
 
 async function refreshToken() {
@@ -189,7 +211,8 @@ async function refreshToken() {
     const { data, error, response } = await api.POST("/v1/partner-connections/token", {
       body: { connection_id: state.partner.connectionID, refresh_token: state.refreshToken },
     });
-    if (!response.ok || !data) throw requestError("POST /v1/partner-connections/token", response, error);
+    if (!response.ok || !data)
+      throw requestError("POST /v1/partner-connections/token", response, error);
     applyPartnerToken(data);
     return;
   }
@@ -219,12 +242,18 @@ async function revokeToken() {
     const { error, response } = await api.DELETE(
       "/v1/partner-integrations/{integrationID}/connections/{connectionID}",
       {
-        params: { path: { integrationID: partnerIntegrationID, connectionID: state.partner.connectionID } },
+        params: {
+          path: { integrationID: partnerIntegrationID, connectionID: state.partner.connectionID },
+        },
         headers: { Authorization: `Bearer ${partnerSecret}` },
       },
     );
     if (response.status !== 204) {
-      throw requestError("DELETE /v1/partner-integrations/{integrationID}/connections/{connectionID}", response, error);
+      throw requestError(
+        "DELETE /v1/partner-integrations/{integrationID}/connections/{connectionID}",
+        response,
+        error,
+      );
     }
     state.partner = null;
   } else {
