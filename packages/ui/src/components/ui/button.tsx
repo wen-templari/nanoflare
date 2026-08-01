@@ -1,5 +1,7 @@
-import { Button as KumoButton } from "@cloudflare/kumo";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+
+import { Button as KumoButton } from "@cloudflare/kumo";
+
 import { cn } from "../../lib/utils";
 
 type LegacyVariant = "default" | "outline" | "ghost" | "dark" | "danger";

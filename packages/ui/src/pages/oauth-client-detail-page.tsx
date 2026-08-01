@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+
 import {
   Banner,
   Button,
@@ -13,14 +13,17 @@ import {
   Tooltip,
 } from "@cloudflare/kumo";
 import { Check, Copy, PlugZap, Settings, SquarePen, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiClient, errorMessage } from "../app/api";
+
 import type { OAuthClient, OAuthClientConnection } from "../app/types";
+
+import { apiClient, errorMessage } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
-import { Badge } from "../components/ui/badge";
-import { Panel } from "../components/shared/primitives";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
+import { Panel } from "../components/shared/primitives";
+import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 
 const oauthScopes = [
@@ -211,7 +214,10 @@ export function OAuthClientDetailPage() {
                 </Panel>
               </div>
 
-              <Panel title="Redirect URIs" eyebrow={`${(client.redirect_uris ?? []).length} configured`}>
+              <Panel
+                title="Redirect URIs"
+                eyebrow={`${(client.redirect_uris ?? []).length} configured`}
+              >
                 <div className="flex flex-col gap-2">
                   {(client.redirect_uris ?? []).map((uri) => (
                     <div className="flex min-w-0 items-center gap-2" key={uri}>

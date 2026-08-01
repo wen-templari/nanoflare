@@ -1,4 +1,3 @@
-import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
 import { Tabs, Text } from "@cloudflare/kumo";
 import {
   Archive,
@@ -16,14 +15,17 @@ import {
   Waypoints,
   Workflow,
 } from "lucide-react";
+import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+
 import type { ObjectStorageBucketMetrics, ObjectStorageObject } from "../app/types";
+
+import { apiFetch, errorText, fetchJSON } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
-import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
+import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";

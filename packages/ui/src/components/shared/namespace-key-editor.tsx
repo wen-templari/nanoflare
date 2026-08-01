@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
 import { KeyRound, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react";
-import { activeOrgID, apiClient, apiFetch, errorMessage } from "../../app/api";
+import { useEffect, useState } from "react";
+
 import type { KVNamespaceOption, WorkerKVKey } from "../../app/types";
+
+import { activeOrgID, apiClient, apiFetch, errorMessage } from "../../app/api";
 import { formatBytes } from "../../app/utils";
-import { Input } from "../ui/input";
-import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 export function NamespaceKeyEditor({
   workerID,

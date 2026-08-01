@@ -1,5 +1,5 @@
-import type { Dispatch, SetStateAction } from "react";
 import type { components } from "@nanoflare/schema";
+import type { Dispatch, SetStateAction } from "react";
 
 export type Section = "overview" | "workers" | "kv" | "databases" | "object-storage";
 export type WorkerAuth = components["schemas"]["AuthConfig"];

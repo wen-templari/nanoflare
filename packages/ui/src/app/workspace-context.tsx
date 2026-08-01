@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { useAuth } from "./auth-context";
-import { apiClient } from "./api";
+
 import type {
   Database,
   KVNamespace,
@@ -8,8 +7,11 @@ import type {
   Worker,
   WorkspaceContextValue,
 } from "./types";
-import { sortDatabases, sortNamespaces, sortObjectStorageBuckets } from "./utils";
+
+import { apiClient } from "./api";
+import { useAuth } from "./auth-context";
 import { appToastManager } from "./toast";
+import { sortDatabases, sortNamespaces, sortObjectStorageBuckets } from "./utils";
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 

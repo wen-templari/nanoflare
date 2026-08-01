@@ -2,10 +2,12 @@ import { ChartPalette, LayerCard, Text, TimeseriesChart } from "@cloudflare/kumo
 import { ArrowUpRight, DatabaseZap, KeyRound, Waypoints } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
+import type { WorkerTraffic } from "../app/types";
+
 import { activeOrgID, apiClient } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import { useWorkspace } from "../app/workspace-context";
-import type { WorkerTraffic } from "../app/types";
 import { EmptyMetrics, PageHeading, Panel } from "../components/shared/primitives";
 import { echarts } from "../lib/kumo-echarts";
 

@@ -12,7 +12,6 @@ import {
   TimeseriesChart,
   Tooltip,
 } from "@cloudflare/kumo";
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -33,12 +32,9 @@ import {
   TimerReset,
   X,
 } from "lucide-react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { activeOrgID, apiClient, errorMessage } from "../app/api";
-import { useAuth } from "../app/auth-context";
-import { useQueryTab } from "../app/use-query-tab";
-import { useWorkspace } from "../app/workspace-context";
-import { Input } from "../components/ui/input";
+
 import type {
   ConsoleDeployment,
   WorkerDeployment,
@@ -48,15 +44,21 @@ import type {
   WorkerOutputLine,
   WorkerTraffic,
 } from "../app/types";
+
+import { activeOrgID, apiClient, errorMessage } from "../app/api";
+import { useAuth } from "../app/auth-context";
+import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes } from "../app/utils";
+import { useWorkspace } from "../app/workspace-context";
 import {
   EmptyMetrics,
   Panel,
   StatusCodeMix,
   WorkerDetailEmpty,
 } from "../components/shared/primitives";
-import { cn } from "../lib/utils";
+import { Input } from "../components/ui/input";
 import { echarts } from "../lib/kumo-echarts";
+import { cn } from "../lib/utils";
 
 const emptyTraffic: WorkerTraffic = {
   available: false,
@@ -292,7 +294,9 @@ function WorkerMetrics({ traffic }: { traffic: WorkerTraffic }) {
       </Panel>
       <Panel
         title="Handler duration"
-        eyebrow={(traffic.duration_series ?? []).length ? "Last 24 hours" : "Waiting for runtime timings"}
+        eyebrow={
+          (traffic.duration_series ?? []).length ? "Last 24 hours" : "Waiting for runtime timings"
+        }
       >
         <MiniTrafficChart values={traffic.duration_series ?? []} />
       </Panel>

@@ -1,5 +1,6 @@
-import createClient from "openapi-fetch";
 import type { paths } from "@nanoflare/schema";
+
+import createClient from "openapi-fetch";
 
 const tokenKey = "nanoflare.auth.token";
 const activeOrgKey = "nanoflare.auth.active_org_id";
@@ -61,6 +62,7 @@ export async function errorText(response: Response, fallback: string) {
 
 export async function fetchJSON<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await apiFetch(input, init);
-  if (!response.ok) throw new Error(await errorText(response, `Request failed (${response.status})`));
+  if (!response.ok)
+    throw new Error(await errorText(response, `Request failed (${response.status})`));
   return (await response.json()) as T;
 }

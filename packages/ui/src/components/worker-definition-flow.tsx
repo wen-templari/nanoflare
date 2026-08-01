@@ -10,12 +10,14 @@ import {
   Waypoints,
 } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef } from "react";
+
 import type {
   Database as DatabaseResource,
   KVNamespace,
   Worker,
   WorkerDeployment,
 } from "../app/types";
+
 import { cn } from "../lib/utils";
 
 type WorkerDefinitionFlowProps = {

@@ -1,3 +1,5 @@
+import type { components } from "@nanoflare/schema";
+
 import {
   Badge,
   Button,
@@ -26,14 +28,15 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { apiClient, errorMessage } from "../app/api";
-import type { components } from "@nanoflare/schema";
+
 import type { DatabaseMetrics, DatabaseMetricsTimeseries, MetricPoint } from "../app/types";
+
+import { apiClient, errorMessage } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortDatabases } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
-import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
+import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
 import { echarts } from "../lib/kumo-echarts";
 
 type DBQueryResponse = components["schemas"]["DBQueryResponse"];
@@ -139,8 +142,18 @@ function DatabaseDetailContent({
     let cancelled = false;
     async function loadMetrics() {
       const [nextMetrics, nextSeries] = await Promise.all([
-        apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" }).then(({ data }) => data ?? emptyDatabaseMetrics()),
-        apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" }).then(({ data }) => data ?? emptyDatabaseMetricsTimeseries()),
+        apiClient
+          .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", {
+            params: { path: { orgID: activeOrgID, databaseID: database.id } },
+            parseAs: "json",
+          })
+          .then(({ data }) => data ?? emptyDatabaseMetrics()),
+        apiClient
+          .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", {
+            params: { path: { orgID: activeOrgID, databaseID: database.id } },
+            parseAs: "json",
+          })
+          .then(({ data }) => data ?? emptyDatabaseMetricsTimeseries()),
       ]);
       if (!cancelled) setMetrics(nextMetrics);
       if (!cancelled) setSeries(nextSeries);
@@ -159,7 +172,10 @@ function DatabaseDetailContent({
     setDeleteError("");
     try {
       if (apiConnected) {
-        const { error } = await apiClient.DELETE("/v1/organizations/{orgID}/databases/{databaseID}", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" });
+        const { error } = await apiClient.DELETE(
+          "/v1/organizations/{orgID}/databases/{databaseID}",
+          { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" },
+        );
         if (error) throw new Error(errorMessage(error, "Database delete failed"));
       }
       setDatabases((current) => sortDatabases(current.filter((item) => item.id !== database.id)));
@@ -215,7 +231,14 @@ function DatabaseDetailContent({
       createdAt: new Date().toISOString(),
     };
     try {
-      const { data, error } = await apiClient.POST("/v1/organizations/{orgID}/databases/{databaseID}/queries", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, body: { sql: statement, statements: [{ sql: statement }] }, parseAs: "json" });
+      const { data, error } = await apiClient.POST(
+        "/v1/organizations/{orgID}/databases/{databaseID}/queries",
+        {
+          params: { path: { orgID: activeOrgID, databaseID: database.id } },
+          body: { sql: statement, statements: [{ sql: statement }] },
+          parseAs: "json",
+        },
+      );
       if (error || !data) throw new Error(errorMessage(error, "Query failed"));
       run.response = data;
     } catch (error) {
@@ -223,10 +246,18 @@ function DatabaseDetailContent({
     } finally {
       setQueryRuns((current) => [...current, run]);
       if (apiConnected) {
-        void apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" })
+        void apiClient
+          .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", {
+            params: { path: { orgID: activeOrgID, databaseID: database.id } },
+            parseAs: "json",
+          })
           .then(({ data }) => data && setMetrics(data))
           .catch(() => undefined);
-        void apiClient.GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" })
+        void apiClient
+          .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", {
+            params: { path: { orgID: activeOrgID, databaseID: database.id } },
+            parseAs: "json",
+          })
           .then(({ data }) => data && setSeries(data))
           .catch(() => undefined);
       }
@@ -643,7 +674,12 @@ function DatabaseStorageChart({ series }: { series: DatabaseMetricsTimeseries })
     <DatabaseMetricTimeseriesLines
       emptyCopy="Create tables or write data while Prometheus is scraping to populate storage and schema series."
       series={[
-        { key: "storage", label: "Storage", points: series.storage_bytes ?? [], formatter: formatBytes },
+        {
+          key: "storage",
+          label: "Storage",
+          points: series.storage_bytes ?? [],
+          formatter: formatBytes,
+        },
         { key: "tables", label: "Tables", points: series.table_count ?? [] },
       ]}
       valueLabel="Value"
@@ -656,9 +692,24 @@ function DatabaseLatencySeriesChart({ series }: { series: DatabaseMetricsTimeser
     <DatabaseTimeseriesLines
       emptyCopy="Run queries while Prometheus is scraping to populate latency percentiles."
       series={[
-        { key: "p50", label: "P50", points: series.p50_latency_ms ?? [], formatter: formatQueryDuration },
-        { key: "p95", label: "P95", points: series.p95_latency_ms ?? [], formatter: formatQueryDuration },
-        { key: "p99", label: "P99", points: series.p99_latency_ms ?? [], formatter: formatQueryDuration },
+        {
+          key: "p50",
+          label: "P50",
+          points: series.p50_latency_ms ?? [],
+          formatter: formatQueryDuration,
+        },
+        {
+          key: "p95",
+          label: "P95",
+          points: series.p95_latency_ms ?? [],
+          formatter: formatQueryDuration,
+        },
+        {
+          key: "p99",
+          label: "P99",
+          points: series.p99_latency_ms ?? [],
+          formatter: formatQueryDuration,
+        },
       ]}
       valueLabel="Latency"
     />

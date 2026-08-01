@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import http from "node:http";
 import crypto from "node:crypto";
+import http from "node:http";
 import createClient from "openapi-fetch";
 
 const nanoflareURL = (process.env.NANOFLARE_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { Activity } from "lucide-react";
+
 import { LayerCard, Meter, Text } from "@cloudflare/kumo";
+import { Activity } from "lucide-react";
 export { Field } from "@cloudflare/kumo";
 
 export function PageHeading({

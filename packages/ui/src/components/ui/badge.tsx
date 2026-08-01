@@ -1,5 +1,7 @@
-import { Badge as KumoBadge } from "@cloudflare/kumo";
 import type { ComponentProps } from "react";
+
+import { Badge as KumoBadge } from "@cloudflare/kumo";
+
 import { cn } from "../../lib/utils";
 
 export function Badge({

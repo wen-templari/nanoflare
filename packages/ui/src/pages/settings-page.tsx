@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, MouseEvent, ReactNode } from "react";
+
 import {
   Banner,
   Button,
@@ -25,15 +25,9 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Input } from "../components/ui/input";
-import { apiClient, errorMessage } from "../app/api";
-import {
-  formatBytes,
-  normalizeUsageLevel,
-  orgLimitsForLevel,
-  usageLevelPaid,
-} from "../app/org-limits";
+
 import type {
   KVNamespaceMetrics,
   OAuthClient,
@@ -45,9 +39,18 @@ import type {
   PersonalAccessToken,
   PersonalAccessTokenCreated,
 } from "../app/types";
+
+import { apiClient, errorMessage } from "../app/api";
+import {
+  formatBytes,
+  normalizeUsageLevel,
+  orgLimitsForLevel,
+  usageLevelPaid,
+} from "../app/org-limits";
 import { useWorkspace } from "../app/workspace-context";
-import { Badge } from "../components/ui/badge";
 import { PageHeading, Panel } from "../components/shared/primitives";
+import { Badge } from "../components/ui/badge";
+import { Input } from "../components/ui/input";
 
 const oauthScopes = [
   "workers:read",
@@ -367,7 +370,9 @@ export function SettingsPage() {
       ? controlScopes.filter((scope) => activeOrg?.scopes?.includes(scope))
       : controlScopes;
   const pendingInvites = useMemo(() => {
-    const memberEmails = new Set(members.flatMap((member) => (member.user_email ? [member.user_email.toLowerCase()] : [])));
+    const memberEmails = new Set(
+      members.flatMap((member) => (member.user_email ? [member.user_email.toLowerCase()] : [])),
+    );
     return invites.filter(
       (invite) =>
         !invite.accepted_at && !invite.revoked_at && !memberEmails.has(invite.email.toLowerCase()),

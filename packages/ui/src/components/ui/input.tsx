@@ -1,5 +1,7 @@
-import { Input as KumoInput } from "@cloudflare/kumo";
 import type { ChangeEventHandler } from "react";
+
+import { Input as KumoInput } from "@cloudflare/kumo";
+
 import { cn } from "../../lib/utils";
 
 type InputProps = {

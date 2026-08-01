@@ -1,6 +1,7 @@
 import { Empty, Table, Text } from "@cloudflare/kumo";
 import { Database, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+
 import { useWorkspace } from "../app/workspace-context";
 import { PageHeading, Panel } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";

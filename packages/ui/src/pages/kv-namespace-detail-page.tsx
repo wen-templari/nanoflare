@@ -1,4 +1,3 @@
-import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { Tabs, Text } from "@cloudflare/kumo";
 import {
   Archive,
@@ -14,9 +13,12 @@ import {
   Waypoints,
   Workflow,
 } from "lucide-react";
+import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+
 import type { KVNamespaceMetrics, WorkerKVKey } from "../app/types";
+
+import { apiFetch, errorText, fetchJSON } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortNamespaces } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";

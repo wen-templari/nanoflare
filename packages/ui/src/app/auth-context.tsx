@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { apiClient, authToken, clearAuth, saveActiveOrg, saveAuth } from "./api";
+
 import type { AuthSession, Organization } from "./types";
+
+import { apiClient, authToken, clearAuth, saveActiveOrg, saveAuth } from "./api";
 
 type AuthContextValue = {
   ready: boolean;
