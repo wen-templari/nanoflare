@@ -1,6 +1,6 @@
 # gallery-app
 
-`gallery-app` is a gallery app using nanoflare Workers, db, and Object Storage.
+`gallery-app` is a gallery app using nanoflare Workers, Hono, Drizzle ORM, and Object Storage.
 
 ## What It Demonstrates
 
@@ -8,7 +8,9 @@
 - a dedicated Worker entrypoint under `worker/`
 - static assets built into `dist/client/` and served through `ASSETS`
 - uploaded image files stored in `OBJECTS`
-- gallery metadata and preview counts stored in `GALLERY_DB`
+- a Hono API under `/api/*` with typed route parameters
+- generated OpenAPI 3.1 documentation at `/api/openapi.json`
+- Drizzle ORM schema and queries for gallery metadata and preview counts in `GALLERY_DB`
 - a bundled Worker artifact at `dist/worker.js`
 - a Worker-first asset setup where `/api/*` stays dynamic and `/` serves the SPA
 
@@ -39,7 +41,8 @@ frontend or the Worker. TypeScript validation is split between
 ## Project Layout
 
 - `src/main.tsx`, `src/App.tsx`, and `src/styles.css` drive the Vite React UI
-- `worker/index.ts` contains the gallery API and asset-serving Worker
+- `worker/index.ts` contains the Hono gallery API and asset-serving Worker
+- `worker/db/schema.ts` defines the Drizzle schema for `gallery_items`
 - `tsconfig.app.json` checks the browser UI source
 - `tsconfig.worker.json` checks the Worker source
 
@@ -51,3 +54,4 @@ frontend or the Worker. TypeScript validation is split between
 - `POST /api/gallery/:id/preview` increments and returns that image's preview count
 - `GET /api/gallery/:id` streams a stored image back from object storage
 - `DELETE /api/gallery/:id` removes the image from object storage and db
+- `GET /api/openapi.json` returns the generated OpenAPI 3.1 document

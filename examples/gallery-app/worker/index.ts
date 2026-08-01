@@ -1,5 +1,11 @@
 import type { AssetFetcher, D1Database, ObjectStorageBucket } from "@nanoflare/workers-types";
+import { drizzle } from "drizzle-orm/d1";
+import { desc, eq, sql } from "drizzle-orm";
+import { Hono } from "hono";
+import { describeRoute, openAPIRouteHandler, resolver, validator } from "hono-openapi";
 import mime from "mime";
+import * as v from "valibot";
+import { galleryItems } from "./db/schema";
 
 interface GalleryItem {
   id: string;
@@ -11,16 +17,6 @@ interface GalleryItem {
   previewCount: number;
 }
 
-interface GalleryRow {
-  id: string;
-  object_key: string;
-  filename: string;
-  content_type: string;
-  uploaded_at: string;
-  size: number;
-  preview_count: number;
-}
-
 interface GalleryEnv {
   ASSETS: AssetFetcher;
   GALLERY_DB: D1Database;
@@ -28,49 +24,146 @@ interface GalleryEnv {
 }
 
 const MAX_ITEMS = 24;
+type AppEnv = { Bindings: GalleryEnv };
+
+const app = new Hono<AppEnv>();
+const galleryItemSchema = v.object({
+  id: v.string(),
+  key: v.string(),
+  filename: v.string(),
+  contentType: v.string(),
+  uploadedAt: v.string(),
+  size: v.number(),
+  previewCount: v.number(),
+});
+const galleryResponseSchema = v.object({ items: v.array(galleryItemSchema) });
+const uploadResponseSchema = v.object({ ok: v.boolean(), item: galleryItemSchema });
+const deleteResponseSchema = v.object({ ok: v.boolean(), id: v.string() });
+const errorResponseSchema = v.object({ ok: v.boolean(), error: v.string() });
+const idParamSchema = v.object({ id: v.string() });
+const imageUploadSchema = v.object({ image: v.file() });
+
+app.use("/api/*", async (c, next) => {
+  await ensureGallerySchema(c.env);
+  await next();
+});
+
+app.get(
+  "/api/gallery",
+  describeRoute({
+    tags: ["Gallery"],
+    summary: "List gallery images",
+    responses: {
+      200: {
+        description: "The most recently uploaded gallery images.",
+        content: { "application/json": { schema: resolver(galleryResponseSchema) } },
+      },
+    },
+  }),
+  async (c) => c.json({ items: await readGalleryItems(c.env) }),
+);
+
+app.post(
+  "/api/gallery",
+  describeRoute({
+    tags: ["Gallery"],
+    summary: "Upload an image",
+    responses: {
+      201: {
+        description: "The uploaded image metadata.",
+        content: { "application/json": { schema: resolver(uploadResponseSchema) } },
+      },
+      400: {
+        description: "The multipart request did not include an image.",
+        content: { "application/json": { schema: resolver(errorResponseSchema) } },
+      },
+    },
+  }),
+  validator("form", imageUploadSchema),
+  (c) => uploadImage(c.req.valid("form").image, c.env),
+);
+
+app.post(
+  "/api/gallery/:id/preview",
+  describeRoute({
+    tags: ["Gallery"],
+    summary: "Record an image preview",
+    responses: {
+      200: {
+        description: "The image metadata with its updated preview count.",
+        content: { "application/json": { schema: resolver(uploadResponseSchema) } },
+      },
+      404: {
+        description: "The image does not exist.",
+        content: { "application/json": { schema: resolver(errorResponseSchema) } },
+      },
+    },
+  }),
+  validator("param", idParamSchema),
+  (c) => trackPreview(c.req.valid("param").id, c.env),
+);
+
+app.delete(
+  "/api/gallery/:id",
+  describeRoute({
+    tags: ["Gallery"],
+    summary: "Delete an image",
+    responses: {
+      200: {
+        description: "The deleted image ID.",
+        content: { "application/json": { schema: resolver(deleteResponseSchema) } },
+      },
+      404: {
+        description: "The image does not exist.",
+        content: { "application/json": { schema: resolver(errorResponseSchema) } },
+      },
+    },
+  }),
+  validator("param", idParamSchema),
+  (c) => deleteImage(c.req.valid("param").id, c.env),
+);
+
+app.get(
+  "/api/gallery/:id",
+  describeRoute({
+    tags: ["Gallery"],
+    summary: "Get an uploaded image",
+    responses: {
+      200: { description: "The image bytes from object storage." },
+      404: {
+        description: "The image or stored object does not exist.",
+        content: { "application/json": { schema: resolver(errorResponseSchema) } },
+      },
+    },
+  }),
+  validator("param", idParamSchema),
+  (c) => serveImage(c.req.valid("param").id, c.env),
+);
+
+app.get(
+  "/api/openapi.json",
+  openAPIRouteHandler(app, {
+    documentation: {
+      info: {
+        title: "Gallery API",
+        version: "1.0.0",
+        description: "Upload, retrieve, preview, and delete gallery images.",
+      },
+    },
+  }),
+);
 
 export default {
   async fetch(request: Request, env: GalleryEnv): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname.startsWith("/api/")) {
-      await ensureGallerySchema(env);
-    }
-
-    if (request.method === "GET" && url.pathname === "/api/gallery") {
-      return Response.json({ items: await readGalleryItems(env) });
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/gallery") {
-      return uploadImage(request, env);
-    }
-
-    if (
-      request.method === "POST" &&
-      url.pathname.startsWith("/api/gallery/") &&
-      url.pathname.endsWith("/preview")
-    ) {
-      return trackPreview(url.pathname, env);
-    }
-
-    if (request.method === "DELETE" && url.pathname.startsWith("/api/gallery/")) {
-      return deleteImage(url.pathname, env);
-    }
-
-    if (request.method === "GET" && url.pathname.startsWith("/api/gallery/")) {
-      return serveImage(url.pathname, env);
+    if (new URL(request.url).pathname.startsWith("/api/")) {
+      return app.fetch(request, env);
     }
 
     return env.ASSETS.fetch(request);
   },
 };
 
-async function uploadImage(request: Request, env: GalleryEnv): Promise<Response> {
-  const form = await request.formData();
-  const uploaded = form.get("image");
-  if (!(uploaded instanceof File)) {
-    return Response.json({ ok: false, error: "image file is required" }, { status: 400 });
-  }
+async function uploadImage(uploaded: File, env: GalleryEnv): Promise<Response> {
 
   const timestamp = Date.now().toString(36);
   const id = crypto.randomUUID().replace(/-/g, "");
@@ -110,33 +203,21 @@ async function uploadImage(request: Request, env: GalleryEnv): Promise<Response>
     etag: stored?.etag ?? "",
   });
 
-  await env.GALLERY_DB.prepare(`
-    INSERT INTO gallery_items (
-      id,
-      object_key,
-      filename,
-      content_type,
-      uploaded_at,
-      size,
-      preview_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `)
-    .bind(
-      item.id,
-      item.key,
-      item.filename,
-      item.contentType,
-      item.uploadedAt,
-      item.size,
-      item.previewCount,
-    )
-    .run();
+  const db = drizzle(env.GALLERY_DB);
+  await db.insert(galleryItems).values({
+    id: item.id,
+    objectKey: item.key,
+    filename: item.filename,
+    contentType: item.contentType,
+    uploadedAt: item.uploadedAt,
+    size: item.size,
+    previewCount: item.previewCount,
+  });
 
   return Response.json({ ok: true, item }, { status: 201 });
 }
 
-async function serveImage(pathname: string, env: GalleryEnv): Promise<Response> {
-  const id = pathname.slice("/api/gallery/".length);
+async function serveImage(id: string, env: GalleryEnv): Promise<Response> {
   if (!id) {
     return new Response("Not found", { status: 404 });
   }
@@ -169,20 +250,16 @@ async function serveImage(pathname: string, env: GalleryEnv): Promise<Response> 
   });
 }
 
-async function trackPreview(pathname: string, env: GalleryEnv): Promise<Response> {
-  const id = pathname.slice("/api/gallery/".length).replace(/\/preview$/, "");
-
+async function trackPreview(id: string, env: GalleryEnv): Promise<Response> {
   if (!id) {
     return new Response("Not found", { status: 404 });
   }
 
-  await env.GALLERY_DB.prepare(`
-    UPDATE gallery_items
-    SET preview_count = preview_count + 1
-    WHERE id = ?
-  `)
-    .bind(id)
-    .run();
+  const db = drizzle(env.GALLERY_DB);
+  await db
+    .update(galleryItems)
+    .set({ previewCount: sql`${galleryItems.previewCount} + 1` })
+    .where(eq(galleryItems.id, id));
 
   const item = await readGalleryItem(env, id);
   if (!item) {
@@ -192,8 +269,7 @@ async function trackPreview(pathname: string, env: GalleryEnv): Promise<Response
   return Response.json({ ok: true, item });
 }
 
-async function deleteImage(pathname: string, env: GalleryEnv): Promise<Response> {
-  const id = pathname.slice("/api/gallery/".length);
+async function deleteImage(id: string, env: GalleryEnv): Promise<Response> {
   if (!id) {
     return new Response("Not found", { status: 404 });
   }
@@ -204,13 +280,13 @@ async function deleteImage(pathname: string, env: GalleryEnv): Promise<Response>
   }
 
   await env.OBJECTS.delete(item.key);
-  await env.GALLERY_DB.prepare("DELETE FROM gallery_items WHERE id = ?").bind(id).run();
+  await drizzle(env.GALLERY_DB).delete(galleryItems).where(eq(galleryItems.id, id));
 
   return Response.json({ ok: true, id });
 }
 
 async function ensureGallerySchema(env: GalleryEnv): Promise<void> {
-  await env.GALLERY_DB.exec(`
+  await drizzle(env.GALLERY_DB).run(sql.raw(`
     CREATE TABLE IF NOT EXISTS gallery_items (
       id text PRIMARY KEY,
       object_key text NOT NULL,
@@ -222,56 +298,36 @@ async function ensureGallerySchema(env: GalleryEnv): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS gallery_items_uploaded_at_idx
       ON gallery_items (uploaded_at DESC);
-  `);
+  `));
 }
 
 async function readGalleryItems(env: GalleryEnv): Promise<GalleryItem[]> {
-  const result = await env.GALLERY_DB.prepare(`
-    SELECT
-      id,
-      object_key,
-      filename,
-      content_type,
-      uploaded_at,
-      size,
-      preview_count
-    FROM gallery_items
-    ORDER BY uploaded_at DESC
-    LIMIT ?
-  `)
-    .bind(MAX_ITEMS)
-    .all<GalleryRow>();
+  const rows = await drizzle(env.GALLERY_DB)
+    .select()
+    .from(galleryItems)
+    .orderBy(desc(galleryItems.uploadedAt))
+    .limit(MAX_ITEMS);
 
-  return result.results.map(rowToGalleryItem);
+  return rows.map(rowToGalleryItem);
 }
 
 async function readGalleryItem(env: GalleryEnv, id: string): Promise<GalleryItem | null> {
-  const row = await env.GALLERY_DB.prepare(`
-    SELECT
-      id,
-      object_key,
-      filename,
-      content_type,
-      uploaded_at,
-      size,
-      preview_count
-    FROM gallery_items
-    WHERE id = ?
-  `)
-    .bind(id)
-    .first<GalleryRow>();
+  const [row] = await drizzle(env.GALLERY_DB)
+    .select()
+    .from(galleryItems)
+    .where(eq(galleryItems.id, id));
 
   return row ? rowToGalleryItem(row) : null;
 }
 
-function rowToGalleryItem(row: GalleryRow): GalleryItem {
+function rowToGalleryItem(row: typeof galleryItems.$inferSelect): GalleryItem {
   return {
     id: row.id,
-    key: row.object_key,
+    key: row.objectKey,
     filename: row.filename,
-    contentType: row.content_type,
-    uploadedAt: row.uploaded_at,
+    contentType: row.contentType,
+    uploadedAt: row.uploadedAt,
     size: Number(row.size),
-    previewCount: Number(row.preview_count ?? 0),
+    previewCount: Number(row.previewCount ?? 0),
   };
 }
