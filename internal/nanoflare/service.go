@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"mime"
 	"net"
 	"path"
@@ -15,6 +16,10 @@ import (
 	"sync"
 	"time"
 )
+
+// LatestSupportedCompatibilityDate is the newest compatibility date understood
+// by the workerd version bundled with Nanoflare.
+const LatestSupportedCompatibilityDate = "2026-07-13"
 
 type ConfigWriter interface {
 	Write([]ActiveDeployment) error
@@ -1044,8 +1049,17 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
-	if _, err := time.Parse("2006-01-02", input.CompatibilityDate); err != nil {
+	compatibilityDate, err := time.Parse("2006-01-02", input.CompatibilityDate)
+	if err != nil {
 		return Deployment{}, errors.New("compatibility_date must use YYYY-MM-DD")
+	}
+	latestCompatibilityDate, err := time.Parse("2006-01-02", LatestSupportedCompatibilityDate)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("invalid server compatibility date: %w", err)
+	}
+	if compatibilityDate.After(latestCompatibilityDate) {
+		log.Printf("warning: requested compatibility date %q is newer than this server supports; falling back to %q", input.CompatibilityDate, LatestSupportedCompatibilityDate)
+		input.CompatibilityDate = LatestSupportedCompatibilityDate
 	}
 	compatibilityFlags := normalizeCompatibilityFlags(input.CompatibilityFlags)
 	port, err := s.store.NextPort()

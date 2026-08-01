@@ -349,6 +349,9 @@ func (r *Runner) deploy(args []string) error {
 	}, &deployment); err != nil {
 		return err
 	}
+	if deployment.CompatibilityDate != date {
+		fmt.Fprintf(r.Stderr, "Warning: compatibility date %s is not supported by the server; using %s instead\n", date, deployment.CompatibilityDate)
+	}
 	fmt.Fprintf(r.Stdout, "Deployed worker %s as deployment %s\n", app.ID, deployment.ID)
 	return nil
 }
