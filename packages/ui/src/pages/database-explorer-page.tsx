@@ -331,7 +331,7 @@ export function DatabaseExplorerPage() {
   return (
     <div className="flex h-full min-h-[540px] overflow-hidden bg-kumo-canvas md:min-h-0">
       <aside className="flex shrink-0 flex-col bg-kumo-base" style={{ width: sidebarWidth }}>
-        <div className="border-b border-kumo-line p-3">
+        <div className="p-3 pb-1">
           <Input
             aria-label="Search tables"
             onChange={(event) => setTableFilter(event.target.value)}
