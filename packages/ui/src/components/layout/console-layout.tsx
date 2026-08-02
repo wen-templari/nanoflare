@@ -82,6 +82,7 @@ export function ConsoleLayout() {
     databases,
     objectStorageBuckets,
   });
+  const isDatabaseExplorer = /^\/databases\/[^/]+\/explore$/.test(location.pathname);
   const hasOrg = Boolean(activeOrgID);
   const organizationSelectData = [
     ...organizations.map((org) => ({
@@ -125,6 +126,10 @@ export function ConsoleLayout() {
         saving={orgSaving}
       />
     );
+  }
+
+  if (isDatabaseExplorer) {
+    return <DatabaseExplorerLayout breadcrumbs={breadcrumbs} />;
   }
 
   return (
@@ -216,8 +221,18 @@ export function ConsoleLayout() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-5 md:p-8">
-          <div className="mx-auto w-full max-w-(--breakpoint-xl)">
+        <main
+          className={
+            isDatabaseExplorer
+              ? "min-h-0 flex-1 overflow-hidden"
+              : "min-h-0 flex-1 overflow-y-auto p-5 md:p-8"
+          }
+        >
+          <div
+            className={
+              isDatabaseExplorer ? "h-full w-full" : "mx-auto w-full max-w-(--breakpoint-xl)"
+            }
+          >
             <Outlet />
           </div>
         </main>
@@ -290,6 +305,34 @@ export function ConsoleLayout() {
         </Dialog.Root>
       </div>
     </Sidebar.Provider>
+  );
+}
+
+function DatabaseExplorerLayout({ breadcrumbs }: { breadcrumbs: BreadcrumbItem[] }) {
+  return (
+    <div className="flex h-svh min-w-0 flex-col overflow-hidden bg-kumo-canvas text-kumo-default">
+      <header className="z-20 flex h-[58px] shrink-0 items-center border-b border-kumo-line bg-kumo-canvas px-5 md:px-8">
+        <Breadcrumbs>
+          {breadcrumbs.map((item, index) => {
+            const isCurrent = index === breadcrumbs.length - 1;
+
+            return (
+              <Fragment key={`${item.label}-${index}`}>
+                {isCurrent ? (
+                  <Breadcrumbs.Current>{item.label}</Breadcrumbs.Current>
+                ) : (
+                  <Breadcrumbs.Link href={item.href ?? "/"}>{item.label}</Breadcrumbs.Link>
+                )}
+                {!isCurrent && <Breadcrumbs.Separator />}
+              </Fragment>
+            );
+          })}
+        </Breadcrumbs>
+      </header>
+      <main className="min-h-0 flex-1 overflow-hidden">
+        <Outlet />
+      </main>
+    </div>
   );
 }
 
@@ -416,6 +459,8 @@ function GuideStep({ label, title, copy }: { label: string; title: string; copy:
   );
 }
 
+type BreadcrumbItem = { href?: string; label: string };
+
 function getBreadcrumbs(
   pathname: string,
   workspace: {
@@ -424,7 +469,7 @@ function getBreadcrumbs(
     namespaces: { id: string; name: string }[];
     workers: { id: string; name: string }[];
   },
-) {
+): BreadcrumbItem[] {
   const [, section, id, resource, ...rest] = pathname.split("/");
 
   if (!section) return [{ label: "Overview" }];
@@ -445,6 +490,13 @@ function getBreadcrumbs(
 
   if (section === "databases") {
     const database = workspace.databases.find((item) => item.id === id);
+    if (id && resource === "explore") {
+      return [
+        { href: "/databases", label: "Databases" },
+        { href: `/databases/${id}`, label: database?.name ?? id },
+        { label: "Explore data" },
+      ];
+    }
     return id
       ? [{ href: "/databases", label: "Databases" }, { label: database?.name ?? id }]
       : [{ label: "Databases" }];

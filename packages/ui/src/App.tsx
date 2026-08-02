@@ -7,6 +7,7 @@ import { WorkspaceProvider } from "./app/workspace-context";
 import { ConsoleLayout } from "./components/layout/console-layout";
 import { CLILoginPage } from "./pages/cli-login-page";
 import { DatabaseDetailPage } from "./pages/database-detail-page";
+import { DatabaseExplorerPage } from "./pages/database-explorer-page";
 import { DatabasesPage } from "./pages/databases-page";
 import { InvitePage } from "./pages/invite-page";
 import { KVNamespaceDetailPage } from "./pages/kv-namespace-detail-page";
@@ -39,6 +40,7 @@ export function App() {
               <Route path="kv" element={<KVNamespacesPage />} />
               <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />
               <Route path="databases" element={<DatabasesPage />} />
+              <Route path="databases/:databaseId/explore" element={<DatabaseExplorerPage />} />
               <Route path="databases/:databaseId" element={<DatabaseDetailPage />} />
               <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
               <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />

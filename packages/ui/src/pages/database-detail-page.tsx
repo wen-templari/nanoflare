@@ -289,7 +289,7 @@ function DatabaseDetailContent({
 
   return (
     <>
-      <div className="mb-6">
+      <div className="mb-6 flex items-center justify-between gap-4">
         <Tabs
           className="inline-flex max-w-full"
           listClassName="max-w-full"
@@ -302,6 +302,15 @@ function DatabaseDetailContent({
           value={tab}
           variant="segmented"
         />
+        <a
+          className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md bg-kumo-brand px-3 text-sm text-kumo-inverse hover:bg-kumo-brand/90"
+          href={`/databases/${database.id}/explore`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <Table2 className="size-4" />
+          Explore data
+        </a>
       </div>
 
       {tab === "overview" ? (

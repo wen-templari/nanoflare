@@ -18,6 +18,7 @@
     "lucide-react": "^1.25.0",
     "openapi-fetch": "^0.15.0",
     "react": "^19.2.7",
+    "react-data-grid": "7.0.0-beta.61",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
     "tailwind-merge": "^3.6.0",

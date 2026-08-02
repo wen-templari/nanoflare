@@ -1,14 +1,28 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@500;600;700;800&display=swap");
 @source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
 @import "@cloudflare/kumo/styles/tailwind";
 @import "tailwindcss";
-
-:root {
-  font-family: "Manrope", sans-serif;
-}
 
 body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+}
+
+/* Keep the row index pinned without react-data-grid's frozen-column gradient. */
+.database-data-grid .rdg-7-0-0-beta-60-86aef152 {
+  background-image: none;
+}
+
+/* The surrounding workspace already supplies these two edges. */
+.database-data-grid {
+  border-block-start: 0 !important;
+  border-inline-start: 0 !important;
+}
+
+.database-data-grid .database-data-grid__pending-delete {
+  background-color: #fee2e2 !important;
+}
+
+.database-data-grid .database-data-grid__pending-change {
+  background-color: #fef3c7 !important;
 }
