@@ -698,12 +698,12 @@ export function SettingsPage() {
 
       <div className="flex flex-col gap-8">
         <LayerCard>
-          <LayerCard.Secondary>
-            <Text as="p" size="xs" variant="secondary">
-              {usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}
-            </Text>
-            <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
+          <LayerCard.Secondary className="flex justify-between items-center">
+            <Text as="h2" variant="secondary">
               Usage
+            </Text>
+            <Text as="p" variant="secondary">
+              {usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}
             </Text>
           </LayerCard.Secondary>
           <LayerCard.Primary className="p-4">
