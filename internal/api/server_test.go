@@ -368,6 +368,18 @@ func TestKVNamespaceAPIs(t *testing.T) {
 		t.Fatalf("unexpected namespace detail: %#v", fetched)
 	}
 
+	valuePath := "/v1/kv/namespaces/" + namespace.ID + "/values/color"
+	workerKVRequest(t, server, http.MethodPut, valuePath, []byte("blue"), http.StatusNoContent)
+	if got := workerKVRequest(t, server, http.MethodGet, valuePath, nil, http.StatusOK); string(got) != "blue" {
+		t.Fatalf("got %q, want namespace value", got)
+	}
+	var keys []nanoflare.WorkerKVKey
+	requestJSON(t, server, http.MethodGet, "/v1/kv/namespaces/"+namespace.ID+"/values", http.StatusOK, &keys)
+	if len(keys) != 1 || keys[0].Key != "color" || keys[0].Size != 4 {
+		t.Fatalf("unexpected namespace keys: %#v", keys)
+	}
+	workerKVRequest(t, server, http.MethodDelete, valuePath, nil, http.StatusNoContent)
+
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPatch, "/v1/kv/namespaces/"+namespace.ID, strings.NewReader(`{"name":"shared-sessions"}`))
 	request.Header.Set("Content-Type", "application/json")

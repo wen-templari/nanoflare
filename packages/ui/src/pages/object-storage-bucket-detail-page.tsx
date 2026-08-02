@@ -1,13 +1,24 @@
-import { ChartPalette, Tabs, Text, TimeseriesChart } from "@cloudflare/kumo";
+import {
+  ChartPalette,
+  DropdownMenu,
+  LayerCard,
+  Tabs,
+  Text,
+  TimeseriesChart,
+} from "@cloudflare/kumo";
 import {
   Archive,
-  ArrowDownToLine,
   BookOpen,
+  ChevronRight,
+  Copy,
   DatabaseZap,
   FileJson,
   FileText,
+  Folder,
+  FolderPlus,
   Globe2,
   HardDrive,
+  MoreHorizontal,
   RefreshCw,
   Search,
   Trash2,
@@ -15,7 +26,15 @@ import {
   Waypoints,
   Workflow,
 } from "lucide-react";
-import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 
 import type { ObjectStorageBucketMetricsTimeseries, ObjectStorageObject } from "../app/types";
@@ -26,18 +45,18 @@ import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
-import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
+import { Field, WorkerDetailEmpty } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { echarts } from "../lib/kumo-echarts";
 
-type ObjectPreview =
-  | { kind: "empty" }
-  | { kind: "text"; content: string }
-  | { kind: "image"; url: string; contentType: string };
+type ObjectBrowserEntry =
+  | { kind: "folder"; key: string; name: string }
+  | { kind: "object"; object: ObjectStorageObject; name: string };
 
-const objectStorageBucketDetailTabs = ["overview", "objects", "settings"] as const;
+const objectStorageBucketDetailTabs = ["overview", "settings"] as const;
+const folderMarker = ".nanoflare-folder";
 
 function latestObjectMetric(points: { value: number }[] | null | undefined) {
   return points?.[points.length - 1]?.value ?? 0;
@@ -65,6 +84,7 @@ function ObjectStorageBucketDetailContent({
   bucket: { id: string; name: string; created_at: string };
   onBack: () => void;
 }) {
+  const navigate = useNavigate();
   const { workers, setObjectStorageBuckets, notify, apiConnected, activeOrgID } = useWorkspace();
   const [tab, setTab] = useQueryTab<(typeof objectStorageBucketDetailTabs)[number]>(
     objectStorageBucketDetailTabs,
@@ -78,13 +98,15 @@ function ObjectStorageBucketDetailContent({
   const [objects, setObjects] = useState<ObjectStorageObject[]>([]);
   const [loadingObjects, setLoadingObjects] = useState(false);
   const [status, setStatus] = useState("");
-  const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search);
-  const [selectedKey, setSelectedKey] = useState("");
-  const [selectedObject, setSelectedObject] = useState<ObjectStorageObject>();
-  const [preview, setPreview] = useState<ObjectPreview>({ kind: "empty" });
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchPrefix, setSearchPrefix] = useState("");
+  const deferredSearch = useDeferredValue(searchPrefix);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [currentPrefix, setCurrentPrefix] = useState("");
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
   const [metrics, setMetrics] = useState<ObjectStorageBucketMetricsTimeseries>({
     available: false,
     reads: [],
@@ -138,24 +160,44 @@ function ObjectStorageBucketDetailContent({
   }, [activeOrgID, apiConnected, bucket.id]);
 
   const basePath = accessorWorkerID
-    ? `/v1/workers/${accessorWorkerID}/object-storage-buckets/${encodeURIComponent(bucket.id)}`
+    ? `/v1/organizations/${encodeURIComponent(activeOrgID)}/workers/${encodeURIComponent(accessorWorkerID)}/object-storage-buckets/${encodeURIComponent(bucket.id)}/objects`
     : "";
   const filteredObjects = objects.filter((item) =>
-    item.key.toLowerCase().includes(deferredSearch.trim().toLowerCase()),
+    item.key.toLowerCase().startsWith(deferredSearch.trim().toLowerCase()),
   );
+  const browserEntries = useMemo(() => {
+    const folders = new Map<string, ObjectBrowserEntry>();
+    const files: ObjectBrowserEntry[] = [];
+
+    for (const item of filteredObjects) {
+      if (!item.key.startsWith(currentPrefix)) continue;
+      const remainder = item.key.slice(currentPrefix.length);
+      if (!remainder) continue;
+      const slash = remainder.indexOf("/");
+      if (slash >= 0) {
+        const name = remainder.slice(0, slash);
+        const key = `${currentPrefix}${name}/`;
+        folders.set(key, { kind: "folder", key, name });
+      } else if (remainder !== folderMarker) {
+        files.push({ kind: "object", object: item, name: remainder });
+      }
+    }
+
+    return [
+      ...[...folders.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      ...files.sort((a, b) => a.name.localeCompare(b.name)),
+    ];
+  }, [currentPrefix, filteredObjects]);
 
   useEffect(() => {
     setObjects([]);
-    setSelectedKey("");
-    setSelectedObject(undefined);
-    setPreview({ kind: "empty" });
     setStatus("");
+    setSearchInput("");
+    setSearchPrefix("");
+    setCurrentPrefix("");
+    setNewFolderOpen(false);
+    setNewFolderName("");
   }, [bucket.id, accessorWorkerID]);
-
-  useEffect(() => {
-    if (preview.kind !== "image") return;
-    return () => URL.revokeObjectURL(preview.url);
-  }, [preview]);
 
   async function refreshObjects() {
     if (!basePath) {
@@ -181,49 +223,14 @@ function ObjectStorageBucketDetailContent({
     }
   }
 
+  function applySearch() {
+    setCurrentPrefix("");
+    setSearchPrefix(searchInput.trim());
+  }
+
   useEffect(() => {
     void refreshObjects();
   }, [basePath]);
-
-  async function loadObject(key: string) {
-    if (!basePath) return;
-    setSelectedKey(key);
-    setPreviewLoading(true);
-    try {
-      const response = await apiFetch(`${basePath}/${encodeURIComponent(key)}`);
-      if (response.status === 404) {
-        setSelectedObject(undefined);
-        setStatus("Object not found");
-        return;
-      }
-      if (!response.ok) throw new Error(`Object read failed (${response.status})`);
-      const contentType = response.headers.get("content-type") ?? "";
-      const listedMetadata = objects.find((item) => item.key === key);
-      const metadata: ObjectStorageObject = {
-        ...(listedMetadata ?? { key, uploaded: new Date().toISOString() }),
-        key,
-        size: Number(response.headers.get("content-length") ?? listedMetadata?.size ?? "0"),
-        etag: response.headers.get("x-nanoflare-object-etag") ?? listedMetadata?.etag ?? "",
-        httpEtag: response.headers.get("etag") ?? listedMetadata?.httpEtag ?? "",
-        uploaded:
-          response.headers.get("x-nanoflare-object-uploaded") ??
-          listedMetadata?.uploaded ??
-          new Date().toISOString(),
-        httpMetadata: { ...listedMetadata?.httpMetadata, contentType },
-      };
-      setSelectedObject(metadata);
-      if (contentType.startsWith("image/")) {
-        const blob = await response.blob();
-        setPreview({ kind: "image", url: URL.createObjectURL(blob), contentType });
-      } else if (contentType.includes("json") || contentType.startsWith("text/") || !contentType) {
-        setPreview({ kind: "text", content: await response.text() });
-      }
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "Object read failed");
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
 
   async function uploadObject(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -231,14 +238,15 @@ function ObjectStorageBucketDetailContent({
     if (!file || !basePath) return;
     setUploading(true);
     try {
-      const response = await apiFetch(`${basePath}/${encodeURIComponent(file.name)}`, {
+      const objectKey = `${currentPrefix}${file.name}`;
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(objectKey)}`, {
         method: "PUT",
         headers: file.type ? { "content-type": file.type } : undefined,
         body: file,
       });
       if (!response.ok) throw new Error(`Object upload failed (${response.status})`);
       await refreshObjects();
-      notify(`${file.name} uploaded`);
+      notify(`${objectKey} uploaded`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Object upload failed");
     } finally {
@@ -246,16 +254,41 @@ function ObjectStorageBucketDetailContent({
     }
   }
 
-  async function downloadSelectedObject() {
-    if (!basePath || !selectedKey) return;
+  async function createFolder() {
+    const folderName = newFolderName.trim().replace(/^\/+|\/+$/g, "");
+    if (!folderName || !basePath) return;
+    const folderKey = `${currentPrefix}${folderName}/`;
+    setCreatingFolder(true);
     try {
-      const response = await apiFetch(`${basePath}/${encodeURIComponent(selectedKey)}`);
+      const response = await apiFetch(
+        `${basePath}/${encodeURIComponent(`${folderKey}${folderMarker}`)}`,
+        {
+          method: "PUT",
+          body: "",
+        },
+      );
+      if (!response.ok) throw new Error(`Folder creation failed (${response.status})`);
+      setNewFolderName("");
+      setNewFolderOpen(false);
+      await refreshObjects();
+      notify(`${folderKey} created`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Folder creation failed");
+    } finally {
+      setCreatingFolder(false);
+    }
+  }
+
+  async function downloadObject(key: string) {
+    if (!basePath) return;
+    try {
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(key)}`);
       if (!response.ok) throw new Error(`Object download failed (${response.status})`);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = selectedKey.split("/").pop() || selectedKey;
+      link.download = key.split("/").pop() || key;
       link.click();
       URL.revokeObjectURL(url);
     } catch (error) {
@@ -263,19 +296,15 @@ function ObjectStorageBucketDetailContent({
     }
   }
 
-  async function deleteSelectedObject() {
-    if (!basePath || !selectedKey) return;
-    if (!window.confirm(`Delete object "${selectedKey}" from ${bucket.name}?`)) return;
+  async function deleteObject(key: string) {
+    if (!basePath || !window.confirm(`Delete object "${key}" from ${bucket.name}?`)) return;
     try {
-      const response = await apiFetch(`${basePath}/${encodeURIComponent(selectedKey)}`, {
+      const response = await apiFetch(`${basePath}/${encodeURIComponent(key)}`, {
         method: "DELETE",
       });
       if (!response.ok) throw new Error(`Object delete failed (${response.status})`);
       await refreshObjects();
-      setSelectedKey("");
-      setSelectedObject(undefined);
-      setPreview({ kind: "empty" });
-      notify(`${selectedKey} deleted`);
+      notify(`${key} deleted`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Object delete failed");
     }
@@ -289,7 +318,7 @@ function ObjectStorageBucketDetailContent({
       let nextBucket = { ...bucket, name: trimmed };
       if (apiConnected) {
         const response = await apiFetch(
-          `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`,
+          `/v1/organizations/${encodeURIComponent(activeOrgID)}/object-storage-buckets/${encodeURIComponent(bucket.id)}`,
           {
             method: "PATCH",
             headers: { "content-type": "application/json" },
@@ -318,7 +347,7 @@ function ObjectStorageBucketDetailContent({
     try {
       if (apiConnected) {
         const response = await apiFetch(
-          `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}`,
+          `/v1/organizations/${encodeURIComponent(activeOrgID)}/object-storage-buckets/${encodeURIComponent(bucket.id)}`,
           { method: "DELETE" },
         );
         if (!response.ok)
@@ -381,10 +410,9 @@ function ObjectStorageBucketDetailContent({
           listClassName="max-w-full"
           tabs={[
             { label: "Overview", value: "overview" },
-            { label: "Objects", value: "objects" },
             { label: "Settings", value: "settings" },
           ]}
-          onValueChange={(value) => setTab(value as "overview" | "objects" | "settings")}
+          onValueChange={(value) => setTab(value as "overview" | "settings")}
           value={tab}
         />
       </div>
@@ -407,7 +435,339 @@ function ObjectStorageBucketDetailContent({
               </div>
             ))}
           </div>
-          <ObjectMetricChart reads={metrics.reads} writes={metrics.writes} size={metrics.size} />
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="h2" variant="secondary">
+                Bucket activity
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="px-5 py-4">
+              <ObjectMetricChart
+                reads={metrics.reads}
+                writes={metrics.writes}
+                size={metrics.size}
+              />
+            </LayerCard.Primary>
+          </LayerCard>
+          <section className="space-y-6">
+            <div className="">
+              <div className="border-b border-kumo-line py-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                  <label className="block min-w-0 lg:w-[420px]">
+                    <span className="mb-1.5 block text-sm text-gray-700">
+                      Search objects by prefix
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3">
+                        <Search className="size-4 shrink-0 text-gray-500" />
+                        <Input
+                          value={searchInput}
+                          onChange={(event) => setSearchInput(event.target.value)}
+                          onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              applySearch();
+                            }
+                          }}
+                          placeholder="e.g. uploads/2026/"
+                          variant="unstyled"
+                          className="min-w-0 flex-1"
+                          inputClassName="h-10 bg-transparent p-0"
+                        />
+                      </div>
+                      <Button type="button" variant="outline" onClick={applySearch}>
+                        <Search className="size-4" />
+                        Search
+                      </Button>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {!accessorWorkerID ? (
+                <WorkerDetailEmpty
+                  icon={<DatabaseZap />}
+                  title="No worker access path"
+                  copy="Bind this bucket to a worker to browse objects through the runtime API."
+                />
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+                    <div className="flex min-w-0 items-center gap-1 overflow-x-auto text-sm">
+                      <button
+                        type="button"
+                        className="shrink-0 text-blue-700 hover:underline"
+                        onClick={() => setCurrentPrefix("")}
+                      >
+                        {bucket.name}
+                      </button>
+                      {currentPrefix
+                        .split("/")
+                        .filter(Boolean)
+                        .map((part, index, parts) => {
+                          const prefix = `${parts.slice(0, index + 1).join("/")}/`;
+                          const isCurrentFolder = index === parts.length - 1;
+                          return (
+                            <span key={prefix} className="flex shrink-0 items-center gap-1">
+                              <ChevronRight className="size-4 text-gray-400" />
+                              {isCurrentFolder ? (
+                                <span className="text-gray-700">{part}</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="text-blue-700 hover:underline"
+                                  onClick={() => setCurrentPrefix(prefix)}
+                                >
+                                  {part}
+                                </button>
+                              )}
+                            </span>
+                          );
+                        })}
+                      <button
+                        type="button"
+                        className="ml-1 shrink-0 text-gray-500 hover:text-gray-950"
+                        aria-label="Copy current path"
+                        onClick={() =>
+                          void navigator.clipboard?.writeText(`${bucket.name}/${currentPrefix}`)
+                        }
+                      >
+                        <Copy className="size-4" />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={uploading}
+                        onClick={() => uploadInputRef.current?.click()}
+                      >
+                        <Upload className="size-4" />
+                        {uploading ? "Uploading..." : "Upload"}
+                      </Button>
+                      <input
+                        ref={uploadInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={uploadObject}
+                      />
+                      <Button type="button" onClick={() => setNewFolderOpen((open) => !open)}>
+                        <FolderPlus className="size-4" />
+                        Add folder
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Refresh objects"
+                        onClick={() => void refreshObjects()}
+                        disabled={loadingObjects}
+                      >
+                        <RefreshCw className={loadingObjects ? "size-4 animate-spin" : "size-4"} />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {newFolderOpen && (
+                    <form
+                      className="flex flex-wrap items-end gap-3 border-b border-gray-200 bg-gray-50 px-5 py-3"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void createFolder();
+                      }}
+                    >
+                      <label className="min-w-[240px] flex-1">
+                        <span className="mb-1.5 block text-sm text-gray-700">Folder name</span>
+                        <Input
+                          value={newFolderName}
+                          onChange={(event) => setNewFolderName(event.target.value)}
+                          placeholder="e.g. incoming"
+                          autoFocus
+                        />
+                      </label>
+                      <Button type="submit" disabled={creatingFolder || !newFolderName.trim()}>
+                        {creatingFolder ? "Creating..." : "Create folder"}
+                      </Button>
+                    </form>
+                  )}
+
+                  <LayerCard>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[760px] text-left">
+                        <thead className="border-b border-gray-200 bg-gray-50 text-sm text-gray-600">
+                          <tr>
+                            <th className="px-5 py-3 font-medium">Object</th>
+                            <th className="py-3 font-medium">Type</th>
+                            <th className="py-3 font-medium">Size</th>
+                            <th className="py-3 font-medium">Modified</th>
+                            <th className="w-16 px-5 py-3">
+                              <span className="sr-only">Actions</span>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {currentPrefix && (
+                            <tr className="border-b border-gray-200">
+                              <td colSpan={5}>
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 px-5 py-3 text-sm text-blue-700 hover:bg-blue-50"
+                                  onClick={() =>
+                                    setCurrentPrefix(
+                                      currentPrefix
+                                        .split("/")
+                                        .filter(Boolean)
+                                        .slice(0, -1)
+                                        .join("/")
+                                        ? `${currentPrefix.split("/").filter(Boolean).slice(0, -1).join("/")}/`
+                                        : "",
+                                    )
+                                  }
+                                >
+                                  <ChevronRight className="size-4 rotate-180" />
+                                  Back to parent folder
+                                </button>
+                              </td>
+                            </tr>
+                          )}
+                          {browserEntries.map((entry) =>
+                            entry.kind === "folder" ? (
+                              <tr
+                                key={entry.key}
+                                className="cursor-pointer border-b border-gray-200 last:border-0 hover:bg-blue-50"
+                                onClick={() => {
+                                  setCurrentPrefix(entry.key);
+                                }}
+                              >
+                                <td className="px-5 py-3">
+                                  <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
+                                    <Folder className="size-4" />
+                                    {entry.name}/
+                                  </div>
+                                </td>
+                                <td className="py-3 text-sm text-gray-600">Folder</td>
+                                <td className="py-3 text-sm text-gray-500">—</td>
+                                <td className="py-3 text-sm text-gray-500">—</td>
+                                <td className="px-5 py-3">
+                                  <DropdownMenu>
+                                    <DropdownMenu.Trigger>
+                                      <button
+                                        type="button"
+                                        aria-label={`Actions for ${entry.name}`}
+                                        className="inline-grid size-8 place-items-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-950"
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <MoreHorizontal className="size-4" />
+                                      </button>
+                                    </DropdownMenu.Trigger>
+                                    <DropdownMenu.Content align="end">
+                                      <DropdownMenu.Item
+                                        onClick={() => setCurrentPrefix(entry.key)}
+                                      >
+                                        Open folder
+                                      </DropdownMenu.Item>
+                                      <DropdownMenu.Item
+                                        onClick={() =>
+                                          void navigator.clipboard?.writeText(entry.key)
+                                        }
+                                      >
+                                        Copy prefix
+                                      </DropdownMenu.Item>
+                                    </DropdownMenu.Content>
+                                  </DropdownMenu>
+                                </td>
+                              </tr>
+                            ) : (
+                              <tr
+                                key={entry.object.key}
+                                className="cursor-pointer border-b border-gray-200 last:border-0 hover:bg-gray-50"
+                                onClick={() =>
+                                  navigate(
+                                    `/object-storage/${bucket.id}/objects/${encodeURIComponent(entry.object.key)}`,
+                                  )
+                                }
+                              >
+                                <td className="px-5 py-3">
+                                  <div className="flex items-center gap-2 text-sm font-medium text-gray-950">
+                                    {entry.object.httpMetadata?.contentType?.includes("json") ? (
+                                      <FileJson className="size-4 text-amber-600" />
+                                    ) : (
+                                      <FileText className="size-4 text-gray-600" />
+                                    )}
+                                    {entry.name}
+                                  </div>
+                                </td>
+                                <td className="py-3 text-sm text-gray-600">
+                                  {objectMimeType(entry.object)}
+                                </td>
+                                <td className="py-3 text-sm text-gray-600">
+                                  {formatBytes(entry.object.size)}
+                                </td>
+                                <td className="py-3 text-sm text-gray-600">
+                                  {new Date(entry.object.uploaded).toLocaleString()}
+                                </td>
+                                <td className="px-5 py-3">
+                                  <DropdownMenu>
+                                    <DropdownMenu.Trigger>
+                                      <button
+                                        type="button"
+                                        aria-label={`Actions for ${entry.name}`}
+                                        className="inline-grid size-8 place-items-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-950"
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <MoreHorizontal className="size-4" />
+                                      </button>
+                                    </DropdownMenu.Trigger>
+                                    <DropdownMenu.Content align="end">
+                                      <DropdownMenu.Item
+                                        onClick={() =>
+                                          navigate(
+                                            `/object-storage/${bucket.id}/objects/${encodeURIComponent(entry.object.key)}`,
+                                          )
+                                        }
+                                      >
+                                        View details
+                                      </DropdownMenu.Item>
+                                      <DropdownMenu.Item
+                                        onClick={() => void downloadObject(entry.object.key)}
+                                      >
+                                        Download
+                                      </DropdownMenu.Item>
+                                      <DropdownMenu.Item
+                                        onClick={() => void deleteObject(entry.object.key)}
+                                      >
+                                        Delete
+                                      </DropdownMenu.Item>
+                                    </DropdownMenu.Content>
+                                  </DropdownMenu>
+                                </td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </LayerCard>
+
+                  {!browserEntries.length && (
+                    <div className="grid min-h-48 place-items-center px-5 text-center">
+                      <div>
+                        <DatabaseZap className="mx-auto size-5 text-gray-400" />
+                        <p className="mt-3 text-sm font-medium text-gray-950">
+                          {filteredObjects.length
+                            ? "No objects in this folder"
+                            : "No matching objects"}
+                        </p>
+                        <p className="mt-1 text-sm text-gray-600">
+                          {status || "Upload a file or add a folder to get started."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
         </div>
       )}
 
@@ -456,30 +816,37 @@ function ObjectStorageBucketDetailContent({
             </div>
           </section>
 
-          <Panel title="Danger zone">
-            <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-              <div>
-                <Text bold size="sm">
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="h2" variant="heading3">
+                Danger zone
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="p-4">
+              <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <Text bold size="sm">
+                    Delete bucket
+                  </Text>
+                  <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
+                    Permanently remove this bucket and its objects. Worker bindings should be
+                    updated before deleting it.
+                  </Text>
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    setDeleteError("");
+                    setDeleteOpen(true);
+                  }}
+                  disabled={deleting || saving}
+                >
+                  <Trash2 className="size-3.5" />
                   Delete bucket
-                </Text>
-                <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
-                  Permanently remove this bucket and its objects. Worker bindings should be updated
-                  before deleting it.
-                </Text>
+                </Button>
               </div>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  setDeleteError("");
-                  setDeleteOpen(true);
-                }}
-                disabled={deleting || saving}
-              >
-                <Trash2 className="size-3.5" />
-                Delete bucket
-              </Button>
-            </div>
-          </Panel>
+            </LayerCard.Primary>
+          </LayerCard>
           <ConfirmDeleteDialog
             confirmLabel="Delete bucket"
             description="This action cannot be undone. All objects stored in this bucket will be permanently deleted."
@@ -491,196 +858,41 @@ function ObjectStorageBucketDetailContent({
             title="Delete bucket"
           />
 
-          <Panel title="Bound workers">
-            {bindings.length ? (
-              <div className="space-y-3">
-                {bindings.map(({ worker, binding }) => (
-                  <div
-                    key={`${worker.id}-${binding.binding}`}
-                    className="rounded-lg border border-gray-200 bg-white px-4 py-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
-                        <p className="mt-1 font-mono text-[10px] text-[#7d837d]">
-                          {worker.hostname}
-                        </p>
-                      </div>
-                      <Badge tone="green">{binding.binding}</Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm leading-6 text-[#7a8079]">
-                This bucket is not bound by any active deployment yet, so there is no worker path
-                available for object inspection.
-              </p>
-            )}
-          </Panel>
-        </div>
-      )}
-
-      {tab === "objects" && (
-        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-7rem)] md:min-h-[540px]">
-          {!accessorWorkerID ? (
-            <WorkerDetailEmpty
-              icon={<DatabaseZap />}
-              title="No worker access path"
-              copy="Bind this bucket to a worker to browse objects through the runtime API."
-            />
-          ) : (
-            <div className="grid min-h-[540px] md:h-full md:min-h-0 md:grid-cols-[280px_minmax(0,1fr)]">
-              <aside className="flex min-h-0 flex-col border-b border-gray-200 bg-gray-50 md:h-full md:border-b-0 md:border-r">
-                <div className="flex items-center justify-between px-4 pb-2 pt-3">
-                  <p className="font-mono text-[9px]   text-[#a0a39c]">Objects</p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Refresh objects"
-                    onClick={() => void refreshObjects()}
-                    disabled={loadingObjects}
-                  >
-                    <RefreshCw className={loadingObjects ? "size-3.5 animate-spin" : "size-3.5"} />
-                  </Button>
-                </div>
-                <div className="space-y-3 px-4 pb-3">
-                  <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-gray-300 bg-white px-3 py-2 font-mono text-[10px] font-bold text-gray-700 hover:bg-gray-50">
-                    <Upload className="size-3.5 text-[#d75a41]" />
-                    {uploading ? "Uploading..." : "Upload file"}
-                    <input type="file" className="hidden" onChange={uploadObject} />
-                  </label>
-                  <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
-                    <Search className="size-4 text-[#959a93]" />
-                    <Input
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search objects"
-                      variant="unstyled"
-                      className="min-w-0 flex-1"
-                      inputClassName="h-10 bg-transparent p-0"
-                    />
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto pb-3">
-                  {filteredObjects.map((item) => (
-                    <button
-                      key={item.key}
-                      onClick={() => void loadObject(item.key)}
-                      className={
-                        selectedKey === item.key
-                          ? "flex w-full items-center gap-2 bg-[#e5e0d6] px-4 py-2 text-left font-mono text-[10px] font-bold text-[#35413e]"
-                          : "flex w-full items-center gap-2 px-4 py-2 text-left font-mono text-[10px] text-[#848a83] transition hover:bg-white/60 hover:text-[#4c5853]"
-                      }
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="h2" variant="heading3">
+                Bound workers
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="p-4">
+              {bindings.length ? (
+                <div className="space-y-3">
+                  {bindings.map(({ worker, binding }) => (
+                    <div
+                      key={`${worker.id}-${binding.binding}`}
+                      className="rounded-lg border border-gray-200 bg-white px-4 py-3"
                     >
-                      {item.httpMetadata?.contentType?.includes("json") ? (
-                        <FileJson className="size-3.5 text-[#bd7e35]" />
-                      ) : (
-                        <FileText className="size-3.5 text-[#668e7a]" />
-                      )}
-                      <span className="min-w-0 flex-1 truncate">{item.key}</span>
-                      <span className="text-[9px] text-[#a0a39c]">{formatBytes(item.size)}</span>
-                    </button>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
+                          <p className="mt-1 font-mono text-[10px] text-[#7d837d]">
+                            {worker.hostname}
+                          </p>
+                        </div>
+                        <Badge tone="green">{binding.binding}</Badge>
+                      </div>
+                    </div>
                   ))}
-                  {!filteredObjects.length && (
-                    <p className="px-4 py-8 text-center font-mono text-[9px]   text-[#a1a49e]">
-                      {status || "No objects yet"}
-                    </p>
-                  )}
                 </div>
-              </aside>
-
-              <div className="min-h-0 overflow-y-auto p-5">
-                {!selectedKey ? (
-                  <WorkerDetailEmpty
-                    icon={<DatabaseZap />}
-                    title="Select an object"
-                    copy="Choose an object to inspect its metadata, preview text content, or download it."
-                  />
-                ) : (
-                  <>
-                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-extrabold text-[#26332f]">{selectedKey}</p>
-                        <p className="mt-1 font-mono text-[10px] text-[#8a8f88]">
-                          {selectedObject?.httpMetadata?.contentType || "application/octet-stream"}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => void downloadSelectedObject()}
-                        >
-                          <ArrowDownToLine className="size-3.5" />
-                          Download
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={() => void deleteSelectedObject()}
-                        >
-                          <Trash2 className="size-3.5" />
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                    {selectedObject ? (
-                      <div className="mb-4 overflow-hidden rounded-lg border border-[#e2ddd2]">
-                        {[
-                          ["Size", formatBytes(selectedObject.size)],
-                          ["Uploaded", new Date(selectedObject.uploaded).toLocaleString()],
-                          ["ETag", selectedObject.etag || "-"],
-                        ].map(([label, value]) => (
-                          <div
-                            key={label}
-                            className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"
-                          >
-                            <span className="font-mono text-[10px]   text-[#93978f]">{label}</span>
-                            <span className="font-mono text-[11px] font-bold break-all text-[#4f5a55]">
-                              {value}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="overflow-hidden rounded-lg border border-[#d9d3c7] bg-[#202b29]">
-                      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-                        <p className="font-mono text-[10px] text-[#b5c1bb]">Preview</p>
-                        <span className="font-mono text-[9px]   text-[#778781]">
-                          {previewLoading ? "loading" : previewLabel(preview)}
-                        </span>
-                      </div>
-                      <div className="relative min-h-80 bg-[#111917]">
-                        {preview.kind === "image" ? (
-                          <div className="flex min-h-80 items-center justify-center p-4">
-                            <img
-                              src={preview.url}
-                              alt={selectedKey}
-                              className="max-h-[560px] max-w-full object-contain"
-                            />
-                          </div>
-                        ) : (
-                          <pre className="min-h-80 overflow-x-auto p-4 font-mono text-[11px] leading-6 text-[#d8dfd8]">
-                            {preview.kind === "text"
-                              ? preview.content
-                              : "No inline preview available for this object type."}
-                          </pre>
-                        )}
-                        {previewLoading ? (
-                          <div className="absolute inset-0 flex items-center justify-center bg-[#111917]/75 font-mono text-[10px] text-[#b5c1bb]">
-                            Loading preview
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-        </section>
+              ) : (
+                <p className="text-sm leading-6 text-[#7a8079]">
+                  This bucket is not bound by any active deployment yet, so there is no worker path
+                  available for object inspection.
+                </p>
+              )}
+            </LayerCard.Primary>
+          </LayerCard>
+        </div>
       )}
     </>
   );
@@ -726,8 +938,21 @@ function compactNumber(value: number) {
   );
 }
 
-function previewLabel(preview: ObjectPreview) {
-  if (preview.kind === "text") return `${preview.content.length} chars`;
-  if (preview.kind === "image") return preview.contentType;
-  return "binary-safe mode";
+function objectMimeType(object: ObjectStorageObject) {
+  if (object.httpMetadata?.contentType) return object.httpMetadata.contentType;
+  const extension = object.key.split(".").pop()?.toLowerCase();
+  return (
+    {
+      avif: "image/avif",
+      gif: "image/gif",
+      jpeg: "image/jpeg",
+      jpg: "image/jpeg",
+      json: "application/json",
+      pdf: "application/pdf",
+      png: "image/png",
+      svg: "image/svg+xml",
+      txt: "text/plain",
+      webp: "image/webp",
+    }[extension ?? ""] ?? "application/octet-stream"
+  );
 }

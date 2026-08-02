@@ -49,12 +49,7 @@ import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
-import {
-  EmptyMetrics,
-  Panel,
-  StatusCodeMix,
-  WorkerDetailEmpty,
-} from "../components/shared/primitives";
+import { EmptyMetrics, StatusCodeMix, WorkerDetailEmpty } from "../components/shared/primitives";
 import { Input } from "../components/ui/input";
 import { echarts } from "../lib/kumo-echarts";
 import { cn } from "../lib/utils";
@@ -68,10 +63,12 @@ const emptyTraffic: WorkerTraffic = {
   errors: 0,
   bundle_size: 0,
   traffic: [],
+  request_series: [],
   duration_ms_avg: 0,
   duration_ms_p95: 0,
   duration_ms_per_second: 0,
   duration_series: [],
+  duration_timeseries: [],
   status_codes: [],
 };
 
@@ -90,10 +87,14 @@ function normalizeTraffic(input?: Partial<WorkerMetricsTimeseries> | null): Work
     invocations: latest(input?.requests),
     errors: latest(input?.errors),
     traffic: (input?.requests ?? []).map((point) => point.value),
+    request_series: input?.requests ?? [],
+    error_timeseries: input?.errors ?? [],
+    cpu_time_p90_series: input?.cpu_time_p90_ms ?? [],
     duration_ms_avg: latest(input?.duration_avg_ms),
     duration_ms_p95: latest(input?.duration_p95_ms),
     duration_ms_per_second: latest(input?.duration_ms_per_second),
     duration_series: (input?.duration_ms_per_second ?? []).map((point) => point.value),
+    duration_timeseries: input?.duration_ms_per_second ?? [],
     status_codes: statuses,
   };
 }
@@ -296,26 +297,63 @@ function WorkerDetailContent({
 function WorkerMetrics({ traffic }: { traffic: WorkerTraffic }) {
   return (
     <div className="grid gap-6 xl:grid-cols-2">
-      <Panel
-        title="Worker traffic"
-        eyebrow={traffic.available ? "Last 24 hours" : "Prometheus unavailable"}
-      >
-        <MiniTrafficChart values={traffic.traffic ?? []} />
-      </Panel>
-      <Panel
-        title="Handler duration"
-        eyebrow={
-          (traffic.duration_series ?? []).length ? "Last 24 hours" : "Waiting for runtime timings"
-        }
-      >
-        <MiniTrafficChart values={traffic.duration_series ?? []} />
-      </Panel>
-      <Panel title="Response codes" eyebrow="5 minute rate">
-        <StatusCodeMix values={traffic.status_codes ?? []} />
-      </Panel>
       <LayerCard>
         <LayerCard.Secondary>
-          <Text as="h2" variant="heading3">
+          <Text as="p" size="xs" variant="secondary">
+            {traffic.available ? "Last 24 hours" : "Prometheus unavailable"}
+          </Text>
+          <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
+            Worker traffic
+          </Text>
+        </LayerCard.Secondary>
+        <LayerCard.Primary className="p-4">
+          <WorkerMetricTimeseriesChart
+            ariaDescription="Worker requests over time."
+            emptyCopy="Send a request through Traefik to populate the traffic chart."
+            points={traffic.request_series}
+            seriesName="Requests"
+            tooltipValueFormat={(value) => `${compactNumber(value)} requests`}
+          />
+        </LayerCard.Primary>
+      </LayerCard>
+      <LayerCard>
+        <LayerCard.Secondary>
+          <Text as="p" size="xs" variant="secondary">
+            {(traffic.duration_series ?? []).length
+              ? "Last 24 hours"
+              : "Waiting for runtime timings"}
+          </Text>
+          <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
+            Handler duration
+          </Text>
+        </LayerCard.Secondary>
+        <LayerCard.Primary className="p-4">
+          <WorkerMetricTimeseriesChart
+            ariaDescription="Worker handler duration over time."
+            emptyCopy="Send a request through Traefik to populate the duration chart."
+            points={traffic.duration_timeseries}
+            seriesName="Duration"
+            tooltipValueFormat={formatMilliseconds}
+            yAxisTickFormat={formatMilliseconds}
+          />
+        </LayerCard.Primary>
+      </LayerCard>
+      <LayerCard>
+        <LayerCard.Secondary>
+          <Text as="p" size="xs" variant="secondary">
+            5 minute rate
+          </Text>
+          <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
+            Response codes
+          </Text>
+        </LayerCard.Secondary>
+        <LayerCard.Primary className="p-4">
+          <StatusCodeMix values={traffic.status_codes ?? []} />
+        </LayerCard.Primary>
+      </LayerCard>
+      <LayerCard>
+        <LayerCard.Secondary>
+          <Text as="h2" variant="secondary">
             Current values
           </Text>
         </LayerCard.Secondary>
@@ -400,7 +438,7 @@ function WorkerOverview({
         </div>
       </LayerCard>
 
-      <LayerCard className="min-h-[360px] overflow-hidden p-3">
+      <LayerCard className="min-h-[360px] overflow-hidden">
         <Suspense
           fallback={
             <div className="h-[420px] animate-pulse rounded-xl border border-gray-200 bg-white" />
@@ -420,37 +458,36 @@ function WorkerOverview({
 
       <LayerCard>
         <LayerCard.Secondary className="flex items-center gap-2">
-          <Text as="h2" variant="heading3">
+          <Text as="h2" variant="secondary">
             Metrics
-          </Text>
-          <Text size="xs" variant="secondary">
-            Last 24 hours
           </Text>
         </LayerCard.Secondary>
         <LayerCard.Primary className="grid divide-y divide-kumo-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-          {[
-            { label: "Invocations", value: compactNumber(traffic.invocations) },
-            { label: "Errors", value: compactNumber(traffic.errors) },
-            { label: "CPU time", value: `${formatMilliseconds(traffic.duration_ms_avg)}` },
-          ].map(({ label, value }) => (
-            <div className="px-5 py-4" key={label}>
-              <Text size="sm" variant="secondary">
-                {label}
-              </Text>
-              <div className="mt-2">
-                <Text as="p" variant="heading3">
-                  {value}
-                </Text>
-              </div>
-            </div>
-          ))}
+          <WorkerOverviewMetricChart
+            label="Invocations"
+            points={traffic.request_series}
+            value={compactNumber(traffic.invocations)}
+          />
+          <WorkerOverviewMetricChart
+            label="Errors"
+            points={traffic.error_timeseries ?? []}
+            value={compactNumber(traffic.errors)}
+          />
+          <WorkerOverviewMetricChart
+            label="CPU time"
+            points={traffic.cpu_time_p90_series ?? []}
+            value={formatMilliseconds(
+              traffic.cpu_time_p90_series?.[traffic.cpu_time_p90_series.length - 1]?.value ?? 0,
+            )}
+            valueFormat={formatMilliseconds}
+          />
         </LayerCard.Primary>
       </LayerCard>
 
       <LayerCard>
         <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <Text as="h2" variant="heading3">
+            <Text as="h2" variant="secondary">
               Versions
             </Text>
           </div>
@@ -462,10 +499,56 @@ function WorkerOverview({
             Open deployments tab
           </button>
         </LayerCard.Secondary>
-        <LayerCard.Primary className="overflow-x-auto">
+        <LayerCard.Primary className="overflow-x-auto p-0">
           <WorkerDeploymentsTable deployments={recentDeployments} />
         </LayerCard.Primary>
       </LayerCard>
+    </div>
+  );
+}
+
+function WorkerOverviewMetricChart({
+  label,
+  points,
+  value,
+  valueFormat = compactNumber,
+}: {
+  label: string;
+  points: { timestamp: string; value: number }[];
+  value: string;
+  valueFormat?: (value: number) => string;
+}) {
+  const data = points.flatMap((point) => {
+    const timestamp = new Date(point.timestamp).getTime();
+    return Number.isNaN(timestamp) ? [] : [[timestamp, point.value] as [number, number]];
+  });
+
+  return (
+    <div className="">
+      <Text size="sm" variant="secondary">
+        {label}
+      </Text>
+      <Text as="p" DANGEROUS_className="mt-1" variant="heading3">
+        {value}
+      </Text>
+      {data.length ? (
+        <TimeseriesChart
+          ariaDescription={`${label} over the last 24 hours.`}
+          data={[{ color: ChartPalette.categorical(0), data, name: label }]}
+          echarts={echarts}
+          gradient
+          height={120}
+          tooltipValueFormat={valueFormat}
+          xAxisTickFormat={formatMetricTime}
+          yAxisTickFormat={valueFormat}
+        />
+      ) : (
+        <div className="flex h-[120px] items-center justify-center">
+          <Text size="xs" variant="secondary">
+            No samples yet
+          </Text>
+        </div>
+      )}
     </div>
   );
 }
@@ -867,7 +950,7 @@ function WorkerDeployments({
     <div className="min-h-[510px] w-full space-y-7">
       <LayerCard>
         <LayerCard.Secondary>
-          <Text as="h2" variant="heading3">
+          <Text as="h2" variant="secondary">
             Active deployment
           </Text>
         </LayerCard.Secondary>
@@ -1188,27 +1271,58 @@ function WorkerOutput({
   );
 }
 
-function MiniTrafficChart({ values }: { values: number[] }) {
-  if (!values.length) return <EmptyMetrics />;
-  const now = Date.now();
-  const data = values.map(
-    (value, index) => [now - (values.length - 1 - index) * 60_000, value] as [number, number],
-  );
-  const lastTimestamp = data[data.length - 1][0];
+function WorkerMetricTimeseriesChart({
+  ariaDescription,
+  emptyCopy,
+  points,
+  seriesName,
+  tooltipValueFormat,
+  yAxisTickFormat = compactNumber,
+}: {
+  ariaDescription: string;
+  emptyCopy: string;
+  points: { timestamp: string; value: number }[];
+  seriesName: string;
+  tooltipValueFormat: (value: number) => string;
+  yAxisTickFormat?: (value: number) => string;
+}) {
+  const data = points.flatMap((point) => {
+    const timestamp = new Date(point.timestamp).getTime();
+    return Number.isNaN(timestamp) ? [] : [[timestamp, point.value] as [number, number]];
+  });
+  if (!data.length) return <WorkerMetricChartEmpty copy={emptyCopy} />;
   return (
     <TimeseriesChart
-      ariaDescription="Worker requests per minute."
-      data={[{ color: ChartPalette.categorical(0), data, name: "Traffic" }]}
+      ariaDescription={ariaDescription}
+      data={[{ color: ChartPalette.categorical(0), data, name: seriesName }]}
       echarts={echarts}
       gradient
       height={208}
-      tooltipValueFormat={(value) => `${value.toFixed(1)} requests`}
-      xAxisTickFormat={(timestamp) =>
-        timestamp === lastTimestamp ? "Now" : `${Math.round((lastTimestamp - timestamp) / 60_000)}m`
-      }
-      yAxisTickFormat={compactNumber}
+      tooltipValueFormat={tooltipValueFormat}
+      xAxisTickFormat={formatMetricTime}
+      yAxisTickFormat={yAxisTickFormat}
     />
   );
+}
+
+function WorkerMetricChartEmpty({ copy }: { copy: string }) {
+  return (
+    <div className="flex h-[208px] items-center justify-center">
+      <div className="flex flex-col items-center gap-1 text-center">
+        <Activity size={22} />
+        <Text size="sm">No traffic samples yet</Text>
+        <Text size="xs" variant="secondary">
+          {copy}
+        </Text>
+      </div>
+    </div>
+  );
+}
+
+function formatMetricTime(timestamp: number) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 function compactNumber(value: number) {
@@ -1268,14 +1382,14 @@ function WorkerDeploymentsTable({
               key={deployment.id}
               className="group border-b border-[#e6e6e6] text-sm transition last:border-0 hover:bg-[#fafafa]"
             >
-              <td className="relative w-28 px-5 py-4">
+              <td className="relative w-28 px-5">
                 {percent > 0 && (
-                  <span className="absolute left-2 top-4 h-7 w-1 rounded-full bg-[#1677ff]" />
+                  <span className="absolute left-2 top-3 h-6 w-1 rounded-full bg-[#1677ff]" />
                 )}
                 <DeploymentID id={deployment.id} />
                 {/* {deployment.commit_hash && <div className="mt-1 pl-5 font-mono text-[10px] text-[#8a8a8a]">{shortCommitHash(deployment.commit_hash)}</div>} */}
               </td>
-              <td className="w-8 py-4">
+              <td className="w-8">
                 <Tooltip
                   content="Copy version ID"
                   render={
@@ -1292,7 +1406,7 @@ function WorkerDeploymentsTable({
                 />
               </td>
               <td
-                className="max-w-[360px] truncate px-2 py-4 italic text-[#727272]"
+                className="max-w-[360px] truncate px-2 italic text-[#727272]"
                 title={deployment.commit_message || undefined}
               >
                 {deployment.commit_message || "Manually deployed"}
@@ -1300,8 +1414,8 @@ function WorkerDeploymentsTable({
               <td className="px-4 py-4 text-right text-[#242424]">
                 <span className="text-[#777]">{deployment.created_by || "local"}</span>
               </td>
-              <td className="w-24 px-2 py-4 text-[#333]">{formatAge(deployment.created_at)}</td>
-              <td className="w-12 px-4 py-4 text-right">
+              <td className="w-24 px-2 text-[#333]">{formatAge(deployment.created_at)}</td>
+              <td className="w-12 px-4 text-right">
                 {showMenu && (
                   <DropdownMenu>
                     <DropdownMenu.Trigger>

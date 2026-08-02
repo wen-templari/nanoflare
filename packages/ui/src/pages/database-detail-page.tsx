@@ -34,7 +34,7 @@ import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes, sortDatabases } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
-import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
+import { Field, WorkerDetailEmpty } from "../components/shared/primitives";
 import { echarts } from "../lib/kumo-echarts";
 
 type DBQueryResponse = components["schemas"]["DBQueryResponse"];
@@ -313,25 +313,60 @@ function DatabaseDetailContent({
           </div>
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
-            <Panel title="Query mix" eyebrow="Database metrics">
-              <DatabaseQueryMixChart series={series} />
-            </Panel>
-            <Panel title="Row activity" eyebrow="Database metrics">
-              <DatabaseRowsChart series={series} />
-            </Panel>
-            <Panel title="Query latency distribution" eyebrow="Database metrics">
-              <DatabaseLatencyHistogram metrics={metrics} />
-            </Panel>
-            <Panel title="Storage and schema" eyebrow="Database metrics">
-              <DatabaseStorageChart series={series} />
-            </Panel>
-            <Panel title="Query latency over time" eyebrow="Database metrics">
-              <DatabaseLatencySeriesChart series={series} />
-            </Panel>
+            <LayerCard>
+              <LayerCard.Secondary>
+                <Text as="h2" variant="secondary">
+                  Query mix
+                </Text>
+              </LayerCard.Secondary>
+              <LayerCard.Primary className="p-4">
+                <DatabaseQueryMixChart series={series} />
+              </LayerCard.Primary>
+            </LayerCard>
+            <LayerCard>
+              <LayerCard.Secondary>
+                <Text as="h2" variant="secondary">
+                  Row activity
+                </Text>
+              </LayerCard.Secondary>
+              <LayerCard.Primary className="p-4">
+                <DatabaseRowsChart series={series} />
+              </LayerCard.Primary>
+            </LayerCard>
+            <LayerCard>
+              <LayerCard.Secondary>
+                <Text as="h2" variant="secondary">
+                  Query latency distribution
+                </Text>
+              </LayerCard.Secondary>
+              <LayerCard.Primary className="p-4">
+                <DatabaseLatencyHistogram metrics={metrics} />
+              </LayerCard.Primary>
+            </LayerCard>
+            <LayerCard>
+              <LayerCard.Secondary>
+                <Text as="h2" variant="secondary">
+                  Storage and schema
+                </Text>
+              </LayerCard.Secondary>
+              <LayerCard.Primary className="p-4">
+                <DatabaseStorageChart series={series} />
+              </LayerCard.Primary>
+            </LayerCard>
+            <LayerCard>
+              <LayerCard.Secondary>
+                <Text as="h2" variant="secondary">
+                  Query latency over time
+                </Text>
+              </LayerCard.Secondary>
+              <LayerCard.Primary className="p-4">
+                <DatabaseLatencySeriesChart series={series} />
+              </LayerCard.Primary>
+            </LayerCard>
           </div>
 
           <div className="mt-6">
-            <Panel flush>
+            <LayerCard className="overflow-hidden">
               <div className="border-b border-[#e8e3d9] px-5 py-4">
                 <Field label="Bound workers">
                   <Text size="sm" variant="secondary">
@@ -370,7 +405,7 @@ function DatabaseDetailContent({
                   />
                 </div>
               )}
-            </Panel>
+            </LayerCard>
           </div>
         </>
       ) : tab === "query" ? (
@@ -424,51 +459,68 @@ function DatabaseDetailContent({
         </LayerCard>
       ) : (
         <div className="space-y-6">
-          <Panel title="Basic info" eyebrow="Database">
-            <div className="overflow-hidden rounded-lg border border-[#e2ddd2]">
-              {[
-                ["Database ID", database.id],
-                ["Name", database.name],
-                ["Engine", "SQLite"],
-                ["Created", new Date(database.created_at).toLocaleString()],
-                ["Bindings", String(bindings.length)],
-              ].map(([label, value]) => (
-                <div
-                  key={label}
-                  className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"
-                >
-                  <span className="font-mono text-[10px] text-[#93978f]">{label}</span>
-                  <span className="break-all font-mono text-[11px] font-bold text-[#4f5a55]">
-                    {value}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Panel>
-          <Panel title="Danger zone">
-            <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-              <div>
-                <Text bold size="sm">
-                  Delete database
-                </Text>
-                <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
-                  Permanently remove this database and its stored data. Databases with active worker
-                  bindings must be unbound first.
-                </Text>
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="p" size="xs" variant="secondary">
+                Database
+              </Text>
+              <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
+                Basic info
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="p-4">
+              <div className="overflow-hidden rounded-lg border border-[#e2ddd2]">
+                {[
+                  ["Database ID", database.id],
+                  ["Name", database.name],
+                  ["Engine", "SQLite"],
+                  ["Created", new Date(database.created_at).toLocaleString()],
+                  ["Bindings", String(bindings.length)],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="grid gap-1 border-b border-[#e8e3d9] bg-white/35 px-4 py-3 last:border-0 sm:grid-cols-[170px_1fr]"
+                  >
+                    <span className="font-mono text-[10px] text-[#93978f]">{label}</span>
+                    <span className="break-all font-mono text-[11px] font-bold text-[#4f5a55]">
+                      {value}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <Button
-                disabled={bindings.length > 0}
-                onClick={() => {
-                  setDeleteError("");
-                  setDeleteOpen(true);
-                }}
-                variant="destructive"
-              >
-                <Trash2 className="size-4" />
-                Delete database
-              </Button>
-            </div>
-          </Panel>
+            </LayerCard.Primary>
+          </LayerCard>
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="h2" variant="heading3">
+                Danger zone
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="p-4">
+              <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <Text bold size="sm">
+                    Delete database
+                  </Text>
+                  <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
+                    Permanently remove this database and its stored data. Databases with active
+                    worker bindings must be unbound first.
+                  </Text>
+                </div>
+                <Button
+                  disabled={bindings.length > 0}
+                  onClick={() => {
+                    setDeleteError("");
+                    setDeleteOpen(true);
+                  }}
+                  variant="destructive"
+                >
+                  <Trash2 className="size-4" />
+                  Delete database
+                </Button>
+              </div>
+            </LayerCard.Primary>
+          </LayerCard>
           <ConfirmDeleteDialog
             confirmLabel="Delete database"
             description="This action cannot be undone. All data stored in this database will be permanently deleted."
@@ -581,7 +633,7 @@ function DatabaseLatencyHistogram({ metrics }: { metrics: DatabaseMetrics }) {
   const hasSamples = data.some((item) => item.count > 0);
   if (!hasSamples) {
     return (
-      <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-[#d8d2c6] bg-[#fbfaf6] px-6 text-center">
+      <div className="flex min-h-64 items-center justify-center text-center">
         <div>
           <Gauge className="mx-auto mb-2 size-6 text-[#7b827b]" />
           <Text bold size="sm">
@@ -766,7 +818,7 @@ function DatabaseTimeseriesLines({
 
 function DatabaseChartEmpty({ copy }: { copy: string }) {
   return (
-    <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-[#d8d2c6] bg-[#fbfaf6] px-6 text-center">
+    <div className="flex min-h-64 items-center justify-center text-center">
       <div>
         <Gauge className="mx-auto mb-2 size-6 text-[#7b827b]" />
         <Text bold size="sm">

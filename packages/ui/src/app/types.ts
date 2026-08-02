@@ -48,12 +48,16 @@ export type WorkerTraffic = {
   bundle_size: number;
   total_requests?: number[];
   traffic: number[];
+  request_series: MetricPoint[];
+  error_timeseries?: MetricPoint[];
   error_series?: number[];
   cpu_time_p90_ms?: number[];
+  cpu_time_p90_series?: MetricPoint[];
   duration_ms_avg: number;
   duration_ms_p95: number;
   duration_ms_per_second: number;
   duration_series: number[];
+  duration_timeseries: MetricPoint[];
   status_codes: { code: string; value: number }[];
 };
 export type KVNamespaceMetrics = {

@@ -6,6 +6,7 @@ import {
   cn,
   Dialog,
   Label,
+  LayerCard,
   Meter,
   Select as KumoSelect,
   Table as KumoTable,
@@ -47,7 +48,7 @@ import {
 } from "../app/org-limits";
 import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
-import { PageHeading, Panel } from "../components/shared/primitives";
+import { PageHeading } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 
@@ -696,41 +697,51 @@ export function SettingsPage() {
       )}
 
       <div className="flex flex-col gap-8">
-        <Panel title="Usage" eyebrow={usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <LimitRow current={workers.length} label="Workers" limit={limits.workers} />
-            <LimitRow
-              current={namespaces.length}
-              label="KV namespaces"
-              limit={limits.kvNamespaces}
-            />
-            <LimitRow
-              current={quotaUsage.kvBytes}
-              format={formatBytes}
-              label="KV storage"
-              limit={limits.kvStorageBytes}
-              loading={quotaUsage.loading}
-            />
-            <LimitRow
-              current={objectStorageBuckets.length}
-              label="Object buckets"
-              limit={limits.objectStorageBuckets}
-            />
-            <LimitRow
-              current={quotaUsage.objectBytes}
-              format={formatBytes}
-              label="Object storage"
-              limit={limits.objectStorageBytes}
-              loading={quotaUsage.loading}
-            />
-            <LimitRow
-              current={clients.length}
-              label="OAuth clients"
-              limit={limits.oauthClients}
-              loading={loading}
-            />
-          </div>
-        </Panel>
+        <LayerCard>
+          <LayerCard.Secondary>
+            <Text as="p" size="xs" variant="secondary">
+              {usageLevel === usageLevelPaid ? "Paid plan" : "Default plan"}
+            </Text>
+            <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
+              Usage
+            </Text>
+          </LayerCard.Secondary>
+          <LayerCard.Primary className="p-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <LimitRow current={workers.length} label="Workers" limit={limits.workers} />
+              <LimitRow
+                current={namespaces.length}
+                label="KV namespaces"
+                limit={limits.kvNamespaces}
+              />
+              <LimitRow
+                current={quotaUsage.kvBytes}
+                format={formatBytes}
+                label="KV storage"
+                limit={limits.kvStorageBytes}
+                loading={quotaUsage.loading}
+              />
+              <LimitRow
+                current={objectStorageBuckets.length}
+                label="Object buckets"
+                limit={limits.objectStorageBuckets}
+              />
+              <LimitRow
+                current={quotaUsage.objectBytes}
+                format={formatBytes}
+                label="Object storage"
+                limit={limits.objectStorageBytes}
+                loading={quotaUsage.loading}
+              />
+              <LimitRow
+                current={clients.length}
+                label="OAuth clients"
+                limit={limits.oauthClients}
+                loading={loading}
+              />
+            </div>
+          </LayerCard.Primary>
+        </LayerCard>
 
         <Box>
           <SectionHeading

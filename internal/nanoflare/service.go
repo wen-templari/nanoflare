@@ -2125,6 +2125,37 @@ func (s *Service) WorkerKVDeleteForOrg(orgID, appID, namespaceID, key string) er
 	return s.WorkerKVDelete(appID, namespaceID, key)
 }
 
+// KVNamespaceListForOrg provides console access to keys in a namespace without
+// requiring the namespace to be bound to a worker. Organization ownership is
+// verified before the store is accessed.
+func (s *Service) KVNamespaceListForOrg(orgID, namespaceID string) ([]WorkerKVKey, error) {
+	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
+		return nil, err
+	}
+	return s.store.KVList("", namespaceID)
+}
+
+func (s *Service) KVNamespaceGetForOrg(orgID, namespaceID, key string) ([]byte, bool, error) {
+	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
+		return nil, false, err
+	}
+	return s.store.KVGet("", namespaceID, key)
+}
+
+func (s *Service) KVNamespacePutForOrg(orgID, namespaceID, key string, value []byte) error {
+	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
+		return err
+	}
+	return s.KVPut("", namespaceID, key, value)
+}
+
+func (s *Service) KVNamespaceDeleteForOrg(orgID, namespaceID, key string) error {
+	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
+		return err
+	}
+	return s.KVDelete("", namespaceID, key)
+}
+
 func (s *Service) DBExecute(capability, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
 	appID, err := s.store.AppIDForCapability(capability)
 	if err != nil {

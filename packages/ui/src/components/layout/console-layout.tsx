@@ -129,7 +129,7 @@ export function ConsoleLayout() {
 
   return (
     <Sidebar.Provider className="h-svh overflow-hidden" collapsible="none" defaultOpen>
-      <Sidebar>
+      <Sidebar className="bg-kumo-canvas">
         <Sidebar.Header>
           <div className="flex w-full items-center gap-2">
             <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-kumo-brand text-kumo-inverse">
@@ -137,7 +137,7 @@ export function ConsoleLayout() {
             </div>
             <Select
               aria-label="Active organization"
-              className="min-w-0 flex-1 h-8! justify-start! bg-transparent! px-2! text-sm! shadow-none! ring-0! hover:bg-kumo-tint!"
+              className="grow h-8! bg-transparent ring-0 outline-0 border-0 shadow-none hover:bg-kumo-tint!"
               items={organizationSelectData}
               disabled={!organizations.length}
               onValueChange={(value) => {
@@ -193,8 +193,8 @@ export function ConsoleLayout() {
         </Sidebar.Footer>
       </Sidebar>
 
-      <div className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-kumo-base text-kumo-default">
-        <header className="z-20 flex h-[58px] shrink-0 items-center border-b border-kumo-line bg-kumo-base px-5 md:px-8">
+      <div className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-kumo-canvas text-kumo-default">
+        <header className="z-20 flex h-[58px] shrink-0 items-center border-b border-kumo-line bg-kumo-canvas px-5 md:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <Sidebar.Trigger className="md:hidden" />
             <Breadcrumbs>
@@ -309,7 +309,7 @@ function OrganizationOnboarding({
   saving: boolean;
 }) {
   return (
-    <div className="min-h-screen bg-kumo-base">
+    <div className="min-h-screen bg-kumo-canvas">
       <header className="flex h-16 items-center justify-between px-8">
         <div className="flex items-center gap-3">
           <div className="grid size-9 place-items-center rounded-md bg-kumo-brand text-kumo-inverse">
@@ -425,7 +425,7 @@ function getBreadcrumbs(
     workers: { id: string; name: string }[];
   },
 ) {
-  const [, section, id] = pathname.split("/");
+  const [, section, id, resource, ...rest] = pathname.split("/");
 
   if (!section) return [{ label: "Overview" }];
 
@@ -452,6 +452,14 @@ function getBreadcrumbs(
 
   if (section === "object-storage") {
     const bucket = workspace.objectStorageBuckets.find((item) => item.id === id);
+    const objectKey = resource === "objects" ? decodeRouteLabel(rest.join("/")) : "";
+    if (id && objectKey) {
+      return [
+        { href: "/object-storage", label: "Object storage" },
+        { href: `/object-storage/${id}?tab=objects`, label: bucket?.name ?? id },
+        { label: objectKey },
+      ];
+    }
     return id
       ? [{ href: "/object-storage", label: "Object storage" }, { label: bucket?.name ?? id }]
       : [{ label: "Object storage" }];
@@ -467,4 +475,12 @@ function getBreadcrumbs(
   }
 
   return [{ label: "Overview" }];
+}
+
+function decodeRouteLabel(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }

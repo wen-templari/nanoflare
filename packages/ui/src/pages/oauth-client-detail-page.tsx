@@ -22,7 +22,6 @@ import { apiClient, errorMessage } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspace } from "../app/workspace-context";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
-import { Panel } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 
@@ -191,29 +190,36 @@ export function OAuthClientDetailPage() {
           {tab === "overview" && (
             <>
               <div className="grid gap-4 md:grid-cols-3">
-                <Panel title="Client ID" eyebrow="Registration">
+                <LayerCard className="p-4">
+                  <SectionHeading title="Client ID" eyebrow="Registration" />
                   <div className="flex min-w-0 items-center gap-2">
                     <Text DANGEROUS_className="min-w-0 truncate" variant="mono">
                       {client.client_id}
                     </Text>
                     <CopyButton label="Client ID" value={client.client_id} onCopy={copy} />
                   </div>
-                </Panel>
-                <Panel title="Status" eyebrow="Lifecycle">
+                </LayerCard>
+                <LayerCard className="p-4">
+                  <SectionHeading title="Status" eyebrow="Lifecycle" />
                   <Badge tone="green">Active</Badge>
                   <Text DANGEROUS_className="mt-2 text-xs" variant="secondary">
                     Updated {new Date(client.updated_at).toLocaleString()}
                   </Text>
-                </Panel>
-                <Panel title="Scopes" eyebrow={`${(client.scopes ?? []).length} allowed`}>
+                </LayerCard>
+                <LayerCard className="p-4">
+                  <SectionHeading
+                    title="Scopes"
+                    eyebrow={`${(client.scopes ?? []).length} allowed`}
+                  />
                   <ScopeBadges scopes={client.scopes ?? []} />
-                </Panel>
+                </LayerCard>
               </div>
 
-              <Panel
-                title="Redirect URIs"
-                eyebrow={`${(client.redirect_uris ?? []).length} configured`}
-              >
+              <LayerCard className="p-4">
+                <SectionHeading
+                  title="Redirect URIs"
+                  eyebrow={`${(client.redirect_uris ?? []).length} configured`}
+                />
                 <div className="flex flex-col gap-2">
                   {(client.redirect_uris ?? []).map((uri) => (
                     <div className="flex min-w-0 items-center gap-2" key={uri}>
@@ -224,7 +230,7 @@ export function OAuthClientDetailPage() {
                     </div>
                   ))}
                 </div>
-              </Panel>
+              </LayerCard>
             </>
           )}
 
@@ -290,7 +296,8 @@ export function OAuthClientDetailPage() {
 
           {tab === "settings" && (
             <div className="flex flex-col gap-4">
-              <Panel title="Basic info" eyebrow="OAuth client">
+              <LayerCard className="p-4">
+                <SectionHeading title="Basic info" eyebrow="OAuth client" />
                 <div className="overflow-hidden rounded-lg border border-[#e2ddd2]">
                   {[
                     ["Client ID", client.client_id],
@@ -312,8 +319,9 @@ export function OAuthClientDetailPage() {
                     </div>
                   ))}
                 </div>
-              </Panel>
-              <Panel title="Actions" eyebrow="Manage client">
+              </LayerCard>
+              <LayerCard className="p-4">
+                <SectionHeading title="Actions" eyebrow="Manage client" />
                 <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
                   <Text size="sm" variant="secondary">
                     Update this client registration, redirect URIs, and allowed scopes.
@@ -323,8 +331,9 @@ export function OAuthClientDetailPage() {
                     Edit
                   </Button>
                 </div>
-              </Panel>
-              <Panel title="Danger zone">
+              </LayerCard>
+              <LayerCard className="p-4">
+                <SectionHeading title="Danger zone" eyebrow="" />
                 <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
                   <div>
                     <Text as="h3" size="sm">
@@ -346,7 +355,7 @@ export function OAuthClientDetailPage() {
                     Delete client
                   </Button>
                 </div>
-              </Panel>
+              </LayerCard>
               <ConfirmDeleteDialog
                 confirmLabel="Delete client"
                 description="This action cannot be undone. Existing integrations will no longer be able to authorize through this client."

@@ -35,7 +35,7 @@ export function KVKeyDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title={editing ? "Edit KV entry" : "Create KV entry"}
+      title={editing ? "Edit KV entry" : "Add KV entry"}
       description={
         editing
           ? "Update the key name or value for this namespace entry."
@@ -74,7 +74,7 @@ export function KVKeyDialog({
             </Button>
             <Button type="submit" disabled={loading || submitting || !keyName.trim()}>
               <Save className="size-3.5" />
-              {editing ? "Save changes" : "Create key"}
+              {editing ? "Save changes" : "Add entry"}
             </Button>
           </div>
         </div>

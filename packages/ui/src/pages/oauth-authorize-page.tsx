@@ -92,7 +92,7 @@ export function OAuthAuthorizePage() {
   }
 
   return (
-    <div className="min-h-screen bg-kumo-base px-5 py-8 md:px-8 md:py-10">
+    <div className="min-h-screen bg-kumo-canvas px-5 py-8 md:px-8 md:py-10">
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center md:min-h-[calc(100vh-5rem)]">
         <div className="w-full max-w-[560px]">
           <div className="flex flex-col gap-6">

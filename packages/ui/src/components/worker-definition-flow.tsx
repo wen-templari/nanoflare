@@ -94,7 +94,7 @@ export function WorkerDefinitionFlow({
     <Flow
       align="center"
       canvas={false}
-      className="min-h-[330px] rounded-xl bg-kumo-base ring ring-kumo-hairline"
+      className="min-h-[330px]"
       orientation="horizontal"
       padding={{ x: 24, y: 48 }}
     >

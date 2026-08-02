@@ -76,7 +76,7 @@ export function CLILoginPage() {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center bg-[#f7f7f8] px-5 py-8 md:px-8 md:py-10">
+    <div className="grid min-h-screen place-items-center bg-kumo-canvas px-5 py-8 md:px-8 md:py-10">
       <div className="w-full max-w-[520px]">
         <div className="flex flex-col gap-6">
           <div className="flex items-center gap-3">

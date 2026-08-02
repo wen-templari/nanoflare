@@ -1,4 +1,4 @@
-import { Link, Table, Text } from "@cloudflare/kumo";
+import { LayerCard, Link, Table, Text } from "@cloudflare/kumo";
 import { Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -7,7 +7,7 @@ import type { Worker } from "../app/types";
 import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits";
 import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
-import { PageHeading, Panel } from "../components/shared/primitives";
+import { PageHeading } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 
@@ -39,7 +39,7 @@ export function WorkersPage() {
           )
         }
       />
-      <Panel flush>
+      <LayerCard>
         <div className="overflow-x-auto">
           <Table className="min-w-[720px]">
             <Table.Header>
@@ -62,7 +62,7 @@ export function WorkersPage() {
             </Table.Body>
           </Table>
         </div>
-      </Panel>
+      </LayerCard>
     </>
   );
 }

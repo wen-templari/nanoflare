@@ -16,11 +16,97 @@ func (s *Server) registerKVRoutes() {
 	s.mux.HandleFunc("PATCH "+base+"/kv-namespaces/{namespaceID}", s.updateKVNamespace)
 	s.mux.HandleFunc("DELETE "+base+"/kv-namespaces/{namespaceID}", s.deleteKVNamespace)
 	s.mux.HandleFunc("GET "+base+"/kv-namespaces/{namespaceID}/analytics", s.kvNamespaceMetrics)
+	namespaceValuesBase := base + "/kv-namespaces/{namespaceID}/values"
+	s.mux.HandleFunc("GET "+namespaceValuesBase, s.kvNamespaceList)
+	s.mux.HandleFunc("GET "+namespaceValuesBase+"/{key...}", s.kvNamespaceGet)
+	s.mux.HandleFunc("PUT "+namespaceValuesBase+"/{key...}", s.kvNamespacePut)
+	s.mux.HandleFunc("DELETE "+namespaceValuesBase+"/{key...}", s.kvNamespaceDelete)
 	workerBase := base + "/workers/{workerID}/kv-namespaces/{namespaceID}/values"
 	s.mux.HandleFunc("GET "+workerBase, s.workerKVList)
 	s.mux.HandleFunc("GET "+workerBase+"/{key...}", s.workerKVGet)
 	s.mux.HandleFunc("PUT "+workerBase+"/{key...}", s.workerKVPut)
 	s.mux.HandleFunc("DELETE "+workerBase+"/{key...}", s.workerKVDelete)
+}
+
+func (s *Server) kvNamespaceList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
+	keys, err := s.service.KVNamespaceListForOrg(controlOrgID(r), r.PathValue("namespaceID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, keys)
+}
+
+func (s *Server) kvNamespaceGet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
+	if r.PathValue("key") == "" {
+		s.kvNamespaceList(w, r)
+		return
+	}
+	key, err := consoleKVKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	value, ok, err := s.service.KVNamespaceGetForOrg(controlOrgID(r), r.PathValue("namespaceID"), key)
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(value)
+}
+
+func (s *Server) kvNamespacePut(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:write") {
+		return
+	}
+	key, err := consoleKVKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	defer r.Body.Close()
+	value, err := io.ReadAll(io.LimitReader(r.Body, maxKVValueSize+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(value) > maxKVValueSize {
+		writeError(w, http.StatusRequestEntityTooLarge, errors.New("KV value exceeds 25 MiB limit"))
+		return
+	}
+	if err := s.service.KVNamespacePutForOrg(controlOrgID(r), r.PathValue("namespaceID"), key, value); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) kvNamespaceDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:write") {
+		return
+	}
+	key, err := consoleKVKey(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.KVNamespaceDeleteForOrg(controlOrgID(r), r.PathValue("namespaceID"), key); err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) workerKVList(w http.ResponseWriter, r *http.Request) {

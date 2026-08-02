@@ -1,4 +1,4 @@
-import { ChartPalette, Tabs, Text, TimeseriesChart } from "@cloudflare/kumo";
+import { ChartPalette, LayerCard, Tabs, Text, TimeseriesChart } from "@cloudflare/kumo";
 import {
   Archive,
   BookOpen,
@@ -25,7 +25,7 @@ import { formatBytes, sortNamespaces } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { KVKeyDialog } from "../components/dialogs/kv-key-dialog";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
-import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives";
+import { Field } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -97,19 +97,10 @@ function KVNamespaceDetailContent({
     .filter(
       (worker, index, all) => all.findIndex((candidate) => candidate.id === worker.id) === index,
     );
-  const [accessorWorkerID, setAccessorWorkerID] = useState(accessorWorkers[0]?.id ?? "");
 
   useEffect(() => {
     setName(namespace.name);
   }, [namespace.id, namespace.name]);
-
-  useEffect(() => {
-    setAccessorWorkerID((current) =>
-      current && accessorWorkers.some((worker) => worker.id === current)
-        ? current
-        : (accessorWorkers[0]?.id ?? ""),
-    );
-  }, [namespace.id, accessorWorkers]);
 
   useEffect(() => {
     if (!apiConnected) {
@@ -131,20 +122,18 @@ function KVNamespaceDetailContent({
     };
   }, [activeOrgID, apiConnected, namespace.id]);
 
-  const activeWorker = accessorWorkers.find((worker) => worker.id === accessorWorkerID);
-  const namespaceBase = activeWorker
-    ? `/v1/workers/${activeWorker.id}/kv/namespaces/${encodeURIComponent(namespace.id)}`
+  const namespaceBase = activeOrgID
+    ? `/v1/organizations/${encodeURIComponent(activeOrgID)}/kv-namespaces/${encodeURIComponent(namespace.id)}/values`
     : "";
-  const filteredKeys = keys.filter(({ key }) =>
-    key.toLowerCase().includes(deferredSearch.trim().toLowerCase()),
-  );
+  const searchPrefix = deferredSearch.trim();
+  const filteredKeys = keys.filter(({ key }) => key.startsWith(searchPrefix));
 
   useEffect(() => {
     setKeys([]);
     setKeysStatus("");
     setSearch("");
     setDialogOpen(false);
-  }, [namespace.id, accessorWorkerID]);
+  }, [namespace.id]);
 
   useEffect(() => {
     if (!namespaceBase) {
@@ -180,7 +169,7 @@ function KVNamespaceDetailContent({
     return () => {
       cancelled = true;
     };
-  }, [namespaceBase, accessorWorkers.length]);
+  }, [namespaceBase]);
 
   function closeDialog() {
     setDialogOpen(false);
@@ -391,7 +380,7 @@ function KVNamespaceDetailContent({
           listClassName="max-w-full"
           tabs={[
             { label: "Overview", value: "overview" },
-            { label: "Keys", value: "keys" },
+            { label: "KV Pairs", value: "keys" },
             { label: "Settings", value: "settings" },
           ]}
           onValueChange={(value) => setTab(value as "overview" | "keys" | "settings")}
@@ -470,30 +459,37 @@ function KVNamespaceDetailContent({
             </div>
           </section>
 
-          <Panel title="Danger zone">
-            <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-              <div>
-                <Text bold size="sm">
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="h2" variant="heading3">
+                Danger zone
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="p-4">
+              <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <Text bold size="sm">
+                    Delete namespace
+                  </Text>
+                  <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
+                    Permanently remove this namespace and its keys. Worker bindings should be
+                    updated before deleting it.
+                  </Text>
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    setDeleteError("");
+                    setDeleteOpen(true);
+                  }}
+                  disabled={deleting || saving}
+                >
+                  <Trash2 className="size-3.5" />
                   Delete namespace
-                </Text>
-                <Text DANGEROUS_className="mt-1" size="sm" variant="secondary">
-                  Permanently remove this namespace and its keys. Worker bindings should be updated
-                  before deleting it.
-                </Text>
+                </Button>
               </div>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  setDeleteError("");
-                  setDeleteOpen(true);
-                }}
-                disabled={deleting || saving}
-              >
-                <Trash2 className="size-3.5" />
-                Delete namespace
-              </Button>
-            </div>
-          </Panel>
+            </LayerCard.Primary>
+          </LayerCard>
           <ConfirmDeleteDialog
             confirmLabel="Delete namespace"
             description="This action cannot be undone. All keys in this namespace will be permanently deleted."
@@ -505,52 +501,64 @@ function KVNamespaceDetailContent({
             title="Delete KV namespace"
           />
 
-          <Panel title="Bound workers">
-            {bindings.length ? (
-              <div className="space-y-3">
-                {bindings.map(({ worker, binding }) => (
-                  <div
-                    key={`${worker.id}-${binding.binding}`}
-                    className="rounded-lg border border-gray-200 bg-white px-4 py-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
-                        <p className="mt-1 font-mono text-[10px] text-[#7d837d]">
-                          {worker.hostname}
-                        </p>
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="h2" variant="heading3">
+                Bound workers
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="p-4">
+              {bindings.length ? (
+                <div className="space-y-3">
+                  {bindings.map(({ worker, binding }) => (
+                    <div
+                      key={`${worker.id}-${binding.binding}`}
+                      className="rounded-lg border border-gray-200 bg-white px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-extrabold text-[#35413e]">{worker.name}</p>
+                          <p className="mt-1 font-mono text-[10px] text-[#7d837d]">
+                            {worker.hostname}
+                          </p>
+                        </div>
+                        <Badge tone="green">{binding.binding}</Badge>
                       </div>
-                      <Badge tone="green">{binding.binding}</Badge>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm leading-6 text-[#7a8079]">
-                This namespace is not bound by any active deployment yet, so there is no worker path
-                available for key inspection.
-              </p>
-            )}
-          </Panel>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm leading-6 text-[#7a8079]">
+                  This namespace is not bound by any active deployment yet, so there is no worker
+                  path available for key inspection.
+                </p>
+              )}
+            </LayerCard.Primary>
+          </LayerCard>
         </div>
       )}
 
       {tab === "keys" && (
-        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
-            <div>
-              <h2 className="text-sm font-extrabold">Namespace keys</h2>
-            </div>
-          </header>
-          {activeWorker ? (
-            <div className="p-5">
+        <LayerCard>
+          <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
+            <Text as="h2" variant="heading3">
+              KV Pairs
+            </Text>
+            <Button type="button" onClick={openCreateDialog} disabled={!namespaceBase}>
+              <Plus className="size-3.5" />
+              Add entry
+            </Button>
+          </LayerCard.Secondary>
+          {namespaceBase ? (
+            <LayerCard.Primary className="px-5 py-4">
               <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
                   <Search className="size-4 text-[#959a93]" />
                   <Input
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search keys"
+                    aria-label="Search keys by prefix"
+                    placeholder="Search keys by prefix"
                     variant="unstyled"
                     className="min-w-0 flex-1"
                     inputClassName="h-10 bg-transparent p-0"
@@ -566,10 +574,6 @@ function KVNamespaceDetailContent({
                     <RefreshCw className={cn("size-3.5", keysLoading && "animate-spin")} />
                     Refresh
                   </Button>
-                  <Button type="button" onClick={openCreateDialog}>
-                    <Plus className="size-3.5" />
-                    New key
-                  </Button>
                 </div>
               </div>
 
@@ -580,7 +584,7 @@ function KVNamespaceDetailContent({
                       <tr className="border-b border-[#e5dfd4] font-mono text-[9px]   text-[#989b95]">
                         <th className="px-5 py-3">Key</th>
                         <th className="py-3">Size</th>
-                        <th className="py-3">Worker</th>
+                        <th className="py-3">Access</th>
                         <th className="pr-5 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -601,7 +605,7 @@ function KVNamespaceDetailContent({
                           <td className="py-4 font-mono text-[10px] text-[#727a74]">
                             {formatBytes(item.size)}
                           </td>
-                          <td className="py-4 text-[#7d837d]">{activeWorker.name}</td>
+                          <td className="py-4 text-[#7d837d]">Direct namespace access</td>
                           <td className="pr-5 py-4">
                             <div className="flex justify-end gap-2">
                               <Button
@@ -655,15 +659,17 @@ function KVNamespaceDetailContent({
                 <p className="font-mono text-[10px]   text-[#8a8f89]">{_keysStatus}</p>
               )}
             </div> */}
-            </div>
+            </LayerCard.Primary>
           ) : (
-            <WorkerDetailEmpty
-              icon={<KeyRound />}
-              title="No worker access yet"
-              copy="Bind this namespace to a live worker deployment to read or write shared keys."
-            />
+            <LayerCard.Primary>
+              <div className="flex min-h-[360px] items-center justify-center">
+                <Text size="sm" variant="secondary">
+                  Select an organization to manage this namespace.
+                </Text>
+              </div>
+            </LayerCard.Primary>
           )}
-        </section>
+        </LayerCard>
       )}
 
       <KVKeyDialog
@@ -705,16 +711,25 @@ function ResourceMetricChart({
     ),
   });
   return (
-    <TimeseriesChart
-      ariaDescription={ariaLabel}
-      data={[
-        data("Reads", reads, ChartPalette.categorical(0)),
-        data("Writes", writes, ChartPalette.categorical(1)),
-        data("Stored bytes", size, ChartPalette.categorical(2)),
-      ]}
-      echarts={echarts}
-      height={240}
-    />
+    <LayerCard>
+      <LayerCard.Secondary>
+        <Text as="h2" variant="heading3">
+          Operations
+        </Text>
+      </LayerCard.Secondary>
+      <LayerCard.Primary className="px-5 py-4">
+        <TimeseriesChart
+          ariaDescription={ariaLabel}
+          data={[
+            data("Reads", reads, ChartPalette.categorical(0)),
+            data("Writes", writes, ChartPalette.categorical(1)),
+            data("Stored bytes", size, ChartPalette.categorical(2)),
+          ]}
+          echarts={echarts}
+          height={240}
+        />
+      </LayerCard.Primary>
+    </LayerCard>
   );
 }
 

@@ -16,6 +16,7 @@ import { OAuthAuthorizePage } from "./pages/oauth-authorize-page";
 import { OAuthClientDetailPage } from "./pages/oauth-client-detail-page";
 import { ObjectStorageBucketDetailPage } from "./pages/object-storage-bucket-detail-page";
 import { ObjectStorageBucketsPage } from "./pages/object-storage-buckets-page";
+import { ObjectStorageObjectDetailPage } from "./pages/object-storage-object-detail-page";
 import { OverviewPage } from "./pages/overview-page";
 import { SettingsPage } from "./pages/settings-page";
 import { WorkerDetailPage } from "./pages/worker-detail-page";
@@ -41,6 +42,10 @@ export function App() {
               <Route path="databases/:databaseId" element={<DatabaseDetailPage />} />
               <Route path="object-storage" element={<ObjectStorageBucketsPage />} />
               <Route path="object-storage/:bucketId" element={<ObjectStorageBucketDetailPage />} />
+              <Route
+                path="object-storage/:bucketId/objects/*"
+                element={<ObjectStorageObjectDetailPage />}
+              />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="settings/oauth-clients/:clientId" element={<OAuthClientDetailPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />

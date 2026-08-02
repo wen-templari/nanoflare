@@ -1596,8 +1596,10 @@ func (s *Store) AppIDForCapability(capability string) (string, error) {
 func (s *Store) KVGet(capability, namespaceID, key string) ([]byte, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if _, ok := s.capabilityToApp[capability]; !ok {
-		return nil, false, ErrInvalidCapability
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return nil, false, ErrInvalidCapability
+		}
 	}
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return nil, false, ErrKVNamespaceNotFound
@@ -1609,8 +1611,10 @@ func (s *Store) KVGet(capability, namespaceID, key string) ([]byte, bool, error)
 func (s *Store) KVList(capability, namespaceID string) ([]WorkerKVKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if _, ok := s.capabilityToApp[capability]; !ok {
-		return nil, ErrInvalidCapability
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return nil, ErrInvalidCapability
+		}
 	}
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return nil, ErrKVNamespaceNotFound
@@ -1626,8 +1630,10 @@ func (s *Store) KVList(capability, namespaceID string) ([]WorkerKVKey, error) {
 func (s *Store) KVPut(capability, namespaceID, key string, value []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.capabilityToApp[capability]; !ok {
-		return ErrInvalidCapability
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return ErrInvalidCapability
+		}
 	}
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return ErrKVNamespaceNotFound
@@ -1642,8 +1648,10 @@ func (s *Store) KVPut(capability, namespaceID, key string, value []byte) error {
 func (s *Store) KVValueSize(capability, namespaceID, key string) (int64, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if _, ok := s.capabilityToApp[capability]; !ok {
-		return 0, false, ErrInvalidCapability
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return 0, false, ErrInvalidCapability
+		}
 	}
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return 0, false, ErrKVNamespaceNotFound
@@ -1658,8 +1666,10 @@ func (s *Store) KVValueSize(capability, namespaceID, key string) (int64, bool, e
 func (s *Store) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.capabilityToApp[capability]; !ok {
-		return 0, ErrInvalidCapability
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return 0, ErrInvalidCapability
+		}
 	}
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return 0, ErrKVNamespaceNotFound
@@ -1682,8 +1692,10 @@ func (s *Store) KVPutWithSizeDelta(capability, namespaceID, key string, value []
 func (s *Store) KVDelete(capability, namespaceID, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.capabilityToApp[capability]; !ok {
-		return ErrInvalidCapability
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return ErrInvalidCapability
+		}
 	}
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return ErrKVNamespaceNotFound
@@ -1695,8 +1707,10 @@ func (s *Store) KVDelete(capability, namespaceID, key string) error {
 func (s *Store) KVDeleteWithSizeDelta(capability, namespaceID, key string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.capabilityToApp[capability]; !ok {
-		return 0, ErrInvalidCapability
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return 0, ErrInvalidCapability
+		}
 	}
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return 0, ErrKVNamespaceNotFound

@@ -1,10 +1,10 @@
-import { Empty, Table, Text } from "@cloudflare/kumo";
+import { Empty, LayerCard, Table, Text } from "@cloudflare/kumo";
 import { Database, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
-import { PageHeading, Panel } from "../components/shared/primitives";
+import { PageHeading } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 
@@ -26,7 +26,7 @@ export function DatabasesPage() {
           </Button>
         }
       />
-      <Panel flush>
+      <LayerCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <Table className="min-w-[760px]" layout="fixed">
             <Table.Header>
@@ -84,7 +84,7 @@ export function DatabasesPage() {
             description="Create one to bind SQLite into a worker"
           />
         )}
-      </Panel>
+      </LayerCard>
     </>
   );
 }

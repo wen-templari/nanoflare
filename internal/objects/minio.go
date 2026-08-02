@@ -138,8 +138,14 @@ func (m *MinIO) List(appID, prefix string) ([]nanoflare.ObjectInfo, error) {
 		if object.Err != nil {
 			return nil, object.Err
 		}
-		relative := strings.TrimPrefix(object.Key, path.Join("apps", appID)+"/")
-		objects = append(objects, objectInfo(relative, object))
+		// ListObjects does not consistently populate ContentType. Stat each object so
+		// callers receive the same HTTP metadata from list and object-detail views.
+		info, err := m.client.StatObject(context.Background(), m.bucket, object.Key, minio.StatObjectOptions{})
+		if err != nil {
+			return nil, minioNotFound(err)
+		}
+		relative := strings.TrimPrefix(info.Key, path.Join("apps", appID)+"/")
+		objects = append(objects, objectInfo(relative, info))
 	}
 	return objects, nil
 }

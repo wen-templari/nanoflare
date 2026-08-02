@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { LayerCard, Meter, Text } from "@cloudflare/kumo";
+import { Meter, Text } from "@cloudflare/kumo";
 import { Activity } from "lucide-react";
 export { Field } from "@cloudflare/kumo";
 
@@ -17,51 +17,17 @@ export function PageHeading({
   return (
     <div className="mb-10 flex items-start justify-between gap-6 py-2">
       <div>
-        <Text as="h1" DANGEROUS_className="flex h-12 items-center" variant="heading1">
+        <Text as="h1" DANGEROUS_className="flex items-center" variant="heading1">
           {title}
         </Text>
         {copy && (
-          <Text DANGEROUS_className="mt-3 max-w-[620px]" size="sm" variant="secondary">
+          <Text DANGEROUS_className="mt-2 max-w-[620px]" variant="secondary">
             {copy}
           </Text>
         )}
       </div>
       {actions}
     </div>
-  );
-}
-
-export function Panel({
-  title,
-  eyebrow,
-  children,
-  flush = false,
-}: {
-  title?: string;
-  eyebrow?: string;
-  children: ReactNode;
-  flush?: boolean;
-}) {
-  const hasHeader = Boolean(title || eyebrow);
-
-  return (
-    <LayerCard className="overflow-hidden">
-      {hasHeader && (
-        <div className="border-b border-kumo-line px-5 py-3">
-          {eyebrow && (
-            <Text as="p" size="xs" variant="secondary">
-              {eyebrow}
-            </Text>
-          )}
-          {title && (
-            <Text as="h2" DANGEROUS_className="mt-0.5" variant="heading3">
-              {title}
-            </Text>
-          )}
-        </div>
-      )}
-      {flush ? children : <div className="px-5 py-4">{children}</div>}
-    </LayerCard>
   );
 }
 

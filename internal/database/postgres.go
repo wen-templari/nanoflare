@@ -2252,8 +2252,10 @@ func (p *Postgres) AppIDForCapability(capability string) (string, error) {
 }
 
 func (p *Postgres) KVGet(capability, namespaceID, key string) ([]byte, bool, error) {
-	if _, err := p.AppIDForCapability(capability); err != nil {
-		return nil, false, err
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return nil, false, err
+		}
 	}
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return nil, false, err
@@ -2267,8 +2269,10 @@ func (p *Postgres) KVGet(capability, namespaceID, key string) ([]byte, bool, err
 }
 
 func (p *Postgres) KVValueSize(capability, namespaceID, key string) (int64, bool, error) {
-	if _, err := p.AppIDForCapability(capability); err != nil {
-		return 0, false, err
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return 0, false, err
+		}
 	}
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return 0, false, err
@@ -2282,8 +2286,10 @@ func (p *Postgres) KVValueSize(capability, namespaceID, key string) (int64, bool
 }
 
 func (p *Postgres) KVList(capability, namespaceID string) ([]nanoflare.WorkerKVKey, error) {
-	if _, err := p.AppIDForCapability(capability); err != nil {
-		return nil, err
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return nil, err
@@ -2305,8 +2311,10 @@ func (p *Postgres) KVList(capability, namespaceID string) ([]nanoflare.WorkerKVK
 }
 
 func (p *Postgres) KVPut(capability, namespaceID, key string, value []byte) error {
-	if _, err := p.AppIDForCapability(capability); err != nil {
-		return err
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return err
+		}
 	}
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return err
@@ -2318,8 +2326,10 @@ ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value`, namesp
 }
 
 func (p *Postgres) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error) {
-	if _, err := p.AppIDForCapability(capability); err != nil {
-		return 0, err
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return 0, err
+		}
 	}
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return 0, err
@@ -2365,8 +2375,10 @@ func randomToken() (string, error) {
 }
 
 func (p *Postgres) KVDelete(capability, namespaceID, key string) error {
-	if _, err := p.AppIDForCapability(capability); err != nil {
-		return err
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return err
+		}
 	}
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return err
@@ -2376,8 +2388,10 @@ func (p *Postgres) KVDelete(capability, namespaceID, key string) error {
 }
 
 func (p *Postgres) KVDeleteWithSizeDelta(capability, namespaceID, key string) (int64, error) {
-	if _, err := p.AppIDForCapability(capability); err != nil {
-		return 0, err
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return 0, err
+		}
 	}
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return 0, err

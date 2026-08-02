@@ -9,7 +9,7 @@ import { activeOrgID, apiClient } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
-import { EmptyMetrics, PageHeading, Panel } from "../components/shared/primitives";
+import { EmptyMetrics, PageHeading } from "../components/shared/primitives";
 import { echarts } from "../lib/kumo-echarts";
 
 export function OverviewPage() {
@@ -150,11 +150,11 @@ export function OverviewPage() {
 
 function toTraffic(data: {
   available?: boolean;
-  total_requests?: { value: number }[] | null;
-  invocations?: { value: number }[] | null;
-  requests?: { value: number }[] | null;
-  errors?: { value: number }[] | null;
-  cpu_time_p90_ms?: { value: number }[] | null;
+  total_requests?: { timestamp: string; value: number }[] | null;
+  invocations?: { timestamp: string; value: number }[] | null;
+  requests?: { timestamp: string; value: number }[] | null;
+  errors?: { timestamp: string; value: number }[] | null;
+  cpu_time_p90_ms?: { timestamp: string; value: number }[] | null;
 }): WorkerTraffic {
   const requests = data.invocations ?? data.requests ?? [];
   const errors = data.errors ?? [];
@@ -170,12 +170,14 @@ function toTraffic(data: {
     bundle_size: 0,
     total_requests: totalRequests.map((point) => point.value),
     traffic: requests.map((point) => point.value),
+    request_series: requests,
     error_series: errors.map((point) => point.value),
     cpu_time_p90_ms: cpuTimeP90.map((point) => point.value),
     duration_ms_avg: 0,
     duration_ms_p95: 0,
     duration_ms_per_second: 0,
     duration_series: [],
+    duration_timeseries: [],
     status_codes: [],
   };
 }
