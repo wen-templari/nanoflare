@@ -928,6 +928,8 @@ function ObjectMetricChart({
       ]}
       echarts={echarts}
       height={240}
+      tooltipValueFormat={formatBytes}
+      yAxisTickFormat={formatBytes}
     />
   );
 }
