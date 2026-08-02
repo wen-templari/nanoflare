@@ -580,9 +580,8 @@ console opens with demo workers and local page and storage management state.
 
 The development Compose stack also starts Prometheus at
 `http://127.0.0.1:9090`. Traefik publishes request metrics on its internal
-metrics endpoint, and Prometheus scrapes them every 15 seconds. The console's
-Monitoring view queries Prometheus through Vite's `/prometheus` development
-proxy.
+metrics endpoint, and Prometheus scrapes them every 15 seconds. `nanoflared`
+queries Prometheus to serve the console's Monitoring view.
 
 The Compose stack also starts Vector and Loki for logs. Vector labels worker
 output with its worker and deployment IDs before writing it to Loki; Grafana at

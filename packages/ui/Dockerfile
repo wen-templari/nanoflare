@@ -15,7 +15,6 @@ RUN pnpm --filter @nanoflare/ui run build
 FROM nginx:1.27-alpine
 
 ENV NANOFLARED_UPSTREAM=http://nanoflared:8080
-ENV PROMETHEUS_UPSTREAM=http://prometheus:9090
 
 COPY packages/ui/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /workspace/packages/ui/dist/ /usr/share/nginx/html/

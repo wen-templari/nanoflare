@@ -11,10 +11,6 @@ export default defineConfig(({ mode }) => {
       proxy: {
         "/v1": nanoflared,
         "/healthz": nanoflared,
-        "/prometheus": {
-          target: "http://127.0.0.1:9090",
-          rewrite: (path) => path.replace(/^\/prometheus/, ""),
-        },
       },
     },
   };
