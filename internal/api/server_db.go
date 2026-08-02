@@ -18,8 +18,7 @@ func (s *Server) registerDBRoutes() {
 	s.mux.HandleFunc("GET "+base, s.listDatabases)
 	s.mux.HandleFunc("POST "+base, s.createDatabase)
 	s.mux.HandleFunc("DELETE "+base+"/{databaseID}", s.deleteDatabase)
-	s.mux.HandleFunc("GET "+base+"/{databaseID}/analytics", s.databaseMetrics)
-	s.mux.HandleFunc("GET "+base+"/{databaseID}/analytics/timeseries", s.databaseMetricsTimeseries)
+	s.mux.HandleFunc("GET "+base+"/{databaseID}/analytics", s.databaseMetricsTimeseries)
 	s.mux.HandleFunc("POST "+base+"/{databaseID}/queries", s.executeDatabase)
 	s.mux.HandleFunc("POST "+base+"/{databaseID}/migrations", s.applyDatabaseMigration)
 }

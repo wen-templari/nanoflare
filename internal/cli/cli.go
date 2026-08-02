@@ -1072,11 +1072,14 @@ func organizationScopedURL(target, orgID string) (string, error) {
 			}
 			if resource == "workers" {
 				rest = strings.Replace(rest, "/deployments/traffic", "/deployment-traffic", 1)
-				rest = strings.Replace(rest, "/traffic", "/analytics/traffic", 1)
+				rest = strings.Replace(rest, "/traffic", "/analytics", 1)
 			}
 			if resource == "databases" {
 				rest = strings.Replace(rest, "/execute", "/queries", 1)
-				rest = strings.Replace(rest, "/metrics/timeseries", "/analytics/timeseries", 1)
+				rest = strings.Replace(rest, "/metrics/timeseries", "/analytics", 1)
+				rest = strings.Replace(rest, "/metrics", "/analytics", 1)
+			}
+			if resource == "kv-namespaces" || resource == "object-storage-buckets" {
 				rest = strings.Replace(rest, "/metrics", "/analytics", 1)
 			}
 			parsed.Path = "/v1/organizations/" + url.PathEscape(orgID) + "/" + resource + rest

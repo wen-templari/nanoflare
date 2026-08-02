@@ -2,29 +2,35 @@ package metrics
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/prometheus/common/model"
 )
 
 func TestTrafficQueriesRouterMetrics(t *testing.T) {
 	var queries []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("query")
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		query := r.Form.Get("query")
 		queries = append(queries, query)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "query_range"):
-			fmt.Fprint(w, `{"status":"success","data":{"result":[{"values":[[1,"2.5"],[2,"3.5"]]}]}}`)
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1,"2.5"],[2,"3.5"]]}]}}`)
 		case strings.Contains(query, "duration"):
-			fmt.Fprint(w, `{"status":"success","data":{"result":[{"value":[1,"0.084"]}]}}`)
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[1,"0.084"]}]}}`)
 		case strings.Contains(query, `code=~"5.."`):
-			fmt.Fprint(w, `{"status":"success","data":{"result":[{"value":[1,"0.25"]}]}}`)
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[1,"0.25"]}]}}`)
 		case strings.Contains(query, "sum by (code)"):
-			fmt.Fprint(w, `{"status":"success","data":{"result":[{"metric":{"code":"200"},"value":[1,"3.75"]},{"metric":{"code":"500"},"value":[1,"0.25"]}]}}`)
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"code":"200"},"value":[1,"3.75"]},{"metric":{"code":"500"},"value":[1,"0.25"]}]}}`)
 		default:
-			fmt.Fprint(w, `{"status":"success","data":{"result":[{"value":[1,"4"]}]}}`)
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[1,"4"]}]}}`)
 		}
 	}))
 	defer server.Close()
@@ -64,9 +70,12 @@ func TestTrafficQueriesRouterMetrics(t *testing.T) {
 func TestDatabaseMetricsTimeseriesQueriesPrometheus(t *testing.T) {
 	var queries []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		queries = append(queries, r.URL.Query().Get("query"))
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		queries = append(queries, r.Form.Get("query"))
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"success","data":{"result":[{"values":[[1,"2"],[2,"3"]]}]}}`)
+		fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1,"2"],[2,"3"]]}]}}`)
 	}))
 	defer server.Close()
 
@@ -77,8 +86,8 @@ func TestDatabaseMetricsTimeseriesQueriesPrometheus(t *testing.T) {
 	if !series.Available || len(series.Queries) != 2 || series.Queries[1].Value != 3 || series.Queries[0].Timestamp.IsZero() {
 		t.Fatalf("unexpected database series: %#v", series)
 	}
-	if len(queries) != 10 {
-		t.Fatalf("got %d queries, want 10: %#v", len(queries), queries)
+	if len(queries) != 12 {
+		t.Fatalf("got %d queries, want 12: %#v", len(queries), queries)
 	}
 	for _, query := range queries {
 		if !strings.Contains(query, `database_id="db_123"`) {
@@ -90,6 +99,20 @@ func TestDatabaseMetricsTimeseriesQueriesPrometheus(t *testing.T) {
 	}
 	if !queryWasSent(queries, `histogram_quantile(0.99, sum by (le) (rate(nanoflare_db_query_duration_seconds_bucket{database_id="db_123"}[5m]))) * 1000`) {
 		t.Fatalf("missing p99 latency range query: %#v", queries)
+	}
+	if !queryWasSent(queries, `sum(increase(nanoflare_db_rows_returned_total{database_id="db_123"}[5m]))`) {
+		t.Fatalf("missing rows returned query: %#v", queries)
+	}
+}
+
+func TestPointsForStreamDropsNonFiniteValues(t *testing.T) {
+	points := pointsForStream(&model.SampleStream{Values: []model.SamplePair{
+		{Timestamp: 1, Value: 3.5},
+		{Timestamp: 2, Value: model.SampleValue(math.NaN())},
+		{Timestamp: 3, Value: model.SampleValue(math.Inf(1))},
+	}})
+	if len(points) != 1 || points[0].Value != 3.5 {
+		t.Fatalf("points = %#v, want only the finite sample", points)
 	}
 }
 

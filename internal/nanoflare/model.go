@@ -508,17 +508,50 @@ type MetricPoint struct {
 }
 
 type DatabaseMetricsTimeseries struct {
-	Available    bool          `json:"available"`
-	Queries      []MetricPoint `json:"queries"`
-	ReadQueries  []MetricPoint `json:"read_queries"`
-	WriteQueries []MetricPoint `json:"write_queries"`
-	RowsRead     []MetricPoint `json:"rows_read"`
-	RowsWritten  []MetricPoint `json:"rows_written"`
-	StorageBytes []MetricPoint `json:"storage_bytes"`
-	TableCount   []MetricPoint `json:"table_count"`
-	P50LatencyMS []MetricPoint `json:"p50_latency_ms"`
-	P95LatencyMS []MetricPoint `json:"p95_latency_ms"`
-	P99LatencyMS []MetricPoint `json:"p99_latency_ms"`
+	Available       bool          `json:"available"`
+	Queries         []MetricPoint `json:"queries"`
+	ReadQueries     []MetricPoint `json:"read_queries"`
+	WriteQueries    []MetricPoint `json:"write_queries"`
+	RowsRead        []MetricPoint `json:"rows_read"`
+	RowsReturned    []MetricPoint `json:"rows_returned"`
+	RowsWritten     []MetricPoint `json:"rows_written"`
+	StorageBytes    []MetricPoint `json:"storage_bytes"`
+	TableCount      []MetricPoint `json:"table_count"`
+	DurationTotalMS []MetricPoint `json:"duration_total_ms"`
+	P50LatencyMS    []MetricPoint `json:"p50_latency_ms"`
+	P95LatencyMS    []MetricPoint `json:"p95_latency_ms"`
+	P99LatencyMS    []MetricPoint `json:"p99_latency_ms"`
+}
+
+type KVNamespaceMetricsTimeseries struct {
+	Available bool          `json:"available"`
+	Reads     []MetricPoint `json:"reads"`
+	Writes    []MetricPoint `json:"writes"`
+	Size      []MetricPoint `json:"size"`
+}
+
+type ObjectStorageBucketMetricsTimeseries struct {
+	Available bool          `json:"available"`
+	Reads     []MetricPoint `json:"reads"`
+	Writes    []MetricPoint `json:"writes"`
+	Size      []MetricPoint `json:"size"`
+}
+
+type WorkerStatusCodeTimeseries struct {
+	Code   string        `json:"code"`
+	Points []MetricPoint `json:"points"`
+}
+
+type WorkerMetricsTimeseries struct {
+	Available           bool                         `json:"available"`
+	Requests            []MetricPoint                `json:"requests"`
+	Errors              []MetricPoint                `json:"errors"`
+	ErrorRate           []MetricPoint                `json:"error_rate"`
+	P95LatencyMS        []MetricPoint                `json:"p95_latency_ms"`
+	StatusCodes         []WorkerStatusCodeTimeseries `json:"status_codes"`
+	DurationAvgMS       []MetricPoint                `json:"duration_avg_ms"`
+	DurationP95MS       []MetricPoint                `json:"duration_p95_ms"`
+	DurationMSPerSecond []MetricPoint                `json:"duration_ms_per_second"`
 }
 
 type DatabaseQueryMetricsInput struct {

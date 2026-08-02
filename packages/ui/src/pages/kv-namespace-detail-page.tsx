@@ -1,4 +1,4 @@
-import { Tabs, Text } from "@cloudflare/kumo";
+import { ChartPalette, Tabs, Text, TimeseriesChart } from "@cloudflare/kumo";
 import {
   Archive,
   BookOpen,
@@ -16,9 +16,9 @@ import {
 import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 
-import type { KVNamespaceMetrics, WorkerKVKey } from "../app/types";
+import type { KVNamespaceMetricsTimeseries, WorkerKVKey } from "../app/types";
 
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+import { apiClient, apiFetch, errorText, fetchJSON } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortNamespaces } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
@@ -28,9 +28,14 @@ import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { echarts } from "../lib/kumo-echarts";
 import { cn } from "../lib/utils";
 
 const kvNamespaceDetailTabs = ["overview", "keys", "settings"] as const;
+
+function latestMetric(points: { value: number }[] | null | undefined) {
+  return points?.[points.length - 1]?.value ?? 0;
+}
 
 export function KVNamespaceDetailPage() {
   const navigate = useNavigate();
@@ -51,7 +56,7 @@ function KVNamespaceDetailContent({
   namespace: { id: string; name: string; created_at: string };
   onBack: () => void;
 }) {
-  const { workers, setNamespaces, notify, apiConnected } = useWorkspace();
+  const { workers, setNamespaces, notify, apiConnected, activeOrgID } = useWorkspace();
   const [tab, setTab] = useQueryTab<(typeof kvNamespaceDetailTabs)[number]>(
     kvNamespaceDetailTabs,
     "overview",
@@ -64,11 +69,11 @@ function KVNamespaceDetailContent({
   const [keys, setKeys] = useState<WorkerKVKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
   const [_keysStatus, setKeysStatus] = useState("");
-  const [metrics, setMetrics] = useState<KVNamespaceMetrics>({
+  const [metrics, setMetrics] = useState<KVNamespaceMetricsTimeseries>({
     available: false,
-    reads: 0,
-    writes: 0,
-    size: 0,
+    reads: [],
+    writes: [],
+    size: [],
   });
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
@@ -106,14 +111,17 @@ function KVNamespaceDetailContent({
 
   useEffect(() => {
     if (!apiConnected) {
-      setMetrics({ available: false, reads: 0, writes: 0, size: 0 });
+      setMetrics({ available: false, reads: [], writes: [], size: [] });
       return;
     }
     let cancelled = false;
     async function loadMetrics() {
-      const nextMetrics = await fetchJSON<KVNamespaceMetrics>(
-        `/v1/kv/namespaces/${encodeURIComponent(namespace.id)}/metrics`,
-      ).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }));
+      const nextMetrics = await apiClient
+        .GET("/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/analytics", {
+          params: { path: { orgID: activeOrgID, namespaceID: namespace.id } },
+          parseAs: "json",
+        })
+        .then(({ data }) => data ?? { available: false, reads: [], writes: [], size: [] });
       if (!cancelled) setMetrics(nextMetrics);
     }
     void loadMetrics();
@@ -122,7 +130,7 @@ function KVNamespaceDetailContent({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [apiConnected, namespace.id]);
+  }, [activeOrgID, apiConnected, namespace.id]);
 
   const activeWorker = accessorWorkers.find((worker) => worker.id === accessorWorkerID);
   const namespaceBase = activeWorker
@@ -337,19 +345,19 @@ function KVNamespaceDetailContent({
   const cards = [
     {
       label: "Reads",
-      value: compactNumber(metrics.reads),
+      value: compactNumber(latestMetric(metrics.reads)),
       note: metrics.available ? "runtime KV reads" : "metrics unavailable",
       icon: BookOpen,
     },
     {
       label: "Writes",
-      value: compactNumber(metrics.writes),
+      value: compactNumber(latestMetric(metrics.writes)),
       note: metrics.available ? "runtime KV writes" : "metrics unavailable",
       icon: Workflow,
     },
     {
       label: "Size",
-      value: formatBytes(metrics.size),
+      value: formatBytes(latestMetric(metrics.size)),
       note: metrics.available ? "stored value bytes" : "metrics unavailable",
       icon: HardDrive,
     },
@@ -393,21 +401,29 @@ function KVNamespaceDetailContent({
       </div>
 
       {tab === "overview" && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-          {cards.map(({ label, value, note, icon: Icon }, index) => (
-            <div
-              key={label}
-              style={{ animationDelay: `${index * 60}ms` }}
-              className="rounded-lg border border-gray-200 bg-white p-4"
-            >
-              <div className="flex items-center justify-between">
-                <p className="font-mono text-[9px] text-gray-500">{label}</p>
-                <Icon className="size-3.5 text-blue-600" />
+        <div className="space-y-6">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+            {cards.map(({ label, value, note, icon: Icon }, index) => (
+              <div
+                key={label}
+                style={{ animationDelay: `${index * 60}ms` }}
+                className="rounded-lg border border-gray-200 bg-white p-4"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="font-mono text-[9px] text-gray-500">{label}</p>
+                  <Icon className="size-3.5 text-blue-600" />
+                </div>
+                <p className="mt-3 text-3xl font-semibold">{value}</p>
+                <p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p>
               </div>
-              <p className="mt-3 text-3xl font-semibold">{value}</p>
-              <p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p>
-            </div>
-          ))}
+            ))}
+          </div>
+          <ResourceMetricChart
+            reads={metrics.reads}
+            writes={metrics.writes}
+            size={metrics.size}
+            ariaLabel="KV namespace activity over the last 24 hours."
+          />
         </div>
       )}
 
@@ -664,6 +680,42 @@ function KVNamespaceDetailContent({
         onSubmit={(event) => void submitKey(event)}
       />
     </>
+  );
+}
+
+function ResourceMetricChart({
+  reads,
+  writes,
+  size,
+  ariaLabel,
+}: {
+  reads: { timestamp: string; value: number }[] | null;
+  writes: { timestamp: string; value: number }[] | null;
+  size: { timestamp: string; value: number }[] | null;
+  ariaLabel: string;
+}) {
+  const data = (
+    name: string,
+    points: { timestamp: string; value: number }[] | null,
+    color: string,
+  ) => ({
+    name,
+    color,
+    data: (points ?? []).map(
+      (point) => [Date.parse(point.timestamp), point.value] as [number, number],
+    ),
+  });
+  return (
+    <TimeseriesChart
+      ariaDescription={ariaLabel}
+      data={[
+        data("Reads", reads, ChartPalette.categorical(0)),
+        data("Writes", writes, ChartPalette.categorical(1)),
+        data("Stored bytes", size, ChartPalette.categorical(2)),
+      ]}
+      echarts={echarts}
+      height={240}
+    />
   );
 }
 

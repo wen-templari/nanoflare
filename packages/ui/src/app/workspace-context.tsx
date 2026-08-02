@@ -67,7 +67,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}", {
                 params: { path: { orgID: auth.activeOrgID, workerID: app.id } },
               }),
-              apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/analytics/traffic", {
+              apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/analytics", {
                 params: { path: { orgID: auth.activeOrgID, workerID: app.id } },
               }),
             ]);
@@ -76,7 +76,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               ...app,
               status: detail.data?.deployment ? ("live" as const) : ("draft" as const),
               requests: traffic.data?.available
-                ? formatCount(traffic.data.invocations)
+                ? formatCount(traffic.data.requests?.[traffic.data.requests.length - 1]?.value ?? 0)
                 : "unavailable",
               deployment: detail.data?.deployment?.id ?? "awaiting deploy",
               bindings: detail.data?.deployment?.bindings ?? [],

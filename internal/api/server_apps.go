@@ -22,7 +22,7 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("GET "+base+"/{workerID}", s.workerDetail)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/files", s.workerFiles)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/output", s.workerOutput)
-	s.mux.HandleFunc("GET "+base+"/{workerID}/analytics/traffic", s.workerTraffic)
+	s.mux.HandleFunc("GET "+base+"/{workerID}/analytics", s.workerTraffic)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("PUT "+base+"/{workerID}/deployment-traffic", s.setWorkerDeploymentTraffic)
 	s.mux.HandleFunc("POST "+base+"/{workerID}/deployments", s.deploy)
@@ -140,13 +140,13 @@ func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "workers:read") {
 		return
 	}
-	traffic, err := s.service.WorkerTrafficForOrg(controlOrgID(r), r.PathValue("workerID"))
+	traffic, err := s.service.WorkerMetricsTimeseriesForOrg(controlOrgID(r), r.PathValue("workerID"))
 	if err != nil {
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			writeWorkerError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, nanoflare.WorkerTraffic{})
+		writeJSON(w, http.StatusOK, nanoflare.WorkerMetricsTimeseries{})
 		return
 	}
 	writeJSON(w, http.StatusOK, traffic)

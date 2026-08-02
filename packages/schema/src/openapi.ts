@@ -449,23 +449,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** getDatabaseMetricsTimeseries */
-    get: operations["getDatabaseMetricsTimeseries"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/v1/organizations/{orgID}/databases/{databaseID}/migrations": {
     parameters: {
       query?: never;
@@ -924,15 +907,15 @@ export interface paths {
     patch: operations["updateWorker"];
     trace?: never;
   };
-  "/v1/organizations/{orgID}/workers/{workerID}/analytics/traffic": {
+  "/v1/organizations/{orgID}/workers/{workerID}/analytics": {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** getWorkerTraffic */
-    get: operations["getWorkerTraffic"];
+    /** getWorkerMetrics */
+    get: operations["getWorkerMetrics"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1435,6 +1418,7 @@ export interface components {
       size_after: number;
     };
     D1Result: {
+      columns?: string[] | null;
       meta: components["schemas"]["D1Meta"];
       results:
         | {
@@ -1487,61 +1471,6 @@ export interface components {
       binding: string;
       database_id: string;
     };
-    DatabaseMetrics: {
-      /**
-       * Format: uri
-       * @description A URL to the JSON Schema for this object.
-       * @example https://example.com/schemas/DatabaseMetrics.json
-       */
-      readonly $schema?: string;
-      available: boolean;
-      /** Format: int64 */
-      duration_bucket_0_5: number;
-      /** Format: int64 */
-      duration_bucket_1: number;
-      /** Format: int64 */
-      duration_bucket_10: number;
-      /** Format: int64 */
-      duration_bucket_100: number;
-      /** Format: int64 */
-      duration_bucket_1000: number;
-      /** Format: int64 */
-      duration_bucket_25: number;
-      /** Format: int64 */
-      duration_bucket_250: number;
-      /** Format: int64 */
-      duration_bucket_2_5: number;
-      /** Format: int64 */
-      duration_bucket_5: number;
-      /** Format: int64 */
-      duration_bucket_50: number;
-      /** Format: int64 */
-      duration_bucket_500: number;
-      /** Format: int64 */
-      duration_bucket_inf: number;
-      /** Format: double */
-      p50_duration_ms: number;
-      /** Format: double */
-      p99_duration_ms: number;
-      /** Format: int64 */
-      queries: number;
-      /** Format: int64 */
-      read_queries: number;
-      /** Format: int64 */
-      rows_read: number;
-      /** Format: int64 */
-      rows_returned: number;
-      /** Format: int64 */
-      rows_written: number;
-      /** Format: int64 */
-      storage_bytes: number;
-      /** Format: int64 */
-      table_count: number;
-      /** Format: double */
-      total_duration_ms: number;
-      /** Format: int64 */
-      write_queries: number;
-    };
     DatabaseMetricsTimeseries: {
       /**
        * Format: uri
@@ -1550,12 +1479,14 @@ export interface components {
        */
       readonly $schema?: string;
       available: boolean;
+      duration_total_ms: components["schemas"]["MetricPoint"][] | null;
       p50_latency_ms: components["schemas"]["MetricPoint"][] | null;
       p95_latency_ms: components["schemas"]["MetricPoint"][] | null;
       p99_latency_ms: components["schemas"]["MetricPoint"][] | null;
       queries: components["schemas"]["MetricPoint"][] | null;
       read_queries: components["schemas"]["MetricPoint"][] | null;
       rows_read: components["schemas"]["MetricPoint"][] | null;
+      rows_returned: components["schemas"]["MetricPoint"][] | null;
       rows_written: components["schemas"]["MetricPoint"][] | null;
       storage_bytes: components["schemas"]["MetricPoint"][] | null;
       table_count: components["schemas"]["MetricPoint"][] | null;
@@ -1656,20 +1587,17 @@ export interface components {
       oauth_client_id?: string;
       org_id?: string;
     };
-    KVNamespaceMetrics: {
+    KVNamespaceMetricsTimeseries: {
       /**
        * Format: uri
        * @description A URL to the JSON Schema for this object.
-       * @example https://example.com/schemas/KVNamespaceMetrics.json
+       * @example https://example.com/schemas/KVNamespaceMetricsTimeseries.json
        */
       readonly $schema?: string;
       available: boolean;
-      /** Format: int64 */
-      reads: number;
-      /** Format: int64 */
-      size: number;
-      /** Format: int64 */
-      writes: number;
+      reads: components["schemas"]["MetricPoint"][] | null;
+      size: components["schemas"]["MetricPoint"][] | null;
+      writes: components["schemas"]["MetricPoint"][] | null;
     };
     LoginInput: {
       /**
@@ -1853,20 +1781,17 @@ export interface components {
       binding: string;
       bucket_id: string;
     };
-    ObjectStorageBucketMetrics: {
+    ObjectStorageBucketMetricsTimeseries: {
       /**
        * Format: uri
        * @description A URL to the JSON Schema for this object.
-       * @example https://example.com/schemas/ObjectStorageBucketMetrics.json
+       * @example https://example.com/schemas/ObjectStorageBucketMetricsTimeseries.json
        */
       readonly $schema?: string;
       available: boolean;
-      /** Format: int64 */
-      reads: number;
-      /** Format: int64 */
-      size: number;
-      /** Format: int64 */
-      writes: number;
+      reads: components["schemas"]["MetricPoint"][] | null;
+      size: components["schemas"]["MetricPoint"][] | null;
+      writes: components["schemas"]["MetricPoint"][] | null;
     };
     OidcConfigResponse: {
       /**
@@ -2224,6 +2149,23 @@ export interface components {
       /** Format: int64 */
       size: number;
     };
+    WorkerMetricsTimeseries: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/WorkerMetricsTimeseries.json
+       */
+      readonly $schema?: string;
+      available: boolean;
+      duration_avg_ms: components["schemas"]["MetricPoint"][] | null;
+      duration_ms_per_second: components["schemas"]["MetricPoint"][] | null;
+      duration_p95_ms: components["schemas"]["MetricPoint"][] | null;
+      error_rate: components["schemas"]["MetricPoint"][] | null;
+      errors: components["schemas"]["MetricPoint"][] | null;
+      p95_latency_ms: components["schemas"]["MetricPoint"][] | null;
+      requests: components["schemas"]["MetricPoint"][] | null;
+      status_codes: components["schemas"]["WorkerStatusCodeTimeseries"][] | null;
+    };
     WorkerOutputLine: {
       app_id?: string;
       deployment_id?: string;
@@ -2232,40 +2174,9 @@ export interface components {
       /** Format: date-time */
       timestamp: string;
     };
-    WorkerStatusCode: {
+    WorkerStatusCodeTimeseries: {
       code: string;
-      /** Format: double */
-      value: number;
-    };
-    WorkerTraffic: {
-      /**
-       * Format: uri
-       * @description A URL to the JSON Schema for this object.
-       * @example https://example.com/schemas/WorkerTraffic.json
-       */
-      readonly $schema?: string;
-      available: boolean;
-      /** Format: int64 */
-      bundle_size: number;
-      /** Format: double */
-      duration_ms_avg: number;
-      /** Format: double */
-      duration_ms_p95: number;
-      /** Format: double */
-      duration_ms_per_second: number;
-      duration_series: number[] | null;
-      /** Format: double */
-      error_rate: number;
-      /** Format: double */
-      errors: number;
-      /** Format: double */
-      invocations: number;
-      /** Format: double */
-      p95_latency: number;
-      /** Format: double */
-      requests_per_second: number;
-      status_codes: components["schemas"]["WorkerStatusCode"][] | null;
-      traffic: number[] | null;
+      points: components["schemas"]["MetricPoint"][] | null;
     };
   };
   responses: never;
@@ -3849,74 +3760,6 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["DatabaseMetrics"];
-        };
-      };
-      /** @description Error */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["OpenAPIError"];
-        };
-      };
-      /** @description Error */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["OpenAPIError"];
-        };
-      };
-      /** @description Error */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["OpenAPIError"];
-        };
-      };
-      /** @description Error */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["OpenAPIError"];
-        };
-      };
-      /** @description Error */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["OpenAPIError"];
-        };
-      };
-    };
-  };
-  getDatabaseMetricsTimeseries: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        orgID: string;
-        databaseID: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Success */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
           "application/json": components["schemas"]["DatabaseMetricsTimeseries"];
         };
       };
@@ -4677,7 +4520,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["KVNamespaceMetrics"];
+          "application/json": components["schemas"]["KVNamespaceMetricsTimeseries"];
         };
       };
       /** @description Error */
@@ -5907,7 +5750,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["ObjectStorageBucketMetrics"];
+          "application/json": components["schemas"]["ObjectStorageBucketMetricsTimeseries"];
         };
       };
       /** @description Error */
@@ -6834,7 +6677,7 @@ export interface operations {
       };
     };
   };
-  getWorkerTraffic: {
+  getWorkerMetrics: {
     parameters: {
       query?: never;
       header?: never;
@@ -6852,7 +6695,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["WorkerTraffic"];
+          "application/json": components["schemas"]["WorkerMetricsTimeseries"];
         };
       };
       /** @description Error */

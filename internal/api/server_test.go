@@ -73,7 +73,7 @@ func scopedTestPath(orgID, requestPath string) string {
 			return base + "/workers/" + strings.TrimSuffix(rest, "/deployments/traffic") + "/deployment-traffic"
 		}
 		if strings.HasSuffix(rest, "/traffic") {
-			return base + "/workers/" + strings.TrimSuffix(rest, "/traffic") + "/analytics/traffic"
+			return base + "/workers/" + strings.TrimSuffix(rest, "/traffic") + "/analytics"
 		}
 		if before, after, ok := strings.Cut(rest, "/kv/namespaces/"); ok {
 			if namespaceID, key, ok := strings.Cut(after, "/"); ok {
@@ -200,12 +200,12 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 		t.Fatalf("unexpected worker output: %#v", output)
 	}
 
-	var traffic nanoflare.WorkerTraffic
+	var traffic nanoflare.WorkerMetricsTimeseries
 	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/traffic", http.StatusOK, &traffic)
-	if !traffic.Available || traffic.RequestsPerSecond != 4.25 || len(traffic.Traffic) != 2 {
+	if !traffic.Available || len(traffic.Requests) != 2 {
 		t.Fatalf("unexpected worker traffic: %#v", traffic)
 	}
-	if traffic.DurationMsAvg != 12.5 || traffic.DurationMsP95 != 20 || traffic.DurationMsPerSecond != 1.5 || len(traffic.DurationSeries) != 2 {
+	if len(traffic.DurationAvgMS) != 1 || len(traffic.DurationP95MS) != 1 || len(traffic.DurationMSPerSecond) != 1 {
 		t.Fatalf("unexpected worker duration traffic: %#v", traffic)
 	}
 
@@ -286,8 +286,10 @@ func TestWorkerConsoleKV(t *testing.T) {
 	workerKVRequest(t, server, http.MethodDelete, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNoContent)
 	workerKVRequest(t, server, http.MethodGet, "/v1/workers/"+appOne.ID+"/kv/namespaces/"+namespaceOne.ID+"/color", nil, http.StatusNotFound)
 	workerKVRequest(t, server, http.MethodPut, "/v1/workers/missing/kv/namespaces/"+namespaceOne.ID+"/color", []byte("blue"), http.StatusNotFound)
-	var metrics nanoflare.KVNamespaceMetrics
-	requestJSON(t, server, http.MethodGet, "/v1/kv/namespaces/"+namespaceOne.ID+"/metrics", http.StatusOK, &metrics)
+	metrics, err := service.KVNamespaceMetrics(namespaceOne.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !metrics.Available || metrics.Reads != 0 || metrics.Writes != 0 {
 		t.Fatalf("console KV routes should not count runtime metrics: %#v", metrics)
 	}
@@ -388,11 +390,27 @@ func TestKVNamespaceAPIs(t *testing.T) {
 }
 
 func TestPrometheusMetricsExportsRuntimeAggregates(t *testing.T) {
-	service := nanoflare.NewService(nanoflare.NewStore(), discardWriter{})
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, discardWriter{})
 	server := newTestServer(service)
+	if err := store.CreateUser(nanoflare.User{ID: "metrics-user", Email: "metrics@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateOrganization(nanoflare.Organization{ID: "test-org", Name: "Test Org"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertOrganizationMembership(nanoflare.OrganizationMembership{UserID: "metrics-user", OrgID: "test-org", Role: nanoflare.RoleOwner, Scopes: nanoflare.RoleScopes(nanoflare.RoleOwner)}); err != nil {
+		t.Fatal(err)
+	}
 	namespace := createKVNamespace(t, server, "metrics-cache")
+	if _, err := service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{OrgID: "test-org", Name: "org-metrics-cache"}); err != nil {
+		t.Fatal(err)
+	}
 	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "metrics-objects"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{OrgID: "test-org", Name: "org-metrics-objects"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.RecordRuntimeKVRead(namespace.ID); err != nil {
@@ -418,6 +436,13 @@ func TestPrometheusMetricsExportsRuntimeAggregates(t *testing.T) {
 	}
 	body := recorder.Body.String()
 	for _, want := range []string{
+		`nanoflare_organizations 1`,
+		`nanoflare_users 1`,
+		`nanoflare_organization_members{organization_id="test-org",organization_name="Test Org"} 1`,
+		`nanoflare_organization_workers{organization_id="test-org",organization_name="Test Org"} 0`,
+		`nanoflare_organization_kv_namespaces{organization_id="test-org",organization_name="Test Org"} 1`,
+		`nanoflare_organization_databases{organization_id="test-org",organization_name="Test Org"} 0`,
+		`nanoflare_organization_object_storage_buckets{organization_id="test-org",organization_name="Test Org"} 1`,
 		`nanoflare_kv_reads_total{namespace_id="` + namespace.ID + `",namespace_name="metrics-cache"} 1`,
 		`nanoflare_kv_writes_total{namespace_id="` + namespace.ID + `",namespace_name="metrics-cache"} 1`,
 		`nanoflare_object_storage_reads_total{bucket_id="` + bucket.ID + `",bucket_name="metrics-objects"} 1`,
@@ -450,8 +475,10 @@ func TestDatabaseMetricsAPIAndPrometheusExport(t *testing.T) {
 		requestJSONBytes(t, server, http.MethodPost, "/v1/db/"+db.ID+"/execute", []byte(`{"statements":[{"sql":`+strconv.Quote(sql)+`}]}`), http.StatusOK, &nanoflare.DBQueryResponse{})
 	}
 
-	var metrics nanoflare.DatabaseMetrics
-	requestJSON(t, server, http.MethodGet, "/v1/db/"+db.ID+"/metrics", http.StatusOK, &metrics)
+	metrics, err := service.DatabaseMetrics(db.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !metrics.Available || metrics.Queries != 3 || metrics.ReadQueries != 1 || metrics.WriteQueries != 2 {
 		t.Fatalf("unexpected database query metrics: %#v", metrics)
 	}
@@ -492,7 +519,7 @@ func TestDatabaseMetricsTimeseriesAPI(t *testing.T) {
 	}
 
 	var series nanoflare.DatabaseMetricsTimeseries
-	requestJSON(t, server, http.MethodGet, "/v1/db/"+db.ID+"/metrics/timeseries", http.StatusOK, &series)
+	requestJSON(t, server, http.MethodGet, "/v1/db/"+db.ID+"/metrics", http.StatusOK, &series)
 	if !series.Available || len(series.Queries) != 1 || series.Queries[0].Value != 7 {
 		t.Fatalf("unexpected database series: %#v", series)
 	}
@@ -845,8 +872,10 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if object.Key != "folder/hello.txt" || object.Size != 5 || object.HTTPMetadata.ContentType != "text/plain" {
 		t.Fatalf("unexpected object info: %#v", object)
 	}
-	var metrics nanoflare.ObjectStorageBucketMetrics
-	requestJSON(t, server, http.MethodGet, "/v1/object-storage-buckets/"+bucket.ID+"/metrics", http.StatusOK, &metrics)
+	metrics, err := service.ObjectStorageBucketMetrics(bucket.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !metrics.Available || metrics.Reads != 0 || metrics.Writes != 1 || metrics.Size != 5 {
 		t.Fatalf("unexpected object metrics after put: %#v", metrics)
 	}
@@ -880,7 +909,10 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
-	requestJSON(t, server, http.MethodGet, "/v1/object-storage-buckets/"+bucket.ID+"/metrics", http.StatusOK, &metrics)
+	metrics, err = service.ObjectStorageBucketMetrics(bucket.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !metrics.Available || metrics.Reads != 2 || metrics.Writes != 2 || metrics.Size != 0 {
 		t.Fatalf("unexpected object metrics after runtime operations: %#v", metrics)
 	}
@@ -1015,8 +1047,10 @@ func TestObjectStorageMetricsReconcileExistingObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var metrics nanoflare.ObjectStorageBucketMetrics
-	requestJSON(t, server, http.MethodGet, "/v1/object-storage-buckets/"+bucket.ID+"/metrics", http.StatusOK, &metrics)
+	metrics, err := service.ObjectStorageBucketMetrics(bucket.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !metrics.Available || metrics.Size != 6 {
 		t.Fatalf("unexpected reconciled object metrics: %#v", metrics)
 	}
@@ -1524,6 +1558,13 @@ func (fakeTraffic) DatabaseMetricsTimeseries(string) (nanoflare.DatabaseMetricsT
 			Value:     7,
 		}},
 	}, nil
+}
+
+func (fakeTraffic) WorkerMetricsTimeseries(string) (nanoflare.WorkerMetricsTimeseries, error) {
+	point := func(value float64) []nanoflare.MetricPoint {
+		return []nanoflare.MetricPoint{{Timestamp: time.Now().UTC(), Value: value}}
+	}
+	return nanoflare.WorkerMetricsTimeseries{Available: true, Requests: append(point(3), nanoflare.MetricPoint{Timestamp: time.Now().UTC(), Value: 4}), DurationAvgMS: point(12.5), DurationP95MS: point(20), DurationMSPerSecond: point(1.5)}, nil
 }
 
 type apiObjectStore struct {

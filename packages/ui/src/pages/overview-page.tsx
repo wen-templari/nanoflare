@@ -30,11 +30,11 @@ export function OverviewPage() {
       const results = await Promise.all(
         workers.map((worker) =>
           apiClient
-            .GET("/v1/organizations/{orgID}/workers/{workerID}/analytics/traffic", {
+            .GET("/v1/organizations/{orgID}/workers/{workerID}/analytics", {
               params: { path: { orgID: activeOrgID(), workerID: worker.id } },
               parseAs: "json",
             })
-            .then(({ data }) => data),
+            .then(({ data }) => data && toTraffic(data)),
         ),
       );
       if (!cancelled) setTraffic(results.filter((item): item is WorkerTraffic => Boolean(item)));
@@ -171,6 +171,30 @@ export function OverviewPage() {
       </section>
     </>
   );
+}
+
+function toTraffic(data: {
+  available?: boolean;
+  requests?: { value: number }[] | null;
+  errors?: { value: number }[] | null;
+}): WorkerTraffic {
+  const requests = data.requests ?? [];
+  const errors = data.errors ?? [];
+  return {
+    available: Boolean(data.available),
+    requests_per_second: (requests[requests.length - 1]?.value ?? 0) / 300,
+    p95_latency: 0,
+    error_rate: 0,
+    invocations: requests[requests.length - 1]?.value ?? 0,
+    errors: errors[errors.length - 1]?.value ?? 0,
+    bundle_size: 0,
+    traffic: requests.map((point) => point.value),
+    duration_ms_avg: 0,
+    duration_ms_p95: 0,
+    duration_ms_per_second: 0,
+    duration_series: [],
+    status_codes: [],
+  };
 }
 
 function displayNameFromEmail(email: string) {

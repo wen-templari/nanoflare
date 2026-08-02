@@ -1,41 +1,34 @@
 package metrics
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
-	"net/url"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/prometheus/client_golang/api"
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 )
 
+const prometheusQueryTimeout = 3 * time.Second
+
 type Client struct {
-	BaseURL string
-	Client  *http.Client
-}
-
-type prometheusResponse struct {
-	Status string `json:"status"`
-	Data   struct {
-		Result []prometheusResult `json:"result"`
-	} `json:"data"`
-}
-
-type prometheusResult struct {
-	Metric map[string]string `json:"metric"`
-	Value  []any             `json:"value"`
-	Values [][]any           `json:"values"`
+	api     v1.API
+	initErr error
+	now     func() time.Time
 }
 
 func NewClient(baseURL string) *Client {
-	return &Client{
-		BaseURL: baseURL,
-		Client:  &http.Client{Timeout: 3 * time.Second},
+	client, err := api.NewClient(api.Config{Address: baseURL})
+	if err != nil {
+		return &Client{initErr: err, now: time.Now}
 	}
+	return &Client{api: v1.NewAPI(client), now: time.Now}
 }
 
 func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
@@ -73,15 +66,14 @@ func (c *Client) Traffic(appID string) (nanoflare.WorkerTraffic, error) {
 		Traffic:           resultValues(traffic),
 		Invocations:       resultNumber(invocations),
 		Errors:            resultNumber(errorTotal),
-		StatusCodes:       make([]nanoflare.WorkerStatusCode, 0, len(statusCodes)),
 	}
 	if result.Invocations > 0 {
 		result.ErrorRate = result.Errors / result.Invocations
 	}
-	for _, item := range statusCodes {
+	for _, item := range vector(statusCodes) {
 		result.StatusCodes = append(result.StatusCodes, nanoflare.WorkerStatusCode{
-			Code:  item.Metric["code"],
-			Value: valueNumber(item.Value),
+			Code:  string(item.Metric["code"]),
+			Value: float64(item.Value),
 		})
 	}
 	sort.Slice(result.StatusCodes, func(i, j int) bool {
@@ -108,7 +100,15 @@ func (c *Client) DatabaseMetricsTimeseries(databaseID string) (nanoflare.Databas
 	if err != nil {
 		return nanoflare.DatabaseMetricsTimeseries{}, err
 	}
+	rowsReturned, err := c.queryRange(`sum(increase(nanoflare_db_rows_returned_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
 	rowsWritten, err := c.queryRange(`sum(increase(nanoflare_db_rows_written_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.DatabaseMetricsTimeseries{}, err
+	}
+	durationTotal, err := c.queryRange(`sum(increase(nanoflare_db_query_duration_seconds_sum{` + selector + `}[5m])) * 1000`)
 	if err != nil {
 		return nanoflare.DatabaseMetricsTimeseries{}, err
 	}
@@ -133,114 +133,189 @@ func (c *Client) DatabaseMetricsTimeseries(databaseID string) (nanoflare.Databas
 		return nanoflare.DatabaseMetricsTimeseries{}, err
 	}
 	return nanoflare.DatabaseMetricsTimeseries{
-		Available:    true,
-		Queries:      resultPoints(queries),
-		ReadQueries:  resultPoints(readQueries),
-		WriteQueries: resultPoints(writeQueries),
-		RowsRead:     resultPoints(rowsRead),
-		RowsWritten:  resultPoints(rowsWritten),
-		StorageBytes: resultPoints(storageBytes),
-		TableCount:   resultPoints(tableCount),
-		P50LatencyMS: resultPoints(p50Latency),
-		P95LatencyMS: resultPoints(p95Latency),
-		P99LatencyMS: resultPoints(p99Latency),
+		Available:       true,
+		Queries:         resultPoints(queries),
+		ReadQueries:     resultPoints(readQueries),
+		WriteQueries:    resultPoints(writeQueries),
+		RowsRead:        resultPoints(rowsRead),
+		RowsReturned:    resultPoints(rowsReturned),
+		RowsWritten:     resultPoints(rowsWritten),
+		StorageBytes:    resultPoints(storageBytes),
+		TableCount:      resultPoints(tableCount),
+		DurationTotalMS: resultPoints(durationTotal),
+		P50LatencyMS:    resultPoints(p50Latency),
+		P95LatencyMS:    resultPoints(p95Latency),
+		P99LatencyMS:    resultPoints(p99Latency),
 	}, nil
 }
 
-func (c *Client) query(query string) ([]prometheusResult, error) {
-	return c.get("/api/v1/query", url.Values{"query": []string{query}})
+func (c *Client) KVNamespaceMetricsTimeseries(namespaceID string) (nanoflare.KVNamespaceMetricsTimeseries, error) {
+	selector := `namespace_id=` + strconv.Quote(namespaceID)
+	reads, err := c.queryRange(`sum(increase(nanoflare_kv_reads_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.KVNamespaceMetricsTimeseries{}, err
+	}
+	writes, err := c.queryRange(`sum(increase(nanoflare_kv_writes_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.KVNamespaceMetricsTimeseries{}, err
+	}
+	size, err := c.queryRange(`max(nanoflare_kv_size_bytes{` + selector + `})`)
+	if err != nil {
+		return nanoflare.KVNamespaceMetricsTimeseries{}, err
+	}
+	return nanoflare.KVNamespaceMetricsTimeseries{Available: true, Reads: resultPoints(reads), Writes: resultPoints(writes), Size: resultPoints(size)}, nil
 }
 
-func (c *Client) queryRange(query string) ([]prometheusResult, error) {
-	end := time.Now().Unix()
-	return c.get("/api/v1/query_range", url.Values{
-		"query": []string{query},
-		"start": []string{strconv.FormatInt(end-24*60*60, 10)},
-		"end":   []string{strconv.FormatInt(end, 10)},
-		"step":  []string{"300"},
-	})
+func (c *Client) ObjectStorageBucketMetricsTimeseries(bucketID string) (nanoflare.ObjectStorageBucketMetricsTimeseries, error) {
+	selector := `bucket_id=` + strconv.Quote(bucketID)
+	reads, err := c.queryRange(`sum(increase(nanoflare_object_storage_reads_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.ObjectStorageBucketMetricsTimeseries{}, err
+	}
+	writes, err := c.queryRange(`sum(increase(nanoflare_object_storage_writes_total{` + selector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.ObjectStorageBucketMetricsTimeseries{}, err
+	}
+	size, err := c.queryRange(`max(nanoflare_object_storage_size_bytes{` + selector + `})`)
+	if err != nil {
+		return nanoflare.ObjectStorageBucketMetricsTimeseries{}, err
+	}
+	return nanoflare.ObjectStorageBucketMetricsTimeseries{Available: true, Reads: resultPoints(reads), Writes: resultPoints(writes), Size: resultPoints(size)}, nil
 }
 
-func (c *Client) get(path string, values url.Values) ([]prometheusResult, error) {
-	requestURL := c.BaseURL + path + "?" + values.Encode()
-	response, err := c.Client.Get(requestURL)
+func (c *Client) WorkerMetricsTimeseries(appID string) (nanoflare.WorkerMetricsTimeseries, error) {
+	router := strconv.Quote(regexp.QuoteMeta(appID) + `@(http|file)`)
+	routerSelector := `router=~` + router
+	points := func(query string) ([]nanoflare.MetricPoint, error) {
+		result, err := c.queryRange(query)
+		return resultPoints(result), err
+	}
+	requests, err := points(`sum(increase(traefik_router_requests_total{` + routerSelector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	errors, err := points(`sum(increase(traefik_router_requests_total{` + routerSelector + `,code=~"5.."}[5m]))`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	errorRate, err := points(`sum(increase(traefik_router_requests_total{` + routerSelector + `,code=~"5.."}[5m])) / sum(increase(traefik_router_requests_total{` + routerSelector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	p95, err := points(`histogram_quantile(0.95, sum by (le) (rate(traefik_router_request_duration_seconds_bucket{` + routerSelector + `}[5m]))) * 1000`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	durationSelector := `worker_id=` + strconv.Quote(appID)
+	avg, err := points(`max(nanoflare_worker_duration_milliseconds_average{` + durationSelector + `})`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	durationP95, err := points(`max(nanoflare_worker_duration_milliseconds_p95{` + durationSelector + `})`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	perSecond, err := points(`max(nanoflare_worker_duration_milliseconds_per_second{` + durationSelector + `})`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	status, err := c.queryRange(`sum by (code) (increase(traefik_router_requests_total{` + routerSelector + `}[5m]))`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
+	statusCodes := make([]nanoflare.WorkerStatusCodeTimeseries, 0, len(matrix(status)))
+	for _, series := range matrix(status) {
+		statusCodes = append(statusCodes, nanoflare.WorkerStatusCodeTimeseries{Code: string(series.Metric["code"]), Points: pointsForStream(series)})
+	}
+	sort.Slice(statusCodes, func(i, j int) bool { return statusCodes[i].Code < statusCodes[j].Code })
+	return nanoflare.WorkerMetricsTimeseries{Available: true, Requests: requests, Errors: errors, ErrorRate: errorRate, P95LatencyMS: p95, StatusCodes: statusCodes, DurationAvgMS: avg, DurationP95MS: durationP95, DurationMSPerSecond: perSecond}, nil
+}
+
+func (c *Client) query(query string) (model.Value, error) {
+	if c.initErr != nil {
+		return nil, fmt.Errorf("create prometheus client: %w", c.initErr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), prometheusQueryTimeout)
+	defer cancel()
+	result, _, err := c.api.Query(ctx, query, c.now())
 	if err != nil {
 		return nil, fmt.Errorf("query prometheus: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("query prometheus: status %s", response.Status)
-	}
-	var payload prometheusResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode prometheus response: %w", err)
-	}
-	if payload.Status != "success" {
-		return nil, fmt.Errorf("query prometheus: response status %q", payload.Status)
-	}
-	return payload.Data.Result, nil
+	return result, nil
 }
 
-func resultNumber(result []prometheusResult) float64 {
-	if len(result) == 0 {
+func (c *Client) queryRange(query string) (model.Value, error) {
+	if c.initErr != nil {
+		return nil, fmt.Errorf("create prometheus client: %w", c.initErr)
+	}
+	end := c.now()
+	ctx, cancel := context.WithTimeout(context.Background(), prometheusQueryTimeout)
+	defer cancel()
+	result, _, err := c.api.QueryRange(ctx, query, v1.Range{Start: end.Add(-24 * time.Hour), End: end, Step: 5 * time.Minute})
+	if err != nil {
+		return nil, fmt.Errorf("query prometheus: %w", err)
+	}
+	return result, nil
+}
+
+func resultNumber(result model.Value) float64 {
+	values := vector(result)
+	if len(values) == 0 {
 		return 0
 	}
-	return valueNumber(result[0].Value)
+	value := float64(values[0].Value)
+	if !isFinite(value) {
+		return 0
+	}
+	return value
 }
 
-func resultValues(result []prometheusResult) []float64 {
-	if len(result) == 0 {
+func resultValues(result model.Value) []float64 {
+	values := matrix(result)
+	if len(values) == 0 {
 		return []float64{}
 	}
-	values := make([]float64, 0, len(result[0].Values))
-	for _, value := range result[0].Values {
-		values = append(values, valueNumber(value))
+	points := values[0].Values
+	resultValues := make([]float64, 0, len(points))
+	for _, point := range points {
+		value := float64(point.Value)
+		if isFinite(value) {
+			resultValues = append(resultValues, value)
+		}
 	}
-	return values
+	return resultValues
 }
 
-func resultPoints(result []prometheusResult) []nanoflare.MetricPoint {
-	if len(result) == 0 {
+func resultPoints(result model.Value) []nanoflare.MetricPoint {
+	values := matrix(result)
+	if len(values) == 0 {
 		return []nanoflare.MetricPoint{}
 	}
-	points := make([]nanoflare.MetricPoint, 0, len(result[0].Values))
-	for _, value := range result[0].Values {
-		points = append(points, nanoflare.MetricPoint{
-			Timestamp: valueTimestamp(value),
-			Value:     valueNumber(value),
-		})
+	return pointsForStream(values[0])
+}
+
+func pointsForStream(stream *model.SampleStream) []nanoflare.MetricPoint {
+	points := make([]nanoflare.MetricPoint, 0, len(stream.Values))
+	for _, value := range stream.Values {
+		metricValue := float64(value.Value)
+		if !isFinite(metricValue) {
+			continue
+		}
+		points = append(points, nanoflare.MetricPoint{Timestamp: value.Timestamp.Time().UTC(), Value: metricValue})
 	}
 	return points
 }
 
-func valueTimestamp(value []any) time.Time {
-	if len(value) == 0 {
-		return time.Time{}
-	}
-	switch raw := value[0].(type) {
-	case float64:
-		seconds := int64(raw)
-		return time.Unix(seconds, int64((raw-float64(seconds))*1_000_000_000)).UTC()
-	case string:
-		parsed, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			return time.Time{}
-		}
-		seconds := int64(parsed)
-		return time.Unix(seconds, int64((parsed-float64(seconds))*1_000_000_000)).UTC()
-	default:
-		return time.Time{}
-	}
+func isFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-func valueNumber(value []any) float64 {
-	if len(value) < 2 {
-		return 0
-	}
-	raw, ok := value[1].(string)
-	if !ok {
-		return 0
-	}
-	result, _ := strconv.ParseFloat(raw, 64)
-	return result
+func vector(result model.Value) model.Vector {
+	values, _ := result.(model.Vector)
+	return values
+}
+
+func matrix(result model.Value) model.Matrix {
+	values, _ := result.(model.Matrix)
+	return values
 }

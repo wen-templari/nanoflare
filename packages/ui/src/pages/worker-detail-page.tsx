@@ -39,6 +39,7 @@ import type {
   WorkerDetailTab,
   WorkerFile,
   WorkerOutputLine,
+  WorkerMetricsTimeseries,
   WorkerTraffic,
 } from "../app/types";
 
@@ -73,13 +74,26 @@ const emptyTraffic: WorkerTraffic = {
   status_codes: [],
 };
 
-function normalizeTraffic(input?: Partial<WorkerTraffic> | null): WorkerTraffic {
+function normalizeTraffic(input?: Partial<WorkerMetricsTimeseries> | null): WorkerTraffic {
+  const latest = (points?: { value: number }[] | null) => points?.[points.length - 1]?.value ?? 0;
+  const statuses = (input?.status_codes ?? []).map((item) => ({
+    code: item.code,
+    value: latest(item.points),
+  }));
   return {
     ...emptyTraffic,
-    ...input,
-    traffic: Array.isArray(input?.traffic) ? input!.traffic : [],
-    duration_series: Array.isArray(input?.duration_series) ? input!.duration_series : [],
-    status_codes: Array.isArray(input?.status_codes) ? input!.status_codes : [],
+    available: Boolean(input?.available),
+    requests_per_second: latest(input?.requests) / 300,
+    p95_latency: latest(input?.p95_latency_ms) / 1000,
+    error_rate: latest(input?.error_rate) * 100,
+    invocations: latest(input?.requests),
+    errors: latest(input?.errors),
+    traffic: (input?.requests ?? []).map((point) => point.value),
+    duration_ms_avg: latest(input?.duration_avg_ms),
+    duration_ms_p95: latest(input?.duration_p95_ms),
+    duration_ms_per_second: latest(input?.duration_ms_per_second),
+    duration_series: (input?.duration_ms_per_second ?? []).map((point) => point.value),
+    status_codes: statuses,
   };
 }
 
@@ -171,7 +185,7 @@ function WorkerDetailContent({
             params: { path },
             parseAs: "json",
           }),
-          apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/analytics/traffic", {
+          apiClient.GET("/v1/organizations/{orgID}/workers/{workerID}/analytics", {
             params: { path },
             parseAs: "json",
           }),
@@ -180,7 +194,7 @@ function WorkerDetailContent({
       const nextFiles = filesResult.data ?? [];
       const nextDeployments = deploymentsResult.data ?? [];
       const nextOutput = outputResult.data ?? [];
-      const nextTraffic = trafficResult.data ?? emptyTraffic;
+      const nextTraffic = trafficResult.data;
       if (cancelled) return;
       setDetail(nextDetail);
       setFiles(nextFiles);

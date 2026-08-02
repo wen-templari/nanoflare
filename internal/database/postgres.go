@@ -846,6 +846,24 @@ func (p *Postgres) CreateOrganization(org nanoflare.Organization) error {
 	return err
 }
 
+func (p *Postgres) ListOrganizations() ([]nanoflare.Organization, error) {
+	rows, err := p.db.Query(`SELECT id, name, usage_level, partner_integration_id, external_account_id, created_at FROM organizations ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	orgs := []nanoflare.Organization{}
+	for rows.Next() {
+		var org nanoflare.Organization
+		if err := rows.Scan(&org.ID, &org.Name, &org.UsageLevel, &org.PartnerIntegrationID, &org.ExternalAccountID, &org.CreatedAt); err != nil {
+			return nil, err
+		}
+		org.UsageLevel = nanoflare.NormalizeUsageLevel(org.UsageLevel)
+		orgs = append(orgs, org)
+	}
+	return orgs, rows.Err()
+}
+
 func (p *Postgres) GetOrganization(orgID string) (nanoflare.Organization, error) {
 	var org nanoflare.Organization
 	err := p.db.QueryRow(`SELECT id, name, usage_level, partner_integration_id, external_account_id, created_at FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.UsageLevel, &org.PartnerIntegrationID, &org.ExternalAccountID, &org.CreatedAt)

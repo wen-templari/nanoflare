@@ -181,7 +181,7 @@ func (s *Server) kvNamespaceMetrics(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "kv:read") {
 		return
 	}
-	metrics, err := s.service.KVNamespaceMetricsForOrg(controlOrgID(r), r.PathValue("namespaceID"))
+	metrics, err := s.service.KVNamespaceMetricsTimeseriesForOrg(controlOrgID(r), r.PathValue("namespaceID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return

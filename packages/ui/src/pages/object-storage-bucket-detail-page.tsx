@@ -1,4 +1,4 @@
-import { Tabs, Text } from "@cloudflare/kumo";
+import { ChartPalette, Tabs, Text, TimeseriesChart } from "@cloudflare/kumo";
 import {
   Archive,
   ArrowDownToLine,
@@ -18,9 +18,9 @@ import {
 import { type ChangeEvent, useDeferredValue, useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 
-import type { ObjectStorageBucketMetrics, ObjectStorageObject } from "../app/types";
+import type { ObjectStorageBucketMetricsTimeseries, ObjectStorageObject } from "../app/types";
 
-import { apiFetch, errorText, fetchJSON } from "../app/api";
+import { apiClient, apiFetch, errorText, fetchJSON } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
@@ -29,6 +29,7 @@ import { Field, Panel, WorkerDetailEmpty } from "../components/shared/primitives
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { echarts } from "../lib/kumo-echarts";
 
 type ObjectPreview =
   | { kind: "empty" }
@@ -36,6 +37,10 @@ type ObjectPreview =
   | { kind: "image"; url: string; contentType: string };
 
 const objectStorageBucketDetailTabs = ["overview", "objects", "settings"] as const;
+
+function latestObjectMetric(points: { value: number }[] | null | undefined) {
+  return points?.[points.length - 1]?.value ?? 0;
+}
 
 export function ObjectStorageBucketDetailPage() {
   const navigate = useNavigate();
@@ -58,7 +63,7 @@ function ObjectStorageBucketDetailContent({
   bucket: { id: string; name: string; created_at: string };
   onBack: () => void;
 }) {
-  const { workers, setObjectStorageBuckets, notify, apiConnected } = useWorkspace();
+  const { workers, setObjectStorageBuckets, notify, apiConnected, activeOrgID } = useWorkspace();
   const [tab, setTab] = useQueryTab<(typeof objectStorageBucketDetailTabs)[number]>(
     objectStorageBucketDetailTabs,
     "overview",
@@ -78,11 +83,11 @@ function ObjectStorageBucketDetailContent({
   const [preview, setPreview] = useState<ObjectPreview>({ kind: "empty" });
   const [previewLoading, setPreviewLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [metrics, setMetrics] = useState<ObjectStorageBucketMetrics>({
+  const [metrics, setMetrics] = useState<ObjectStorageBucketMetricsTimeseries>({
     available: false,
-    reads: 0,
-    writes: 0,
-    size: 0,
+    reads: [],
+    writes: [],
+    size: [],
   });
   const bindings = workers.flatMap((worker) =>
     (worker.bindings ?? [])
@@ -112,14 +117,17 @@ function ObjectStorageBucketDetailContent({
 
   useEffect(() => {
     if (!apiConnected) {
-      setMetrics({ available: false, reads: 0, writes: 0, size: 0 });
+      setMetrics({ available: false, reads: [], writes: [], size: [] });
       return;
     }
     let cancelled = false;
     async function loadMetrics() {
-      const nextMetrics = await fetchJSON<ObjectStorageBucketMetrics>(
-        `/v1/object-storage-buckets/${encodeURIComponent(bucket.id)}/metrics`,
-      ).catch(() => ({ available: false, reads: 0, writes: 0, size: 0 }));
+      const nextMetrics = await apiClient
+        .GET("/v1/organizations/{orgID}/object-storage-buckets/{bucketID}/analytics", {
+          params: { path: { orgID: activeOrgID, bucketID: bucket.id } },
+          parseAs: "json",
+        })
+        .then(({ data }) => data ?? { available: false, reads: [], writes: [], size: [] });
       if (!cancelled) setMetrics(nextMetrics);
     }
     void loadMetrics();
@@ -128,7 +136,7 @@ function ObjectStorageBucketDetailContent({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [apiConnected, bucket.id]);
+  }, [activeOrgID, apiConnected, bucket.id]);
 
   const basePath = accessorWorkerID
     ? `/v1/workers/${accessorWorkerID}/object-storage-buckets/${encodeURIComponent(bucket.id)}`
@@ -330,19 +338,19 @@ function ObjectStorageBucketDetailContent({
   const cards = [
     {
       label: "Reads",
-      value: compactNumber(metrics.reads),
+      value: compactNumber(latestObjectMetric(metrics.reads)),
       note: metrics.available ? "runtime object reads" : "metrics unavailable",
       icon: BookOpen,
     },
     {
       label: "Writes",
-      value: compactNumber(metrics.writes),
+      value: compactNumber(latestObjectMetric(metrics.writes)),
       note: metrics.available ? "runtime object writes" : "metrics unavailable",
       icon: Workflow,
     },
     {
       label: "Size",
-      value: formatBytes(metrics.size),
+      value: formatBytes(latestObjectMetric(metrics.size)),
       note: metrics.available ? "stored object bytes" : "metrics unavailable",
       icon: HardDrive,
     },
@@ -383,21 +391,24 @@ function ObjectStorageBucketDetailContent({
       </div>
 
       {tab === "overview" && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          {cards.map(({ label, value, note, icon: Icon }, index) => (
-            <div
-              key={label}
-              style={{ animationDelay: `${index * 60}ms` }}
-              className="rounded-lg border border-gray-200 bg-white p-4"
-            >
-              <div className="flex items-center justify-between">
-                <p className="font-mono text-[9px] text-gray-500">{label}</p>
-                <Icon className="size-3.5 text-blue-600" />
+        <div className="space-y-6">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {cards.map(({ label, value, note, icon: Icon }, index) => (
+              <div
+                key={label}
+                style={{ animationDelay: `${index * 60}ms` }}
+                className="rounded-lg border border-gray-200 bg-white p-4"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="font-mono text-[9px] text-gray-500">{label}</p>
+                  <Icon className="size-3.5 text-blue-600" />
+                </div>
+                <p className="mt-3 text-3xl font-semibold">{value}</p>
+                <p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p>
               </div>
-              <p className="mt-3 text-3xl font-semibold">{value}</p>
-              <p className="mt-1 font-mono text-[9px] text-gray-500">{note}</p>
-            </div>
-          ))}
+            ))}
+          </div>
+          <ObjectMetricChart reads={metrics.reads} writes={metrics.writes} size={metrics.size} />
         </div>
       )}
 
@@ -673,6 +684,40 @@ function ObjectStorageBucketDetailContent({
         </section>
       )}
     </>
+  );
+}
+
+function ObjectMetricChart({
+  reads,
+  writes,
+  size,
+}: {
+  reads: { timestamp: string; value: number }[] | null;
+  writes: { timestamp: string; value: number }[] | null;
+  size: { timestamp: string; value: number }[] | null;
+}) {
+  const data = (
+    name: string,
+    points: { timestamp: string; value: number }[] | null,
+    color: string,
+  ) => ({
+    name,
+    color,
+    data: (points ?? []).map(
+      (point) => [Date.parse(point.timestamp), point.value] as [number, number],
+    ),
+  });
+  return (
+    <TimeseriesChart
+      ariaDescription="Object storage activity over the last 24 hours."
+      data={[
+        data("Reads", reads, ChartPalette.categorical(0)),
+        data("Writes", writes, ChartPalette.categorical(1)),
+        data("Stored bytes", size, ChartPalette.categorical(2)),
+      ]}
+      echarts={echarts}
+      height={240}
+    />
   );
 }
 

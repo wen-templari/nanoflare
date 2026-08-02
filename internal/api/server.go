@@ -14,6 +14,8 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtime"
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Server struct {
@@ -32,8 +34,14 @@ type Server struct {
 	runtime                RuntimeEnsurer
 	workerClient           *http.Client
 	workerGatewayMetrics   workerGatewayMetrics
+	durationTelemetry      durationStatsReader
+	metricsHandler         http.Handler
 	mux                    *http.ServeMux
 	openAPI                huma.API
+}
+
+type durationStatsReader interface {
+	Stats(string) runtime.DurationStats
 }
 
 type workerGatewayMetrics struct {
@@ -132,6 +140,9 @@ func (s *Server) SetPartnerService(partner *nanoflare.PartnerService) {
 	}
 }
 
+// SetDurationTelemetry makes worker execution durations available to the Prometheus exporter.
+func (s *Server) SetDurationTelemetry(telemetry durationStatsReader) { s.durationTelemetry = telemetry }
+
 func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer, oauth *nanoflare.OAuthService) *Server {
 	mux := http.NewServeMux()
 	server := &Server{
@@ -145,6 +156,9 @@ func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token st
 		workerClient: newWorkerGatewayClient(),
 		mux:          mux,
 	}
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(serverMetricsCollector{server: server})
+	server.metricsHandler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	server.openAPI = newOpenAPI(mux)
 	return server
 }
@@ -192,7 +206,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	s.mux.HandleFunc("GET /metrics", s.prometheusMetrics)
+	s.mux.Handle("GET /metrics", s.metricsHandler)
 	s.registerAppRoutes()
 	s.registerKVRoutes()
 	s.registerDBRoutes()

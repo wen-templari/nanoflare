@@ -138,22 +138,16 @@ function DatabaseDetailContent({
     }
     let cancelled = false;
     async function loadMetrics() {
-      const [nextMetrics, nextSeries] = await Promise.all([
-        apiClient
-          .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", {
-            params: { path: { orgID: activeOrgID, databaseID: database.id } },
-            parseAs: "json",
-          })
-          .then(({ data }) => data ?? emptyDatabaseMetrics()),
-        apiClient
-          .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", {
-            params: { path: { orgID: activeOrgID, databaseID: database.id } },
-            parseAs: "json",
-          })
-          .then(({ data }) => data ?? emptyDatabaseMetricsTimeseries()),
-      ]);
-      if (!cancelled) setMetrics(nextMetrics);
-      if (!cancelled) setSeries(nextSeries);
+      const nextSeries = await apiClient
+        .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics", {
+          params: { path: { orgID: activeOrgID, databaseID: database.id } },
+          parseAs: "json",
+        })
+        .then(({ data }) => data ?? emptyDatabaseMetricsTimeseries());
+      if (!cancelled) {
+        setSeries(nextSeries);
+        setMetrics(databaseMetricsFromSeries(nextSeries));
+      }
     }
     void loadMetrics();
     const interval = window.setInterval(() => void loadMetrics(), 15000);
@@ -248,14 +242,12 @@ function DatabaseDetailContent({
             params: { path: { orgID: activeOrgID, databaseID: database.id } },
             parseAs: "json",
           })
-          .then(({ data }) => data && setMetrics(data))
-          .catch(() => undefined);
-        void apiClient
-          .GET("/v1/organizations/{orgID}/databases/{databaseID}/analytics/timeseries", {
-            params: { path: { orgID: activeOrgID, databaseID: database.id } },
-            parseAs: "json",
+          .then(({ data }) => {
+            if (data) {
+              setSeries(data);
+              setMetrics(databaseMetricsFromSeries(data));
+            }
           })
-          .then(({ data }) => data && setSeries(data))
           .catch(() => undefined);
       }
       setQuerying(false);
@@ -865,12 +857,34 @@ function emptyDatabaseMetricsTimeseries(): DatabaseMetricsTimeseries {
     read_queries: [],
     write_queries: [],
     rows_read: [],
+    rows_returned: [],
     rows_written: [],
     storage_bytes: [],
     table_count: [],
+    duration_total_ms: [],
     p50_latency_ms: [],
     p95_latency_ms: [],
     p99_latency_ms: [],
+  };
+}
+
+function databaseMetricsFromSeries(series: DatabaseMetricsTimeseries): DatabaseMetrics {
+  const latest = (points: MetricPoint[] | null | undefined) =>
+    points?.[points.length - 1]?.value ?? 0;
+  return {
+    ...emptyDatabaseMetrics(),
+    available: Boolean(series.available),
+    queries: latest(series.queries),
+    read_queries: latest(series.read_queries),
+    write_queries: latest(series.write_queries),
+    rows_read: latest(series.rows_read),
+    rows_returned: latest(series.rows_returned),
+    rows_written: latest(series.rows_written),
+    storage_bytes: latest(series.storage_bytes),
+    table_count: latest(series.table_count),
+    total_duration_ms: latest(series.duration_total_ms),
+    p50_duration_ms: latest(series.p50_latency_ms),
+    p99_duration_ms: latest(series.p99_latency_ms),
   };
 }
 

@@ -218,7 +218,7 @@ func (s *Server) objectStorageBucketMetrics(w http.ResponseWriter, r *http.Reque
 	if !s.requireScope(w, r, "objects:read") {
 		return
 	}
-	metrics, err := s.service.ObjectStorageBucketMetricsForOrg(controlOrgID(r), r.PathValue("bucketID"))
+	metrics, err := s.service.ObjectStorageBucketMetricsTimeseriesForOrg(controlOrgID(r), r.PathValue("bucketID"))
 	if err != nil {
 		writeWorkerError(w, err)
 		return

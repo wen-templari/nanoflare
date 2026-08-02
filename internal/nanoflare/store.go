@@ -52,6 +52,7 @@ type Repository interface {
 	UserCount() (int, error)
 	CreateOrganization(Organization) error
 	GetOrganization(string) (Organization, error)
+	ListOrganizations() ([]Organization, error)
 	ProvisionPartnerConnection(Organization, PartnerConnection) (Organization, PartnerConnection, bool, error)
 	CountOwnedOrganizationsByUser(userID string) (int, error)
 	UpsertOrganizationMembership(OrganizationMembership) error
@@ -380,6 +381,18 @@ func (s *Store) CreateOrganization(org Organization) error {
 	org.UsageLevel = NormalizeUsageLevel(org.UsageLevel)
 	s.organizations[org.ID] = org
 	return nil
+}
+
+func (s *Store) ListOrganizations() ([]Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	orgs := make([]Organization, 0, len(s.organizations))
+	for _, org := range s.organizations {
+		org.UsageLevel = NormalizeUsageLevel(org.UsageLevel)
+		orgs = append(orgs, org)
+	}
+	sort.Slice(orgs, func(i, j int) bool { return orgs[i].Name < orgs[j].Name })
+	return orgs, nil
 }
 
 func (s *Store) GetOrganization(orgID string) (Organization, error) {

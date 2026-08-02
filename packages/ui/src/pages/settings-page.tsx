@@ -386,7 +386,7 @@ export function SettingsPage() {
               .GET("/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/analytics", {
                 params: { path: { orgID: activeOrgID, namespaceID: namespace.id } },
               })
-              .then(({ data }) => data ?? { available: false, reads: 0, writes: 0, size: 0 }),
+              .then(({ data }) => data ?? { available: false, reads: [], writes: [], size: [] }),
           ),
         ),
         Promise.all(
@@ -395,15 +395,21 @@ export function SettingsPage() {
               .GET("/v1/organizations/{orgID}/object-storage-buckets/{bucketID}/analytics", {
                 params: { path: { orgID: activeOrgID, bucketID: bucket.id } },
               })
-              .then(({ data }) => data ?? { available: false, reads: 0, writes: 0, size: 0 }),
+              .then(({ data }) => data ?? { available: false, reads: [], writes: [], size: [] }),
           ),
         ),
       ]);
 
       if (cancelled) return;
       setQuotaUsage({
-        kvBytes: kvMetrics.reduce((sum, metrics) => sum + (metrics.size ?? 0), 0),
-        objectBytes: bucketMetrics.reduce((sum, metrics) => sum + (metrics.size ?? 0), 0),
+        kvBytes: kvMetrics.reduce(
+          (sum, metrics) => sum + (metrics.size?.[metrics.size.length - 1]?.value ?? 0),
+          0,
+        ),
+        objectBytes: bucketMetrics.reduce(
+          (sum, metrics) => sum + (metrics.size?.[metrics.size.length - 1]?.value ?? 0),
+          0,
+        ),
         loading: false,
       });
     }

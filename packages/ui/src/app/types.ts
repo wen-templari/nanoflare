@@ -38,13 +38,60 @@ export type ObjectStorageBucket = components["schemas"]["ObjectStorageBucket"];
 export type Database = components["schemas"]["Database"];
 export type ObjectStorageObject = components["schemas"]["ObjectInfo"];
 
-export type WorkerTraffic = components["schemas"]["WorkerTraffic"];
-
-export type KVNamespaceMetrics = components["schemas"]["KVNamespaceMetrics"];
-export type ObjectStorageBucketMetrics = components["schemas"]["ObjectStorageBucketMetrics"];
-export type DatabaseMetrics = components["schemas"]["DatabaseMetrics"];
+export type WorkerTraffic = {
+  available: boolean;
+  requests_per_second: number;
+  p95_latency: number;
+  error_rate: number;
+  invocations: number;
+  errors: number;
+  bundle_size: number;
+  traffic: number[];
+  duration_ms_avg: number;
+  duration_ms_p95: number;
+  duration_ms_per_second: number;
+  duration_series: number[];
+  status_codes: { code: string; value: number }[];
+};
+export type KVNamespaceMetrics = {
+  available: boolean;
+  reads: number;
+  writes: number;
+  size: number;
+};
+export type ObjectStorageBucketMetrics = KVNamespaceMetrics;
+export type DatabaseMetrics = {
+  available: boolean;
+  queries: number;
+  read_queries: number;
+  write_queries: number;
+  rows_read: number;
+  rows_returned: number;
+  rows_written: number;
+  storage_bytes: number;
+  table_count: number;
+  total_duration_ms: number;
+  p50_duration_ms: number;
+  p99_duration_ms: number;
+  duration_bucket_0_5: number;
+  duration_bucket_1: number;
+  duration_bucket_2_5: number;
+  duration_bucket_5: number;
+  duration_bucket_10: number;
+  duration_bucket_25: number;
+  duration_bucket_50: number;
+  duration_bucket_100: number;
+  duration_bucket_250: number;
+  duration_bucket_500: number;
+  duration_bucket_1000: number;
+  duration_bucket_inf: number;
+};
 export type MetricPoint = components["schemas"]["MetricPoint"];
 export type DatabaseMetricsTimeseries = components["schemas"]["DatabaseMetricsTimeseries"];
+export type KVNamespaceMetricsTimeseries = components["schemas"]["KVNamespaceMetricsTimeseries"];
+export type ObjectStorageBucketMetricsTimeseries =
+  components["schemas"]["ObjectStorageBucketMetricsTimeseries"];
+export type WorkerMetricsTimeseries = components["schemas"]["WorkerMetricsTimeseries"];
 
 export type KVNamespace = components["schemas"]["KVNamespace"];
 export type OAuthClient = components["schemas"]["OAuthClient"];

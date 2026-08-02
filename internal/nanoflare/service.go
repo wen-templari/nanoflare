@@ -60,6 +60,16 @@ type DatabaseMetricsTimeseriesReader interface {
 	DatabaseMetricsTimeseries(string) (DatabaseMetricsTimeseries, error)
 }
 
+type KVNamespaceMetricsTimeseriesReader interface {
+	KVNamespaceMetricsTimeseries(string) (KVNamespaceMetricsTimeseries, error)
+}
+type ObjectStorageBucketMetricsTimeseriesReader interface {
+	ObjectStorageBucketMetricsTimeseries(string) (ObjectStorageBucketMetricsTimeseries, error)
+}
+type WorkerMetricsTimeseriesReader interface {
+	WorkerMetricsTimeseries(string) (WorkerMetricsTimeseries, error)
+}
+
 type RepositoryPoolStatsReader interface {
 	PoolStats() RepositoryPoolStats
 }
@@ -85,6 +95,9 @@ type Service struct {
 	output               WorkerOutputReader
 	traffic              WorkerTrafficReader
 	dbTimeseries         DatabaseMetricsTimeseriesReader
+	kvTimeseries         KVNamespaceMetricsTimeseriesReader
+	objectTimeseries     ObjectStorageBucketMetricsTimeseriesReader
+	workerTimeseries     WorkerMetricsTimeseriesReader
 	secrets              *SecretCodec
 	baseHostname         string
 	randomHostnameSuffix func() (string, error)
@@ -133,6 +146,15 @@ func NewServiceWithConsole(store Repository, writer ConfigWriter, objects Object
 	}
 	if reader, ok := traffic.(DatabaseMetricsTimeseriesReader); ok {
 		service.dbTimeseries = reader
+	}
+	if reader, ok := traffic.(KVNamespaceMetricsTimeseriesReader); ok {
+		service.kvTimeseries = reader
+	}
+	if reader, ok := traffic.(ObjectStorageBucketMetricsTimeseriesReader); ok {
+		service.objectTimeseries = reader
+	}
+	if reader, ok := traffic.(WorkerMetricsTimeseriesReader); ok {
+		service.workerTimeseries = reader
 	}
 	return service
 }
@@ -639,6 +661,18 @@ func (s *Service) DeleteSecretForOrg(orgID, appID, name string) error {
 
 func (s *Service) ListApps() ([]App, error) {
 	return s.store.ListApps()
+}
+
+func (s *Service) ListOrganizations() ([]Organization, error) {
+	return s.store.ListOrganizations()
+}
+
+func (s *Service) UserCount() (int, error) {
+	return s.store.UserCount()
+}
+
+func (s *Service) ListOrganizationMembers(orgID string) ([]OrganizationMembership, error) {
+	return s.store.ListOrganizationMembers(strings.TrimSpace(orgID))
 }
 
 func (s *Service) ListAppsForOrg(orgID string) ([]App, error) {
@@ -2161,6 +2195,36 @@ func (s *Service) DatabaseMetricsTimeseriesForOrg(orgID, databaseID string) (Dat
 		return DatabaseMetricsTimeseries{}, err
 	}
 	return s.DatabaseMetricsTimeseries(databaseID)
+}
+
+func (s *Service) KVNamespaceMetricsTimeseriesForOrg(orgID, namespaceID string) (KVNamespaceMetricsTimeseries, error) {
+	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
+		return KVNamespaceMetricsTimeseries{}, err
+	}
+	if s.kvTimeseries == nil {
+		return KVNamespaceMetricsTimeseries{}, nil
+	}
+	return s.kvTimeseries.KVNamespaceMetricsTimeseries(namespaceID)
+}
+
+func (s *Service) ObjectStorageBucketMetricsTimeseriesForOrg(orgID, bucketID string) (ObjectStorageBucketMetricsTimeseries, error) {
+	if _, err := s.GetObjectStorageBucketForOrg(orgID, bucketID); err != nil {
+		return ObjectStorageBucketMetricsTimeseries{}, err
+	}
+	if s.objectTimeseries == nil {
+		return ObjectStorageBucketMetricsTimeseries{}, nil
+	}
+	return s.objectTimeseries.ObjectStorageBucketMetricsTimeseries(bucketID)
+}
+
+func (s *Service) WorkerMetricsTimeseriesForOrg(orgID, appID string) (WorkerMetricsTimeseries, error) {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return WorkerMetricsTimeseries{}, err
+	}
+	if s.workerTimeseries == nil {
+		return WorkerMetricsTimeseries{}, nil
+	}
+	return s.workerTimeseries.WorkerMetricsTimeseries(appID)
 }
 
 func (s *Service) executeDBWithMetrics(databaseID string, request DBQueryRequest) (DBQueryResponse, error) {

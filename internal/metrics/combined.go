@@ -50,3 +50,30 @@ func (r *CombinedReader) DatabaseMetricsTimeseries(databaseID string) (nanoflare
 	}
 	return nanoflare.DatabaseMetricsTimeseries{}, nil
 }
+
+func (r *CombinedReader) KVNamespaceMetricsTimeseries(namespaceID string) (nanoflare.KVNamespaceMetricsTimeseries, error) {
+	if prometheus, ok := r.prometheus.(interface {
+		KVNamespaceMetricsTimeseries(string) (nanoflare.KVNamespaceMetricsTimeseries, error)
+	}); ok {
+		return prometheus.KVNamespaceMetricsTimeseries(namespaceID)
+	}
+	return nanoflare.KVNamespaceMetricsTimeseries{}, nil
+}
+
+func (r *CombinedReader) ObjectStorageBucketMetricsTimeseries(bucketID string) (nanoflare.ObjectStorageBucketMetricsTimeseries, error) {
+	if prometheus, ok := r.prometheus.(interface {
+		ObjectStorageBucketMetricsTimeseries(string) (nanoflare.ObjectStorageBucketMetricsTimeseries, error)
+	}); ok {
+		return prometheus.ObjectStorageBucketMetricsTimeseries(bucketID)
+	}
+	return nanoflare.ObjectStorageBucketMetricsTimeseries{}, nil
+}
+
+func (r *CombinedReader) WorkerMetricsTimeseries(appID string) (nanoflare.WorkerMetricsTimeseries, error) {
+	if prometheus, ok := r.prometheus.(interface {
+		WorkerMetricsTimeseries(string) (nanoflare.WorkerMetricsTimeseries, error)
+	}); ok {
+		return prometheus.WorkerMetricsTimeseries(appID)
+	}
+	return nanoflare.WorkerMetricsTimeseries{}, nil
+}
