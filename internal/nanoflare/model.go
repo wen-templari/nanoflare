@@ -314,6 +314,39 @@ type Database struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// DatabaseReplicationStatus is the safe, per-database view of Litestream's
+// local control socket. It intentionally never contains replica credentials.
+type DatabaseReplicationStatus struct {
+	Enabled            bool                   `json:"enabled"`
+	State              string                 `json:"state"`
+	LastSyncAt         *time.Time             `json:"last_sync_at,omitempty"`
+	EarliestRecoveryAt *time.Time             `json:"earliest_recovery_at,omitempty"`
+	RestorePoints      []DatabaseRestorePoint `json:"restore_points,omitempty"`
+	SyncAgeSeconds     float64                `json:"sync_age_seconds,omitempty"`
+	LocalTXID          uint64                 `json:"local_txid,omitempty"`
+	WALBytes           int64                  `json:"wal_bytes,omitempty"`
+	RecoveryHours      int                    `json:"recovery_hours"`
+	DaemonVersion      string                 `json:"daemon_version,omitempty"`
+	Error              string                 `json:"error,omitempty"`
+}
+
+// DatabaseRestorePoint is a snapshot checkpoint published by Litestream.
+// Choosing it avoids asking operators to infer a valid timestamp from WAL files.
+type DatabaseRestorePoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	TXID      string    `json:"txid,omitempty"`
+}
+
+type RestoreDatabaseInput struct {
+	// Timestamp is RFC3339 in UTC. An empty value restores the latest replica.
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+type RestoreDatabaseResult struct {
+	RestoredAt time.Time  `json:"restored_at"`
+	Timestamp  *time.Time `json:"timestamp,omitempty"`
+}
+
 type ObjectStorageBucket struct {
 	ID            string    `json:"id"`
 	OrgID         string    `json:"org_id,omitempty"`
@@ -456,6 +489,11 @@ type KVNamespaceMetrics struct {
 	Size      int64 `json:"size"`
 }
 
+type KVNamespaceMetricsItem struct {
+	NamespaceID string `json:"namespace_id"`
+	KVNamespaceMetrics
+}
+
 type RepositoryPoolStats struct {
 	MaxOpenConnections int   `json:"max_open_connections"`
 	OpenConnections    int   `json:"open_connections"`
@@ -469,10 +507,16 @@ type RepositoryPoolStats struct {
 }
 
 type ObjectStorageBucketMetrics struct {
-	Available bool  `json:"available"`
-	Reads     int64 `json:"reads"`
-	Writes    int64 `json:"writes"`
-	Size      int64 `json:"size"`
+	Available   bool  `json:"available"`
+	Reads       int64 `json:"reads"`
+	Writes      int64 `json:"writes"`
+	Size        int64 `json:"size"`
+	ObjectCount int64 `json:"object_count"`
+}
+
+type ObjectStorageBucketMetricsItem struct {
+	BucketID string `json:"bucket_id"`
+	ObjectStorageBucketMetrics
 }
 
 type DatabaseMetrics struct {
@@ -500,6 +544,11 @@ type DatabaseMetrics struct {
 	DurationBucket500  int64   `json:"duration_bucket_500"`
 	DurationBucket1000 int64   `json:"duration_bucket_1000"`
 	DurationBucketInf  int64   `json:"duration_bucket_inf"`
+}
+
+type DatabaseMetricsItem struct {
+	DatabaseID string `json:"database_id"`
+	DatabaseMetrics
 }
 
 type MetricPoint struct {

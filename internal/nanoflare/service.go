@@ -14,6 +14,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -107,6 +108,7 @@ type Service struct {
 	kvOrgUsageCacheMu    sync.Mutex
 	kvOrgUsageCache      map[string]orgKVUsageCacheEntry
 	kvOrgUsageCacheTTL   time.Duration
+	restoreCounts        sync.Map // map[databaseID + result]*atomic.Uint64
 }
 
 type AssetResponse struct {
@@ -288,6 +290,22 @@ func (s *Service) ListKVNamespacesForOrg(orgID string) ([]KVNamespace, error) {
 	return s.store.ListKVNamespacesByOrg(strings.TrimSpace(orgID))
 }
 
+func (s *Service) KVNamespaceMetricsListForOrg(orgID string) ([]KVNamespaceMetricsItem, error) {
+	namespaces, err := s.ListKVNamespacesForOrg(orgID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]KVNamespaceMetricsItem, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		metrics, err := s.KVNamespaceMetrics(namespace.ID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, KVNamespaceMetricsItem{NamespaceID: namespace.ID, KVNamespaceMetrics: metrics})
+	}
+	return items, nil
+}
+
 func (s *Service) CreateDatabase(input CreateDatabaseInput) (Database, error) {
 	input.OrgID = strings.TrimSpace(input.OrgID)
 	name := strings.TrimSpace(input.Name)
@@ -314,6 +332,22 @@ func (s *Service) ListDatabases() ([]Database, error) {
 
 func (s *Service) ListDatabasesForOrg(orgID string) ([]Database, error) {
 	return s.store.ListDatabasesByOrg(strings.TrimSpace(orgID))
+}
+
+func (s *Service) DatabaseMetricsListForOrg(orgID string) ([]DatabaseMetricsItem, error) {
+	databases, err := s.ListDatabasesForOrg(orgID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]DatabaseMetricsItem, 0, len(databases))
+	for _, database := range databases {
+		metrics, err := s.DatabaseMetrics(database.ID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, DatabaseMetricsItem{DatabaseID: database.ID, DatabaseMetrics: metrics})
+	}
+	return items, nil
 }
 
 func (s *Service) CreateObjectStorageBucket(input CreateObjectStorageBucketInput) (ObjectStorageBucket, error) {
@@ -344,6 +378,22 @@ func (s *Service) ListObjectStorageBuckets() ([]ObjectStorageBucket, error) {
 
 func (s *Service) ListObjectStorageBucketsForOrg(orgID string) ([]ObjectStorageBucket, error) {
 	return s.store.ListObjectStorageBucketsByOrg(strings.TrimSpace(orgID))
+}
+
+func (s *Service) ObjectStorageBucketMetricsListForOrg(orgID string) ([]ObjectStorageBucketMetricsItem, error) {
+	buckets, err := s.ListObjectStorageBucketsForOrg(orgID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ObjectStorageBucketMetricsItem, 0, len(buckets))
+	for _, bucket := range buckets {
+		metrics, err := s.ObjectStorageBucketMetrics(bucket.ID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, ObjectStorageBucketMetricsItem{BucketID: bucket.ID, ObjectStorageBucketMetrics: metrics})
+	}
+	return items, nil
 }
 
 func (s *Service) enforceOrgLimit(orgID, resource string) error {
@@ -1886,8 +1936,10 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 	}
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
 	var oldSize int64
+	existed := false
 	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
 		oldSize = existing.Size
+		existed = true
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return err
 	}
@@ -1896,6 +1948,9 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 	}
 	if oldSize > 0 {
 		_ = s.store.AdjustObjectStorageBucketSize(bucketID, -oldSize)
+	}
+	if existed {
+		_ = s.store.AdjustObjectStorageBucketObjectCount(bucketID, -1)
 	}
 	return nil
 }
@@ -1910,8 +1965,10 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 	}
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
 	var oldSize int64
+	existed := false
 	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
 		oldSize = existing.Size
+		existed = true
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return ObjectInfo{}, err
 	}
@@ -1923,6 +1980,9 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 		return ObjectInfo{}, err
 	}
 	_ = s.store.AdjustObjectStorageBucketSize(bucketID, object.Size-oldSize)
+	if !existed {
+		_ = s.store.AdjustObjectStorageBucketObjectCount(bucketID, 1)
+	}
 	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, nil
 }
@@ -2231,6 +2291,47 @@ func (s *Service) DatabaseMetricsTimeseriesForOrg(orgID, databaseID string) (Dat
 	return s.DatabaseMetricsTimeseries(databaseID)
 }
 
+func (s *Service) DatabaseReplicationStatusForOrg(orgID, databaseID string) (DatabaseReplicationStatus, error) {
+	if _, err := s.GetDatabaseForOrg(orgID, databaseID); err != nil {
+		return DatabaseReplicationStatus{}, err
+	}
+	if s.db == nil {
+		return DatabaseReplicationStatus{State: "disabled", RecoveryHours: 168}, nil
+	}
+	return s.db.ReplicationStatus(databaseID)
+}
+
+func (s *Service) RestoreDatabaseForOrg(orgID, databaseID string, timestamp *time.Time) (RestoreDatabaseResult, error) {
+	if _, err := s.GetDatabaseForOrg(orgID, databaseID); err != nil {
+		s.recordRestore(databaseID, "error")
+		return RestoreDatabaseResult{}, err
+	}
+	if s.db == nil {
+		s.recordRestore(databaseID, "error")
+		return RestoreDatabaseResult{}, errors.New("database runtime is not configured")
+	}
+	result, err := s.db.Restore(databaseID, timestamp)
+	if err != nil {
+		s.recordRestore(databaseID, "error")
+	} else {
+		s.recordRestore(databaseID, "success")
+	}
+	return result, err
+}
+
+func (s *Service) recordRestore(databaseID, result string) {
+	key := databaseID + "\x00" + result
+	value, _ := s.restoreCounts.LoadOrStore(key, &atomic.Uint64{})
+	value.(*atomic.Uint64).Add(1)
+}
+func (s *Service) DatabaseRestoreCount(databaseID, result string) uint64 {
+	value, ok := s.restoreCounts.Load(databaseID + "\x00" + result)
+	if !ok {
+		return 0
+	}
+	return value.(*atomic.Uint64).Load()
+}
+
 func (s *Service) KVNamespaceMetricsTimeseriesForOrg(orgID, namespaceID string) (KVNamespaceMetricsTimeseries, error) {
 	if _, err := s.GetKVNamespaceForOrg(orgID, namespaceID); err != nil {
 		return KVNamespaceMetricsTimeseries{}, err
@@ -2449,12 +2550,14 @@ func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBuck
 	if s.objects == nil {
 		return metrics, nil
 	}
-	size, ok, err := s.reconcileObjectStorageBucketSize(bucketID)
+	size, objectCount, ok, err := s.reconcileObjectStorageBucketUsage(bucketID)
 	if err != nil || !ok {
 		return metrics, err
 	}
 	_ = s.store.AdjustObjectStorageBucketSize(bucketID, size-metrics.Size)
+	_ = s.store.SetObjectStorageBucketObjectCount(bucketID, objectCount)
 	metrics.Size = size
+	metrics.ObjectCount = objectCount
 	return metrics, nil
 }
 
@@ -2631,10 +2734,10 @@ func (s *Service) RecordRuntimeObjectWrite(bucketID string) error {
 	return s.store.IncrementObjectStorageBucketWrites(bucketID)
 }
 
-func (s *Service) reconcileObjectStorageBucketSize(bucketID string) (int64, bool, error) {
+func (s *Service) reconcileObjectStorageBucketUsage(bucketID string) (int64, int64, bool, error) {
 	active, err := s.activeDeployments()
 	if err != nil {
-		return 0, false, err
+		return 0, 0, false, err
 	}
 	for _, item := range active {
 		for _, binding := range item.Deployment.ObjectStorageBuckets {
@@ -2643,16 +2746,16 @@ func (s *Service) reconcileObjectStorageBucketSize(bucketID string) (int64, bool
 			}
 			objects, err := s.ObjectList(item.App.RuntimeToken, bucketID)
 			if err != nil {
-				return 0, false, err
+				return 0, 0, false, err
 			}
 			var size int64
 			for _, object := range objects {
 				size += object.Size
 			}
-			return size, true, nil
+			return size, int64(len(objects)), true, nil
 		}
 	}
-	return 0, false, nil
+	return 0, 0, false, nil
 }
 
 func (s *Service) ensureActiveDeploymentBindsNamespace(appID, namespaceID string) error {

@@ -825,6 +825,137 @@
         "required": ["binding", "database_id"],
         "type": "object"
       },
+      "DatabaseMetricsItem": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "database_id": {
+            "type": "string"
+          },
+          "duration_bucket_0_5": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_1": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_10": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_100": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_1000": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_25": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_250": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_2_5": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_5": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_50": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_500": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duration_bucket_inf": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "p50_duration_ms": {
+            "format": "double",
+            "type": "number"
+          },
+          "p99_duration_ms": {
+            "format": "double",
+            "type": "number"
+          },
+          "queries": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "read_queries": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "rows_read": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "rows_returned": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "rows_written": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "storage_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "table_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_duration_ms": {
+            "format": "double",
+            "type": "number"
+          },
+          "write_queries": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "database_id",
+          "available",
+          "queries",
+          "read_queries",
+          "write_queries",
+          "rows_read",
+          "rows_returned",
+          "rows_written",
+          "storage_bytes",
+          "table_count",
+          "total_duration_ms",
+          "p50_duration_ms",
+          "p99_duration_ms",
+          "duration_bucket_0_5",
+          "duration_bucket_1",
+          "duration_bucket_2_5",
+          "duration_bucket_5",
+          "duration_bucket_10",
+          "duration_bucket_25",
+          "duration_bucket_50",
+          "duration_bucket_100",
+          "duration_bucket_250",
+          "duration_bucket_500",
+          "duration_bucket_1000",
+          "duration_bucket_inf"
+        ],
+        "type": "object"
+      },
       "DatabaseMetricsTimeseries": {
         "additionalProperties": false,
         "properties": {
@@ -926,6 +1057,77 @@
           "p95_latency_ms",
           "p99_latency_ms"
         ],
+        "type": "object"
+      },
+      "DatabaseReplicationStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/DatabaseReplicationStatus.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "daemon_version": {
+            "type": "string"
+          },
+          "earliest_recovery_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "last_sync_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "local_txid": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "recovery_hours": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "restore_points": {
+            "items": {
+              "$ref": "#/components/schemas/DatabaseRestorePoint"
+            },
+            "type": ["array", "null"]
+          },
+          "state": {
+            "type": "string"
+          },
+          "sync_age_seconds": {
+            "format": "double",
+            "type": "number"
+          },
+          "wal_bytes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": ["enabled", "state", "recovery_hours"],
+        "type": "object"
+      },
+      "DatabaseRestorePoint": {
+        "additionalProperties": false,
+        "properties": {
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          }
+        },
+        "required": ["timestamp"],
         "type": "object"
       },
       "DbExecuteInput": {
@@ -1184,6 +1386,31 @@
           }
         },
         "required": ["id", "name", "created_at"],
+        "type": "object"
+      },
+      "KVNamespaceMetricsItem": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "namespace_id": {
+            "type": "string"
+          },
+          "reads": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "writes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": ["namespace_id", "available", "reads", "writes", "size"],
         "type": "object"
       },
       "KVNamespaceMetricsTimeseries": {
@@ -1674,6 +1901,35 @@
           }
         },
         "required": ["binding", "bucket_id"],
+        "type": "object"
+      },
+      "ObjectStorageBucketMetricsItem": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "bucket_id": {
+            "type": "string"
+          },
+          "object_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reads": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "writes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": ["bucket_id", "available", "reads", "writes", "size", "object_count"],
         "type": "object"
       },
       "ObjectStorageBucketMetricsTimeseries": {
@@ -2250,6 +2506,44 @@
           }
         },
         "required": ["value"],
+        "type": "object"
+      },
+      "RestoreDatabaseInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/RestoreDatabaseInput.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "RestoreDatabaseResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/RestoreDatabaseResult.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "restored_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": ["restored_at"],
         "type": "object"
       },
       "Secret": {
@@ -4507,6 +4801,93 @@
         "tags": ["Databases"]
       }
     },
+    "/v1/organizations/{orgID}/databases/metrics": {
+      "get": {
+        "operationId": "listDatabaseMetrics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DatabaseMetricsItem"
+                  },
+                  "type": ["array", "null"]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "listDatabaseMetrics",
+        "tags": ["Databases"]
+      }
+    },
     "/v1/organizations/{orgID}/databases/{databaseID}": {
       "delete": {
         "operationId": "deleteDatabase",
@@ -4885,6 +5266,200 @@
           }
         ],
         "summary": "executeDatabase",
+        "tags": ["Databases"]
+      }
+    },
+    "/v1/organizations/{orgID}/databases/{databaseID}/replication": {
+      "get": {
+        "operationId": "getDatabaseReplication",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "databaseID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseReplicationStatus"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "getDatabaseReplication",
+        "tags": ["Databases"]
+      }
+    },
+    "/v1/organizations/{orgID}/databases/{databaseID}/restore": {
+      "post": {
+        "operationId": "restoreDatabase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "databaseID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreDatabaseInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreDatabaseResult"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "restoreDatabase",
         "tags": ["Databases"]
       }
     },
@@ -5331,6 +5906,93 @@
         "tags": ["KV"]
       }
     },
+    "/v1/organizations/{orgID}/kv-namespaces/metrics": {
+      "get": {
+        "operationId": "listKVNamespaceMetrics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/KVNamespaceMetricsItem"
+                  },
+                  "type": ["array", "null"]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "listKVNamespaceMetrics",
+        "tags": ["KV"]
+      }
+    },
     "/v1/organizations/{orgID}/kv-namespaces/{namespaceID}": {
       "delete": {
         "operationId": "deleteKVNamespace",
@@ -5695,6 +6357,304 @@
           }
         ],
         "summary": "getKVNamespaceMetrics",
+        "tags": ["KV"]
+      }
+    },
+    "/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/values": {
+      "get": {
+        "operationId": "listKVNamespaceValues",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespaceID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkerKVKey"
+                  },
+                  "type": ["array", "null"]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "listKVNamespaceValues",
+        "tags": ["KV"]
+      }
+    },
+    "/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/values/{key}": {
+      "get": {
+        "operationId": "getKVNamespaceValue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespaceID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "getKVNamespaceValue",
+        "tags": ["KV"]
+      },
+      "put": {
+        "operationId": "putKVNamespaceValue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespaceID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinaryBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "putKVNamespaceValue",
         "tags": ["KV"]
       }
     },
@@ -6959,6 +7919,93 @@
           }
         ],
         "summary": "createObjectStorageBucket",
+        "tags": ["Object storage"]
+      }
+    },
+    "/v1/organizations/{orgID}/object-storage-buckets/metrics": {
+      "get": {
+        "operationId": "listObjectStorageBucketMetrics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ObjectStorageBucketMetricsItem"
+                  },
+                  "type": ["array", "null"]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "listObjectStorageBucketMetrics",
         "tags": ["Object storage"]
       }
     },

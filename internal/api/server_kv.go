@@ -11,6 +11,7 @@ import (
 func (s *Server) registerKVRoutes() {
 	base := "/v1/organizations/{orgID}"
 	s.mux.HandleFunc("GET "+base+"/kv-namespaces", s.listKVNamespaces)
+	s.mux.HandleFunc("GET "+base+"/kv-namespaces/metrics", s.listKVNamespaceMetrics)
 	s.mux.HandleFunc("POST "+base+"/kv-namespaces", s.createKVNamespace)
 	s.mux.HandleFunc("GET "+base+"/kv-namespaces/{namespaceID}", s.getKVNamespace)
 	s.mux.HandleFunc("PATCH "+base+"/kv-namespaces/{namespaceID}", s.updateKVNamespace)
@@ -26,6 +27,18 @@ func (s *Server) registerKVRoutes() {
 	s.mux.HandleFunc("GET "+workerBase+"/{key...}", s.workerKVGet)
 	s.mux.HandleFunc("PUT "+workerBase+"/{key...}", s.workerKVPut)
 	s.mux.HandleFunc("DELETE "+workerBase+"/{key...}", s.workerKVDelete)
+}
+
+func (s *Server) listKVNamespaceMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "kv:read") {
+		return
+	}
+	metrics, err := s.service.KVNamespaceMetricsListForOrg(controlOrgID(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
 }
 
 func (s *Server) kvNamespaceList(w http.ResponseWriter, r *http.Request) {

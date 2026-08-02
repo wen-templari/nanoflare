@@ -22,6 +22,7 @@ func (s *Server) registerObjectRoutes() {
 	base := "/v1/organizations/{orgID}"
 	buckets := base + "/object-storage-buckets"
 	s.mux.HandleFunc("GET "+buckets, s.listObjectStorageBuckets)
+	s.mux.HandleFunc("GET "+buckets+"/metrics", s.listObjectStorageBucketMetrics)
 	s.mux.HandleFunc("POST "+buckets, s.createObjectStorageBucket)
 	s.mux.HandleFunc("GET "+buckets+"/{bucketID}", s.getObjectStorageBucket)
 	s.mux.HandleFunc("PATCH "+buckets+"/{bucketID}", s.updateObjectStorageBucket)
@@ -39,6 +40,18 @@ func (s *Server) registerObjectRoutes() {
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-upload", s.presignUpload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-download", s.presignDownload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/delete", s.deleteObject)
+}
+
+func (s *Server) listObjectStorageBucketMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "objects:read") {
+		return
+	}
+	metrics, err := s.service.ObjectStorageBucketMetricsListForOrg(controlOrgID(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
 }
 
 func (s *Server) workerObjectList(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,7 @@ type SQLiteManager struct {
 	mu         sync.Mutex
 	dbs        map[string]*sql.DB
 	bookmarks  map[string]int64
+	restoreMu  sync.RWMutex
 }
 
 func NewSQLiteManager(dir string, litestream *LitestreamSupervisor) (*SQLiteManager, error) {
@@ -30,15 +31,35 @@ func NewSQLiteManager(dir string, litestream *LitestreamSupervisor) (*SQLiteMana
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return &SQLiteManager{
+	manager := &SQLiteManager{
 		dir:        dir,
 		litestream: litestream,
 		dbs:        make(map[string]*sql.DB),
 		bookmarks:  make(map[string]int64),
-	}, nil
+	}
+	// Existing databases must be registered before the supervisor starts. On a
+	// process restart no query may run immediately, but their replicas still
+	// need a daemon for status and time-travel recovery.
+	if litestream != nil && litestream.Enabled() {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sqlite") {
+				continue
+			}
+			if err := litestream.ConfigureDatabase(filepath.Join(dir, entry.Name())); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return manager, nil
 }
 
 func (m *SQLiteManager) Execute(databaseID string, request nanoflare.DBQueryRequest) (nanoflare.DBQueryResponse, error) {
+	m.restoreMu.RLock()
+	defer m.restoreMu.RUnlock()
 	databaseID = strings.TrimSpace(databaseID)
 	if databaseID == "" {
 		return nanoflare.DBQueryResponse{}, nanoflare.ErrDatabaseNotFound
@@ -102,6 +123,8 @@ func (m *SQLiteManager) Execute(databaseID string, request nanoflare.DBQueryRequ
 }
 
 func (m *SQLiteManager) ApplyMigration(databaseID, name, migrationSQL string) (nanoflare.DBMigrationResult, error) {
+	m.restoreMu.RLock()
+	defer m.restoreMu.RUnlock()
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nanoflare.DBMigrationResult{}, errors.New("migration name is required")
@@ -142,6 +165,8 @@ func (m *SQLiteManager) ApplyMigration(databaseID, name, migrationSQL string) (n
 }
 
 func (m *SQLiteManager) Stats(databaseID string) (nanoflare.DatabaseRuntimeStats, error) {
+	m.restoreMu.RLock()
+	defer m.restoreMu.RUnlock()
 	databaseID = strings.TrimSpace(databaseID)
 	if databaseID == "" {
 		return nanoflare.DatabaseRuntimeStats{}, nanoflare.ErrDatabaseNotFound
@@ -158,6 +183,52 @@ func (m *SQLiteManager) Stats(databaseID string) (nanoflare.DatabaseRuntimeStats
 		StorageBytes: databaseFileSize(m.path(databaseID)),
 		TableCount:   tableCount,
 	}, nil
+}
+
+func (m *SQLiteManager) ReplicationStatus(databaseID string) (nanoflare.DatabaseReplicationStatus, error) {
+	if m.litestream == nil {
+		return nanoflare.DatabaseReplicationStatus{State: "disabled", RecoveryHours: 168}, nil
+	}
+	return m.litestream.Status(m.path(databaseID))
+}
+
+func (m *SQLiteManager) Restore(databaseID string, timestamp *time.Time) (nanoflare.RestoreDatabaseResult, error) {
+	m.restoreMu.Lock()
+	defer m.restoreMu.Unlock()
+	if m.litestream == nil || !m.litestream.Enabled() {
+		return nanoflare.RestoreDatabaseResult{}, errors.New("Litestream is not enabled")
+	}
+	path := m.path(databaseID)
+	if err := m.litestream.EnsureDatabase(path); err != nil {
+		return nanoflare.RestoreDatabaseResult{}, err
+	}
+	temporary := path + ".restore"
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		_ = os.Remove(temporary + suffix)
+	}
+	if err := m.litestream.RestoreTo(path, temporary, timestamp); err != nil {
+		return nanoflare.RestoreDatabaseResult{}, err
+	}
+	m.mu.Lock()
+	if db := m.dbs[databaseID]; db != nil {
+		_ = db.Close()
+	}
+	delete(m.dbs, databaseID)
+	m.mu.Unlock()
+	backup := path + ".pre-restore"
+	_ = os.Remove(backup)
+	if err := os.Rename(path, backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nanoflare.RestoreDatabaseResult{}, err
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Remove(path + suffix)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		_ = os.Rename(backup, path)
+		return nanoflare.RestoreDatabaseResult{}, err
+	}
+	_ = os.Remove(backup)
+	return nanoflare.RestoreDatabaseResult{RestoredAt: time.Now().UTC(), Timestamp: timestamp}, nil
 }
 
 func (m *SQLiteManager) RestoreMissing(databaseID string) error {

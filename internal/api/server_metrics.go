@@ -50,6 +50,7 @@ func collectObjectStorageMetrics(ch chan<- prometheus.Metric, s *Server) {
 	reads := metricDesc("nanoflare_object_storage_reads_total", "Runtime object storage read operations.", []string{"bucket_id", "bucket_name"})
 	writes := metricDesc("nanoflare_object_storage_writes_total", "Runtime object storage write operations.", []string{"bucket_id", "bucket_name"})
 	size := metricDesc("nanoflare_object_storage_size_bytes", "Stored object storage bytes by bucket.", []string{"bucket_id", "bucket_name"})
+	objects := metricDesc("nanoflare_object_storage_objects", "Stored object count by bucket.", []string{"bucket_id", "bucket_name"})
 	buckets, err := s.service.ListObjectStorageBuckets()
 	if err != nil {
 		return
@@ -63,6 +64,7 @@ func collectObjectStorageMetrics(ch chan<- prometheus.Metric, s *Server) {
 		ch <- prometheus.MustNewConstMetric(reads, prometheus.CounterValue, float64(metrics.Reads), labels...)
 		ch <- prometheus.MustNewConstMetric(writes, prometheus.CounterValue, float64(metrics.Writes), labels...)
 		ch <- prometheus.MustNewConstMetric(size, prometheus.GaugeValue, float64(metrics.Size), labels...)
+		ch <- prometheus.MustNewConstMetric(objects, prometheus.GaugeValue, float64(metrics.ObjectCount), labels...)
 	}
 }
 
@@ -77,6 +79,12 @@ func collectDatabaseMetrics(ch chan<- prometheus.Metric, s *Server) {
 	storage := metricDesc("nanoflare_db_storage_size_bytes", "Stored database bytes.", labels)
 	tables := metricDesc("nanoflare_db_tables", "Database user table count.", labels)
 	duration := metricDesc("nanoflare_db_query_duration_seconds", "Runtime database query duration.", labels)
+	replicationUp := metricDesc("nanoflare_db_replication_up", "Whether Litestream is actively replicating this database.", labels)
+	lastSync := metricDesc("nanoflare_db_replication_last_sync_timestamp_seconds", "Unix time of the last successful Litestream sync.", labels)
+	syncAge := metricDesc("nanoflare_db_replication_sync_age_seconds", "Age of the last successful Litestream sync.", labels)
+	walBytes := metricDesc("nanoflare_db_replication_wal_bytes", "Current SQLite WAL size observed by Litestream.", labels)
+	localTXID := metricDesc("nanoflare_db_replication_local_txid", "Current local Litestream transaction ID.", labels)
+	restores := metricDesc("nanoflare_db_restore_total", "Database restore attempts.", append(labels, "result"))
 	databases, err := s.service.ListDatabases()
 	if err != nil {
 		return
@@ -96,6 +104,22 @@ func collectDatabaseMetrics(ch chan<- prometheus.Metric, s *Server) {
 		ch <- prometheus.MustNewConstMetric(storage, prometheus.GaugeValue, float64(metrics.StorageBytes), values...)
 		ch <- prometheus.MustNewConstMetric(tables, prometheus.GaugeValue, float64(metrics.TableCount), values...)
 		ch <- databaseDurationHistogram(duration, values, metrics)
+		if replication, err := s.service.DatabaseReplicationStatusForOrg(database.OrgID, database.ID); err == nil {
+			up := 0.0
+			if replication.State == "replicating" {
+				up = 1
+			}
+			ch <- prometheus.MustNewConstMetric(replicationUp, prometheus.GaugeValue, up, values...)
+			ch <- prometheus.MustNewConstMetric(syncAge, prometheus.GaugeValue, replication.SyncAgeSeconds, values...)
+			ch <- prometheus.MustNewConstMetric(walBytes, prometheus.GaugeValue, float64(replication.WALBytes), values...)
+			ch <- prometheus.MustNewConstMetric(localTXID, prometheus.GaugeValue, float64(replication.LocalTXID), values...)
+			if replication.LastSyncAt != nil {
+				ch <- prometheus.MustNewConstMetric(lastSync, prometheus.GaugeValue, float64(replication.LastSyncAt.Unix()), values...)
+			}
+		}
+		for _, result := range []string{"success", "error"} {
+			ch <- prometheus.MustNewConstMetric(restores, prometheus.CounterValue, float64(s.service.DatabaseRestoreCount(database.ID, result)), append(values, result)...)
+		}
 	}
 }
 

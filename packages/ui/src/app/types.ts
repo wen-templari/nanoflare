@@ -66,7 +66,10 @@ export type KVNamespaceMetrics = {
   writes: number;
   size: number;
 };
+export type KVNamespaceMetricsItem = components["schemas"]["KVNamespaceMetricsItem"];
 export type ObjectStorageBucketMetrics = KVNamespaceMetrics;
+export type ObjectStorageBucketMetricsItem =
+  components["schemas"]["ObjectStorageBucketMetricsItem"];
 export type DatabaseMetrics = {
   available: boolean;
   queries: number;
@@ -93,6 +96,7 @@ export type DatabaseMetrics = {
   duration_bucket_1000: number;
   duration_bucket_inf: number;
 };
+export type DatabaseMetricsItem = components["schemas"]["DatabaseMetricsItem"];
 export type MetricPoint = components["schemas"]["MetricPoint"];
 export type DatabaseMetricsTimeseries = components["schemas"]["DatabaseMetricsTimeseries"];
 export type KVNamespaceMetricsTimeseries = components["schemas"]["KVNamespaceMetricsTimeseries"];

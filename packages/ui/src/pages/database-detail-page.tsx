@@ -5,8 +5,10 @@ import {
   Button,
   Chart,
   ChartPalette,
+  Dialog,
   LayerCard,
   LinkButton,
+  Select,
   Table,
   Tabs,
   Text,
@@ -19,6 +21,8 @@ import {
   HardDrive,
   Play,
   Rows3,
+  RefreshCw,
+  RotateCcw,
   Table2,
   Trash2,
   Waypoints,
@@ -57,7 +61,8 @@ const slashCommands = [
 ];
 
 const tablesSQL = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;";
-const databaseDetailTabs = ["overview", "query", "settings"] as const;
+const databaseDetailTabs = ["overview", "query", "time-travel", "settings"] as const;
+type ReplicationStatus = components["schemas"]["DatabaseReplicationStatus"];
 
 function helpQueryRun(): QueryRun {
   return {
@@ -121,6 +126,17 @@ function DatabaseDetailContent({
   const [series, setSeries] = useState<DatabaseMetricsTimeseries>(() =>
     emptyDatabaseMetricsTimeseries(),
   );
+  const [replication, setReplication] = useState<ReplicationStatus>({
+    enabled: false,
+    state: "disabled",
+    recovery_hours: 168,
+  });
+  const [replicationLoading, setReplicationLoading] = useState(false);
+  const [restoreTimestamp, setRestoreTimestamp] = useState("");
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreName, setRestoreName] = useState("");
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState("");
   const queryResultEndRef = useRef<HTMLDivElement>(null);
   const bindings = workers.flatMap((worker) =>
     (worker.bindings ?? [])
@@ -157,6 +173,59 @@ function DatabaseDetailContent({
       cancelled = true;
     };
   }, [activeOrgID, apiConnected, database.id]);
+
+  async function loadReplication() {
+    if (!apiConnected)
+      return setReplication({ enabled: false, state: "disabled", recovery_hours: 168 });
+    setReplicationLoading(true);
+    try {
+      const { data, error } = await apiClient.GET(
+        "/v1/organizations/{orgID}/databases/{databaseID}/replication",
+        { params: { path: { orgID: activeOrgID, databaseID: database.id } }, parseAs: "json" },
+      );
+      if (error || !data) throw new Error(errorMessage(error, "Replication status unavailable"));
+      setReplication(data);
+    } catch (error) {
+      setReplication({
+        enabled: true,
+        state: "error",
+        recovery_hours: 168,
+        error: error instanceof Error ? error.message : "Replication status unavailable",
+      });
+    } finally {
+      setReplicationLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadReplication();
+  }, [activeOrgID, apiConnected, database.id]);
+
+  async function restoreDatabase() {
+    if (restoreName !== database.name) return setRestoreError("Enter the database name to confirm");
+    setRestoring(true);
+    setRestoreError("");
+    try {
+      const timestamp = restoreTimestamp ? new Date(restoreTimestamp).toISOString() : undefined;
+      const { error } = await apiClient.POST(
+        "/v1/organizations/{orgID}/databases/{databaseID}/restore",
+        {
+          params: { path: { orgID: activeOrgID, databaseID: database.id } },
+          body: timestamp ? { timestamp } : {},
+          parseAs: "json",
+        },
+      );
+      if (error) throw new Error(errorMessage(error, "Restore failed"));
+      setRestoreOpen(false);
+      setRestoreName("");
+      notify(`${database.name} restored`);
+      void loadReplication();
+    } catch (error) {
+      setRestoreError(error instanceof Error ? error.message : "Restore failed");
+    } finally {
+      setRestoring(false);
+    }
+  }
 
   async function deleteDatabase() {
     if (bindings.length) return notify("Remove worker bindings before deleting this database");
@@ -297,9 +366,10 @@ function DatabaseDetailContent({
           tabs={[
             { label: "Overview", value: "overview" },
             { label: "Query", value: "query" },
+            { label: "Time travel", value: "time-travel" },
             { label: "Settings", value: "settings" },
           ]}
-          onValueChange={(value) => setTab(value as "overview" | "query" | "settings")}
+          onValueChange={(value) => setTab(value as (typeof databaseDetailTabs)[number])}
           value={tab}
           variant="segmented"
         />
@@ -375,6 +445,63 @@ function DatabaseDetailContent({
           </div>
 
           <div className="mt-6">
+            <LayerCard className="mb-6 overflow-hidden">
+              <LayerCard.Secondary className="flex items-center justify-between gap-3">
+                <div>
+                  <Text as="h2" variant="secondary">
+                    Replication
+                  </Text>
+                  <Text size="xs" variant="secondary">
+                    Litestream recovery history
+                  </Text>
+                </div>
+                <Button
+                  disabled={replicationLoading}
+                  onClick={() => void loadReplication()}
+                  size="sm"
+                  variant="secondary"
+                >
+                  <RefreshCw className="size-3.5" />
+                  Refresh
+                </Button>
+              </LayerCard.Secondary>
+              <LayerCard.Primary className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-5">
+                <ReplicationValue label="Status" value={replication.state} />
+                <ReplicationValue
+                  label="Last synced"
+                  value={
+                    replication.last_sync_at
+                      ? new Date(replication.last_sync_at).toLocaleString()
+                      : "Never"
+                  }
+                />
+                <ReplicationValue
+                  label="Sync age"
+                  value={
+                    replication.last_sync_at ? formatAge(replication.sync_age_seconds ?? 0) : "—"
+                  }
+                />
+                <ReplicationValue
+                  label="WAL size"
+                  value={formatBytes(replication.wal_bytes ?? 0)}
+                />
+                <ReplicationValue
+                  label="Recover from"
+                  value={
+                    replication.earliest_recovery_at
+                      ? new Date(replication.earliest_recovery_at).toLocaleString()
+                      : "Not available"
+                  }
+                />
+              </LayerCard.Primary>
+              {replication.error && (
+                <div className="border-t border-kumo-line px-4 py-3">
+                  <Text size="sm" variant="error">
+                    {replication.error}
+                  </Text>
+                </div>
+              )}
+            </LayerCard>
             <LayerCard className="overflow-hidden">
               <div className="border-b border-[#e8e3d9] px-5 py-4">
                 <Field label="Bound workers">
@@ -466,6 +593,94 @@ function DatabaseDetailContent({
             </div>
           </div>
         </LayerCard>
+      ) : tab === "time-travel" ? (
+        <div className="space-y-6">
+          <LayerCard>
+            <LayerCard.Secondary>
+              <Text as="h2" variant="secondary">
+                Restore a previous version
+              </Text>
+            </LayerCard.Secondary>
+            <LayerCard.Primary className="grid gap-5 p-4">
+              <Select
+                className="max-w-xl"
+                items={[
+                  { value: "", label: "Latest recoverable point" },
+                  ...(replication.restore_points ?? []).map((point) => ({
+                    value: point.timestamp,
+                    label: `${new Date(point.timestamp).toLocaleString()} · snapshot ${point.txid}`,
+                  })),
+                ]}
+                label="Restore point"
+                onValueChange={(value) =>
+                  setRestoreTimestamp(typeof value === "string" ? value : "")
+                }
+                value={restoreTimestamp}
+              />
+              <Text size="sm" variant="secondary">
+                Choose a Litestream snapshot checkpoint. Latest is checked by Litestream before the
+                live database is replaced. Database bookmarks cannot be used because they are not
+                Litestream recovery points.
+              </Text>
+              <div>
+                <Button
+                  disabled={replication.state !== "replicating"}
+                  onClick={() => {
+                    setRestoreError("");
+                    setRestoreOpen(true);
+                  }}
+                  variant="destructive"
+                >
+                  <RotateCcw className="size-4" />
+                  Restore database
+                </Button>
+              </div>
+            </LayerCard.Primary>
+          </LayerCard>
+          <Dialog.Root open={restoreOpen} onOpenChange={setRestoreOpen}>
+            <Dialog className="p-0">
+              <div className="border-b border-kumo-line px-6 py-4">
+                <Dialog.Title className="text-lg font-semibold">Restore database</Dialog.Title>
+              </div>
+              <div className="grid gap-4 px-6 py-5">
+                {restoreError && (
+                  <Text size="sm" variant="error">
+                    {restoreError}
+                  </Text>
+                )}
+                <Text size="sm" variant="secondary">
+                  This replaces the live database. All writes after the selected point will be
+                  permanently lost.
+                </Text>
+                <label className="grid gap-1.5">
+                  <Text size="sm">Type {database.name} to confirm</Text>
+                  <input
+                    className="rounded-md border border-kumo-line px-3 py-2 text-sm"
+                    onChange={(event) => setRestoreName(event.target.value)}
+                    value={restoreName}
+                  />
+                </label>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-kumo-line px-6 py-4">
+                <Button
+                  disabled={restoring}
+                  onClick={() => setRestoreOpen(false)}
+                  variant="secondary"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={restoreName !== database.name}
+                  loading={restoring}
+                  onClick={() => void restoreDatabase()}
+                  variant="destructive"
+                >
+                  Restore database
+                </Button>
+              </div>
+            </Dialog>
+          </Dialog.Root>
+        </div>
       ) : (
         <div className="space-y-6">
           <LayerCard>
@@ -544,6 +759,22 @@ function DatabaseDetailContent({
       )}
     </>
   );
+}
+
+function ReplicationValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1">
+      <Text size="xs" variant="secondary">
+        {label}
+      </Text>
+      <Text variant="mono">{value}</Text>
+    </div>
+  );
+}
+function formatAge(seconds: number) {
+  if (seconds < 60) return `${Math.max(0, Math.floor(seconds))}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3600)}h`;
 }
 
 function QueryRunCard({ run }: { run: QueryRun }) {

@@ -440,7 +440,8 @@ CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
 	bucket_id text PRIMARY KEY REFERENCES object_storage_buckets(id) ON DELETE CASCADE,
 	reads bigint NOT NULL DEFAULT 0,
 	writes bigint NOT NULL DEFAULT 0,
-	size bigint NOT NULL DEFAULT 0
+	size bigint NOT NULL DEFAULT 0,
+	object_count bigint NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS database_metrics (
 	database_id text PRIMARY KEY REFERENCES databases(id) ON DELETE CASCADE,
@@ -467,6 +468,7 @@ CREATE TABLE IF NOT EXISTS database_metrics (
 	duration_bucket_inf bigint NOT NULL DEFAULT 0
 );
 ALTER TABLE kv_namespace_metrics ADD COLUMN IF NOT EXISTS size bigint NOT NULL DEFAULT 0;
+ALTER TABLE object_storage_bucket_metrics ADD COLUMN IF NOT EXISTS object_count bigint NOT NULL DEFAULT 0;
 INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size)
 SELECT kv_namespace_id, 0, 0, COALESCE(SUM(octet_length(value)), 0)
 FROM runtime_kv
@@ -2489,9 +2491,9 @@ func (p *Postgres) ObjectStorageBucketMetrics(bucketID string) (nanoflare.Object
 	}
 	var metrics nanoflare.ObjectStorageBucketMetrics
 	err := p.db.QueryRow(`
-SELECT reads, writes, size
+SELECT reads, writes, size, object_count
 FROM object_storage_bucket_metrics
-WHERE bucket_id = $1`, bucketID).Scan(&metrics.Reads, &metrics.Writes, &metrics.Size)
+WHERE bucket_id = $1`, bucketID).Scan(&metrics.Reads, &metrics.Writes, &metrics.Size, &metrics.ObjectCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		metrics.Available = true
 		return metrics, nil
@@ -2537,6 +2539,26 @@ func (p *Postgres) AdjustObjectStorageBucketSize(bucketID string, delta int64) e
 	_, err := p.db.Exec(`
 INSERT INTO object_storage_bucket_metrics (bucket_id, reads, writes, size) VALUES ($1, 0, 0, GREATEST($2, 0))
 ON CONFLICT (bucket_id) DO UPDATE SET size = GREATEST(object_storage_bucket_metrics.size + $2, 0)`, bucketID, delta)
+	return err
+}
+
+func (p *Postgres) SetObjectStorageBucketObjectCount(bucketID string, count int64) error {
+	if _, err := p.GetObjectStorageBucket(bucketID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO object_storage_bucket_metrics (bucket_id, reads, writes, size, object_count) VALUES ($1, 0, 0, 0, GREATEST($2, 0))
+ON CONFLICT (bucket_id) DO UPDATE SET object_count = GREATEST($2, 0)`, bucketID, count)
+	return err
+}
+
+func (p *Postgres) AdjustObjectStorageBucketObjectCount(bucketID string, delta int64) error {
+	if _, err := p.GetObjectStorageBucket(bucketID); err != nil {
+		return err
+	}
+	_, err := p.db.Exec(`
+INSERT INTO object_storage_bucket_metrics (bucket_id, reads, writes, size, object_count) VALUES ($1, 0, 0, 0, GREATEST($2, 0))
+ON CONFLICT (bucket_id) DO UPDATE SET object_count = GREATEST(object_storage_bucket_metrics.object_count + $2, 0)`, bucketID, delta)
 	return err
 }
 

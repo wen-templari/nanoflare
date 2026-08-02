@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"sort"
+	"time"
 )
 
 type DBExecutor interface {
@@ -12,6 +13,8 @@ type DBExecutor interface {
 	Stats(databaseID string) (DatabaseRuntimeStats, error)
 	Delete(databaseID string) error
 	RestoreMissing(databaseID string) error
+	ReplicationStatus(databaseID string) (DatabaseReplicationStatus, error)
+	Restore(databaseID string, timestamp *time.Time) (RestoreDatabaseResult, error)
 }
 
 type DBQueryRequest struct {

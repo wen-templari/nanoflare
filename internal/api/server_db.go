@@ -3,6 +3,8 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
@@ -16,11 +18,65 @@ type dbExecuteInput struct {
 func (s *Server) registerDBRoutes() {
 	base := "/v1/organizations/{orgID}/databases"
 	s.mux.HandleFunc("GET "+base, s.listDatabases)
+	s.mux.HandleFunc("GET "+base+"/metrics", s.listDatabaseMetrics)
 	s.mux.HandleFunc("POST "+base, s.createDatabase)
 	s.mux.HandleFunc("DELETE "+base+"/{databaseID}", s.deleteDatabase)
 	s.mux.HandleFunc("GET "+base+"/{databaseID}/analytics", s.databaseMetricsTimeseries)
+	s.mux.HandleFunc("GET "+base+"/{databaseID}/replication", s.databaseReplicationStatus)
+	s.mux.HandleFunc("POST "+base+"/{databaseID}/restore", s.restoreDatabase)
 	s.mux.HandleFunc("POST "+base+"/{databaseID}/queries", s.executeDatabase)
 	s.mux.HandleFunc("POST "+base+"/{databaseID}/migrations", s.applyDatabaseMigration)
+}
+
+func (s *Server) listDatabaseMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "db:read") {
+		return
+	}
+	metrics, err := s.service.DatabaseMetricsListForOrg(controlOrgID(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
+func (s *Server) databaseReplicationStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "db:read") {
+		return
+	}
+	status, err := s.service.DatabaseReplicationStatusForOrg(controlOrgID(r), r.PathValue("databaseID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) restoreDatabase(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "db:write") {
+		return
+	}
+	var input nanoflare.RestoreDatabaseInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var timestamp *time.Time
+	if value := strings.TrimSpace(input.Timestamp); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, errors.New("timestamp must be RFC3339"))
+			return
+		}
+		utc := parsed.UTC()
+		timestamp = &utc
+	}
+	result, err := s.service.RestoreDatabaseForOrg(controlOrgID(r), r.PathValue("databaseID"), timestamp)
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) listDatabases(w http.ResponseWriter, r *http.Request) {

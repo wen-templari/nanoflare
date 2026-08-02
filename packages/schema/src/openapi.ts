@@ -415,6 +415,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/databases/metrics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listDatabaseMetrics */
+    get: operations["listDatabaseMetrics"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/databases/{databaseID}": {
     parameters: {
       query?: never;
@@ -483,6 +500,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/databases/{databaseID}/replication": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getDatabaseReplication */
+    get: operations["getDatabaseReplication"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/databases/{databaseID}/restore": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** restoreDatabase */
+    post: operations["restoreDatabase"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/invites": {
     parameters: {
       query?: never;
@@ -536,6 +587,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/kv-namespaces/metrics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listKVNamespaceMetrics */
+    get: operations["listKVNamespaceMetrics"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/kv-namespaces/{namespaceID}": {
     parameters: {
       query?: never;
@@ -565,6 +633,41 @@ export interface paths {
     /** getKVNamespaceMetrics */
     get: operations["getKVNamespaceMetrics"];
     put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/values": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listKVNamespaceValues */
+    get: operations["listKVNamespaceValues"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/values/{key}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getKVNamespaceValue */
+    get: operations["getKVNamespaceValue"];
+    /** putKVNamespaceValue */
+    put: operations["putKVNamespaceValue"];
     post?: never;
     delete?: never;
     options?: never;
@@ -724,6 +827,23 @@ export interface paths {
     put?: never;
     /** createObjectStorageBucket */
     post: operations["createObjectStorageBucket"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/object-storage-buckets/metrics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listObjectStorageBucketMetrics */
+    get: operations["listObjectStorageBucketMetrics"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1488,6 +1608,56 @@ export interface components {
       binding: string;
       database_id: string;
     };
+    DatabaseMetricsItem: {
+      available: boolean;
+      database_id: string;
+      /** Format: int64 */
+      duration_bucket_0_5: number;
+      /** Format: int64 */
+      duration_bucket_1: number;
+      /** Format: int64 */
+      duration_bucket_10: number;
+      /** Format: int64 */
+      duration_bucket_100: number;
+      /** Format: int64 */
+      duration_bucket_1000: number;
+      /** Format: int64 */
+      duration_bucket_25: number;
+      /** Format: int64 */
+      duration_bucket_250: number;
+      /** Format: int64 */
+      duration_bucket_2_5: number;
+      /** Format: int64 */
+      duration_bucket_5: number;
+      /** Format: int64 */
+      duration_bucket_50: number;
+      /** Format: int64 */
+      duration_bucket_500: number;
+      /** Format: int64 */
+      duration_bucket_inf: number;
+      /** Format: double */
+      p50_duration_ms: number;
+      /** Format: double */
+      p99_duration_ms: number;
+      /** Format: int64 */
+      queries: number;
+      /** Format: int64 */
+      read_queries: number;
+      /** Format: int64 */
+      rows_read: number;
+      /** Format: int64 */
+      rows_returned: number;
+      /** Format: int64 */
+      rows_written: number;
+      /** Format: int64 */
+      storage_bytes: number;
+      /** Format: int64 */
+      table_count: number;
+      /** Format: double */
+      total_duration_ms: number;
+      /** Format: int64 */
+      write_queries: number;
+    };
     DatabaseMetricsTimeseries: {
       /**
        * Format: uri
@@ -1508,6 +1678,36 @@ export interface components {
       storage_bytes: components["schemas"]["MetricPoint"][] | null;
       table_count: components["schemas"]["MetricPoint"][] | null;
       write_queries: components["schemas"]["MetricPoint"][] | null;
+    };
+    DatabaseReplicationStatus: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/DatabaseReplicationStatus.json
+       */
+      readonly $schema?: string;
+      daemon_version?: string;
+      /** Format: date-time */
+      earliest_recovery_at?: string;
+      enabled: boolean;
+      error?: string;
+      /** Format: date-time */
+      last_sync_at?: string;
+      /** Format: int64 */
+      local_txid?: number;
+      /** Format: int64 */
+      recovery_hours: number;
+      restore_points?: components["schemas"]["DatabaseRestorePoint"][] | null;
+      state: string;
+      /** Format: double */
+      sync_age_seconds?: number;
+      /** Format: int64 */
+      wal_bytes?: number;
+    };
+    DatabaseRestorePoint: {
+      /** Format: date-time */
+      timestamp: string;
+      txid?: string;
     };
     DbExecuteInput: {
       /**
@@ -1603,6 +1803,16 @@ export interface components {
       name: string;
       oauth_client_id?: string;
       org_id?: string;
+    };
+    KVNamespaceMetricsItem: {
+      available: boolean;
+      namespace_id: string;
+      /** Format: int64 */
+      reads: number;
+      /** Format: int64 */
+      size: number;
+      /** Format: int64 */
+      writes: number;
     };
     KVNamespaceMetricsTimeseries: {
       /**
@@ -1797,6 +2007,18 @@ export interface components {
     ObjectStorageBucketBinding: {
       binding: string;
       bucket_id: string;
+    };
+    ObjectStorageBucketMetricsItem: {
+      available: boolean;
+      bucket_id: string;
+      /** Format: int64 */
+      object_count: number;
+      /** Format: int64 */
+      reads: number;
+      /** Format: int64 */
+      size: number;
+      /** Format: int64 */
+      writes: number;
     };
     ObjectStorageBucketMetricsTimeseries: {
       /**
@@ -2027,6 +2249,27 @@ export interface components {
        */
       readonly $schema?: string;
       value: string;
+    };
+    RestoreDatabaseInput: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/RestoreDatabaseInput.json
+       */
+      readonly $schema?: string;
+      timestamp?: string;
+    };
+    RestoreDatabaseResult: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/RestoreDatabaseResult.json
+       */
+      readonly $schema?: string;
+      /** Format: date-time */
+      restored_at: string;
+      /** Format: date-time */
+      timestamp?: string;
     };
     Secret: {
       /**
@@ -3696,6 +3939,73 @@ export interface operations {
       };
     };
   };
+  listDatabaseMetrics: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DatabaseMetricsItem"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
   deleteDatabase: {
     parameters: {
       query?: never;
@@ -3925,6 +4235,146 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["DBQueryResponse"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  getDatabaseReplication: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        databaseID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DatabaseReplicationStatus"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  restoreDatabase: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        databaseID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RestoreDatabaseInput"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RestoreDatabaseResult"];
         };
       };
       /** @description Error */
@@ -4316,6 +4766,73 @@ export interface operations {
       };
     };
   };
+  listKVNamespaceMetrics: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["KVNamespaceMetricsItem"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
   getKVNamespace: {
     parameters: {
       query?: never;
@@ -4542,6 +5059,214 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["KVNamespaceMetricsTimeseries"];
         };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  listKVNamespaceValues: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkerKVKey"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  getKVNamespaceValue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/octet-stream": string;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  putKVNamespaceValue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BinaryBody"];
+      };
+    };
+    responses: {
+      /** @description No content */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Error */
       400: {
@@ -5497,6 +6222,73 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ObjectStorageBucket"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  listObjectStorageBucketMetrics: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ObjectStorageBucketMetricsItem"][] | null;
         };
       };
       /** @description Error */

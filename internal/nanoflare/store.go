@@ -146,6 +146,8 @@ type Repository interface {
 	IncrementObjectStorageBucketReads(bucketID string) error
 	IncrementObjectStorageBucketWrites(bucketID string) error
 	AdjustObjectStorageBucketSize(bucketID string, delta int64) error
+	AdjustObjectStorageBucketObjectCount(bucketID string, delta int64) error
+	SetObjectStorageBucketObjectCount(bucketID string, count int64) error
 }
 
 type Store struct {
@@ -1853,6 +1855,30 @@ func (s *Store) AdjustObjectStorageBucketSize(bucketID string, delta int64) erro
 	if metrics.Size < 0 {
 		metrics.Size = 0
 	}
+	s.objectMetrics[bucketID] = metrics
+	return nil
+}
+
+func (s *Store) SetObjectStorageBucketObjectCount(bucketID string, count int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.objectBuckets[bucketID]; !ok {
+		return ErrObjectStorageBucketNotFound
+	}
+	metrics := s.objectMetrics[bucketID]
+	metrics.ObjectCount = max(count, 0)
+	s.objectMetrics[bucketID] = metrics
+	return nil
+}
+
+func (s *Store) AdjustObjectStorageBucketObjectCount(bucketID string, delta int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.objectBuckets[bucketID]; !ok {
+		return ErrObjectStorageBucketNotFound
+	}
+	metrics := s.objectMetrics[bucketID]
+	metrics.ObjectCount = max(metrics.ObjectCount+delta, 0)
 	s.objectMetrics[bucketID] = metrics
 	return nil
 }

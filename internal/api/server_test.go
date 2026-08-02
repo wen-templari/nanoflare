@@ -464,10 +464,61 @@ func TestPrometheusMetricsExportsRuntimeAggregates(t *testing.T) {
 		`nanoflare_kv_writes_total{namespace_id="` + namespace.ID + `",namespace_name="metrics-cache"} 1`,
 		`nanoflare_object_storage_reads_total{bucket_id="` + bucket.ID + `",bucket_name="metrics-objects"} 1`,
 		`nanoflare_object_storage_writes_total{bucket_id="` + bucket.ID + `",bucket_name="metrics-objects"} 2`,
+		`nanoflare_object_storage_objects{bucket_id="` + bucket.ID + `",bucket_name="metrics-objects"} 0`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics body missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestResourceMetricsListAPI(t *testing.T) {
+	store := nanoflare.NewStore()
+	service := nanoflare.NewService(store, discardWriter{})
+	server := newTestServer(service)
+	if err := store.CreateOrganization(nanoflare.Organization{ID: "test-org", Name: "Test Org"}); err != nil {
+		t.Fatal(err)
+	}
+
+	namespace, err := service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{Name: "list-kv", OrgID: "test-org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdjustKVNamespaceSize(namespace.ID, 12); err != nil {
+		t.Fatal(err)
+	}
+	database, err := service.CreateDatabase(nanoflare.CreateDatabaseInput{Name: "list-db", OrgID: "test-org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDatabaseRuntimeStats(database.ID, nanoflare.DatabaseRuntimeStats{StorageBytes: 34, TableCount: 2}); err != nil {
+		t.Fatal(err)
+	}
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "list-bucket", OrgID: "test-org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AdjustObjectStorageBucketSize(bucket.ID, 56); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetObjectStorageBucketObjectCount(bucket.ID, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	var kvMetrics []nanoflare.KVNamespaceMetricsItem
+	requestJSON(t, server, http.MethodGet, "/v1/organizations/test-org/kv-namespaces/metrics", http.StatusOK, &kvMetrics)
+	if len(kvMetrics) != 1 || kvMetrics[0].NamespaceID != namespace.ID || !kvMetrics[0].Available || kvMetrics[0].Size != 12 {
+		t.Fatalf("unexpected KV list metrics: %#v", kvMetrics)
+	}
+	var databaseMetrics []nanoflare.DatabaseMetricsItem
+	requestJSON(t, server, http.MethodGet, "/v1/organizations/test-org/databases/metrics", http.StatusOK, &databaseMetrics)
+	if len(databaseMetrics) != 1 || databaseMetrics[0].DatabaseID != database.ID || !databaseMetrics[0].Available || databaseMetrics[0].StorageBytes != 34 || databaseMetrics[0].TableCount != 2 {
+		t.Fatalf("unexpected database list metrics: %#v", databaseMetrics)
+	}
+	var objectMetrics []nanoflare.ObjectStorageBucketMetricsItem
+	requestJSON(t, server, http.MethodGet, "/v1/organizations/test-org/object-storage-buckets/metrics", http.StatusOK, &objectMetrics)
+	if len(objectMetrics) != 1 || objectMetrics[0].BucketID != bucket.ID || !objectMetrics[0].Available || objectMetrics[0].Size != 56 || objectMetrics[0].ObjectCount != 3 {
+		t.Fatalf("unexpected object storage list metrics: %#v", objectMetrics)
 	}
 }
 
@@ -893,7 +944,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !metrics.Available || metrics.Reads != 0 || metrics.Writes != 1 || metrics.Size != 5 {
+	if !metrics.Available || metrics.Reads != 0 || metrics.Writes != 1 || metrics.Size != 5 || metrics.ObjectCount != 1 {
 		t.Fatalf("unexpected object metrics after put: %#v", metrics)
 	}
 
@@ -930,7 +981,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !metrics.Available || metrics.Reads != 2 || metrics.Writes != 2 || metrics.Size != 0 {
+	if !metrics.Available || metrics.Reads != 2 || metrics.Writes != 2 || metrics.Size != 0 || metrics.ObjectCount != 0 {
 		t.Fatalf("unexpected object metrics after runtime operations: %#v", metrics)
 	}
 
@@ -1068,7 +1119,7 @@ func TestObjectStorageMetricsReconcileExistingObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !metrics.Available || metrics.Size != 6 {
+	if !metrics.Available || metrics.Size != 6 || metrics.ObjectCount != 1 {
 		t.Fatalf("unexpected reconciled object metrics: %#v", metrics)
 	}
 }
