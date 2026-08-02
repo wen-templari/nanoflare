@@ -6,6 +6,7 @@ import {
   Chart,
   ChartPalette,
   LayerCard,
+  LinkButton,
   Table,
   Tabs,
   Text,
@@ -302,15 +303,14 @@ function DatabaseDetailContent({
           value={tab}
           variant="segmented"
         />
-        <a
-          className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md bg-kumo-brand px-3 text-sm text-kumo-inverse hover:bg-kumo-brand/90"
+        <LinkButton
+          external
           href={`/databases/${database.id}/explore`}
-          rel="noreferrer"
-          target="_blank"
+          icon={<Table2 className="size-4" />}
+          variant="primary"
         >
-          <Table2 className="size-4" />
           Explore data
-        </a>
+        </LinkButton>
       </div>
 
       {tab === "overview" ? (

@@ -674,7 +674,7 @@ function TableWorkspace({
         <div className="min-w-52 flex-1">
           <Input
             aria-label="Filter visible rows"
-            className="h-8"
+            className="h-7"
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Filter visible rows"
             value={filter}
