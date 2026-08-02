@@ -3,6 +3,7 @@ import { KeyRound, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
 import { PageHeading, Panel } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
@@ -11,6 +12,7 @@ import { Button } from "../components/ui/button";
 export function KVNamespacesPage() {
   const navigate = useNavigate();
   const { activeOrgID, organizations, namespaces, workers, openNamespaceDialog } = useWorkspace();
+  useWorkspaceResources(["namespaces", "workers"], "details");
   const activeOrg = organizations.find((org) => org.id === activeOrgID);
   const usageLevel = normalizeUsageLevel(activeOrg?.usage_level);
   const namespaceLimit = orgLimitsForLevel(usageLevel).kvNamespaces;

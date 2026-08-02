@@ -33,6 +33,7 @@ type DurationStats struct {
 	Available           bool
 	DurationMsAvg       float64
 	DurationMsP95       float64
+	DurationMsP90       float64
 	DurationMsPerSecond float64
 	DurationSeries      []float64
 }
@@ -142,12 +143,17 @@ func (t *DurationTelemetry) statsLocked(samples []durationSample, now time.Time)
 	stats.DurationMsPerSecond = recentTotal / t.recentWindow.Seconds()
 
 	sort.Float64s(recent)
-	index := int(math.Ceil(float64(len(recent))*0.95)) - 1
+	stats.DurationMsP90 = percentile(recent, 0.90)
+	stats.DurationMsP95 = percentile(recent, 0.95)
+	return stats
+}
+
+func percentile(values []float64, quantile float64) float64 {
+	index := int(math.Ceil(float64(len(values))*quantile)) - 1
 	if index < 0 {
 		index = 0
 	}
-	stats.DurationMsP95 = recent[index]
-	return stats
+	return values[index]
 }
 
 func (t *DurationTelemetry) pruneLocked(now time.Time) {

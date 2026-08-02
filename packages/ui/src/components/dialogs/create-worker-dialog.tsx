@@ -50,7 +50,6 @@ export function CreateWorkerDialog({
       const { data, error } = await apiClient.POST("/v1/organizations/{orgID}/workers", {
         params: { path: { orgID: activeOrgID() } },
         body: { name, hostname: trimmedHostname, auth },
-        parseAs: "json",
       });
       if (error || !data) return notify("Worker registration failed");
       worker = {

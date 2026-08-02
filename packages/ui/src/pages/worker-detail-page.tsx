@@ -46,6 +46,7 @@ import type {
 import { activeOrgID, apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import { useQueryTab } from "../app/use-query-tab";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import {
@@ -113,10 +114,11 @@ const workerDetailTabs = [
 
 export function WorkerDetailPage() {
   const { workerId } = useParams();
-  const { workers, notify, apiConnected, workspaceReady } = useWorkspace();
+  const { workers, notify, apiConnected } = useWorkspace();
+  const resourcesReady = useWorkspaceResources(["workers", "databases", "namespaces"]);
   const worker = workers.find((item) => item.id === workerId);
 
-  if (!workspaceReady) return null;
+  if (!resourcesReady) return null;
   if (!worker) return <Navigate to="/workers" replace />;
 
   return <WorkerDetailContent worker={worker} notify={notify} apiConnected={apiConnected} />;
@@ -209,10 +211,8 @@ function WorkerDetailContent({
     }
 
     void refresh();
-    const interval = window.setInterval(() => void refresh(), 15000);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
     };
   }, [activeOrgID, apiConnected, worker]);
 
@@ -1085,7 +1085,6 @@ function WorkerOutput({
             q: search.trim() || undefined,
           },
         },
-        parseAs: "json",
       });
       const next = data ?? [];
       if (!cancelled) {

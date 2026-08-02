@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -186,9 +187,32 @@ func (c *Client) ObjectStorageBucketMetricsTimeseries(bucketID string) (nanoflar
 func (c *Client) WorkerMetricsTimeseries(appID string) (nanoflare.WorkerMetricsTimeseries, error) {
 	router := strconv.Quote(regexp.QuoteMeta(appID) + `@(http|file)`)
 	routerSelector := `router=~` + router
+	durationSelector := `worker_id=` + strconv.Quote(appID)
+	return c.workerMetricsTimeseries(routerSelector, durationSelector)
+}
+
+func (c *Client) OrganizationWorkerMetricsTimeseries(appIDs []string) (nanoflare.WorkerMetricsTimeseries, error) {
+	if len(appIDs) == 0 {
+		return nanoflare.WorkerMetricsTimeseries{Available: true}, nil
+	}
+	quotedIDs := make([]string, 0, len(appIDs))
+	for _, appID := range appIDs {
+		quotedIDs = append(quotedIDs, regexp.QuoteMeta(appID))
+	}
+	workerPattern := `(?:` + strings.Join(quotedIDs, "|") + `)`
+	routerSelector := `router=~` + strconv.Quote(workerPattern+`@(http|file)`)
+	durationSelector := `worker_id=~` + strconv.Quote(workerPattern)
+	return c.workerMetricsTimeseries(routerSelector, durationSelector)
+}
+
+func (c *Client) workerMetricsTimeseries(routerSelector, durationSelector string) (nanoflare.WorkerMetricsTimeseries, error) {
 	points := func(query string) ([]nanoflare.MetricPoint, error) {
 		result, err := c.queryRange(query)
 		return resultPoints(result), err
+	}
+	totalRequests, err := points(`sum(traefik_router_requests_total{` + routerSelector + `})`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
 	}
 	requests, err := points(`sum(increase(traefik_router_requests_total{` + routerSelector + `}[5m]))`)
 	if err != nil {
@@ -206,7 +230,6 @@ func (c *Client) WorkerMetricsTimeseries(appID string) (nanoflare.WorkerMetricsT
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
 	}
-	durationSelector := `worker_id=` + strconv.Quote(appID)
 	avg, err := points(`max(nanoflare_worker_duration_milliseconds_average{` + durationSelector + `})`)
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
@@ -219,6 +242,10 @@ func (c *Client) WorkerMetricsTimeseries(appID string) (nanoflare.WorkerMetricsT
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
 	}
+	cpuTimeP90, err := points(`quantile(0.90, nanoflare_worker_cpu_time_milliseconds_p90{` + durationSelector + `})`)
+	if err != nil {
+		return nanoflare.WorkerMetricsTimeseries{}, err
+	}
 	status, err := c.queryRange(`sum by (code) (increase(traefik_router_requests_total{` + routerSelector + `}[5m]))`)
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
@@ -228,7 +255,7 @@ func (c *Client) WorkerMetricsTimeseries(appID string) (nanoflare.WorkerMetricsT
 		statusCodes = append(statusCodes, nanoflare.WorkerStatusCodeTimeseries{Code: string(series.Metric["code"]), Points: pointsForStream(series)})
 	}
 	sort.Slice(statusCodes, func(i, j int) bool { return statusCodes[i].Code < statusCodes[j].Code })
-	return nanoflare.WorkerMetricsTimeseries{Available: true, Requests: requests, Errors: errors, ErrorRate: errorRate, P95LatencyMS: p95, StatusCodes: statusCodes, DurationAvgMS: avg, DurationP95MS: durationP95, DurationMSPerSecond: perSecond}, nil
+	return nanoflare.WorkerMetricsTimeseries{Available: true, TotalRequests: totalRequests, Invocations: requests, Requests: requests, Errors: errors, ErrorRate: errorRate, P95LatencyMS: p95, StatusCodes: statusCodes, DurationAvgMS: avg, DurationP95MS: durationP95, DurationMSPerSecond: perSecond, CPUTimeP90MS: cpuTimeP90}, nil
 }
 
 func (c *Client) query(query string) (model.Value, error) {

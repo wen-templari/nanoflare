@@ -45,6 +45,7 @@ import {
   orgLimitsForLevel,
   usageLevelPaid,
 } from "../app/org-limits";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
 import { PageHeading, Panel } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
@@ -307,6 +308,7 @@ export function SettingsPage() {
   const navigate = useNavigate();
   const { activeOrgID, organizations, workers, namespaces, objectStorageBuckets, notify } =
     useWorkspace();
+  useWorkspaceResources(["workers", "namespaces", "objectStorageBuckets"]);
   const [clients, setClients] = useState<OAuthClient[]>([]);
   const [pats, setPats] = useState<PersonalAccessToken[]>([]);
   const [members, setMembers] = useState<OrganizationMember[]>([]);
@@ -415,11 +417,9 @@ export function SettingsPage() {
     }
 
     void loadQuotaUsage();
-    const interval = window.setInterval(() => void loadQuotaUsage(), 15000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
     };
   }, [activeOrgID, bucketIDs, namespaceIDs, namespaces, objectStorageBuckets]);
 
@@ -430,7 +430,6 @@ export function SettingsPage() {
         apiClient
           .GET("/v1/organizations/{orgID}/oauth-clients", {
             params: { path: { orgID: activeOrgID } },
-            parseAs: "json",
           })
           .then(({ data }) => data ?? []),
         apiClient
@@ -502,7 +501,6 @@ export function SettingsPage() {
           {
             params: { path: { orgID: activeOrgID, clientID: editingClient.client_id } },
             body: payload,
-            parseAs: "json",
           },
         );
         if (error || !data) throw new Error(errorMessage(error, "Could not save OAuth client"));
@@ -510,7 +508,6 @@ export function SettingsPage() {
         const { data, error } = await apiClient.POST("/v1/organizations/{orgID}/oauth-clients", {
           params: { path: { orgID: activeOrgID } },
           body: payload,
-          parseAs: "json",
         });
         if (error || !data) throw new Error(errorMessage(error, "Could not save OAuth client"));
         setOneTimeSecret(data);
@@ -579,7 +576,6 @@ export function SettingsPage() {
     try {
       const { data: created, error } = await apiClient.POST("/v1/me/personal-access-tokens", {
         body: payload,
-        parseAs: "json",
       });
       if (error || !created)
         throw new Error(errorMessage(error, "Could not create personal access token"));

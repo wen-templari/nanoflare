@@ -2,6 +2,7 @@ import { Empty, Table, Text } from "@cloudflare/kumo";
 import { Database, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
 import { PageHeading, Panel } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
@@ -10,6 +11,7 @@ import { Button } from "../components/ui/button";
 export function DatabasesPage() {
   const navigate = useNavigate();
   const { databases, workers, openDatabaseDialog } = useWorkspace();
+  useWorkspaceResources(["databases", "workers"], "details");
 
   return (
     <>

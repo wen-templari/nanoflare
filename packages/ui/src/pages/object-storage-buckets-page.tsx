@@ -3,6 +3,7 @@ import { DatabaseZap, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { normalizeUsageLevel, orgLimitsForLevel, usageLevelPaid } from "../app/org-limits";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
 import { PageHeading, Panel } from "../components/shared/primitives";
 import { Badge } from "../components/ui/badge";
@@ -17,6 +18,7 @@ export function ObjectStorageBucketsPage() {
     workers,
     openObjectStorageBucketDialog,
   } = useWorkspace();
+  useWorkspaceResources(["objectStorageBuckets", "workers"], "details");
   const activeOrg = organizations.find((org) => org.id === activeOrgID);
   const usageLevel = normalizeUsageLevel(activeOrg?.usage_level);
   const bucketLimit = orgLimitsForLevel(usageLevel).objectStorageBuckets;

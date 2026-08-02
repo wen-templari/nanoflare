@@ -22,6 +22,7 @@ import type { ObjectStorageBucketMetricsTimeseries, ObjectStorageObject } from "
 
 import { apiClient, apiFetch, errorText, fetchJSON } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes, sortObjectStorageBuckets } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
@@ -45,10 +46,11 @@ function latestObjectMetric(points: { value: number }[] | null | undefined) {
 export function ObjectStorageBucketDetailPage() {
   const navigate = useNavigate();
   const { bucketId } = useParams();
-  const { objectStorageBuckets, workspaceReady } = useWorkspace();
+  const { objectStorageBuckets } = useWorkspace();
+  const resourcesReady = useWorkspaceResources(["objectStorageBuckets", "workers"], "details");
   const bucket = objectStorageBuckets.find((item) => item.id === bucketId);
 
-  if (!workspaceReady) return null;
+  if (!resourcesReady) return null;
   if (!bucket) return <Navigate to="/object-storage" replace />;
 
   return (
@@ -125,16 +127,13 @@ function ObjectStorageBucketDetailContent({
       const nextMetrics = await apiClient
         .GET("/v1/organizations/{orgID}/object-storage-buckets/{bucketID}/analytics", {
           params: { path: { orgID: activeOrgID, bucketID: bucket.id } },
-          parseAs: "json",
         })
         .then(({ data }) => data ?? { available: false, reads: [], writes: [], size: [] });
       if (!cancelled) setMetrics(nextMetrics);
     }
     void loadMetrics();
-    const interval = window.setInterval(() => void loadMetrics(), 15000);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
     };
   }, [activeOrgID, apiConnected, bucket.id]);
 

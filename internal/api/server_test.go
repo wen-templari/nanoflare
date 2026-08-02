@@ -208,6 +208,11 @@ func TestWorkerConsoleAPIs(t *testing.T) {
 	if len(traffic.DurationAvgMS) != 1 || len(traffic.DurationP95MS) != 1 || len(traffic.DurationMSPerSecond) != 1 {
 		t.Fatalf("unexpected worker duration traffic: %#v", traffic)
 	}
+	var organizationTraffic nanoflare.WorkerMetricsTimeseries
+	requestJSON(t, server, http.MethodGet, "/v1/organizations/test-org/workers/analytics", http.StatusOK, &organizationTraffic)
+	if !organizationTraffic.Available || len(organizationTraffic.Requests) != 1 {
+		t.Fatalf("unexpected organization worker traffic: %#v", organizationTraffic)
+	}
 
 	var apps []nanoflare.App
 	requestJSON(t, server, http.MethodGet, "/v1/workers", http.StatusOK, &apps)
@@ -1565,6 +1570,16 @@ func (fakeTraffic) WorkerMetricsTimeseries(string) (nanoflare.WorkerMetricsTimes
 		return []nanoflare.MetricPoint{{Timestamp: time.Now().UTC(), Value: value}}
 	}
 	return nanoflare.WorkerMetricsTimeseries{Available: true, Requests: append(point(3), nanoflare.MetricPoint{Timestamp: time.Now().UTC(), Value: 4}), DurationAvgMS: point(12.5), DurationP95MS: point(20), DurationMSPerSecond: point(1.5)}, nil
+}
+
+func (fakeTraffic) OrganizationWorkerMetricsTimeseries(appIDs []string) (nanoflare.WorkerMetricsTimeseries, error) {
+	if len(appIDs) == 0 {
+		return nanoflare.WorkerMetricsTimeseries{Available: true}, nil
+	}
+	return nanoflare.WorkerMetricsTimeseries{
+		Available: true,
+		Requests:  []nanoflare.MetricPoint{{Timestamp: time.Now().UTC(), Value: float64(len(appIDs))}},
+	}, nil
 }
 
 type apiObjectStore struct {

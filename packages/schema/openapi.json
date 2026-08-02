@@ -2602,6 +2602,12 @@
           "available": {
             "type": "boolean"
           },
+          "cpu_time_p90_ms": {
+            "items": {
+              "$ref": "#/components/schemas/MetricPoint"
+            },
+            "type": ["array", "null"]
+          },
           "duration_avg_ms": {
             "items": {
               "$ref": "#/components/schemas/MetricPoint"
@@ -2632,6 +2638,12 @@
             },
             "type": ["array", "null"]
           },
+          "invocations": {
+            "items": {
+              "$ref": "#/components/schemas/MetricPoint"
+            },
+            "type": ["array", "null"]
+          },
           "p95_latency_ms": {
             "items": {
               "$ref": "#/components/schemas/MetricPoint"
@@ -2649,10 +2661,18 @@
               "$ref": "#/components/schemas/WorkerStatusCodeTimeseries"
             },
             "type": ["array", "null"]
+          },
+          "total_requests": {
+            "items": {
+              "$ref": "#/components/schemas/MetricPoint"
+            },
+            "type": ["array", "null"]
           }
         },
         "required": [
           "available",
+          "total_requests",
+          "invocations",
           "requests",
           "errors",
           "error_rate",
@@ -2660,7 +2680,8 @@
           "status_codes",
           "duration_avg_ms",
           "duration_p95_ms",
-          "duration_ms_per_second"
+          "duration_ms_per_second",
+          "cpu_time_p90_ms"
         ],
         "type": "object"
       },
@@ -8205,6 +8226,90 @@
           }
         ],
         "summary": "createWorker",
+        "tags": ["Workers"]
+      }
+    },
+    "/v1/organizations/{orgID}/workers/analytics": {
+      "get": {
+        "operationId": "getOrganizationWorkerMetrics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerMetricsTimeseries"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "getOrganizationWorkerMetrics",
         "tags": ["Workers"]
       }
     },

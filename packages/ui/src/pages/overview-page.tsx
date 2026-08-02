@@ -7,6 +7,7 @@ import type { WorkerTraffic } from "../app/types";
 
 import { activeOrgID, apiClient } from "../app/api";
 import { useAuth } from "../app/auth-context";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { useWorkspace } from "../app/workspace-context";
 import { EmptyMetrics, PageHeading, Panel } from "../components/shared/primitives";
 import { echarts } from "../lib/kumo-echarts";
@@ -14,7 +15,8 @@ import { echarts } from "../lib/kumo-echarts";
 export function OverviewPage() {
   const navigate = useNavigate();
   const { userEmail } = useAuth();
-  const { workers, namespaces, objectStorageBuckets, apiConnected } = useWorkspace();
+  const { workers, apiConnected } = useWorkspace();
+  useWorkspaceResources(["workers"]);
   const userName = displayNameFromEmail(userEmail);
   const [traffic, setTraffic] = useState<WorkerTraffic[]>([]);
 
@@ -27,56 +29,39 @@ export function OverviewPage() {
         return;
       }
 
-      const results = await Promise.all(
-        workers.map((worker) =>
-          apiClient
-            .GET("/v1/organizations/{orgID}/workers/{workerID}/analytics", {
-              params: { path: { orgID: activeOrgID(), workerID: worker.id } },
-              parseAs: "json",
-            })
-            .then(({ data }) => data && toTraffic(data)),
-        ),
-      );
-      if (!cancelled) setTraffic(results.filter((item): item is WorkerTraffic => Boolean(item)));
+      const { data } = await apiClient.GET("/v1/organizations/{orgID}/workers/analytics", {
+        params: { path: { orgID: activeOrgID() } },
+        parseAs: "json",
+      });
+      if (!cancelled) setTraffic(data ? [toTraffic(data)] : []);
     }
 
     void loadTraffic();
     return () => {
       cancelled = true;
     };
-  }, [apiConnected, workers]);
+  }, [apiConnected, workers.length]);
 
   const metrics = aggregateTraffic(traffic);
-  const kvBindings = workers.reduce(
-    (count, worker) =>
-      count + (worker.bindings?.filter((binding) => binding.kind === "kv").length ?? 0),
-    0,
-  );
-  const objectBindings = workers.reduce(
-    (count, worker) =>
-      count +
-      (worker.bindings?.filter((binding) => binding.kind === "object_storage_bucket").length ?? 0),
-    0,
-  );
   const stats = [
     {
       label: "Workers",
       value: workers.length,
-      note: `${workers.filter((worker) => worker.status === "live").length} live · ${workers.filter((worker) => worker.status === "draft").length} draft`,
+      note: "Open Workers to inspect deployment status",
       icon: Waypoints,
       href: "/workers",
     },
     {
       label: "KV",
-      value: namespaces.length,
-      note: `${kvBindings} active bindings across workers`,
+      value: "—",
+      note: "Open KV to load namespace inventory",
       icon: KeyRound,
       href: "/kv",
     },
     {
       label: "Object storage",
-      value: objectStorageBuckets.length,
-      note: `${objectBindings} active bucket bindings`,
+      value: "—",
+      note: "Open Object storage to load bucket inventory",
       icon: DatabaseZap,
       href: "/object-storage",
     },
@@ -134,38 +119,28 @@ export function OverviewPage() {
         </div>
         <div className="grid gap-4 xl:grid-cols-2">
           <MetricPanel
+            label="Total requests"
+            value={metrics.available ? formatCount(metrics.totalRequests) : "—"}
+            note="Cumulative requests across all workers"
+            values={metrics.totalRequestSeries}
+          />
+          <MetricPanel
             label="Worker invocations"
             value={metrics.available ? formatCount(metrics.invocations) : "—"}
-            note="Requests served across all workers"
+            note="Invocations per five-minute interval"
             values={metrics.traffic}
           />
           <MetricPanel
-            label="Worker request rate"
-            value={metrics.available ? `${metrics.requestsPerSecond.toFixed(2)} req/s` : "—"}
-            note="Current five-minute average"
-            values={metrics.traffic}
-          />
-        </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
             label="Worker errors"
-            note="5xx responses in 24 hours"
             value={metrics.available ? formatCount(metrics.errors) : "—"}
+            note="5xx responses per five-minute interval"
+            values={metrics.errorSeries}
           />
-          <MetricCard
-            label="Error rate"
-            note="5xx responses / invocations"
-            value={metrics.available ? `${(metrics.errorRate * 100).toFixed(2)}%` : "—"}
-          />
-          <MetricCard
-            label="Handler average"
-            note="Weighted across workers"
-            value={metrics.available ? formatMilliseconds(metrics.durationAverage) : "—"}
-          />
-          <MetricCard
-            label="Highest handler p95"
-            note="Across reporting workers"
-            value={metrics.available ? formatMilliseconds(metrics.durationP95) : "—"}
+          <MetricPanel
+            label="Worker CPU time p90"
+            value={metrics.available ? formatMilliseconds(metrics.cpuTimeP90) : "—"}
+            note="p90 execution time across reporting workers"
+            values={metrics.cpuTimeP90Series}
           />
         </div>
       </section>
@@ -175,11 +150,16 @@ export function OverviewPage() {
 
 function toTraffic(data: {
   available?: boolean;
+  total_requests?: { value: number }[] | null;
+  invocations?: { value: number }[] | null;
   requests?: { value: number }[] | null;
   errors?: { value: number }[] | null;
+  cpu_time_p90_ms?: { value: number }[] | null;
 }): WorkerTraffic {
-  const requests = data.requests ?? [];
+  const requests = data.invocations ?? data.requests ?? [];
   const errors = data.errors ?? [];
+  const totalRequests = data.total_requests ?? [];
+  const cpuTimeP90 = data.cpu_time_p90_ms ?? [];
   return {
     available: Boolean(data.available),
     requests_per_second: (requests[requests.length - 1]?.value ?? 0) / 300,
@@ -188,7 +168,10 @@ function toTraffic(data: {
     invocations: requests[requests.length - 1]?.value ?? 0,
     errors: errors[errors.length - 1]?.value ?? 0,
     bundle_size: 0,
+    total_requests: totalRequests.map((point) => point.value),
     traffic: requests.map((point) => point.value),
+    error_series: errors.map((point) => point.value),
+    cpu_time_p90_ms: cpuTimeP90.map((point) => point.value),
     duration_ms_avg: 0,
     duration_ms_p95: 0,
     duration_ms_per_second: 0,
@@ -216,29 +199,22 @@ function MetricPanel({
   values: number[];
 }) {
   return (
-    <Panel title={label} eyebrow={note}>
-      <Text as="p" variant="heading1">
-        {value}
-      </Text>
-      <div className="mt-3">
-        {values.length ? <OverviewTrafficChart label={label} values={values} /> : <EmptyMetrics />}
+    <LayerCard>
+      <div className="p-4 bg-white ">
+        <Text as="p" variant="secondary" size="sm">
+          {label}
+        </Text>
+        <Text as="p" variant="heading2">
+          {value}
+        </Text>
+        <div className="">
+          {values.length ? (
+            <OverviewTrafficChart label={label} values={values} />
+          ) : (
+            <EmptyMetrics />
+          )}
+        </div>
       </div>
-    </Panel>
-  );
-}
-
-function MetricCard({ label, value, note }: { label: string; value: string; note: string }) {
-  return (
-    <LayerCard className="px-5 py-4">
-      <Text as="p" size="sm" variant="secondary">
-        {label}
-      </Text>
-      <Text as="p" DANGEROUS_className="mt-1" variant="heading2">
-        {value}
-      </Text>
-      <Text as="p" DANGEROUS_className="mt-2" size="xs" variant="secondary">
-        {note}
-      </Text>
     </LayerCard>
   );
 }
@@ -272,20 +248,26 @@ function aggregateTraffic(items: WorkerTraffic[]) {
   const reporting = items.filter((item) => item.available);
   const invocations = reporting.reduce((sum, item) => sum + item.invocations, 0);
   const errors = reporting.reduce((sum, item) => sum + item.errors, 0);
-  const durationWeight = reporting.reduce((sum, item) => sum + item.invocations, 0);
 
   return {
     available: reporting.length > 0,
+    totalRequests: reporting.reduce((sum, item) => {
+      const values = item.total_requests ?? [];
+      return sum + (values[values.length - 1] ?? 0);
+    }, 0),
     invocations,
     errors,
-    errorRate: invocations ? errors / invocations : 0,
-    requestsPerSecond: reporting.reduce((sum, item) => sum + item.requests_per_second, 0),
-    durationAverage: durationWeight
-      ? reporting.reduce((sum, item) => sum + item.duration_ms_avg * item.invocations, 0) /
-        durationWeight
-      : 0,
-    durationP95: reporting.reduce((maximum, item) => Math.max(maximum, item.duration_ms_p95), 0),
     traffic: sumSeries(reporting.map((item) => item.traffic ?? [])),
+    totalRequestSeries: sumSeries(reporting.map((item) => item.total_requests ?? [])),
+    errorSeries: sumSeries(reporting.map((item) => item.error_series ?? [])),
+    cpuTimeP90: Math.max(
+      0,
+      ...reporting.map((item) => {
+        const values = item.cpu_time_p90_ms ?? [];
+        return values[values.length - 1] ?? 0;
+      }),
+    ),
+    cpuTimeP90Series: sumSeries(reporting.map((item) => item.cpu_time_p90_ms ?? [])),
   };
 }
 

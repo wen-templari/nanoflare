@@ -39,7 +39,6 @@ export function CreateDatabaseDialog({
       const { data, error } = await apiClient.POST("/v1/organizations/{orgID}/databases", {
         params: { path: { orgID: activeOrgID() } },
         body: { name: trimmed },
-        parseAs: "json",
       });
       if (error || !data) return notify(errorMessage(error, "Database creation failed"));
       database = data;

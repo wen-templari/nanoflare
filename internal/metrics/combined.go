@@ -77,3 +77,12 @@ func (r *CombinedReader) WorkerMetricsTimeseries(appID string) (nanoflare.Worker
 	}
 	return nanoflare.WorkerMetricsTimeseries{}, nil
 }
+
+func (r *CombinedReader) OrganizationWorkerMetricsTimeseries(appIDs []string) (nanoflare.WorkerMetricsTimeseries, error) {
+	if prometheus, ok := r.prometheus.(interface {
+		OrganizationWorkerMetricsTimeseries([]string) (nanoflare.WorkerMetricsTimeseries, error)
+	}); ok {
+		return prometheus.OrganizationWorkerMetricsTimeseries(appIDs)
+	}
+	return nanoflare.WorkerMetricsTimeseries{}, nil
+}

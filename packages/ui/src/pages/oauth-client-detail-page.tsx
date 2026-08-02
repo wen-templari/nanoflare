@@ -69,11 +69,9 @@ export function OAuthClientDetailPage() {
       const [clientResult, connectionsResult] = await Promise.all([
         apiClient.GET("/v1/organizations/{orgID}/oauth-clients/{clientID}", {
           params: { path: { orgID: activeOrgID, clientID: clientId } },
-          parseAs: "json",
         }),
         apiClient.GET("/v1/organizations/{orgID}/oauth-clients/{clientID}/connections", {
           params: { path: { orgID: activeOrgID, clientID: clientId } },
-          parseAs: "json",
         }),
       ]);
       if (clientResult.error || !clientResult.data || connectionsResult.error) {
@@ -137,7 +135,6 @@ export function OAuthClientDetailPage() {
         {
           params: { path: { orgID: activeOrgID, clientID: client.client_id } },
           body: payload,
-          parseAs: "json",
         },
       );
       if (error) throw new Error(errorMessage(error, "Could not update OAuth client"));
@@ -160,7 +157,6 @@ export function OAuthClientDetailPage() {
         "/v1/organizations/{orgID}/oauth-clients/{clientID}",
         {
           params: { path: { orgID: activeOrgID, clientID: client.client_id } },
-          parseAs: "json",
         },
       );
       if (error) throw new Error(errorMessage(error, "Could not delete OAuth client"));

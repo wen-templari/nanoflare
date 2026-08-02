@@ -20,6 +20,7 @@ import type { KVNamespaceMetricsTimeseries, WorkerKVKey } from "../app/types";
 
 import { apiClient, apiFetch, errorText, fetchJSON } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes, sortNamespaces } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { KVKeyDialog } from "../components/dialogs/kv-key-dialog";
@@ -40,10 +41,11 @@ function latestMetric(points: { value: number }[] | null | undefined) {
 export function KVNamespaceDetailPage() {
   const navigate = useNavigate();
   const { namespaceId } = useParams();
-  const { namespaces, workspaceReady } = useWorkspace();
+  const { namespaces } = useWorkspace();
+  const resourcesReady = useWorkspaceResources(["namespaces", "workers"], "details");
   const namespace = namespaces.find((item) => item.id === namespaceId);
 
-  if (!workspaceReady) return null;
+  if (!resourcesReady) return null;
   if (!namespace) return <Navigate to="/kv" replace />;
 
   return <KVNamespaceDetailContent namespace={namespace} onBack={() => navigate("/kv")} />;
@@ -119,16 +121,13 @@ function KVNamespaceDetailContent({
       const nextMetrics = await apiClient
         .GET("/v1/organizations/{orgID}/kv-namespaces/{namespaceID}/analytics", {
           params: { path: { orgID: activeOrgID, namespaceID: namespace.id } },
-          parseAs: "json",
         })
         .then(({ data }) => data ?? { available: false, reads: [], writes: [], size: [] });
       if (!cancelled) setMetrics(nextMetrics);
     }
     void loadMetrics();
-    const interval = window.setInterval(() => void loadMetrics(), 15000);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
     };
   }, [activeOrgID, apiConnected, namespace.id]);
 

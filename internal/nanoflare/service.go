@@ -69,6 +69,9 @@ type ObjectStorageBucketMetricsTimeseriesReader interface {
 type WorkerMetricsTimeseriesReader interface {
 	WorkerMetricsTimeseries(string) (WorkerMetricsTimeseries, error)
 }
+type OrganizationWorkerMetricsTimeseriesReader interface {
+	OrganizationWorkerMetricsTimeseries([]string) (WorkerMetricsTimeseries, error)
+}
 
 type RepositoryPoolStatsReader interface {
 	PoolStats() RepositoryPoolStats
@@ -2225,6 +2228,22 @@ func (s *Service) WorkerMetricsTimeseriesForOrg(orgID, appID string) (WorkerMetr
 		return WorkerMetricsTimeseries{}, nil
 	}
 	return s.workerTimeseries.WorkerMetricsTimeseries(appID)
+}
+
+func (s *Service) OrganizationWorkerMetricsTimeseries(orgID string) (WorkerMetricsTimeseries, error) {
+	workers, err := s.ListAppsForOrg(orgID)
+	if err != nil {
+		return WorkerMetricsTimeseries{}, err
+	}
+	reader, ok := s.workerTimeseries.(OrganizationWorkerMetricsTimeseriesReader)
+	if !ok {
+		return WorkerMetricsTimeseries{}, nil
+	}
+	workerIDs := make([]string, 0, len(workers))
+	for _, worker := range workers {
+		workerIDs = append(workerIDs, worker.ID)
+	}
+	return reader.OrganizationWorkerMetricsTimeseries(workerIDs)
 }
 
 func (s *Service) executeDBWithMetrics(databaseID string, request DBQueryRequest) (DBQueryResponse, error) {

@@ -123,6 +123,7 @@ func collectWorkerDurationMetrics(ch chan<- prometheus.Metric, s *Server) {
 	}
 	average := metricDesc("nanoflare_worker_duration_milliseconds_average", "Rolling average worker execution duration.", []string{"worker_id", "worker_name"})
 	p95 := metricDesc("nanoflare_worker_duration_milliseconds_p95", "Rolling p95 worker execution duration.", []string{"worker_id", "worker_name"})
+	p90CPUTime := metricDesc("nanoflare_worker_cpu_time_milliseconds_p90", "Rolling p90 worker CPU execution time.", []string{"worker_id", "worker_name"})
 	perSecond := metricDesc("nanoflare_worker_duration_milliseconds_per_second", "Rolling worker execution time per second.", []string{"worker_id", "worker_name"})
 	workers, err := s.service.ListApps()
 	if err != nil {
@@ -136,6 +137,7 @@ func collectWorkerDurationMetrics(ch chan<- prometheus.Metric, s *Server) {
 		labels := []string{worker.ID, worker.Name}
 		ch <- prometheus.MustNewConstMetric(average, prometheus.GaugeValue, stats.DurationMsAvg, labels...)
 		ch <- prometheus.MustNewConstMetric(p95, prometheus.GaugeValue, stats.DurationMsP95, labels...)
+		ch <- prometheus.MustNewConstMetric(p90CPUTime, prometheus.GaugeValue, stats.DurationMsP90, labels...)
 		ch <- prometheus.MustNewConstMetric(perSecond, prometheus.GaugeValue, stats.DurationMsPerSecond, labels...)
 	}
 }

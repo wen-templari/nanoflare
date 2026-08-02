@@ -16,6 +16,7 @@ import (
 func (s *Server) registerAppRoutes() {
 	base := "/v1/organizations/{orgID}/workers"
 	s.mux.HandleFunc("GET "+base, s.listApps)
+	s.mux.HandleFunc("GET "+base+"/analytics", s.organizationWorkerTraffic)
 	s.mux.HandleFunc("POST "+base, s.createApp)
 	s.mux.HandleFunc("PATCH "+base+"/{workerID}", s.updateApp)
 	s.mux.HandleFunc("DELETE "+base+"/{workerID}", s.deleteApp)
@@ -146,6 +147,18 @@ func (s *Server) workerTraffic(w http.ResponseWriter, r *http.Request) {
 			writeWorkerError(w, err)
 			return
 		}
+		writeJSON(w, http.StatusOK, nanoflare.WorkerMetricsTimeseries{})
+		return
+	}
+	writeJSON(w, http.StatusOK, traffic)
+}
+
+func (s *Server) organizationWorkerTraffic(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "workers:read") {
+		return
+	}
+	traffic, err := s.service.OrganizationWorkerMetricsTimeseries(controlOrgID(r))
+	if err != nil {
 		writeJSON(w, http.StatusOK, nanoflare.WorkerMetricsTimeseries{})
 		return
 	}

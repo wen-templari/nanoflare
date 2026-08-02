@@ -46,7 +46,10 @@ export type WorkerTraffic = {
   invocations: number;
   errors: number;
   bundle_size: number;
+  total_requests?: number[];
   traffic: number[];
+  error_series?: number[];
+  cpu_time_p90_ms?: number[];
   duration_ms_avg: number;
   duration_ms_p95: number;
   duration_ms_per_second: number;
@@ -124,8 +127,8 @@ export type WorkspaceContextValue = {
   setDatabases: Dispatch<SetStateAction<Database[]>>;
   objectStorageBuckets: ObjectStorageBucket[];
   setObjectStorageBuckets: Dispatch<SetStateAction<ObjectStorageBucket[]>>;
-  workspaceReady: boolean;
   apiConnected: boolean;
+  setAPIConnected: (connected: boolean) => void;
   activeOrgID: string;
   organizations: Organization[];
   setActiveOrgID: (orgID: string) => void;

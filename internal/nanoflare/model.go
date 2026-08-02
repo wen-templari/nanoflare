@@ -544,6 +544,8 @@ type WorkerStatusCodeTimeseries struct {
 
 type WorkerMetricsTimeseries struct {
 	Available           bool                         `json:"available"`
+	TotalRequests       []MetricPoint                `json:"total_requests"`
+	Invocations         []MetricPoint                `json:"invocations"`
 	Requests            []MetricPoint                `json:"requests"`
 	Errors              []MetricPoint                `json:"errors"`
 	ErrorRate           []MetricPoint                `json:"error_rate"`
@@ -552,6 +554,7 @@ type WorkerMetricsTimeseries struct {
 	DurationAvgMS       []MetricPoint                `json:"duration_avg_ms"`
 	DurationP95MS       []MetricPoint                `json:"duration_p95_ms"`
 	DurationMSPerSecond []MetricPoint                `json:"duration_ms_per_second"`
+	CPUTimeP90MS        []MetricPoint                `json:"cpu_time_p90_ms"`
 }
 
 type DatabaseQueryMetricsInput struct {

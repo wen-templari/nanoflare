@@ -888,6 +888,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/workers/analytics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getOrganizationWorkerMetrics */
+    get: operations["getOrganizationWorkerMetrics"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/workers/{workerID}": {
     parameters: {
       query?: never;
@@ -2157,14 +2174,17 @@ export interface components {
        */
       readonly $schema?: string;
       available: boolean;
+      cpu_time_p90_ms: components["schemas"]["MetricPoint"][] | null;
       duration_avg_ms: components["schemas"]["MetricPoint"][] | null;
       duration_ms_per_second: components["schemas"]["MetricPoint"][] | null;
       duration_p95_ms: components["schemas"]["MetricPoint"][] | null;
       error_rate: components["schemas"]["MetricPoint"][] | null;
       errors: components["schemas"]["MetricPoint"][] | null;
+      invocations: components["schemas"]["MetricPoint"][] | null;
       p95_latency_ms: components["schemas"]["MetricPoint"][] | null;
       requests: components["schemas"]["MetricPoint"][] | null;
       status_codes: components["schemas"]["WorkerStatusCodeTimeseries"][] | null;
+      total_requests: components["schemas"]["MetricPoint"][] | null;
     };
     WorkerOutputLine: {
       app_id?: string;
@@ -6422,6 +6442,73 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["App"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  getOrganizationWorkerMetrics: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkerMetricsTimeseries"];
         };
       };
       /** @description Error */

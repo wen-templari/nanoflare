@@ -30,6 +30,7 @@ import type { DatabaseMetrics, DatabaseMetricsTimeseries, MetricPoint } from "..
 
 import { apiClient, errorMessage } from "../app/api";
 import { useQueryTab } from "../app/use-query-tab";
+import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes, sortDatabases } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
 import { ConfirmDeleteDialog } from "../components/kumo/confirm-delete-dialog";
@@ -87,10 +88,11 @@ function helpQueryRun(): QueryRun {
 export function DatabaseDetailPage() {
   const navigate = useNavigate();
   const { databaseId } = useParams();
-  const { databases, workspaceReady } = useWorkspace();
+  const { databases } = useWorkspace();
+  const resourcesReady = useWorkspaceResources(["databases", "workers"], "details");
   const database = databases.find((item) => item.id === databaseId);
 
-  if (!workspaceReady) return null;
+  if (!resourcesReady) return null;
   if (!database) return <Navigate to="/databases" replace />;
 
   return <DatabaseDetailContent database={database} onBack={() => navigate("/databases")} />;
@@ -150,10 +152,8 @@ function DatabaseDetailContent({
       }
     }
     void loadMetrics();
-    const interval = window.setInterval(() => void loadMetrics(), 15000);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
     };
   }, [activeOrgID, apiConnected, database.id]);
 

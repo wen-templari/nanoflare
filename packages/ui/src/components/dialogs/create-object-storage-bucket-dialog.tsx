@@ -41,7 +41,6 @@ export function CreateObjectStorageBucketDialog({
         {
           params: { path: { orgID: activeOrgID() } },
           body: { name: trimmed },
-          parseAs: "json",
         },
       );
       if (error || !data) return notify(errorMessage(error, "Bucket creation failed"));
