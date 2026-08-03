@@ -14,6 +14,33 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
   }
 
+  location = /openapi.json {
+    proxy_pass ${NANOFLARED_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location = /openapi-3.0.json {
+    proxy_pass ${NANOFLARED_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location = /docs {
+    proxy_pass ${NANOFLARED_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
   location = /healthz {
     proxy_pass ${NANOFLARED_UPSTREAM};
     proxy_http_version 1.1;
