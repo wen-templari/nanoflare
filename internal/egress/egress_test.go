@@ -1,11 +1,16 @@
 package egress
 
 import (
+	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,6 +82,337 @@ func TestAdapterForwardsAbsoluteHTTPRequestThroughConfiguredProxy(t *testing.T) 
 		}
 	case <-time.After(time.Second):
 		t.Fatal("proxy received no request")
+	}
+}
+
+func TestAdapterAcceptsHostlessAbsoluteHTTPRequest(t *testing.T) {
+	targetURL := ""
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want, _ := url.Parse(targetURL)
+		if r.Host != want.Host {
+			t.Errorf("origin Host = %q, want %q", r.Host, want.Host)
+		}
+		_, _ = w.Write([]byte("hostless request forwarded"))
+	}))
+	defer target.Close()
+	targetURL = target.URL
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out := r.Clone(r.Context())
+		out.RequestURI = ""
+		response, err := http.DefaultTransport.RoundTrip(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer response.Body.Close()
+		w.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(w, response.Body)
+	}))
+	defer proxy.Close()
+
+	adapter, err := New(Config{ProxyURL: proxy.URL, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = adapter.Close(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "GET %s/worker HTTP/1.1\r\nConnection: close\r\n\r\n", target.URL); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || string(body) != "hostless request forwarded" {
+		t.Fatalf("response = %s %q", response.Status, body)
+	}
+}
+
+func TestAdapterHandlesTwoRequestsOnOneConnection(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, "response for %s", r.URL.Path)
+	}))
+	defer target.Close()
+	proxy := newForwardingProxy(t)
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+	defer closeAdapter(t, adapter)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	for i, path := range []string{"/first", "/second"} {
+		connection := ""
+		if i == 1 {
+			connection = "Connection: close\r\n"
+		}
+		if _, err := fmt.Fprintf(conn, "GET %s%s HTTP/1.1\r\n%s\r\n", target.URL, path, connection); err != nil {
+			t.Fatal(err)
+		}
+		response, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := string(body), "response for "+path; got != want {
+			t.Fatalf("body = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestAdapterDrainsRequestBodyBeforeReusingConnection(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reject" {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		_, _ = w.Write([]byte("second request"))
+	}))
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+	defer closeAdapter(t, adapter)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	body := strings.Repeat("x", 512*1024)
+	if _, err := fmt.Fprintf(conn, "POST http://origin.example/reject HTTP/1.1\r\nContent-Length: %d\r\n\r\n%sGET http://origin.example/next HTTP/1.1\r\nConnection: close\r\n\r\n", len(body), body); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	first, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, first.Body)
+	first.Body.Close()
+	if first.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("first response = %s, want 413", first.Status)
+	}
+	second, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBody, err := io.ReadAll(second.Body)
+	second.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.StatusCode != http.StatusOK || string(secondBody) != "second request" {
+		t.Fatalf("second response = %s %q", second.Status, secondBody)
+	}
+}
+
+func TestAdapterIdleTimeoutClosesWithoutResponse(t *testing.T) {
+	proxy := newForwardingProxy(t)
+	defer proxy.Close()
+	adapter, err := New(Config{ProxyURL: proxy.URL, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.readTimeout = 25 * time.Millisecond
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer closeAdapter(t, adapter)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err == nil {
+		response.Body.Close()
+		t.Fatalf("idle connection received unexpected response: %s", response.Status)
+	}
+	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("idle connection read error = %v, want a silent close", err)
+	}
+}
+
+func TestAdapterPartialRequestTimeoutReturnsBadRequest(t *testing.T) {
+	proxy := newForwardingProxy(t)
+	defer proxy.Close()
+	adapter, err := New(Config{ProxyURL: proxy.URL, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.readTimeout = 25 * time.Millisecond
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer closeAdapter(t, adapter)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := io.WriteString(conn, "GET http://example.com/ HTTP/1.1\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("partial request response = %s, want 400", response.Status)
+	}
+}
+
+func TestAdapterCloseWaitsForInflightRequest(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		_, _ = w.Write([]byte("completed"))
+	}))
+	defer target.Close()
+	proxy := newForwardingProxy(t)
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nConnection: close\r\n\r\n", target.URL); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	closed := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		closed <- adapter.Close(ctx)
+	}()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before in-flight request completed: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || string(body) != "completed" {
+		t.Fatalf("response body = %q, error = %v", body, err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+func TestAdapterCloseImmediatelyClosesIdleKeepAliveConnection(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("completed"))
+	}))
+	defer target.Close()
+	proxy := newForwardingProxy(t)
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\n\r\n", target.URL); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, response.Body); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if err := adapter.Close(ctx); err != nil {
+		t.Fatalf("Close failed with an idle keep-alive connection: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := reader.ReadByte(); !errors.Is(err, io.EOF) {
+		t.Fatalf("idle connection remained open after Close: %v", err)
+	}
+}
+
+func newForwardingProxy(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out := r.Clone(r.Context())
+		out.RequestURI = ""
+		response, err := http.DefaultTransport.RoundTrip(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer response.Body.Close()
+		for name, values := range response.Header {
+			w.Header()[name] = append([]string(nil), values...)
+		}
+		w.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(w, response.Body)
+	}))
+}
+
+func startAdapter(t *testing.T, proxyURL string) *Server {
+	t.Helper()
+	adapter, err := New(Config{ProxyURL: proxyURL, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	return adapter
+}
+
+func closeAdapter(t *testing.T, adapter *Server) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := adapter.Close(ctx); err != nil {
+		t.Errorf("Close failed: %v", err)
 	}
 }
 

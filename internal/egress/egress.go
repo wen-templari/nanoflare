@@ -2,6 +2,7 @@
 package egress
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,9 +26,14 @@ type Config struct {
 }
 
 type Server struct {
-	listener  net.Listener
-	server    *http.Server
-	transport *http.Transport
+	listener     net.Listener
+	addr         string
+	transport    *http.Transport
+	readTimeout  time.Duration
+	mu           sync.Mutex
+	conns        map[net.Conn]bool
+	shuttingDown bool
+	wg           sync.WaitGroup
 }
 
 func ParseCAFiles(value string) []string {
@@ -62,13 +69,16 @@ func New(config Config) (*Server, error) {
 		ExpectContinueTimeout: time.Second,
 		IdleConnTimeout:       90 * time.Second,
 	}
-	s := &Server{transport: transport}
-	s.server = &http.Server{Addr: addr, Handler: http.HandlerFunc(s.serveHTTP), ReadHeaderTimeout: 10 * time.Second}
-	return s, nil
+	return &Server{
+		addr:        addr,
+		transport:   transport,
+		readTimeout: 90 * time.Second,
+		conns:       make(map[net.Conn]bool),
+	}, nil
 }
 
 func (s *Server) Start() error {
-	host, _, err := net.SplitHostPort(s.server.Addr)
+	host, _, err := net.SplitHostPort(s.addr)
 	if err != nil {
 		return fmt.Errorf("invalid egress listen address: %w", err)
 	}
@@ -76,11 +86,12 @@ func (s *Server) Start() error {
 	if ip == nil || !ip.IsLoopback() {
 		return errors.New("egress listen address must use a loopback IP")
 	}
-	s.listener, err = net.Listen("tcp", s.server.Addr)
+	s.listener, err = net.Listen("tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("listen for Worker egress: %w", err)
 	}
-	go func() { _ = s.server.Serve(s.listener) }()
+	s.wg.Add(1)
+	go s.accept()
 	return nil
 }
 
@@ -91,32 +102,185 @@ func (s *Server) Close(ctx context.Context) error {
 	if s.listener == nil {
 		return nil
 	}
-	return s.server.Shutdown(ctx)
+	s.mu.Lock()
+	s.shuttingDown = true
+	for conn, idle := range s.conns {
+		if idle {
+			_ = conn.Close()
+		}
+	}
+	s.mu.Unlock()
+	err := s.listener.Close()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return normalizeCloseError(err)
+	case <-ctx.Done():
+		s.mu.Lock()
+		for conn := range s.conns {
+			_ = conn.Close()
+		}
+		s.mu.Unlock()
+		<-done
+		return ctx.Err()
+	}
 }
 
-func (s *Server) serveHTTP(w http.ResponseWriter, request *http.Request) {
+func (s *Server) accept() {
+	defer s.wg.Done()
+	for {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			return
+		}
+		s.mu.Lock()
+		if s.shuttingDown {
+			s.mu.Unlock()
+			_ = conn.Close()
+			continue
+		}
+		s.conns[conn] = true
+		s.mu.Unlock()
+		s.wg.Add(1)
+		go s.serveConn(conn)
+	}
+}
+
+func (s *Server) serveConn(conn net.Conn) {
+	defer s.wg.Done()
+	defer conn.Close()
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, conn)
+		s.mu.Unlock()
+	}()
+
+	countingReader := &byteCountingReader{Reader: conn}
+	reader := bufio.NewReader(countingReader)
+	writer := bufio.NewWriter(conn)
+	for {
+		bufferedBefore := reader.Buffered()
+		bytesReadBefore := countingReader.bytesRead
+		_ = conn.SetReadDeadline(time.Now().Add(s.readTimeout))
+		request, err := http.ReadRequest(reader)
+		if err != nil {
+			var netErr net.Error
+			timedOut := errors.As(err, &netErr) && netErr.Timeout()
+			idleTimeout := timedOut && bufferedBefore == 0 && countingReader.bytesRead == bytesReadBefore
+			if !errors.Is(err, io.EOF) && !idleTimeout {
+				response := errorResponse(http.StatusBadRequest, "bad request")
+				_ = writeResponse(writer, response)
+				response.Body.Close()
+			}
+			return
+		}
+		_ = conn.SetReadDeadline(time.Time{})
+		s.setIdle(conn, false)
+		response := s.forward(request)
+		if err := writeResponse(writer, response); err != nil {
+			response.Body.Close()
+			request.Body.Close()
+			return
+		}
+		response.Body.Close()
+		if request.Close || response.Close {
+			request.Body.Close()
+			return
+		}
+		if !s.drainRequestBody(conn, request) {
+			return
+		}
+		if !s.setIdle(conn, true) {
+			return
+		}
+	}
+}
+
+func (s *Server) drainRequestBody(conn net.Conn, request *http.Request) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(s.readTimeout))
+	_, readErr := io.Copy(io.Discard, request.Body)
+	closeErr := request.Body.Close()
+	_ = conn.SetReadDeadline(time.Time{})
+	return readErr == nil && closeErr == nil
+}
+
+func (s *Server) setIdle(conn net.Conn, idle bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shuttingDown {
+		_ = conn.Close()
+		return false
+	}
+	s.conns[conn] = idle
+	return true
+}
+
+type byteCountingReader struct {
+	io.Reader
+	bytesRead int64
+}
+
+func (r *byteCountingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
+}
+
+func (s *Server) forward(request *http.Request) *http.Response {
 	if request.Method == http.MethodConnect || !request.URL.IsAbs() || (request.URL.Scheme != "http" && request.URL.Scheme != "https") {
-		http.Error(w, "absolute HTTP or HTTPS URL required", http.StatusBadRequest)
-		return
+		return errorResponse(http.StatusBadRequest, "absolute HTTP or HTTPS URL required")
 	}
 	out := request.Clone(request.Context())
 	out.RequestURI = ""
-	out.Header = request.Header.Clone()
+	out.Host = out.URL.Host
+	out.Body = noCloseReadCloser{request.Body}
 	removeHopHeaders(out.Header)
 	response, err := s.transport.RoundTrip(out)
 	if err != nil {
-		http.Error(w, "egress request failed", http.StatusBadGateway)
-		return
+		return errorResponse(http.StatusBadGateway, "egress request failed")
 	}
-	defer response.Body.Close()
 	removeHopHeaders(response.Header)
-	for name, values := range response.Header {
-		for _, value := range values {
-			w.Header().Add(name, value)
-		}
+	response.Close = false
+	return response
+}
+
+type noCloseReadCloser struct {
+	io.Reader
+}
+
+func (noCloseReadCloser) Close() error { return nil }
+
+func writeResponse(writer *bufio.Writer, response *http.Response) error {
+	if err := response.Write(writer); err != nil {
+		return err
 	}
-	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	return writer.Flush()
+}
+
+func errorResponse(status int, message string) *http.Response {
+	body := message + "\n"
+	return &http.Response{
+		StatusCode:    status,
+		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        http.Header{"Content-Type": {"text/plain; charset=utf-8"}},
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Close:         true,
+	}
+}
+
+func normalizeCloseError(err error) error {
+	if errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
 }
 
 func parseProxyURL(value string) (*url.URL, error) {
