@@ -1,8 +1,11 @@
 package egress
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -77,6 +80,64 @@ func TestAdapterForwardsAbsoluteHTTPRequestThroughConfiguredProxy(t *testing.T) 
 		}
 	case <-time.After(time.Second):
 		t.Fatal("proxy received no request")
+	}
+}
+
+func TestAdapterAcceptsHostlessAbsoluteHTTPRequest(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != r.URL.Host {
+			t.Errorf("origin Host = %q, want %q", r.Host, r.URL.Host)
+		}
+		_, _ = w.Write([]byte("hostless request forwarded"))
+	}))
+	defer target.Close()
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out := r.Clone(r.Context())
+		out.RequestURI = ""
+		response, err := http.DefaultTransport.RoundTrip(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer response.Body.Close()
+		w.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(w, response.Body)
+	}))
+	defer proxy.Close()
+
+	adapter, err := New(Config{ProxyURL: proxy.URL, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = adapter.Close(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "GET %s/worker HTTP/1.1\r\nConnection: close\r\n\r\n", target.URL); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || string(body) != "hostless request forwarded" {
+		t.Fatalf("response = %s %q", response.Status, body)
 	}
 }
 
