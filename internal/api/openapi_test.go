@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestOpenAPIListsEveryPublicOperation(t *testing.T) {
@@ -45,6 +47,17 @@ func TestOpenAPISchemaAndDocsAreServed(t *testing.T) {
 		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusNotFound {
 			t.Errorf("GET %s status = %d, want %d", path, recorder.Code, http.StatusNotFound)
+		}
+	}
+}
+
+func TestOpenAPISchemaAndDocsArePublicWithControlAuth(t *testing.T) {
+	server := NewServerWithControlAuth(nil, nil, "", nil, nanoflare.NewControlAuthService(nanoflare.NewStore(), "test-secret"))
+	for _, path := range []string{"/v1/openapi.json", "/v1/openapi-3.0.json", "/v1/openapi.yaml", "/v1/openapi-3.0.yaml", "/v1/docs"} {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d, body = %q", path, recorder.Code, recorder.Body.String())
 		}
 	}
 }

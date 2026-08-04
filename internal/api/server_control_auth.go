@@ -23,10 +23,10 @@ const (
 
 func isPublicControlPath(path string) bool {
 	switch path {
-	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh", "/v1/auth/pat/session", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/cli", "/v1/auth/oidc/logout", "/v1/auth/oidc/session", "/v1/auth/cli/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke":
+	case "/v1/setup/signup", "/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh", "/v1/auth/pat/session", "/v1/auth/validate", "/v1/auth/userinfo", "/v1/auth/oidc/config", "/v1/auth/oidc/start", "/v1/auth/oidc/callback", "/v1/auth/oidc/cli", "/v1/auth/oidc/logout", "/v1/auth/oidc/session", "/v1/auth/cli/session", "/v1/oauth/authorize", "/v1/oauth/token", "/v1/oauth/revoke", "/v1/docs":
 		return true
 	default:
-		if strings.HasPrefix(path, "/v1/invites/") {
+		if strings.HasPrefix(path, "/v1/invites/") || strings.HasPrefix(path, "/v1/openapi") {
 			return true
 		}
 		return false
