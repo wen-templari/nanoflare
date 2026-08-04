@@ -26,12 +26,14 @@ type Config struct {
 }
 
 type Server struct {
-	listener  net.Listener
-	addr      string
-	transport *http.Transport
-	mu        sync.Mutex
-	conns     map[net.Conn]struct{}
-	wg        sync.WaitGroup
+	listener     net.Listener
+	addr         string
+	transport    *http.Transport
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	mu           sync.Mutex
+	conns        map[net.Conn]struct{}
+	wg           sync.WaitGroup
 }
 
 func ParseCAFiles(value string) []string {
@@ -67,7 +69,13 @@ func New(config Config) (*Server, error) {
 		ExpectContinueTimeout: time.Second,
 		IdleConnTimeout:       90 * time.Second,
 	}
-	return &Server{addr: addr, transport: transport, conns: make(map[net.Conn]struct{})}, nil
+	return &Server{
+		addr:         addr,
+		transport:    transport,
+		readTimeout:  90 * time.Second,
+		writeTimeout: 30 * time.Second,
+		conns:        make(map[net.Conn]struct{}),
+	}, nil
 }
 
 func (s *Server) Start() error {
@@ -139,20 +147,28 @@ func (s *Server) serveConn(conn net.Conn) {
 		s.mu.Unlock()
 	}()
 
-	reader := bufio.NewReader(conn)
+	countingReader := &byteCountingReader{Reader: conn}
+	reader := bufio.NewReader(countingReader)
 	writer := bufio.NewWriter(conn)
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		bufferedBefore := reader.Buffered()
+		bytesReadBefore := countingReader.bytesRead
+		_ = conn.SetReadDeadline(time.Now().Add(s.readTimeout))
 		request, err := http.ReadRequest(reader)
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				_ = writeResponse(writer, errorResponse(http.StatusBadRequest, "bad request"))
+			var netErr net.Error
+			timedOut := errors.As(err, &netErr) && netErr.Timeout()
+			idleTimeout := timedOut && bufferedBefore == 0 && countingReader.bytesRead == bytesReadBefore
+			if !errors.Is(err, io.EOF) && !idleTimeout {
+				response := errorResponse(http.StatusBadRequest, "bad request")
+				_ = s.writeResponse(conn, writer, response)
+				response.Body.Close()
 			}
 			return
 		}
 		_ = conn.SetReadDeadline(time.Time{})
 		response := s.forward(request)
-		if err := writeResponse(writer, response); err != nil {
+		if err := s.writeResponse(conn, writer, response); err != nil {
 			response.Body.Close()
 			return
 		}
@@ -161,6 +177,17 @@ func (s *Server) serveConn(conn net.Conn) {
 			return
 		}
 	}
+}
+
+type byteCountingReader struct {
+	io.Reader
+	bytesRead int64
+}
+
+func (r *byteCountingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
 }
 
 func (s *Server) forward(request *http.Request) *http.Response {
@@ -180,7 +207,9 @@ func (s *Server) forward(request *http.Request) *http.Response {
 	return response
 }
 
-func writeResponse(writer *bufio.Writer, response *http.Response) error {
+func (s *Server) writeResponse(conn net.Conn, writer *bufio.Writer, response *http.Response) error {
+	_ = conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+	defer conn.SetWriteDeadline(time.Time{})
 	if err := response.Write(writer); err != nil {
 		return err
 	}
