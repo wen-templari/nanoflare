@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -181,6 +182,51 @@ func TestAdapterHandlesTwoRequestsOnOneConnection(t *testing.T) {
 		if got, want := string(body), "response for "+path; got != want {
 			t.Fatalf("body = %q, want %q", got, want)
 		}
+	}
+}
+
+func TestAdapterDrainsRequestBodyBeforeReusingConnection(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reject" {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		_, _ = w.Write([]byte("second request"))
+	}))
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+	defer closeAdapter(t, adapter)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	body := strings.Repeat("x", 512*1024)
+	if _, err := fmt.Fprintf(conn, "POST http://origin.example/reject HTTP/1.1\r\nContent-Length: %d\r\n\r\n%sGET http://origin.example/next HTTP/1.1\r\nConnection: close\r\n\r\n", len(body), body); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	first, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, first.Body)
+	first.Body.Close()
+	if first.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("first response = %s, want 413", first.Status)
+	}
+	second, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBody, err := io.ReadAll(second.Body)
+	second.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.StatusCode != http.StatusOK || string(secondBody) != "second request" {
+		t.Fatalf("second response = %s %q", second.Status, secondBody)
 	}
 }
 

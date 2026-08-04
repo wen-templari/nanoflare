@@ -30,7 +30,6 @@ type Server struct {
 	addr         string
 	transport    *http.Transport
 	readTimeout  time.Duration
-	writeTimeout time.Duration
 	mu           sync.Mutex
 	conns        map[net.Conn]bool
 	shuttingDown bool
@@ -71,11 +70,10 @@ func New(config Config) (*Server, error) {
 		IdleConnTimeout:       90 * time.Second,
 	}
 	return &Server{
-		addr:         addr,
-		transport:    transport,
-		readTimeout:  90 * time.Second,
-		writeTimeout: 30 * time.Second,
-		conns:        make(map[net.Conn]bool),
+		addr:        addr,
+		transport:   transport,
+		readTimeout: 90 * time.Second,
+		conns:       make(map[net.Conn]bool),
 	}, nil
 }
 
@@ -175,7 +173,7 @@ func (s *Server) serveConn(conn net.Conn) {
 			idleTimeout := timedOut && bufferedBefore == 0 && countingReader.bytesRead == bytesReadBefore
 			if !errors.Is(err, io.EOF) && !idleTimeout {
 				response := errorResponse(http.StatusBadRequest, "bad request")
-				_ = s.writeResponse(conn, writer, response)
+				_ = writeResponse(writer, response)
 				response.Body.Close()
 			}
 			return
@@ -183,18 +181,31 @@ func (s *Server) serveConn(conn net.Conn) {
 		_ = conn.SetReadDeadline(time.Time{})
 		s.setIdle(conn, false)
 		response := s.forward(request)
-		if err := s.writeResponse(conn, writer, response); err != nil {
+		if err := writeResponse(writer, response); err != nil {
 			response.Body.Close()
+			request.Body.Close()
 			return
 		}
 		response.Body.Close()
 		if request.Close || response.Close {
+			request.Body.Close()
+			return
+		}
+		if !s.drainRequestBody(conn, request) {
 			return
 		}
 		if !s.setIdle(conn, true) {
 			return
 		}
 	}
+}
+
+func (s *Server) drainRequestBody(conn net.Conn, request *http.Request) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(s.readTimeout))
+	_, readErr := io.Copy(io.Discard, request.Body)
+	closeErr := request.Body.Close()
+	_ = conn.SetReadDeadline(time.Time{})
+	return readErr == nil && closeErr == nil
 }
 
 func (s *Server) setIdle(conn net.Conn, idle bool) bool {
@@ -226,19 +237,24 @@ func (s *Server) forward(request *http.Request) *http.Response {
 	out := request.Clone(request.Context())
 	out.RequestURI = ""
 	out.Host = out.URL.Host
-	out.Header = request.Header.Clone()
+	out.Body = noCloseReadCloser{request.Body}
 	removeHopHeaders(out.Header)
 	response, err := s.transport.RoundTrip(out)
 	if err != nil {
 		return errorResponse(http.StatusBadGateway, "egress request failed")
 	}
 	removeHopHeaders(response.Header)
+	response.Close = false
 	return response
 }
 
-func (s *Server) writeResponse(conn net.Conn, writer *bufio.Writer, response *http.Response) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
-	defer conn.SetWriteDeadline(time.Time{})
+type noCloseReadCloser struct {
+	io.Reader
+}
+
+func (noCloseReadCloser) Close() error { return nil }
+
+func writeResponse(writer *bufio.Writer, response *http.Response) error {
 	if err := response.Write(writer); err != nil {
 		return err
 	}
