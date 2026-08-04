@@ -28,46 +28,48 @@ func TestProxyURLValidation(t *testing.T) {
 	}
 }
 
-func TestAdapterForwardsAbsoluteHTTPRequestThroughConfiguredProxy(t *testing.T) {
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("X-Origin", "yes")
-		_, _ = w.Write([]byte("proxied"))
-	}))
-	defer target.Close()
-
-	requests := make(chan *http.Request, 1)
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests <- r.Clone(r.Context())
-		out := r.Clone(r.Context())
-		out.RequestURI = ""
-		response, err := http.DefaultTransport.RoundTrip(out)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer response.Body.Close()
-		w.Header().Set("X-Origin", response.Header.Get("X-Origin"))
-		w.WriteHeader(response.StatusCode)
-		_, _ = io.Copy(w, response.Body)
-	}))
-	defer proxy.Close()
-
-	adapter, err := New(Config{ProxyURL: proxy.URL, Addr: "127.0.0.1:0"})
+func TestNoProxyRules(t *testing.T) {
+	proxyURL, err := url.Parse("http://proxy.example:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Start(); err != nil {
-		t.Fatal(err)
+	selector := newProxySelector(proxyURL, []string{"10.0.0.0/8", ".corp.example", "localhost"})
+	for _, test := range []struct {
+		url       string
+		wantProxy bool
+	}{
+		{"http://10.12.0.1/", false},
+		{"https://api.corp.example/", false},
+		{"http://localhost:8080/", false},
+		{"https://example.com/", true},
+	} {
+		requestURL, err := url.Parse(test.url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := selector(&http.Request{URL: requestURL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (got != nil) != test.wantProxy {
+			t.Errorf("proxy for %s = %v, want proxy=%v", test.url, got, test.wantProxy)
+		}
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = adapter.Close(ctx)
-	}()
+}
 
+func TestAdapterForwardsAbsoluteHTTPRequestThroughConfiguredProxy(t *testing.T) {
+	requests := make(chan *http.Request, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Clone(r.Context())
+		w.Header().Set("X-Origin", "yes")
+		_, _ = w.Write([]byte("proxied"))
+	}))
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+	defer closeAdapter(t, adapter)
 	adapterURL, _ := url.Parse("http://" + adapter.Addr())
 	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(adapterURL)}}
-	response, err := client.Get(target.URL + "/stream")
+	response, err := client.Get("http://public.example/stream")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestAdapterForwardsAbsoluteHTTPRequestThroughConfiguredProxy(t *testing.T) 
 	}
 	select {
 	case got := <-requests:
-		if got.URL.String() != target.URL+"/stream" {
+		if got.URL.String() != "http://public.example/stream" {
 			t.Fatalf("proxy URL = %q", got.URL)
 		}
 	case <-time.After(time.Second):
@@ -96,34 +98,10 @@ func TestAdapterAcceptsHostlessAbsoluteHTTPRequest(t *testing.T) {
 	}))
 	defer target.Close()
 	targetURL = target.URL
-
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		out := r.Clone(r.Context())
-		out.RequestURI = ""
-		response, err := http.DefaultTransport.RoundTrip(out)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer response.Body.Close()
-		w.WriteHeader(response.StatusCode)
-		_, _ = io.Copy(w, response.Body)
-	}))
+	proxy := newForwardingProxy(t)
 	defer proxy.Close()
-
-	adapter, err := New(Config{ProxyURL: proxy.URL, Addr: "127.0.0.1:0"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := adapter.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = adapter.Close(ctx)
-	}()
-
+	adapter := startAdapter(t, proxy.URL)
+	defer closeAdapter(t, adapter)
 	conn, err := net.Dial("tcp", adapter.Addr())
 	if err != nil {
 		t.Fatal(err)
@@ -155,16 +133,15 @@ func TestAdapterHandlesTwoRequestsOnOneConnection(t *testing.T) {
 	defer proxy.Close()
 	adapter := startAdapter(t, proxy.URL)
 	defer closeAdapter(t, adapter)
-
 	conn, err := net.Dial("tcp", adapter.Addr())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
-	for i, path := range []string{"/first", "/second"} {
+	for index, path := range []string{"/first", "/second"} {
 		connection := ""
-		if i == 1 {
+		if index == 1 {
 			connection = "Connection: close\r\n"
 		}
 		if _, err := fmt.Fprintf(conn, "GET %s%s HTTP/1.1\r\n%s\r\n", target.URL, path, connection); err != nil {
@@ -196,7 +173,6 @@ func TestAdapterDrainsRequestBodyBeforeReusingConnection(t *testing.T) {
 	defer proxy.Close()
 	adapter := startAdapter(t, proxy.URL)
 	defer closeAdapter(t, adapter)
-
 	conn, err := net.Dial("tcp", adapter.Addr())
 	if err != nil {
 		t.Fatal(err)
@@ -242,20 +218,14 @@ func TestAdapterIdleTimeoutClosesWithoutResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeAdapter(t, adapter)
-
 	conn, err := net.Dial("tcp", adapter.Addr())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
-	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
-	if err == nil {
-		response.Body.Close()
-		t.Fatalf("idle connection received unexpected response: %s", response.Status)
-	}
-	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("idle connection read error = %v, want a silent close", err)
+	if _, err := http.ReadResponse(bufio.NewReader(conn), nil); err == nil || (!errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)) {
+		t.Fatalf("idle connection read error = %v, want silent close", err)
 	}
 }
 
@@ -271,7 +241,6 @@ func TestAdapterPartialRequestTimeoutReturnsBadRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeAdapter(t, adapter)
-
 	conn, err := net.Dial("tcp", adapter.Addr())
 	if err != nil {
 		t.Fatal(err)
@@ -286,7 +255,7 @@ func TestAdapterPartialRequestTimeoutReturnsBadRequest(t *testing.T) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
-		t.Fatalf("partial request response = %s, want 400", response.Status)
+		t.Fatalf("partial response = %s, want 400", response.Status)
 	}
 }
 
@@ -302,7 +271,6 @@ func TestAdapterCloseWaitsForInflightRequest(t *testing.T) {
 	proxy := newForwardingProxy(t)
 	defer proxy.Close()
 	adapter := startAdapter(t, proxy.URL)
-
 	conn, err := net.Dial("tcp", adapter.Addr())
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +314,6 @@ func TestAdapterCloseImmediatelyClosesIdleKeepAliveConnection(t *testing.T) {
 	proxy := newForwardingProxy(t)
 	defer proxy.Close()
 	adapter := startAdapter(t, proxy.URL)
-
 	conn, err := net.Dial("tcp", adapter.Addr())
 	if err != nil {
 		t.Fatal(err)
@@ -364,7 +331,6 @@ func TestAdapterCloseImmediatelyClosesIdleKeepAliveConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	if err := adapter.Close(ctx); err != nil {
@@ -373,6 +339,72 @@ func TestAdapterCloseImmediatelyClosesIdleKeepAliveConnection(t *testing.T) {
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := reader.ReadByte(); !errors.Is(err, io.EOF) {
 		t.Fatalf("idle connection remained open after Close: %v", err)
+	}
+}
+
+func TestAdapterRemovesConnectionNominatedHeaders(t *testing.T) {
+	proxyHeaders := make(chan http.Header, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHeaders <- r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+	defer closeAdapter(t, adapter)
+	adapterURL, _ := url.Parse("http://" + adapter.Addr())
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(adapterURL)}}
+	request, err := http.NewRequest(http.MethodGet, "http://origin.example/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Connection", "X-Remove-Me")
+	request.Header.Set("X-Remove-Me", "secret")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	select {
+	case header := <-proxyHeaders:
+		if header.Get("Connection") != "" || header.Get("X-Remove-Me") != "" {
+			t.Fatalf("proxy received hop-by-hop headers: %#v", header)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("proxy received no request")
+	}
+}
+
+func TestCloseCancelsStalledUpstreamRequest(t *testing.T) {
+	started := make(chan struct{})
+	proxy := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-request.Context().Done()
+	}))
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprint(conn, "GET http://origin.example/stalled HTTP/1.1\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err := adapter.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestRejectsNonLoopbackListener(t *testing.T) {
+	adapter, err := New(Config{ProxyURL: "http://proxy.example", Addr: "0.0.0.0:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Start(); err == nil {
+		t.Fatal("Start succeeded with a public listener")
 	}
 }
 
@@ -413,15 +445,5 @@ func closeAdapter(t *testing.T, adapter *Server) {
 	defer cancel()
 	if err := adapter.Close(ctx); err != nil {
 		t.Errorf("Close failed: %v", err)
-	}
-}
-
-func TestRejectsNonLoopbackListener(t *testing.T) {
-	adapter, err := New(Config{ProxyURL: "http://proxy.example", Addr: "0.0.0.0:0"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := adapter.Start(); err == nil {
-		t.Fatal("Start succeeded with a public listener")
 	}
 }

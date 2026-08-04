@@ -17,11 +17,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/http/httpproxy"
 )
 
 type Config struct {
 	ProxyURL string
 	CAFiles  []string
+	NoProxy  []string
 	Addr     string
 }
 
@@ -32,6 +35,7 @@ type Server struct {
 	readTimeout  time.Duration
 	mu           sync.Mutex
 	conns        map[net.Conn]bool
+	cancels      map[net.Conn]context.CancelFunc
 	shuttingDown bool
 	wg           sync.WaitGroup
 }
@@ -46,11 +50,22 @@ func ParseCAFiles(value string) []string {
 	return files
 }
 
+func ParseNoProxy(value string) []string {
+	var entries []string
+	for _, entry := range strings.Split(value, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
 func New(config Config) (*Server, error) {
 	proxyURL, err := parseProxyURL(config.ProxyURL)
 	if err != nil {
 		return nil, err
 	}
+	proxy := newProxySelector(proxyURL, config.NoProxy)
 	roots, err := loadRoots(config.CAFiles)
 	if err != nil {
 		return nil, err
@@ -60,7 +75,7 @@ func New(config Config) (*Server, error) {
 		addr = "127.0.0.1:8082"
 	}
 	transport := &http.Transport{
-		Proxy:                 http.ProxyURL(proxyURL),
+		Proxy:                 proxy,
 		TLSClientConfig:       &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 		ForceAttemptHTTP2:     true,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -74,7 +89,20 @@ func New(config Config) (*Server, error) {
 		transport:   transport,
 		readTimeout: 90 * time.Second,
 		conns:       make(map[net.Conn]bool),
+		cancels:     make(map[net.Conn]context.CancelFunc),
 	}, nil
+}
+
+func newProxySelector(proxyURL *url.URL, noProxy []string) func(*http.Request) (*url.URL, error) {
+	config := httpproxy.Config{
+		HTTPProxy:  proxyURL.String(),
+		HTTPSProxy: proxyURL.String(),
+		NoProxy:    strings.Join(noProxy, ","),
+	}
+	selector := config.ProxyFunc()
+	return func(request *http.Request) (*url.URL, error) {
+		return selector(request.URL)
+	}
 }
 
 func (s *Server) Start() error {
@@ -121,11 +149,14 @@ func (s *Server) Close(ctx context.Context) error {
 		return normalizeCloseError(err)
 	case <-ctx.Done():
 		s.mu.Lock()
+		for conn, cancel := range s.cancels {
+			cancel()
+			_ = conn.Close()
+		}
 		for conn := range s.conns {
 			_ = conn.Close()
 		}
 		s.mu.Unlock()
-		<-done
 		return ctx.Err()
 	}
 }
@@ -156,6 +187,7 @@ func (s *Server) serveConn(conn net.Conn) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.conns, conn)
+		delete(s.cancels, conn)
 		s.mu.Unlock()
 	}()
 
@@ -179,22 +211,26 @@ func (s *Server) serveConn(conn net.Conn) {
 			return
 		}
 		_ = conn.SetReadDeadline(time.Time{})
-		s.setIdle(conn, false)
+		requestContext, cancel := context.WithCancel(request.Context())
+		request = request.WithContext(requestContext)
+		if !s.setActive(conn, cancel) {
+			cancel()
+			return
+		}
 		response := s.forward(request)
 		if err := writeResponse(writer, response); err != nil {
 			response.Body.Close()
 			request.Body.Close()
+			cancel()
 			return
 		}
 		response.Body.Close()
+		cancel()
 		if request.Close || response.Close {
 			request.Body.Close()
 			return
 		}
-		if !s.drainRequestBody(conn, request) {
-			return
-		}
-		if !s.setIdle(conn, true) {
+		if !s.drainRequestBody(conn, request) || !s.setIdle(conn) {
 			return
 		}
 	}
@@ -208,14 +244,27 @@ func (s *Server) drainRequestBody(conn net.Conn, request *http.Request) bool {
 	return readErr == nil && closeErr == nil
 }
 
-func (s *Server) setIdle(conn net.Conn, idle bool) bool {
+func (s *Server) setActive(conn net.Conn, cancel context.CancelFunc) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.shuttingDown {
 		_ = conn.Close()
 		return false
 	}
-	s.conns[conn] = idle
+	s.conns[conn] = false
+	s.cancels[conn] = cancel
+	return true
+}
+
+func (s *Server) setIdle(conn net.Conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cancels, conn)
+	if s.shuttingDown {
+		_ = conn.Close()
+		return false
+	}
+	s.conns[conn] = true
 	return true
 }
 
@@ -328,6 +377,11 @@ func loadRoots(files []string) (*x509.CertPool, error) {
 }
 
 func removeHopHeaders(header http.Header) {
+	for _, value := range header.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			header.Del(strings.TrimSpace(name))
+		}
+	}
 	for _, name := range []string{"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade"} {
 		header.Del(name)
 	}

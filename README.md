@@ -140,6 +140,25 @@ network ranges, including `10.0.0.0/8`, `172.16.0.0/12`, and
 `192.168.0.0/16`. The same value can be passed with
 `-workerd-network-allow`.
 
+### Corporate proxy egress
+
+Set `NANOFLARE_WORKERD_EGRESS_PROXY_URL` when Worker global `fetch()` must use
+an HTTP corporate proxy. Add intercepting or private certificate authorities
+with `NANOFLARE_WORKERD_EGRESS_CA_FILES`. Requests matching
+`NANOFLARE_WORKERD_EGRESS_NO_PROXY` bypass that proxy; entries support literal
+IP addresses, CIDRs, and hostname suffixes:
+
+```sh
+NANOFLARE_WORKERD_EGRESS_PROXY_URL=http://proxy.corp.example:8080
+NANOFLARE_WORKERD_EGRESS_CA_FILES=/run/secrets/corp-root.pem
+NANOFLARE_WORKERD_EGRESS_NO_PROXY=10.0.0.0/8,.corp.example
+```
+
+When a proxy is configured, `globalOutbound` directs Worker `fetch()` through
+the adapter, so treat the no-proxy list as an explicit egress policy. Keep it
+aligned with the private destinations intended to be allowed by
+`NANOFLARE_WORKERD_NETWORK_ALLOW`.
+
 For a split control plane, start `nanoflare-runner` separately and point
 `nanoflared` at its authenticated control API:
 

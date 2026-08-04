@@ -87,6 +87,7 @@ services:
       # Optional proxy URL; mount any configured CA paths through an override file.
       NANOFLARE_WORKERD_EGRESS_PROXY_URL: ${NANOFLARE_WORKERD_EGRESS_PROXY_URL:-}
       NANOFLARE_WORKERD_EGRESS_CA_FILES: ${NANOFLARE_WORKERD_EGRESS_CA_FILES:-}
+      NANOFLARE_WORKERD_EGRESS_NO_PROXY: ${NANOFLARE_WORKERD_EGRESS_NO_PROXY:-}
     volumes:
       - nanoflare-runner-data:/var/lib/nanoflare/runner
 
