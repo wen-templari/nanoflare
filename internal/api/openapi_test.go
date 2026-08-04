@@ -33,11 +33,18 @@ func TestOpenAPIListsEveryPublicOperation(t *testing.T) {
 
 func TestOpenAPISchemaAndDocsAreServed(t *testing.T) {
 	server := NewServer(nil)
-	for _, path := range []string{"/openapi.json", "/openapi-3.0.json", "/docs"} {
+	for _, path := range []string{"/v1/openapi.json", "/v1/openapi-3.0.json", "/v1/openapi.yaml", "/v1/openapi-3.0.yaml", "/v1/docs"} {
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusOK {
 			t.Errorf("GET %s status = %d", path, recorder.Code)
+		}
+	}
+	for _, path := range []string{"/openapi.json", "/openapi-3.0.json", "/docs"} {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want %d", path, recorder.Code, http.StatusNotFound)
 		}
 	}
 }
