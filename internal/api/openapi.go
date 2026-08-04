@@ -50,6 +50,8 @@ type oauthAuthorizeInfoResponse struct {
 
 func newOpenAPI(mux *http.ServeMux) huma.API {
 	config := huma.DefaultConfig("Nanoflare Control API", "v1.0.0")
+	config.OpenAPIPath = "/v1/openapi"
+	config.DocsPath = "/v1/docs"
 	config.OpenAPI.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
 		"bearerAuth": {Type: "http", Scheme: "bearer", BearerFormat: "JWT or personal access token"},
 	}
