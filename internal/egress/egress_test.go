@@ -292,6 +292,44 @@ func TestAdapterCloseWaitsForInflightRequest(t *testing.T) {
 	}
 }
 
+func TestAdapterCloseImmediatelyClosesIdleKeepAliveConnection(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("completed"))
+	}))
+	defer target.Close()
+	proxy := newForwardingProxy(t)
+	defer proxy.Close()
+	adapter := startAdapter(t, proxy.URL)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\n\r\n", target.URL); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, response.Body); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if err := adapter.Close(ctx); err != nil {
+		t.Fatalf("Close failed with an idle keep-alive connection: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := reader.ReadByte(); !errors.Is(err, io.EOF) {
+		t.Fatalf("idle connection remained open after Close: %v", err)
+	}
+}
+
 func newForwardingProxy(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

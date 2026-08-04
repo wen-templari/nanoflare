@@ -32,7 +32,8 @@ type Server struct {
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	mu           sync.Mutex
-	conns        map[net.Conn]struct{}
+	conns        map[net.Conn]bool
+	shuttingDown bool
 	wg           sync.WaitGroup
 }
 
@@ -74,7 +75,7 @@ func New(config Config) (*Server, error) {
 		transport:    transport,
 		readTimeout:  90 * time.Second,
 		writeTimeout: 30 * time.Second,
-		conns:        make(map[net.Conn]struct{}),
+		conns:        make(map[net.Conn]bool),
 	}, nil
 }
 
@@ -103,6 +104,14 @@ func (s *Server) Close(ctx context.Context) error {
 	if s.listener == nil {
 		return nil
 	}
+	s.mu.Lock()
+	s.shuttingDown = true
+	for conn, idle := range s.conns {
+		if idle {
+			_ = conn.Close()
+		}
+	}
+	s.mu.Unlock()
 	err := s.listener.Close()
 	done := make(chan struct{})
 	go func() {
@@ -131,7 +140,12 @@ func (s *Server) accept() {
 			return
 		}
 		s.mu.Lock()
-		s.conns[conn] = struct{}{}
+		if s.shuttingDown {
+			s.mu.Unlock()
+			_ = conn.Close()
+			continue
+		}
+		s.conns[conn] = true
 		s.mu.Unlock()
 		s.wg.Add(1)
 		go s.serveConn(conn)
@@ -167,6 +181,7 @@ func (s *Server) serveConn(conn net.Conn) {
 			return
 		}
 		_ = conn.SetReadDeadline(time.Time{})
+		s.setIdle(conn, false)
 		response := s.forward(request)
 		if err := s.writeResponse(conn, writer, response); err != nil {
 			response.Body.Close()
@@ -176,7 +191,21 @@ func (s *Server) serveConn(conn net.Conn) {
 		if request.Close || response.Close {
 			return
 		}
+		if !s.setIdle(conn, true) {
+			return
+		}
 	}
+}
+
+func (s *Server) setIdle(conn net.Conn, idle bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shuttingDown {
+		_ = conn.Close()
+		return false
+	}
+	s.conns[conn] = idle
+	return true
 }
 
 type byteCountingReader struct {
