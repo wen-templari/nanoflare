@@ -21,6 +21,7 @@ type Writer struct {
 	workerHost   string
 	runtimeAddr  string
 	networkAllow []string
+	egressAddr   string
 }
 
 type TraefikWriter interface {
@@ -32,6 +33,7 @@ type RuntimeWriter struct {
 	traefik      TraefikWriter
 	runtimeAddr  string
 	networkAllow []string
+	egressAddr   string
 }
 
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
@@ -53,6 +55,9 @@ func (w *Writer) SetNanoflareRuntimeAddr(addr string) {
 func (w *RuntimeWriter) SetNanoflareRuntimeAddr(addr string) {
 	w.runtimeAddr = addr
 }
+
+func (w *Writer) SetWorkerdEgressAddr(addr string)        { w.egressAddr = strings.TrimSpace(addr) }
+func (w *RuntimeWriter) SetWorkerdEgressAddr(addr string) { w.egressAddr = strings.TrimSpace(addr) }
 
 func DefaultNetworkAllow() []string {
 	return []string{"public", "10.0.0.0/8"}
@@ -89,7 +94,7 @@ func (w *Writer) Write(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *Writer) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow})))
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr})))
 }
 
 func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
@@ -97,7 +102,7 @@ func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *RuntimeWriter) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow})))
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr})))
 }
 
 func (w *RuntimeWriter) WriteTraefik(active []nanoflare.ActiveDeployment) error {
@@ -115,6 +120,7 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 type WorkerdOptions struct {
 	RuntimeAddr  string
 	NetworkAllow []string
+	EgressAddr   string
 }
 
 func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOptions) string {
@@ -127,6 +133,9 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	out.WriteString("using Workerd = import \"/workerd/workerd.capnp\";\n\n")
 	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
 	fmt.Fprintf(&out, "    (name = \"internet\", network = (allow = [%s], tlsOptions = (trustBrowserCas = true))),\n", quotedList(networkAllow))
+	if egressAddr := strings.TrimSpace(options.EgressAddr); egressAddr != "" {
+		fmt.Fprintf(&out, "    (name = \"nanoflare-egress\", external = (address = %s, http = (style = proxy))),\n", quote(egressAddr))
+	}
 	out.WriteString(durationTelemetryServices(runtimeAddr))
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(deploymentServiceName(item)), workerName(deploymentServiceName(item)))
@@ -156,6 +165,9 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	for _, item := range active {
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(deploymentServiceName(item)))
 		writeWorkerSource(&out, item)
+		if strings.TrimSpace(options.EgressAddr) != "" {
+			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
+		}
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(workerBindings(item), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))

@@ -84,6 +84,9 @@ services:
       - -nanoflare-runtime-addr=nanoflared:8081
     environment:
       NANOFLARE_RUNNER_TOKEN: ${NANOFLARE_RUNNER_TOKEN:-nanoflare-development}
+      # Optional proxy URL; mount any configured CA paths through an override file.
+      NANOFLARE_WORKERD_EGRESS_PROXY_URL: ${NANOFLARE_WORKERD_EGRESS_PROXY_URL:-}
+      NANOFLARE_WORKERD_EGRESS_CA_FILES: ${NANOFLARE_WORKERD_EGRESS_CA_FILES:-}
     volumes:
       - nanoflare-runner-data:/var/lib/nanoflare/runner
 

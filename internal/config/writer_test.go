@@ -75,6 +75,19 @@ func TestWorkerdUsesCustomNetworkAllowList(t *testing.T) {
 	}
 }
 
+func TestWorkerdUsesConfiguredEgress(t *testing.T) {
+	active := []nanoflare.ActiveDeployment{{App: nanoflare.App{ID: "app"}, Deployment: nanoflare.Deployment{CompatibilityDate: "2025-12-10"}}}
+	generated := WorkerdWithOptions(active, WorkerdOptions{EgressAddr: "127.0.0.1:8082"})
+	for _, expected := range []string{
+		`(name = "nanoflare-egress", external = (address = "127.0.0.1:8082", http = (style = proxy)))`,
+		`globalOutbound = "nanoflare-egress"`,
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, generated)
+		}
+	}
+}
+
 func TestWorkerdIncludesVarsAndSecretsBindings(t *testing.T) {
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret", SecretValues: map[string]string{"DB_URL": "postgres://secret"}},

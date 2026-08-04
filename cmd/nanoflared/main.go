@@ -17,11 +17,13 @@ import (
 	"github.com/clas/nanoflare/internal/api"
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/database"
+	"github.com/clas/nanoflare/internal/egress"
 	"github.com/clas/nanoflare/internal/logs"
 	"github.com/clas/nanoflare/internal/metrics"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/objects"
 	"github.com/clas/nanoflare/internal/oidc"
+	"github.com/clas/nanoflare/internal/runner"
 	"github.com/clas/nanoflare/internal/runtime"
 )
 
@@ -48,6 +50,9 @@ func main() {
 		baseHostname        = flag.String("base-hostname", os.Getenv("NANOFLARE_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
 		workerd             = flag.String("workerd", "workerd", "path to the workerd executable")
 		workerdNetworkAllow = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
+		egressProxyURL      = flag.String("workerd-egress-proxy-url", os.Getenv("NANOFLARE_WORKERD_EGRESS_PROXY_URL"), "explicit HTTP proxy URL for Worker outbound traffic")
+		egressCAFiles       = flag.String("workerd-egress-ca-files", os.Getenv("NANOFLARE_WORKERD_EGRESS_CA_FILES"), "comma-separated corporate CA PEM files")
+		egressAddr          = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
 		portHost            = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart           = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 		idleTimeout         = flag.Duration("runtime-idle-timeout", 30*time.Second, "idle duration before a lazy worker runtime is stopped")
@@ -151,27 +156,42 @@ func main() {
 		}
 	}
 	if *runnerURL != "" {
-		_ = *runnerToken
-		log.Fatal("lazy runtime startup is not implemented for nanoflare-runner; run without -runner-url for lazy local workers")
-	}
-	writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
-	writer.SetNanoflareRuntimeAddr(*runtimeAddr)
-	writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
-	manager := runtime.NewLazyManager(
-		writer,
-		runtime.CommandLauncher{Executable: *workerd, Output: output},
-		*configDir,
-		*portHost,
-		*portStart,
-		10*time.Second,
-		5*time.Second,
-		*idleTimeout,
-	)
-	publisher = manager
-	runtimeEnsurer = manager
-	closeRuntime = func() {
-		if err := manager.Close(); err != nil {
-			log.Printf("close runtime manager: %v", err)
+		publisher = runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
+	} else {
+		writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
+		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
+		writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
+		if strings.TrimSpace(*egressProxyURL) != "" {
+			adapter, err := egress.New(egress.Config{ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), Addr: *egressAddr})
+			if err != nil {
+				log.Fatal(err)
+			}
+			if err := adapter.Start(); err != nil {
+				log.Fatal(err)
+			}
+			writer.SetWorkerdEgressAddr(adapter.Addr())
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = adapter.Close(ctx)
+			}()
+		}
+		manager := runtime.NewLazyManager(
+			writer,
+			runtime.CommandLauncher{Executable: *workerd, Output: output},
+			*configDir,
+			*portHost,
+			*portStart,
+			10*time.Second,
+			5*time.Second,
+			*idleTimeout,
+		)
+		publisher = manager
+		runtimeEnsurer = manager
+		closeRuntime = func() {
+			if err := manager.Close(); err != nil {
+				log.Printf("close runtime manager: %v", err)
+			}
 		}
 	}
 	if closeRuntime != nil {
