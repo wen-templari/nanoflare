@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -32,7 +33,13 @@ type Server struct {
 	listener     net.Listener
 	addr         string
 	transport    *http.Transport
+	proxy        func(*http.Request) (*url.URL, error)
+	dialer       *net.Dialer
+	lookupIPAddr func(context.Context, string) ([]net.IPAddr, error)
+	directNets   []*net.IPNet
 	readTimeout  time.Duration
+	connectTO    time.Duration
+	resolveTO    time.Duration
 	mu           sync.Mutex
 	conns        map[net.Conn]bool
 	cancels      map[net.Conn]context.CancelFunc
@@ -74,23 +81,53 @@ func New(config Config) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:8082"
 	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
-		Proxy:                 proxy,
-		TLSClientConfig:       &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
-		ForceAttemptHTTP2:     true,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		Proxy:           proxy,
+		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		// The adapter is an HTTP/1.1 proxy toward workerd. Speaking HTTP/1.1
+		// upstream keeps responses framed with Content-Length or chunked
+		// encoding; an HTTP/2 upstream response has no length delimiter and
+		// would hang when relayed over the keep-alive HTTP/1.1 hop.
+		ForceAttemptHTTP2:     false,
+		DialContext:           dialer.DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: time.Second,
 		IdleConnTimeout:       90 * time.Second,
 	}
 	return &Server{
-		addr:        addr,
-		transport:   transport,
-		readTimeout: 90 * time.Second,
-		conns:       make(map[net.Conn]bool),
-		cancels:     make(map[net.Conn]context.CancelFunc),
+		addr:         addr,
+		transport:    transport,
+		proxy:        proxy,
+		dialer:       dialer,
+		lookupIPAddr: net.DefaultResolver.LookupIPAddr,
+		directNets:   parseDirectNets(config.NoProxy),
+		readTimeout:  90 * time.Second,
+		connectTO:    proxyConnectTimeout,
+		resolveTO:    dnsResolveTimeout,
+		conns:        make(map[net.Conn]bool),
+		cancels:      make(map[net.Conn]context.CancelFunc),
 	}, nil
+}
+
+// parseDirectNets extracts the CIDR entries from NO_PROXY so a raw-TCP CONNECT
+// whose hostname *resolves* into one of those ranges is dialed directly, not
+// just one that is written as an IP literal. This lets an operator declare
+// corporate ranges (which may be publicly-routable, e.g. Bosch-owned blocks)
+// once and have every hostname inside them treated as reachable-direct.
+func parseDirectNets(noProxy []string) []*net.IPNet {
+	var nets []*net.IPNet
+	for _, entry := range noProxy {
+		entry = strings.TrimSpace(entry)
+		if !strings.Contains(entry, "/") {
+			continue
+		}
+		if _, network, err := net.ParseCIDR(entry); err == nil {
+			nets = append(nets, network)
+		}
+	}
+	return nets
 }
 
 func newProxySelector(proxyURL *url.URL, noProxy []string) func(*http.Request) (*url.URL, error) {
@@ -211,6 +248,10 @@ func (s *Server) serveConn(conn net.Conn) {
 			return
 		}
 		_ = conn.SetReadDeadline(time.Time{})
+		if request.Method == http.MethodConnect {
+			s.handleConnect(conn, reader, request)
+			return
+		}
 		requestContext, cancel := context.WithCancel(request.Context())
 		request = request.WithContext(requestContext)
 		if !s.setActive(conn, cancel) {
@@ -279,6 +320,170 @@ func (r *byteCountingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// handleConnect tunnels a raw TCP CONNECT (used by workerd's Socket API, e.g.
+// MQTT and PostgreSQL). The corporate proxy only carries HTTP(S) to the public
+// internet and refuses CONNECT to non-443 ports, so any target on the corporate
+// or private network must be dialed directly. Routing: an explicit NO_PROXY
+// match, or a target that resolves entirely to loopback/private/configured
+// ranges, is dialed directly; everything else tunnels through the proxy with a
+// nested CONNECT. The adapter never terminates TLS for a tunnel; workerd does
+// that end to end.
+func (s *Server) handleConnect(conn net.Conn, reader *bufio.Reader, request *http.Request) {
+	target := request.Host
+	if target == "" {
+		target = request.URL.Host
+	}
+	if target == "" {
+		_, _ = io.WriteString(conn, "HTTP/1.1 400 Bad Request\r\n\r\n")
+		return
+	}
+
+	proxyURL, err := s.proxy(&http.Request{URL: &url.URL{Scheme: "https", Host: target}})
+	if err != nil {
+		_, _ = io.WriteString(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !s.setActive(conn, cancel) {
+		return
+	}
+
+	var upstream net.Conn
+	if proxyURL == nil || s.resolvesDirect(ctx, target) {
+		upstream, err = s.dialer.DialContext(ctx, "tcp", target)
+	} else {
+		upstream, err = s.dialProxyConnect(ctx, proxyURL, target)
+	}
+	if err != nil {
+		_, _ = io.WriteString(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
+		return
+	}
+	defer upstream.Close()
+	go func() {
+		<-ctx.Done()
+		_ = upstream.Close()
+	}()
+
+	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		return
+	}
+
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(upstream, reader); _ = upstream.Close(); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(conn, upstream); _ = conn.Close(); done <- struct{}{} }()
+	<-done
+	<-done
+}
+
+// proxyConnectTimeout bounds the nested CONNECT handshake with the corporate
+// proxy. Without it, a proxy that accepts the TCP connection but never answers
+// CONNECT (common when it refuses non-443 ports such as MQTT 1883/3003 or
+// PostgreSQL 5432) would block the read forever, wedging the tunnel and hanging
+// the Worker that opened the socket.
+const proxyConnectTimeout = 15 * time.Second
+
+// dnsResolveTimeout bounds the DNS lookup used to classify a CONNECT target as
+// direct-dial vs. proxied. A slow resolver must not stall opening the socket.
+const dnsResolveTimeout = 5 * time.Second
+
+// resolvesDirect reports whether a raw-TCP CONNECT target should be dialed
+// directly rather than tunneled through the corporate proxy. An IP-literal
+// target is classified without DNS; a hostname is resolved and treated as
+// direct only when every resolved address is direct-dial (loopback, private,
+// link-local, or inside a configured NO_PROXY CIDR). Requiring all addresses to
+// be direct keeps a genuinely public host on the proxy path; a lookup failure
+// is treated as "not direct" so the proxy path (and its fast-fail timeout)
+// applies. This captures bare corporate hostnames (e.g. a source database) that
+// resolve into private space without being listed in NO_PROXY.
+func (s *Server) resolvesDirect(ctx context.Context, target string) bool {
+	host := target
+	if h, _, err := net.SplitHostPort(target); err == nil {
+		host = h
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return s.isDirectIP(ip)
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, s.resolveTO)
+	defer cancel()
+	addrs, err := s.lookupIPAddr(lookupCtx, host)
+	if err != nil || len(addrs) == 0 {
+		return false
+	}
+	for _, addr := range addrs {
+		if !s.isDirectIP(addr.IP) {
+			return false
+		}
+	}
+	return true
+}
+
+// isDirectIP reports whether an address is on the local or corporate network and
+// so must be dialed directly (the proxy cannot reach it, and would refuse a
+// non-443 CONNECT to it).
+func (s *Server) isDirectIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	for _, network := range s.directNets {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// dialProxyConnect opens a CONNECT tunnel to target through the corporate proxy
+// and returns the tunneled connection.
+func (s *Server) dialProxyConnect(ctx context.Context, proxyURL *url.URL, target string) (net.Conn, error) {
+	conn, err := s.dialer.DialContext(ctx, "tcp", proxyURL.Host)
+	if err != nil {
+		return nil, err
+	}
+	// Fail fast if the proxy never completes the CONNECT handshake; cleared
+	// below once established so the splice runs without a deadline.
+	_ = conn.SetDeadline(time.Now().Add(s.connectTO))
+	var head strings.Builder
+	fmt.Fprintf(&head, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n", target, target)
+	if proxyURL.User != nil {
+		if password, ok := proxyURL.User.Password(); ok {
+			credential := base64.StdEncoding.EncodeToString([]byte(proxyURL.User.Username() + ":" + password))
+			fmt.Fprintf(&head, "Proxy-Authorization: Basic %s\r\n", credential)
+		}
+	}
+	head.WriteString("\r\n")
+	if _, err := io.WriteString(conn, head.String()); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		_ = conn.Close()
+		return nil, fmt.Errorf("proxy CONNECT to %s: %s", target, response.Status)
+	}
+	_ = conn.SetDeadline(time.Time{}) // hand a clean connection to the splice
+	if reader.Buffered() > 0 {
+		return &bufferedConn{Conn: conn, reader: io.MultiReader(reader, conn)}, nil
+	}
+	return conn, nil
+}
+
+// bufferedConn preserves bytes the proxy sent immediately after the CONNECT
+// response so no tunneled data is lost.
+type bufferedConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
 func (s *Server) forward(request *http.Request) *http.Response {
 	if request.Method == http.MethodConnect || !request.URL.IsAbs() || (request.URL.Scheme != "http" && request.URL.Scheme != "https") {
 		return errorResponse(http.StatusBadRequest, "absolute HTTP or HTTPS URL required")
@@ -293,8 +498,50 @@ func (s *Server) forward(request *http.Request) *http.Response {
 		return errorResponse(http.StatusBadGateway, "egress request failed")
 	}
 	removeHopHeaders(response.Header)
-	response.Close = false
+	frameResponse(response)
 	return response
+}
+
+// frameResponse guarantees the response is self-delimiting when relayed over
+// the keep-alive HTTP/1.1 hop to workerd. A known Content-Length or existing
+// chunked encoding already marks where the body ends, so the connection can be
+// reused as-is. A body with an unknown length carries no HTTP/1.1 delimiter of
+// its own — this happens for an HTTP/2 upstream (framed by DATA frames) and for
+// an HTTP/1.x response delimited only by connection close — so we add chunked
+// framing. Without this, workerd would read headers and then wait forever for a
+// body end that never comes (the original pokeapi/HTTP/2 hang).
+func frameResponse(response *http.Response) {
+	response.Close = false
+	if response.ContentLength < 0 && !hasChunkedEncoding(response.TransferEncoding) && responseHasBody(response) {
+		response.TransferEncoding = []string{"chunked"}
+	}
+}
+
+func hasChunkedEncoding(encodings []string) bool {
+	for _, encoding := range encodings {
+		if encoding == "chunked" {
+			return true
+		}
+	}
+	return false
+}
+
+// responseHasBody reports whether the response is allowed to carry a body, per
+// RFC 9110: 1xx/204/304 statuses and responses to HEAD never do, so they must
+// not be given chunked framing.
+func responseHasBody(response *http.Response) bool {
+	if response.Request != nil && response.Request.Method == http.MethodHead {
+		return false
+	}
+	switch {
+	case response.StatusCode >= 100 && response.StatusCode < 200:
+		return false
+	case response.StatusCode == http.StatusNoContent:
+		return false
+	case response.StatusCode == http.StatusNotModified:
+		return false
+	}
+	return true
 }
 
 type noCloseReadCloser struct {

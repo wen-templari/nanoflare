@@ -408,6 +408,354 @@ func TestRejectsNonLoopbackListener(t *testing.T) {
 	}
 }
 
+func TestAdapterTunnelsRawTCPConnectDirectlyForNoProxyTarget(t *testing.T) {
+	echo := startEchoTCPServer(t)
+	host, _, err := net.SplitHostPort(echo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := New(Config{ProxyURL: "http://127.0.0.1:9", NoProxy: []string{host}, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer closeAdapter(t, adapter)
+	assertTunnelEcho(t, adapter.Addr(), echo)
+}
+
+func TestAdapterTunnelsRawTCPConnectThroughProxy(t *testing.T) {
+	echo := startEchoTCPServer(t)
+	adapter := startAdapter(t, "http://"+startConnectProxyServer(t))
+	defer closeAdapter(t, adapter)
+	assertTunnelEcho(t, adapter.Addr(), echo)
+}
+
+// TestConnectFailsFastWhenProxyStalls guards against the s3 hang: a proxy that
+// accepts the TCP connection but never answers CONNECT (as corporate proxies do
+// for non-443 ports like MQTT/PostgreSQL) must make the adapter return a prompt
+// 502 rather than wedge the tunnel and hang the Worker forever.
+func TestConnectFailsFastWhenProxyStalls(t *testing.T) {
+	stalling := startStallingProxyServer(t)
+	adapter, err := New(Config{ProxyURL: "http://" + stalling, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.connectTO = 300 * time.Millisecond // shrink the real 15s bound for the test
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer closeAdapter(t, adapter)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Generous relative to connectTO but far below any "hang": if the fix
+	// regresses, this deadline trips instead of blocking indefinitely.
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := fmt.Fprintf(conn, "CONNECT db.internal:5432 HTTP/1.1\r\nHost: db.internal:5432\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("adapter did not respond to a stalled proxy CONNECT (hang regressed?): %v", err)
+	}
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %s, want 502 Bad Gateway", response.Status)
+	}
+}
+
+// startStallingProxyServer accepts connections and reads the CONNECT request but
+// never sends any response, emulating a proxy that refuses a port silently.
+func startStallingProxyServer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				reader := bufio.NewReader(c)
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil || line == "\r\n" {
+						// Request read; deliberately never reply. Block until
+						// the adapter gives up and closes its side (EOF here).
+						_, _ = io.Copy(io.Discard, c)
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+	return listener.Addr().String()
+}
+
+// TestIsDirectIPClassifiesRanges checks the reachability classifier that keeps
+// corporate/private raw-TCP targets off the proxy path: loopback, RFC1918, and
+// link-local are direct; public addresses are not, unless they fall inside a
+// configured NO_PROXY CIDR (a corporate range that may be publicly routable).
+func TestIsDirectIPClassifiesRanges(t *testing.T) {
+	adapter, err := New(Config{ProxyURL: "http://127.0.0.1:9", NoProxy: []string{"203.0.113.0/24", ".corp"}, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		ip         string
+		wantDirect bool
+	}{
+		{"127.0.0.1", true},             // loopback
+		{"10.161.189.40", true},         // RFC1918 (the MQTT broker's class)
+		{"192.168.1.10", true},          // RFC1918
+		{"172.16.5.9", true},            // RFC1918
+		{"169.254.10.1", true},          // link-local
+		{"203.0.113.7", true},           // inside the configured corporate CIDR
+		{"8.8.8.8", false},              // public
+		{"203.0.114.1", false},          // just outside the configured CIDR
+		{"::1", true},                   // IPv6 loopback
+		{"fd00::1", true},               // IPv6 unique-local (private)
+		{"2606:4700:4700::1111", false}, // public IPv6
+	} {
+		if got := adapter.isDirectIP(net.ParseIP(test.ip)); got != test.wantDirect {
+			t.Errorf("isDirectIP(%s) = %v, want %v", test.ip, got, test.wantDirect)
+		}
+	}
+}
+
+// TestResolvesDirectRoutesRawTCPByResolvedAddress covers the wx0dnox0lc04 case:
+// a bare hostname (not an IP literal, not listed in NO_PROXY) that resolves into
+// private space must route direct-dial, not proxy. A public or partially-public
+// resolution, or a lookup failure, stays on the proxy path.
+func TestResolvesDirectRoutesRawTCPByResolvedAddress(t *testing.T) {
+	adapter, err := New(Config{ProxyURL: "http://127.0.0.1:9", NoProxy: []string{"203.0.113.0/24"}, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := map[string][]net.IPAddr{
+		"source-db":     {{IP: net.ParseIP("10.20.30.40")}},                                  // corporate, private
+		"corp-host":     {{IP: net.ParseIP("203.0.113.9")}},                                  // corporate, in configured CIDR
+		"public-db":     {{IP: net.ParseIP("93.184.216.34")}},                                // public
+		"split-horizon": {{IP: net.ParseIP("10.0.0.5")}, {IP: net.ParseIP("93.184.216.34")}}, // mixed => proxy
+	}
+	adapter.lookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if addrs, ok := resolved[host]; ok {
+			return addrs, nil
+		}
+		return nil, fmt.Errorf("no such host %q", host)
+	}
+	for _, test := range []struct {
+		target     string
+		wantDirect bool
+	}{
+		{"10.20.30.40:5432", true},    // private IP literal
+		{"93.184.216.34:5432", false}, // public IP literal
+		{"source-db:5432", true},      // hostname -> private
+		{"corp-host:5432", true},      // hostname -> configured corporate CIDR
+		{"public-db:5432", false},     // hostname -> public
+		{"split-horizon:5432", false}, // hostname -> mixed private+public
+		{"unknown-host:5432", false},  // lookup failure -> proxy path (fail-fast applies)
+	} {
+		if got := adapter.resolvesDirect(context.Background(), test.target); got != test.wantDirect {
+			t.Errorf("resolvesDirect(%s) = %v, want %v", test.target, got, test.wantDirect)
+		}
+	}
+}
+
+// assertTunnelEcho sends a CONNECT to the adapter, then verifies raw bytes flow
+// end to end to the echo target behind it.
+func assertTunnelEcho(t *testing.T, adapterAddr, target string) {
+	t.Helper()
+	conn, err := net.Dial("tcp", adapterAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT status = %s, want 200", response.Status)
+	}
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buffer := make([]byte, 4)
+	if _, err := io.ReadFull(reader, buffer); err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer) != "pong" {
+		t.Fatalf("tunnel echo = %q, want %q", buffer, "pong")
+	}
+}
+
+// TestForwardFramesCloseDelimitedResponse guards the version-agnostic framing
+// fix: an upstream response with no Content-Length and no chunked encoding
+// (delimited only by connection close — valid HTTP/1.0 and HTTP/1.1, and the
+// shape an HTTP/2 body also arrives in) must be re-framed as chunked when
+// relayed over the keep-alive hop to workerd, or the client hangs waiting for a
+// body end that never arrives.
+func TestForwardFramesCloseDelimitedResponse(t *testing.T) {
+	upstream := startCloseDelimitedHTTPServer(t, "hello world")
+	host, _, err := net.SplitHostPort(upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := New(Config{ProxyURL: "http://127.0.0.1:9", NoProxy: []string{host}, Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer closeAdapter(t, adapter)
+
+	conn, err := net.Dial("tcp", adapter.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// A deadline turns the pre-fix hang into a test failure instead of a stall.
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := fmt.Fprintf(conn, "GET http://%s/ HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n\r\n", upstream, host); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %s, want 200", response.Status)
+	}
+	if !hasChunkedEncoding(response.TransferEncoding) {
+		t.Fatalf("adapter did not add framing: TransferEncoding=%v ContentLength=%d Close=%v",
+			response.TransferEncoding, response.ContentLength, response.Close)
+	}
+	if response.Close {
+		t.Fatalf("keep-alive hop was downgraded to connection-close")
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("reading relayed body: %v", err)
+	}
+	if string(body) != "hello world" {
+		t.Fatalf("body = %q, want %q", body, "hello world")
+	}
+}
+
+// startCloseDelimitedHTTPServer answers every request with a body delimited only
+// by connection close: no Content-Length, no Transfer-Encoding.
+func startCloseDelimitedHTTPServer(t *testing.T, body string) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				reader := bufio.NewReader(c)
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if line == "\r\n" {
+						break
+					}
+				}
+				_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n%s", body)
+			}(conn)
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func startEchoTCPServer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buffer := make([]byte, 4)
+				if _, err := io.ReadFull(conn, buffer); err != nil {
+					return
+				}
+				_, _ = conn.Write([]byte("pong"))
+			}()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func startConnectProxyServer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(client net.Conn) {
+				defer client.Close()
+				reader := bufio.NewReader(client)
+				request, err := http.ReadRequest(reader)
+				if err != nil || request.Method != http.MethodConnect {
+					_, _ = io.WriteString(client, "HTTP/1.1 400 Bad Request\r\n\r\n")
+					return
+				}
+				upstream, err := net.Dial("tcp", request.Host)
+				if err != nil {
+					_, _ = io.WriteString(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
+					return
+				}
+				defer upstream.Close()
+				_, _ = io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
+				go func() { _, _ = io.Copy(upstream, reader); _ = upstream.Close() }()
+				_, _ = io.Copy(client, upstream)
+			}(conn)
+		}
+	}()
+	return listener.Addr().String()
+}
+
 func newForwardingProxy(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
