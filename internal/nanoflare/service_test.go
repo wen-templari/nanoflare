@@ -673,6 +673,21 @@ func TestCreateAppNormalizesProtectedRoutes(t *testing.T) {
 	}
 }
 
+func TestCreateAppAllowsRootProtectedRoute(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{
+		Name:     "Secure",
+		Hostname: "secure.example.com",
+		Auth:     AuthConfig{ProtectedRoutes: []string{"/"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(app.Auth.ProtectedRoutes) != 1 || app.Auth.ProtectedRoutes[0] != "/" {
+		t.Fatalf("protected routes = %#v", app.Auth.ProtectedRoutes)
+	}
+}
+
 func TestUpdateAppRejectsInvalidProtectedRoutes(t *testing.T) {
 	service := NewService(NewStore(), &recordingWriter{})
 	app, err := service.CreateApp(CreateAppInput{Name: "Secure", Hostname: "secure.example.com"})

@@ -1576,8 +1576,8 @@ func validateProtectedRoute(route string) error {
 	if route == "" {
 		return errors.New("auth.protected_routes cannot contain empty values")
 	}
-	if !strings.HasPrefix(route, "/") || route == "/" {
-		return fmt.Errorf("auth.protected_routes route %q must be an absolute path and cannot be root", route)
+	if !strings.HasPrefix(route, "/") {
+		return fmt.Errorf("auth.protected_routes route %q must be an absolute path", route)
 	}
 	if strings.Contains(strings.TrimSuffix(route, "*"), "*") {
 		return fmt.Errorf("auth.protected_routes route %q must use at most one trailing wildcard", route)
