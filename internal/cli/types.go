@@ -236,6 +236,29 @@ const nanoflareRuntimeTypeDeclarations = `interface NanoflareObjectHTTPMetadata 
   contentType?: string;
 }
 
+interface NanoflareScheduledController {
+  scheduledTime: number;
+  cron: string;
+  noRetry(): void;
+}
+
+interface NanoflareExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+interface NanoflareWorkerHandler<Env = unknown> {
+  fetch?: (
+    request: Request,
+    env: Env,
+    ctx: NanoflareExecutionContext,
+  ) => Response | Promise<Response>;
+  scheduled?: (
+    controller: NanoflareScheduledController,
+    env: Env,
+    ctx: NanoflareExecutionContext,
+  ) => void | Promise<void>;
+}
+
 interface NanoflareObjectStorageObject {
   key: string;
   size: number;

@@ -169,6 +169,8 @@ func TestTypesGeneratesSelfContainedBindings(t *testing.T) {
 	content := string(generated)
 	for _, expected := range []string{
 		"interface NanoflareKVNamespace {",
+		"interface NanoflareScheduledController {",
+		"interface NanoflareWorkerHandler<Env = unknown> {",
 		"interface CloudflareBindings {",
 		"APP_DB: NanoflareD1Database;",
 		"COUNTER_KV: NanoflareKVNamespace;",
@@ -274,6 +276,17 @@ func TestGeneratedTypesCompileWithoutNanoflarePackage(t *testing.T) {
 	}
 	if err := os.WriteFile("worker.ts", []byte(`declare const env: Env;
 async function readValue() { return env.KV.get("key"); }
+
+export default {
+  async fetch(request) {
+    await readValue();
+    return new Response(request.url);
+  },
+  async scheduled(controller, scheduledEnv, ctx) {
+    ctx.waitUntil(Promise.resolve(controller.cron));
+    await scheduledEnv.KV.get("key");
+  },
+} satisfies NanoflareWorkerHandler<Env>;
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

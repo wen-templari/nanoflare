@@ -227,9 +227,10 @@ different path or interface name when needed:
 nanoflare types bindings.d.ts --env-interface CloudflareBindings
 ```
 
-The generated file includes the Nanoflare KV, database, asset, and object
-storage declarations, so it does not require `@nanoflare/workers-types`. Add a
-script such as the following to regenerate it during development:
+The generated file includes the Nanoflare KV, database, asset, object storage,
+and Worker handler declarations (including scheduled handlers), so it does not
+require `@nanoflare/workers-types`. Add a script such as the following to
+regenerate it during development:
 
 ```json
 {
