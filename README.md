@@ -241,6 +241,29 @@ script such as the following to regenerate it during development:
 
 Use `nanoflare types --check` in CI to ensure the declaration file is current.
 
+### Required secrets
+
+Store secret values separately from your project configuration:
+
+```sh
+nanoflare secret put API_KEY "$API_KEY"
+```
+
+Declare the names required by a Worker in `nanoflare.json`. Secret values are
+never written to this file:
+
+```json
+{
+  "secrets": {
+    "required": ["API_KEY", "DB_PASSWORD"]
+  }
+}
+```
+
+`nanoflare types` generates each declared secret as a `string` binding. Before
+deploying, `nanoflare deploy` checks that every declared secret is configured
+for the Worker and reports any names that are missing.
+
 Initialize, register, and deploy a worker:
 
 ```sh

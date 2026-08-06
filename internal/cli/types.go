@@ -71,7 +71,7 @@ type generatedBinding struct {
 }
 
 func generateWorkerTypes(project Project, envInterface string) ([]byte, error) {
-	bindings := make([]generatedBinding, 0, len(project.Vars)+len(project.KVNamespaces)+len(project.Databases)+len(project.ObjectStorageBuckets)+1)
+	bindings := make([]generatedBinding, 0, len(project.Vars)+len(project.Secrets.Required)+len(project.KVNamespaces)+len(project.Databases)+len(project.ObjectStorageBuckets)+1)
 	seen := make(map[string]string)
 	add := func(name, typeName, kind string) error {
 		name = strings.TrimSpace(name)
@@ -97,6 +97,15 @@ func generateWorkerTypes(project Project, envInterface string) ([]byte, error) {
 			return nil, fmt.Errorf("vars.%s must be valid JSON: %w", name, err)
 		}
 		if err := add(name, typeName, "vars"); err != nil {
+			return nil, err
+		}
+	}
+	requiredSecrets, err := requiredSecretNames(project.Secrets.Required)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range requiredSecrets {
+		if err := add(name, "string", "secrets.required"); err != nil {
 			return nil, err
 		}
 	}
@@ -135,6 +144,27 @@ func generateWorkerTypes(project Project, envInterface string) ([]byte, error) {
 	}
 	output.WriteString("}\n")
 	return []byte(output.String()), nil
+}
+
+func requiredSecretNames(names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	required := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for index, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, fmt.Errorf("secrets.required[%d] must be a non-empty secret name", index)
+		}
+		if _, exists := seen[name]; exists {
+			return nil, fmt.Errorf("secrets.required contains duplicate secret name %q", name)
+		}
+		seen[name] = struct{}{}
+		required = append(required, name)
+	}
+	sort.Strings(required)
+	return required, nil
 }
 
 func jsonLiteralType(raw json.RawMessage) (string, error) {

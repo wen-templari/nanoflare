@@ -68,6 +68,7 @@ type Project struct {
 	ObjectStorageBuckets []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	Assets               ProjectAssets                          `json:"assets,omitempty"`
 	Auth                 ProjectAuth                            `json:"auth,omitempty"`
+	Secrets              ProjectSecrets                         `json:"secrets,omitempty"`
 }
 
 type projectAlias struct {
@@ -92,6 +93,12 @@ type ProjectAssets struct {
 
 type ProjectAuth struct {
 	ProtectedRoutes []string `json:"protected_routes,omitempty"`
+}
+
+// ProjectSecrets declares the names of secrets a Worker requires. Values are
+// managed separately with `nanoflare secret put` and are never stored here.
+type ProjectSecrets struct {
+	Required []string `json:"required,omitempty"`
 }
 
 type AuthConfig struct {
@@ -435,6 +442,9 @@ func (r *Runner) deploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := r.validateRequiredSecrets(baseURL, app.ID, project.Secrets.Required); err != nil {
+		return err
+	}
 	if err := r.request(http.MethodPatch, baseURL+"/v1/workers/"+app.ID, nanoflare.UpdateAppInput{
 		Auth: &nanoflare.AuthConfig{
 			ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...),
@@ -481,6 +491,34 @@ func (r *Runner) deploy(args []string) error {
 	fmt.Fprintf(r.Stdout, "Deployed worker %s as deployment %s\n", app.ID, deployment.ID)
 	if hostname := strings.TrimSpace(app.Hostname); hostname != "" {
 		fmt.Fprintf(r.Stdout, "Worker URL: https://%s\n", hostname)
+	}
+	return nil
+}
+
+func (r *Runner) validateRequiredSecrets(baseURL, appID string, required []string) error {
+	required, err := requiredSecretNames(required)
+	if err != nil {
+		return err
+	}
+	if len(required) == 0 {
+		return nil
+	}
+	var configured []nanoflare.Secret
+	if err := r.request(http.MethodGet, baseURL+"/v1/workers/"+appID+"/secrets", nil, &configured); err != nil {
+		return err
+	}
+	present := make(map[string]struct{}, len(configured))
+	for _, secret := range configured {
+		present[secret.Name] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, name := range required {
+		if _, ok := present[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("required secrets are not configured: %s; run `nanoflare secret put <name> <value>`", strings.Join(missing, ", "))
 	}
 	return nil
 }

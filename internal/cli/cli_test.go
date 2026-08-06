@@ -147,6 +147,7 @@ func TestTypesGeneratesSelfContainedBindings(t *testing.T) {
 			"FEATURE_FLAGS": json.RawMessage(`{"beta":true,"regions":["us","jp"]}`),
 			"api-host":      json.RawMessage(`"api.example.test"`),
 		},
+		Secrets:      ProjectSecrets{Required: []string{"DB_PASSWORD", "API_KEY"}},
 		KVNamespaces: []nanoflare.KVBinding{{Binding: "COUNTER_KV", ID: "kv-123"}},
 		Databases:    []nanoflare.DatabaseBinding{{Binding: "APP_DB", DatabaseID: "db-123"}},
 		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{
@@ -173,6 +174,8 @@ func TestTypesGeneratesSelfContainedBindings(t *testing.T) {
 		"COUNTER_KV: NanoflareKVNamespace;",
 		"OBJECTS: NanoflareObjectStorageBucket;",
 		"STATIC: NanoflareAssetFetcher;",
+		"API_KEY: string;",
+		"DB_PASSWORD: string;",
 		`"api-host": "api.example.test";`,
 		"FEATURE_FLAGS: { beta: true; regions: [\"us\", \"jp\"] };",
 	} {
@@ -240,6 +243,17 @@ func TestTypesRejectsInvalidOrConflictingBindingsWithoutWriting(t *testing.T) {
 	project.KVNamespaces = []nanoflare.KVBinding{{Binding: "DUPLICATE", ID: "kv-123"}}
 	if _, err := generateWorkerTypes(project, "Env"); err == nil || !strings.Contains(err.Error(), "both vars and kv_namespaces") {
 		t.Fatalf("duplicate binding error = %v", err)
+	}
+	project = Project{Secrets: ProjectSecrets{Required: []string{"API_KEY", "API_KEY"}}}
+	if _, err := generateWorkerTypes(project, "Env"); err == nil || !strings.Contains(err.Error(), "duplicate secret name") {
+		t.Fatalf("duplicate secret error = %v", err)
+	}
+	project = Project{
+		Vars:    map[string]json.RawMessage{"API_KEY": json.RawMessage(`true`)},
+		Secrets: ProjectSecrets{Required: []string{"API_KEY"}},
+	}
+	if _, err := generateWorkerTypes(project, "Env"); err == nil || !strings.Contains(err.Error(), "both vars and secrets.required") {
+		t.Fatalf("secret binding collision error = %v", err)
 	}
 }
 
@@ -454,6 +468,40 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if deployed.AssetConfig.Binding != "STATIC" || deployed.AssetConfig.NotFoundHandling != "404-page" {
 		t.Fatalf("asset config = %#v", deployed.AssetConfig)
+	}
+}
+
+func TestDeployValidatesRequiredSecrets(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	requests := make([]string, 0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers/app-123/secrets":
+			writeJSON(t, w, http.StatusOK, []nanoflare.Secret{{Name: "API_KEY"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
+	writeProjectFile(t, Project{
+		Name:              "Hello",
+		Main:              "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+		Secrets:           ProjectSecrets{Required: []string{"DB_PASSWORD", "API_KEY"}},
+	})
+
+	runner := NewRunner(io.Discard, io.Discard)
+	err := runner.Run([]string{"deploy"})
+	if err == nil || !strings.Contains(err.Error(), "required secrets are not configured: DB_PASSWORD") {
+		t.Fatalf("deploy error = %v", err)
+	}
+	if slices.Contains(requests, "POST /v1/workers/app-123/deployments") {
+		t.Fatalf("deployment was created despite missing required secrets: %v", requests)
 	}
 }
 
