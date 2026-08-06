@@ -972,13 +972,10 @@ func (r *Runner) requestNoAuth(method, url string, input, output any) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var apiError struct {
-			Error string `json:"error"`
+		if message := responseErrorMessage(response.Body); message != "" {
+			return fmt.Errorf("%s %s: %s", method, url, message)
 		}
-		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&apiError); err != nil || apiError.Error == "" {
-			return fmt.Errorf("%s %s: nanoflared returned %s", method, url, response.Status)
-		}
-		return fmt.Errorf("%s %s: %s", method, url, apiError.Error)
+		return fmt.Errorf("%s %s: nanoflared returned %s", method, url, response.Status)
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil
@@ -1016,13 +1013,10 @@ func (r *Runner) request(method, url string, input, output any) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var apiError struct {
-			Error string `json:"error"`
+		if message := responseErrorMessage(response.Body); message != "" {
+			return fmt.Errorf("%s %s: %s", method, url, message)
 		}
-		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&apiError); err != nil || apiError.Error == "" {
-			return fmt.Errorf("%s %s: nanoflared returned %s", method, url, response.Status)
-		}
-		return fmt.Errorf("%s %s: %s", method, url, apiError.Error)
+		return fmt.Errorf("%s %s: nanoflared returned %s", method, url, response.Status)
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil
@@ -1031,6 +1025,25 @@ func (r *Runner) request(method, url string, input, output any) error {
 		return fmt.Errorf("decode nanoflared response: %w", err)
 	}
 	return nil
+}
+
+// responseErrorMessage supports both the legacy {"error": "..."} API
+// responses and RFC 7807 problem responses returned by nanoflared.
+func responseErrorMessage(body io.Reader) string {
+	var apiError struct {
+		Error            string `json:"error"`
+		Detail           string `json:"detail"`
+		ErrorDescription string `json:"error_description"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&apiError); err != nil {
+		return ""
+	}
+	for _, message := range []string{apiError.Error, apiError.Detail, apiError.ErrorDescription} {
+		if message = strings.TrimSpace(message); message != "" {
+			return message
+		}
+	}
+	return ""
 }
 
 func (r *Runner) authenticatedRequest(method, target string, payload []byte, hasInput bool, auth AuthConfig) (*http.Response, error) {

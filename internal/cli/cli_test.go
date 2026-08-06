@@ -1392,6 +1392,36 @@ func TestDeleteWorkerByID(t *testing.T) {
 	}
 }
 
+func TestResponseErrorMessageSupportsProblemDetails(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "problem detail",
+			body: `{"type":"about:blank","title":"Bad Request","status":400,"detail":"compatibility date must be YYYY-MM-DD"}`,
+			want: "compatibility date must be YYYY-MM-DD",
+		},
+		{
+			name: "legacy error",
+			body: `{"error":"worker already exists"}`,
+			want: "worker already exists",
+		},
+		{
+			name: "malformed response",
+			body: `not JSON`,
+			want: "",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := responseErrorMessage(strings.NewReader(test.body)); got != test.want {
+				t.Fatalf("responseErrorMessage() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestDeployRequiresExistingWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
