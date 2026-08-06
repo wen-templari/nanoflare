@@ -156,6 +156,26 @@ func TestWorkerdGeneratesSingleFileModuleWorker(t *testing.T) {
 	}
 }
 
+func TestWorkerdReplacesNonBreakingSpacesInWorkerSource(t *testing.T) {
+	const source = `export default { fetch() { if (false) { return new Response("never runs"); } return new Response("ok"); } };`
+	config := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
+		Deployment: nanoflare.Deployment{
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: source}},
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Port:              9001,
+		},
+	}})
+	if strings.ContainsRune(config, '\u00a0') {
+		t.Fatalf("workerd config retains a non-breaking space:\n%s", config)
+	}
+	if !strings.Contains(config, `never runs`) {
+		t.Fatalf("workerd config did not preserve the worker source with a normal space:\n%s", config)
+	}
+}
+
 func TestWorkerdModuleWrapperHandlesScheduledRoute(t *testing.T) {
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},

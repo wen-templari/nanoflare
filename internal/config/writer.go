@@ -253,15 +253,23 @@ func workerBindings(item nanoflare.ActiveDeployment) []string {
 func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment) {
 	deployment := item.Deployment
 	if deploymentFormat(deployment) == "service-worker" {
-		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(deployment.Files[0].Content, deployment.Databases, deployment.ObjectStorageBuckets)))
+		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(workerdSafeSource(deployment.Files[0].Content), deployment.Databases, deployment.ObjectStorageBuckets)))
 		return
 	}
 	out.WriteString("  modules = [\n")
 	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)))
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
-		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(file.Content))
+		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(workerdSafeSource(file.Content)))
 	}
 	out.WriteString("  ],\n")
+}
+
+// workerd rejects U+00A0 in module text before it evaluates the Worker. JSX
+// compilers can emit that character from an &nbsp; entity, including in code
+// paths that are never executed. Treat it as ordinary whitespace at the
+// workerd-config boundary while preserving the uploaded deployment source.
+func workerdSafeSource(source string) string {
+	return strings.ReplaceAll(source, "\u00a0", " ")
 }
 
 func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
