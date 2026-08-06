@@ -33,6 +33,7 @@ import (
 
 const (
 	projectFilename  = "nanoflare.json"
+	projectSchemaURL = "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json"
 	defaultAPIURL    = "http://127.0.0.1:8080"
 	authFilename     = "auth.json"
 	authStorePathEnv = "NANOFLARE_AUTH_STORE"
@@ -55,6 +56,7 @@ type Runner struct {
 }
 
 type Project struct {
+	Schema               string                                 `json:"$schema,omitempty"`
 	Name                 string                                 `json:"name"`
 	Main                 string                                 `json:"main"`
 	Format               string                                 `json:"format,omitempty"`
@@ -177,6 +179,7 @@ func (r *Runner) init(args []string) error {
 	}
 	projectConfig := template.Project()
 	project := Project{
+		Schema:            projectSchemaURL,
 		Name:              projectName,
 		Main:              projectConfig.Main,
 		Format:            projectConfig.Format,

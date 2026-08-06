@@ -1,4 +1,5 @@
 {
+  "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
   "name": "gallery-app",
   "main": "dist/worker.js",
   "format": "modules",
