@@ -21,7 +21,7 @@
     "valibot": "^1.4.2"
   },
   "devDependencies": {
-    "@nanoflare/cli": "^0.1.2",
+    "@nanoflare/cli": "^0.1.5",
     "@tailwindcss/vite": "^4.3.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

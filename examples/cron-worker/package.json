@@ -9,7 +9,7 @@
     "check": "nanoflare types --check && tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@nanoflare/cli": "^0.1.2",
+    "@nanoflare/cli": "^0.1.5",
     "typescript": "^5.8.3"
   }
 }
