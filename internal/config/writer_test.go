@@ -276,6 +276,27 @@ func TestTraefikGeneratesProtectedRouteRouters(t *testing.T) {
 	}
 }
 
+func TestTraefikGeneratesRootProtectedRouteRouter(t *testing.T) {
+	config := Traefik([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{
+			ID:       "hello-app",
+			Hostname: "hello.example.com",
+			Auth:     nanoflare.AuthConfig{ProtectedRoutes: []string{"/"}},
+		},
+		Deployment: nanoflare.Deployment{Port: 9001},
+	}}, "http://nanoflared:8080/internal/auth/verify", "", "host.docker.internal")
+	for _, expected := range []string{
+		`hello_app-auth-0`,
+		`rule: "Host(` + "`" + `hello.example.com` + "`" + `) && PathPrefix(` + "`" + `/` + "`" + `)"`,
+		`priority: 190`,
+		`- nanoflare-auth`,
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, config)
+		}
+	}
+}
+
 func TestTraefikGeneratesControlPlaneAuthRouter(t *testing.T) {
 	config := Traefik([]nanoflare.ActiveDeployment{{
 		App:        nanoflare.App{ID: "hello-app", Hostname: "hello.example.com"},

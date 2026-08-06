@@ -1110,14 +1110,14 @@ func uniqueActiveApps(active []nanoflare.ActiveDeployment) []nanoflare.ActiveDep
 }
 
 func protectedRouteRule(hostname, route string) string {
-	if strings.HasSuffix(route, "/*") {
+	if route == "/" || strings.HasSuffix(route, "/*") {
 		return "Host(`" + hostname + "`) && PathPrefix(`" + strings.TrimSuffix(route, "*") + "`)"
 	}
 	return "Host(`" + hostname + "`) && Path(`" + route + "`)"
 }
 
 func protectedRoutePriority(route string) int {
-	if strings.HasSuffix(route, "/*") {
+	if route == "/" || strings.HasSuffix(route, "/*") {
 		return 190
 	}
 	return 200
