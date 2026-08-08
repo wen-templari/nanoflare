@@ -18,3 +18,8 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
+
+# workerd's postinstall script selects the platform-specific binary required by
+# the Cloudflare SDK. pnpm 11 requires build scripts to be explicitly approved.
+allowBuilds:
+  workerd: true
