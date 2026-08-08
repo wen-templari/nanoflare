@@ -42,7 +42,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pnpm config set allowBuilds.workerd true --location project
+          pnpm config set --json allowBuilds '{"workerd":true}' --location project
           pnpm install --frozen-lockfile
 
       - name: Verify release tag
