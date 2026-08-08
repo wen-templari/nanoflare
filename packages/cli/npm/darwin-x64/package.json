@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/cli-darwin-x64",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Nanoflare CLI binary for macOS x64",
   "license": "Apache-2.0",
   "repository": "github:wen-templari/nanoflare",

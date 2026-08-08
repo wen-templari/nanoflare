@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/cli-linux-x64",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Nanoflare CLI binary for Linux x64",
   "license": "Apache-2.0",
   "repository": "github:wen-templari/nanoflare",
