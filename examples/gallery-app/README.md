@@ -37,6 +37,17 @@ It writes deploy artifacts to `dist/`, so rerun the build after changing either 
 frontend or the Worker. TypeScript validation is split between
 `tsconfig.app.json` for the UI and `tsconfig.worker.json` for the Worker.
 
+For local development, run:
+
+```sh
+pnpm run dev
+```
+
+The Vite configuration runs the local Nanoflare Worker plugin for `/api/*`.
+It uses Miniflare D1 and R2 emulation, persisted in `.nanoflare/`, while Vite
+continues to serve the React SPA and its HMR client. Those local bindings are
+separate from the database and object-storage resources configured for deployment.
+
 ## Project Layout
 
 - `src/main.tsx`, `src/App.tsx`, and `src/styles.css` drive the Vite React UI
