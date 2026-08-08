@@ -1,0 +1,19 @@
+name: Recover Vite Plugin Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Vite-plugin release tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    uses: ./.github/workflows/vite-plugin-release.yml
+    with:
+      release_tag: ${{ inputs.tag }}
