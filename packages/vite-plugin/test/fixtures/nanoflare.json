@@ -1,0 +1,9 @@
+{
+  "name": "vite-plugin-test",
+  "main": "worker.ts",
+  "compatibility_date": "2025-12-10",
+  "vars": {
+    "CONFIG_MESSAGE": "from nanoflare.json"
+  },
+  "files": ["worker.ts"]
+}

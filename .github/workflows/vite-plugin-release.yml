@@ -1,0 +1,55 @@
+name: Publish Vite Plugin
+
+on:
+  push:
+    tags:
+      - "vite-plugin-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: vite-plugin-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release tag
+        if: github.event_name == 'push'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="$(node -p "require('./packages/vite-plugin/package.json').version")"
+          test "$RELEASE_TAG" = "vite-plugin-v$version"
+
+      - name: Test package
+        run: pnpm --filter @nanoflare/vite-plugin test
+
+      - name: Verify package contents
+        working-directory: packages/vite-plugin
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        working-directory: packages/vite-plugin
+        run: npm publish --access public --provenance
