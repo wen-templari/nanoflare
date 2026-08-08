@@ -6,8 +6,8 @@ Create a Nanoflare Worker:
 npm create nanoflare@latest my-worker
 ```
 
-The initializer writes a minimal JavaScript Worker and `nanoflare.json`. It does
-not install dependencies or contact a Nanoflare server.
+The initializer writes a TypeScript-first Worker project and `nanoflare.json`.
+It does not install dependencies or contact a Nanoflare server.
 
 ```sh
 cd my-worker
@@ -15,5 +15,6 @@ nanoflare create
 nanoflare deploy
 ```
 
-Pass `-- --template starter` to select a template explicitly, or `-- --help`
-to see all options.
+Use `-- --template <name>` to select `starter`, `bindings`, `pages`, `spa`,
+`ssr`, or `api`. Resource templates mark the IDs to replace in
+`nanoflare.json`; `api` includes an initial SQL migration and OpenAPI endpoint.

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
 import { helpMessage, parseArgs, readStarterTemplate, run } from "../dist/index.js";
+
+const templateIDs = ["starter", "bindings", "pages", "spa", "ssr", "api"];
 
 function output() {
   let text = "";
@@ -55,13 +57,13 @@ test("creates a starter project with the directory name and UTC date", async () 
   assert.deepEqual(project, {
     $schema: "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
     name: "hello-worker",
-    main: "worker.js",
+    main: "dist/worker.js",
     format: "modules",
     compatibility_date: "2026-06-01",
-    files: ["worker.js"],
+    files: ["dist/worker.js"],
   });
   assert.equal(
-    await readFile(resolve(destination, "worker.js"), "utf8"),
+    await readFile(resolve(destination, "worker.ts"), "utf8"),
     await readStarterTemplate(),
   );
   assert.doesNotMatch(
@@ -75,7 +77,7 @@ test("prompts for a missing directory and template", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
   const answers = ["prompted-worker", "starter"];
   await run([], { cwd, interactive: true, prompt: async () => answers.shift(), stdout: output() });
-  await readFile(resolve(cwd, "prompted-worker", "worker.js"));
+  await readFile(resolve(cwd, "prompted-worker", "worker.ts"));
 });
 
 test("rejects unknown templates and preserves non-empty directories unless overwritten", async () => {
@@ -91,7 +93,7 @@ test("rejects unknown templates and preserves non-empty directories unless overw
   assert.equal(await readFile(resolve(destination, "keep.txt"), "utf8"), "keep");
   await run(["worker", "--overwrite", "--no-interactive"], { cwd, stdout: output() });
   await assert.rejects(readFile(resolve(destination, "keep.txt")), { code: "ENOENT" });
-  await readFile(resolve(destination, "worker.js"));
+  await readFile(resolve(destination, "worker.ts"));
 });
 
 test("cancelling an interactive overwrite preserves the destination", async () => {
@@ -115,8 +117,37 @@ test("cancelling an interactive overwrite preserves the destination", async () =
 test("keeps the npm starter asset aligned with the Go CLI template", async () => {
   const packageRoot = resolve(import.meta.dirname, "..");
   const goTemplate = await readFile(
-    resolve(packageRoot, "..", "..", "templates", "starter-worker", "worker.js"),
+    resolve(packageRoot, "..", "..", "templates", "starter-worker", "worker.ts"),
     "utf8",
   );
   assert.deepEqual(await readStarterTemplate(), goTemplate);
+});
+
+test("scaffolds every documented template and keeps shared assets aligned", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
+  const packageRoot = resolve(import.meta.dirname, "..");
+  const nativeRoots = {
+    starter: "starter-worker",
+    bindings: "bindings-worker",
+    pages: "pages-app",
+    spa: "spa-app",
+    ssr: "ssr-app",
+    api: "api-worker",
+  };
+  for (const id of templateIDs) {
+    const result = await run([id, "--template", id, "--no-interactive"], { cwd, stdout: output() });
+    assert.equal(result.template, id);
+    const project = JSON.parse(await readFile(resolve(cwd, id, "nanoflare.json"), "utf8"));
+    assert.equal(project.name, id);
+    assert.ok(project.files.includes("dist/worker.js"));
+    const npmFiles = await readdir(resolve(packageRoot, "templates", id), { recursive: true });
+    const nativeFiles = await readdir(
+      resolve(packageRoot, "..", "..", "templates", nativeRoots[id]),
+      { recursive: true },
+    );
+    assert.deepEqual(
+      npmFiles.filter((file) => file !== "nanoflare.json").sort(),
+      nativeFiles.sort(),
+    );
+  }
 });

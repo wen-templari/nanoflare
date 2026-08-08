@@ -25,7 +25,16 @@ type RunOptions = {
 };
 
 export const templates: Template[] = [
-  { id: "starter", description: "A basic JavaScript Worker", directory: "starter" },
+  { id: "starter", description: "A minimal TypeScript Worker", directory: "starter" },
+  {
+    id: "bindings",
+    description: "A Hono Worker with KV and object storage",
+    directory: "bindings",
+  },
+  { id: "pages", description: "A Vite and Tailwind static site", directory: "pages" },
+  { id: "spa", description: "A React SPA with a Worker API route", directory: "spa" },
+  { id: "ssr", description: "A React SSR app with Hono", directory: "ssr" },
+  { id: "api", description: "A documented Hono and Drizzle API", directory: "api" },
 ];
 
 export const helpMessage = `Usage: create-nanoflare [OPTION]... [DIRECTORY]
@@ -39,7 +48,12 @@ Options:
   -h, --help                          display this help message
 
 Available templates:
-  starter                             A basic JavaScript Worker
+  starter                             A minimal TypeScript Worker
+  bindings                            A Hono Worker with KV and object storage
+  pages                               A Vite and Tailwind static site
+  spa                                 A React SPA with a Worker API route
+  ssr                                 A React SSR app with Hono
+  api                                 A documented Hono and Drizzle API
 `;
 
 export function parseArgs(args: string[]): ParsedArgs {
@@ -226,5 +240,5 @@ export async function main(args: string[]): Promise<void> {
 }
 
 export async function readStarterTemplate(): Promise<string> {
-  return readFile(resolve(templatesDirectory, "starter", "worker.js"), "utf8");
+  return readFile(resolve(templatesDirectory, "starter", "worker.ts"), "utf8");
 }

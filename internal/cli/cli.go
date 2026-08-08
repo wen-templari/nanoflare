@@ -187,6 +187,19 @@ func (r *Runner) init(args []string) error {
 		CompatibilityDate: r.Now().UTC().Format("2006-01-02"),
 		Files:             append([]string(nil), projectConfig.Files...),
 	}
+	for _, binding := range projectConfig.KVNamespaces {
+		project.KVNamespaces = append(project.KVNamespaces, nanoflare.KVBinding{Binding: binding.Binding, ID: binding.ID})
+	}
+	for _, binding := range projectConfig.ObjectStorageBuckets {
+		project.ObjectStorageBuckets = append(project.ObjectStorageBuckets, nanoflare.ObjectStorageBucketBinding{Binding: binding.Binding, BucketID: binding.BucketID})
+	}
+	for _, binding := range projectConfig.Databases {
+		project.Databases = append(project.Databases, nanoflare.DatabaseBinding{Binding: binding.Binding, DatabaseID: binding.DatabaseID})
+	}
+	if config := projectConfig.Assets; config != nil {
+		project.Assets = ProjectAssets{Binding: config.Binding, Directory: config.Directory, HTMLHandling: config.HTMLHandling, NotFoundHandling: config.NotFoundHandling}
+		project.Assets.RunWorkerFirst = append(nanoflare.RunWorkerFirst(nil), config.RunWorkerFirst...)
+	}
 	if err := os.MkdirAll(absDir, 0o755); err != nil {
 		return fmt.Errorf("create project directory: %w", err)
 	}

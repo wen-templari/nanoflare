@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "WebWorker"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true
+  },
+  "include": ["src", "vite*.ts", "worker-configuration.d.ts"]
+}

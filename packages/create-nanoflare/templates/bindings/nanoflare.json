@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+  "name": "{{projectName}}",
+  "main": "dist/worker.js",
+  "format": "modules",
+  "compatibility_date": "{{compatibilityDate}}",
+  "files": ["dist/worker.js"],
+  "kv_namespaces": [{ "binding": "KV", "id": "replace-with-kv-namespace-id" }],
+  "object_storage_buckets": [
+    { "binding": "OBJECTS", "bucket_id": "replace-with-object-storage-bucket-id" }
+  ]
+}

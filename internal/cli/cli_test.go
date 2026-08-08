@@ -49,14 +49,14 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	if project.Name != "Hello Worker" {
 		t.Fatalf("project = %#v", project)
 	}
-	if project.CompatibilityDate != "2026-05-31" || project.Main != "worker.js" || project.Format != "modules" {
+	if project.CompatibilityDate != "2026-05-31" || project.Main != "dist/worker.js" || project.Format != "modules" {
 		t.Fatalf("project = %#v", project)
 	}
-	content, err := os.ReadFile(filepath.Join("hello", "worker.js"))
+	content, err := os.ReadFile(filepath.Join("hello", "worker.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "hello from nanoflare") {
+	if !strings.Contains(string(content), "Hello from Nanoflare") {
 		t.Fatalf("starter worker = %q", content)
 	}
 }
@@ -83,7 +83,7 @@ func TestInitListsTemplates(t *testing.T) {
 	if err := runner.Run([]string{"init", "--list-templates"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "starter") || !strings.Contains(got, "basic JavaScript Worker") {
+	if got := stdout.String(); !strings.Contains(got, "starter") || !strings.Contains(got, "minimal TypeScript Worker") || !strings.Contains(got, "api") {
 		t.Fatalf("template listing = %q", got)
 	}
 }
@@ -109,7 +109,7 @@ func TestInitTemplateSelection(t *testing.T) {
 			if err := runner.Run([]string{"init", "project"}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := os.Stat(filepath.Join("project", "worker.js")); err != nil {
+			if _, err := os.Stat(filepath.Join("project", "worker.ts")); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(stderr.String(), "Select a template [starter]:") {
@@ -131,8 +131,46 @@ func TestInitNonInteractiveDefaultsToStarterWithoutReadingInput(t *testing.T) {
 	if err := runner.Run([]string{"init", "project"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join("project", "worker.js")); err != nil {
+	if _, err := os.Stat(filepath.Join("project", "worker.ts")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitTemplateConfigDeclarations(t *testing.T) {
+	tests := []struct {
+		template string
+		check    func(*testing.T, Project)
+	}{
+		{"bindings", func(t *testing.T, project Project) {
+			if len(project.KVNamespaces) != 1 || len(project.ObjectStorageBuckets) != 1 {
+				t.Fatalf("bindings = %#v", project)
+			}
+		}},
+		{"pages", func(t *testing.T, project Project) {
+			if project.Assets.Directory != "dist/client" || project.Assets.HTMLHandling != "auto-trailing-slash" {
+				t.Fatalf("assets = %#v", project.Assets)
+			}
+		}},
+		{"spa", func(t *testing.T, project Project) {
+			if project.Assets.NotFoundHandling != "single-page-application" || !slices.Equal(project.Assets.RunWorkerFirst.Routes(), []string{"/api/*"}) {
+				t.Fatalf("assets = %#v", project.Assets)
+			}
+		}},
+		{"api", func(t *testing.T, project Project) {
+			if len(project.Databases) != 1 || project.Databases[0].Binding != "DB" {
+				t.Fatalf("databases = %#v", project.Databases)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.template, func(t *testing.T) {
+			withWorkingDirectory(t, t.TempDir())
+			runner := NewRunner(io.Discard, io.Discard)
+			if err := runner.Run([]string{"init", "--template", test.template, "project"}); err != nil {
+				t.Fatal(err)
+			}
+			test.check(t, readProject(t, filepath.Join("project", projectFilename)))
+		})
 	}
 }
 

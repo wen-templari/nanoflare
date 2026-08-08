@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+  "name": "{{projectName}}",
+  "main": "dist/worker.js",
+  "format": "modules",
+  "compatibility_date": "{{compatibilityDate}}",
+  "files": ["dist/worker.js"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "dist/client",
+    "html_handling": "auto-trailing-slash"
+  }
+}
