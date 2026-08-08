@@ -4,7 +4,7 @@
   "title": "Nanoflare worker configuration",
   "description": "Configuration for a Nanoflare Worker project (nanoflare.json).",
   "type": "object",
-  "required": ["name", "main", "compatibility_date", "files"],
+  "required": ["name", "main", "compatibility_date"],
   "properties": {
     "$schema": {
       "description": "The URL of this schema.",

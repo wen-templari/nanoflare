@@ -1,8 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
   "name": "{{projectName}}",
-  "main": "dist/worker.js",
+  "main": "src/worker.tsx",
   "format": "modules",
-  "compatibility_date": "{{compatibilityDate}}",
-  "files": ["dist/worker.js"]
+  "compatibility_date": "{{compatibilityDate}}"
 }

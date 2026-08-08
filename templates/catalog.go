@@ -59,14 +59,13 @@ var Catalog = []Template{
 		Root:        "starter-worker",
 		Project: func() ProjectConfig {
 			return ProjectConfig{
-				Main:   "dist/worker.js",
+				Main:   "worker.ts",
 				Format: "modules",
-				Files:  []string{"dist/worker.js"},
 			}
 		},
 	},
 	{ID: "bindings", Description: "A Hono Worker with KV and object storage", Files: embeddedFiles, Root: "bindings-worker", Project: func() ProjectConfig {
-		return ProjectConfig{Main: "dist/worker.js", Format: "modules", Files: []string{"dist/worker.js"}, KVNamespaces: []Binding{{Binding: "KV", ID: "replace-with-kv-namespace-id"}}, ObjectStorageBuckets: []BucketBinding{{Binding: "OBJECTS", BucketID: "replace-with-object-storage-bucket-id"}}}
+		return ProjectConfig{Main: "src/worker.ts", Format: "modules", KVNamespaces: []Binding{{Binding: "KV", ID: "replace-with-kv-namespace-id"}}, ObjectStorageBuckets: []BucketBinding{{Binding: "OBJECTS", BucketID: "replace-with-object-storage-bucket-id"}}}
 	}},
 	{ID: "pages", Description: "A Vite and Tailwind static site", Files: embeddedFiles, Root: "pages-app", Project: func() ProjectConfig {
 		return ProjectConfig{Main: "dist/worker.js", Format: "modules", Files: []string{"dist/worker.js"}, Assets: &AssetsConfig{Binding: "ASSETS", Directory: "dist/client", HTMLHandling: "auto-trailing-slash"}}
@@ -75,9 +74,9 @@ var Catalog = []Template{
 		return ProjectConfig{Main: "dist/worker.js", Format: "modules", Files: []string{"dist/worker.js"}, Assets: &AssetsConfig{Binding: "ASSETS", Directory: "dist/client", NotFoundHandling: "single-page-application", RunWorkerFirst: []string{"/api/*"}}}
 	}},
 	{ID: "ssr", Description: "A React SSR app with Hono", Files: embeddedFiles, Root: "ssr-app", Project: func() ProjectConfig {
-		return ProjectConfig{Main: "dist/worker.js", Format: "modules", Files: []string{"dist/worker.js"}}
+		return ProjectConfig{Main: "src/worker.tsx", Format: "modules"}
 	}},
 	{ID: "api", Description: "A documented Hono and Drizzle API", Files: embeddedFiles, Root: "api-worker", Project: func() ProjectConfig {
-		return ProjectConfig{Main: "dist/worker.js", Format: "modules", Files: []string{"dist/worker.js"}, Databases: []DatabaseBinding{{Binding: "DB", DatabaseID: "replace-with-database-id"}}}
+		return ProjectConfig{Main: "src/worker.ts", Format: "modules", Databases: []DatabaseBinding{{Binding: "DB", DatabaseID: "replace-with-database-id"}}}
 	}},
 }

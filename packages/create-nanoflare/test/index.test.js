@@ -57,10 +57,9 @@ test("creates a starter project with the directory name and UTC date", async () 
   assert.deepEqual(project, {
     $schema: "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
     name: "hello-worker",
-    main: "dist/worker.js",
+    main: "worker.ts",
     format: "modules",
     compatibility_date: "2026-06-01",
-    files: ["dist/worker.js"],
   });
   assert.equal(
     await readFile(resolve(destination, "worker.ts"), "utf8"),
@@ -139,7 +138,11 @@ test("scaffolds every documented template and keeps shared assets aligned", asyn
     assert.equal(result.template, id);
     const project = JSON.parse(await readFile(resolve(cwd, id, "nanoflare.json"), "utf8"));
     assert.equal(project.name, id);
-    assert.ok(project.files.includes("dist/worker.js"));
+    if (["pages", "spa"].includes(id)) {
+      assert.ok(project.files.includes("dist/worker.js"));
+    } else {
+      assert.equal(project.files, undefined);
+    }
     const npmFiles = await readdir(resolve(packageRoot, "templates", id), { recursive: true });
     const nativeFiles = await readdir(
       resolve(packageRoot, "..", "..", "templates", nativeRoots[id]),

@@ -446,7 +446,7 @@ func (r *Runner) deploy(args []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("usage: nanoflare deploy [worker] [flags]")
 	}
-	projectPath, project, err := loadProject()
+	projectPath, project, err := loadDeploymentProject()
 	if err != nil {
 		return err
 	}
@@ -1178,14 +1178,43 @@ func loadProject() (string, Project, error) {
 	if err != nil {
 		return "", Project{}, err
 	}
-	project, err := loadProjectAtPath(path, true)
+	project, err := loadProjectAtPathWithValidation(path, true, false)
 	if err != nil {
 		return "", Project{}, err
 	}
 	return path, project, nil
 }
 
+// loadDeploymentProject resolves the artifact manifest written by the Vite
+// plugin when the source project intentionally has no deploy-time file list.
+func loadDeploymentProject() (string, Project, error) {
+	path, err := filepath.Abs(projectFilename)
+	if err != nil {
+		return "", Project{}, err
+	}
+	source, err := loadProjectAtPathWithValidation(path, true, false)
+	if err != nil {
+		return "", Project{}, err
+	}
+	if len(source.Files) > 0 {
+		return path, source, nil
+	}
+	artifactPath := filepath.Join(filepath.Dir(path), "dist", viteOutputName(source.Name), projectFilename)
+	project, err := loadProjectAtPath(artifactPath, false)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", Project{}, fmt.Errorf("Vite build output is missing at %s; run vite build before nanoflare deploy", artifactPath)
+		}
+		return "", Project{}, err
+	}
+	return path, project, nil
+}
+
 func loadProjectAtPath(path string, migrateAliases bool) (Project, error) {
+	return loadProjectAtPathWithValidation(path, migrateAliases, true)
+}
+
+func loadProjectAtPathWithValidation(path string, migrateAliases bool, requireFiles bool) (Project, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return Project{}, fmt.Errorf("read %s: %w", path, err)
@@ -1225,10 +1254,28 @@ func loadProjectAtPath(path string, migrateAliases bool) (Project, error) {
 			return Project{}, fmt.Errorf("migrate %s: %w", path, err)
 		}
 	}
-	if project.Name == "" || project.Main == "" || project.CompatibilityDate == "" || len(project.Files) == 0 {
+	if project.Name == "" || project.Main == "" || project.CompatibilityDate == "" || (requireFiles && len(project.Files) == 0) {
 		return Project{}, fmt.Errorf("%s is missing required worker configuration", path)
 	}
 	return project, nil
+}
+
+func viteOutputName(name string) string {
+	var out strings.Builder
+	lastDash := false
+	for _, r := range strings.TrimSpace(name) {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			out.WriteRune(r)
+			lastDash = false
+		} else if !lastDash {
+			out.WriteByte('-')
+			lastDash = true
+		}
+	}
+	if value := strings.Trim(out.String(), "-"); value != "" {
+		return value
+	}
+	return "worker"
 }
 
 func hasEmptyObjectStorageBucketIDs(bindings []nanoflare.ObjectStorageBucketBinding) bool {

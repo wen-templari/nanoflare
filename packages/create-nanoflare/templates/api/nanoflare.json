@@ -1,9 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
   "name": "{{projectName}}",
-  "main": "dist/worker.js",
+  "main": "src/worker.ts",
   "format": "modules",
   "compatibility_date": "{{compatibilityDate}}",
-  "files": ["dist/worker.js"],
   "db": [{ "binding": "DB", "database_id": "replace-with-database-id" }]
 }

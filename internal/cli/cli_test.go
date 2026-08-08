@@ -49,7 +49,7 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	if project.Name != "Hello Worker" {
 		t.Fatalf("project = %#v", project)
 	}
-	if project.CompatibilityDate != "2026-05-31" || project.Main != "dist/worker.js" || project.Format != "modules" {
+	if project.CompatibilityDate != "2026-05-31" || project.Main != "worker.ts" || project.Format != "modules" {
 		t.Fatalf("project = %#v", project)
 	}
 	content, err := os.ReadFile(filepath.Join("hello", "worker.ts"))
@@ -58,6 +58,40 @@ func TestInitCreatesStarterProject(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "Hello from Nanoflare") {
 		t.Fatalf("starter worker = %q", content)
+	}
+}
+
+func TestLoadDeploymentProjectUsesViteBuildManifest(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{Name: "hello worker", Main: "src/worker.ts", CompatibilityDate: "2026-08-08"})
+	if err := os.MkdirAll(filepath.Join("dist", "hello-worker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Project{
+		Name:              "hello worker",
+		Main:              "dist/hello-worker/worker.mjs",
+		CompatibilityDate: "2026-08-08",
+		Format:            "modules",
+		Files:             []string{"dist/hello-worker/worker.mjs"},
+	}
+	content, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("dist", "hello-worker", projectFilename), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	path, project, err := loadDeploymentProject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(cwd, projectFilename) || project.Main != manifest.Main || !slices.Equal(project.Files, manifest.Files) {
+		t.Fatalf("path = %q, project = %#v", path, project)
 	}
 }
 
