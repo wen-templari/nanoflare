@@ -314,13 +314,16 @@
             "type": "string"
           },
           "kind": {
-            "enum": ["kv", "db", "asset", "object_storage_bucket"],
+            "enum": ["kv", "db", "asset", "object_storage_bucket", "service"],
             "type": "string"
           },
           "namespace_id": {
             "type": "string"
           },
           "namespace_name": {
+            "type": "string"
+          },
+          "service": {
             "type": "string"
           }
         },
@@ -1217,6 +1220,12 @@
           "object_storage_buckets": {
             "items": {
               "$ref": "#/components/schemas/ObjectStorageBucketBinding"
+            },
+            "type": ["array", "null"]
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceBinding"
             },
             "type": ["array", "null"]
           },
@@ -2571,6 +2580,19 @@
         "required": ["name", "created_at", "updated_at"],
         "type": "object"
       },
+      "ServiceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "required": ["binding", "service"],
+        "type": "object"
+      },
       "SignupInput": {
         "additionalProperties": false,
         "properties": {
@@ -2798,6 +2820,12 @@
           "port": {
             "format": "int64",
             "type": "integer"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceBinding"
+            },
+            "type": ["array", "null"]
           },
           "traffic_percent": {
             "format": "int64",

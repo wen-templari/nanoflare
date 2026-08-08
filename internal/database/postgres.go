@@ -253,6 +253,7 @@ CREATE TABLE IF NOT EXISTS deployments (
 	kv_namespaces jsonb NOT NULL DEFAULT '[]'::jsonb,
 	db jsonb NOT NULL DEFAULT '[]'::jsonb,
 	object_storage_bucket jsonb NOT NULL DEFAULT '[]'::jsonb,
+	services jsonb NOT NULL DEFAULT '[]'::jsonb,
 	asset_config jsonb NOT NULL DEFAULT '{}'::jsonb,
 	bundle_size bigint NOT NULL DEFAULT 0,
 	object_key text NOT NULL DEFAULT '',
@@ -400,6 +401,7 @@ ALTER TABLE deployments ADD COLUMN IF NOT EXISTS vars jsonb NOT NULL DEFAULT '{}
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS kv_namespaces jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS db jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_storage_bucket jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS services jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS asset_config jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bundle_size bigint NOT NULL DEFAULT 0;
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS object_key text NOT NULL DEFAULT '';
@@ -2072,10 +2074,10 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
-	(id, worker_id, commit_hash, commit_message, created_by, files, assets, entrypoint, format, compatibility_date, compatibility_flags, triggers, vars, kv_namespaces, db, object_storage_bucket, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, true, 100)`,
+	(id, worker_id, commit_hash, commit_message, created_by, files, assets, entrypoint, format, compatibility_date, compatibility_flags, triggers, vars, kv_namespaces, db, object_storage_bucket, services, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, true, 100)`,
 		deployment.ID, deployment.AppID, deployment.CommitHash, deployment.CommitMessage, deployment.CreatedBy, files, assets, deployment.Entrypoint, deployment.Format,
-		deployment.CompatibilityDate, mustJSON(deployment.CompatibilityFlags), mustJSON(deployment.Triggers), mustJSON(deployment.Vars), mustJSON(deployment.KVNamespaces), mustJSON(deployment.Databases), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
+		deployment.CompatibilityDate, mustJSON(deployment.CompatibilityFlags), mustJSON(deployment.Triggers), mustJSON(deployment.Vars), mustJSON(deployment.KVNamespaces), mustJSON(deployment.Databases), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.Services), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
 		return nanoflare.ErrAppNotFound
 	}
@@ -2128,7 +2130,7 @@ func (p *Postgres) DeleteDeployment(id string) error {
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
 	rows, err := p.db.Query(`
 SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
-	d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.compatibility_flags, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
+	d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.compatibility_flags, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.services, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
 FROM deployments d
 JOIN workers a ON a.id = d.worker_id
 WHERE d.traffic_percent > 0
@@ -2140,11 +2142,11 @@ ORDER BY a.id, d.created_at DESC`)
 	var active []nanoflare.ActiveDeployment
 	for rows.Next() {
 		var item nanoflare.ActiveDeployment
-		var files, assets, compatibilityFlags, triggers, vars, kvNamespaces, databases, objectStorageBuckets, assetConfig, auth []byte
+		var files, assets, compatibilityFlags, triggers, vars, kvNamespaces, databases, objectStorageBuckets, services, assetConfig, auth []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.CommitHash, &item.Deployment.CommitMessage, &item.Deployment.CreatedBy, &files, &assets, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &compatibilityFlags, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &compatibilityFlags, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &services, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.TrafficPercent,
 		)
@@ -2178,6 +2180,9 @@ ORDER BY a.id, d.created_at DESC`)
 		if err := json.Unmarshal(objectStorageBuckets, &item.Deployment.ObjectStorageBuckets); err != nil {
 			return nil, err
 		}
+		if err := json.Unmarshal(services, &item.Deployment.Services); err != nil {
+			return nil, err
+		}
 		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {
 			return nil, err
 		}
@@ -2189,7 +2194,7 @@ ORDER BY a.id, d.created_at DESC`)
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
 	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
-		d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.assets, d.entrypoint, d.format, d.compatibility_date, d.compatibility_flags, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
+		d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.assets, d.entrypoint, d.format, d.compatibility_date, d.compatibility_flags, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.services, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
 	FROM deployments d
 	JOIN workers a ON a.id = d.worker_id
 	ORDER BY d.created_at DESC`)
@@ -2200,11 +2205,11 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	var records []nanoflare.DeploymentRecord
 	for rows.Next() {
 		var item nanoflare.DeploymentRecord
-		var assets, compatibilityFlags, triggers, vars, kvNamespaces, databases, objectStorageBuckets, assetConfig, auth []byte
+		var assets, compatibilityFlags, triggers, vars, kvNamespaces, databases, objectStorageBuckets, services, assetConfig, auth []byte
 		err := rows.Scan(
 			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt,
 			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.CommitHash, &item.Deployment.CommitMessage, &item.Deployment.CreatedBy, &assets, &item.Deployment.Entrypoint,
-			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &compatibilityFlags, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &assetConfig, &item.Deployment.BundleSize,
+			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &compatibilityFlags, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &services, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
 			&item.Deployment.CreatedAt, &item.Active, &item.TrafficPercent,
 		)
@@ -2233,6 +2238,9 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal(objectStorageBuckets, &item.Deployment.ObjectStorageBuckets); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(services, &item.Deployment.Services); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(assetConfig, &item.Deployment.AssetConfig); err != nil {

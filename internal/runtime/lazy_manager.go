@@ -35,6 +35,7 @@ type LazyManager struct {
 	generation    int
 	workers       map[string]*lazyWorker
 	activeKeys    map[string]bool
+	active        []nanoflare.ActiveDeployment
 	closed        bool
 }
 
@@ -82,7 +83,14 @@ func (m *LazyManager) Write(active []nanoflare.ActiveDeployment) error {
 		m.mu.Unlock()
 		return errors.New("runtime manager is closed")
 	}
+	// A lazy workerd process can now contain a caller and its service-binding
+	// dependencies. Stop existing processes on a deployment graph change so a
+	// caller never keeps pointing at an old target deployment.
 	stale := m.staleWorkersLocked(active)
+	if !sameActiveDeployments(m.active, active) {
+		stale = append(stale, m.allWorkersLocked()...)
+	}
+	m.active = append([]nanoflare.ActiveDeployment(nil), active...)
 	m.activeKeys = activeWorkerKeys(active)
 	previousScheduler := m.scheduler
 	m.scheduler = nil
@@ -212,12 +220,21 @@ func (m *LazyManager) worker(active nanoflare.ActiveDeployment) (*lazyWorker, bo
 }
 
 func (m *LazyManager) start(worker *lazyWorker, active nanoflare.ActiveDeployment) {
-	generation, err := m.withRuntimePorts([]nanoflare.ActiveDeployment{active})
+	m.mu.Lock()
+	available := append([]nanoflare.ActiveDeployment(nil), m.active...)
+	m.mu.Unlock()
+	generation, err := m.withRuntimePorts(lazyRuntimeClosure(active, available))
 	if err != nil {
 		m.failStart(worker, err)
 		return
 	}
 	routed := generation[0]
+	for _, item := range generation {
+		if item.App.ID == active.App.ID && item.Deployment.ID == active.Deployment.ID {
+			routed = item
+			break
+		}
+	}
 	m.mu.Lock()
 	m.generation++
 	configPath := filepath.Join(m.configDir, fmt.Sprintf("workerd-lazy-%06d-%s-%s.capnp", m.generation, active.App.ID, active.Deployment.ID))
@@ -350,6 +367,57 @@ func (m *LazyManager) staleWorkersLocked(active []nanoflare.ActiveDeployment) []
 		}
 	}
 	return stale
+}
+
+func (m *LazyManager) allWorkersLocked() []*lazyWorker {
+	workers := make([]*lazyWorker, 0, len(m.workers))
+	for key, worker := range m.workers {
+		delete(m.workers, key)
+		workers = append(workers, worker)
+	}
+	return workers
+}
+
+func sameActiveDeployments(left, right []nanoflare.ActiveDeployment) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]bool, len(left))
+	for _, item := range left {
+		seen[workerKey(item)] = true
+	}
+	for _, item := range right {
+		if !seen[workerKey(item)] {
+			return false
+		}
+	}
+	return true
+}
+
+// lazyRuntimeClosure returns the caller plus every active Worker it can reach
+// through a same-organization service binding. workerd needs all of them in
+// the one generated config; a single-worker config leaves env.BINDING unset.
+func lazyRuntimeClosure(root nanoflare.ActiveDeployment, available []nanoflare.ActiveDeployment) []nanoflare.ActiveDeployment {
+	if len(available) == 0 {
+		return []nanoflare.ActiveDeployment{root}
+	}
+	byService := make(map[string]nanoflare.ActiveDeployment, len(available))
+	for _, item := range available {
+		byService[item.App.OrgID+"\x00"+item.App.Name] = item
+	}
+	result := []nanoflare.ActiveDeployment{root}
+	seen := map[string]bool{workerKey(root): true}
+	for index := 0; index < len(result); index++ {
+		for _, binding := range result[index].Deployment.Services {
+			target, ok := byService[result[index].App.OrgID+"\x00"+binding.Service]
+			if !ok || seen[workerKey(target)] {
+				continue
+			}
+			seen[workerKey(target)] = true
+			result = append(result, target)
+		}
+	}
+	return result
 }
 
 func workerKey(active nanoflare.ActiveDeployment) string {

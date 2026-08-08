@@ -663,7 +663,7 @@ func (s *Service) PutSecret(appID, name, value string) error {
 		return err
 	}
 	if item := activeForApp(active, appID); item != nil {
-		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.Databases, item.Deployment.ObjectStorageBuckets, item.Deployment.AssetConfig); err != nil {
+		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.Databases, item.Deployment.ObjectStorageBuckets, item.Deployment.Services, item.Deployment.AssetConfig); err != nil {
 			return err
 		}
 	}
@@ -1093,6 +1093,9 @@ func (s *Service) appForOrg(orgID, appID string) (App, error) {
 }
 
 func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
+	if _, _, err := s.worker(appID); err != nil {
+		return Deployment{}, err
+	}
 	files, entrypoint, err := deploymentFiles(input.Files, input.Entrypoint)
 	if err != nil {
 		return Deployment{}, err
@@ -1117,6 +1120,10 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
+	services, err := s.normalizeServiceBindings(appID, input.Services)
+	if err != nil {
+		return Deployment{}, err
+	}
 	vars, err := normalizeVars(input.Vars)
 	if err != nil {
 		return Deployment{}, err
@@ -1129,7 +1136,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil && !errors.Is(err, ErrAppNotFound) {
 		return Deployment{}, err
 	}
-	if err := validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, input.AssetConfig); err != nil {
+	if err := validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig); err != nil {
 		return Deployment{}, err
 	}
 	format, err := workerFormat(input.Format, len(files))
@@ -1174,6 +1181,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		KVNamespaces:         kvNamespaces,
 		Databases:            databases,
 		ObjectStorageBuckets: objectStorageBuckets,
+		Services:             services,
 		AssetConfig:          assetConfig,
 		BundleSize:           bundleSize(files),
 		Port:                 port,
@@ -1450,6 +1458,64 @@ func (s *Service) normalizeObjectStorageBuckets(bindings []ObjectStorageBucketBi
 	return normalized, nil
 }
 
+func (s *Service) normalizeServiceBindings(appID string, bindings []ServiceBinding) ([]ServiceBinding, error) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return nil, err
+	}
+	apps, err := s.store.ListApps()
+	if err != nil {
+		return nil, err
+	}
+	active, err := s.activeDeployments()
+	if err != nil {
+		return nil, err
+	}
+	normalized := make([]ServiceBinding, 0, len(bindings))
+	seen := make(map[string]bool, len(bindings))
+	for _, binding := range bindings {
+		binding.Binding = strings.TrimSpace(binding.Binding)
+		binding.Service = strings.TrimSpace(binding.Service)
+		if binding.Binding == "" {
+			return nil, errors.New("services.binding is required")
+		}
+		if binding.Service == "" {
+			return nil, errors.New("services.service is required")
+		}
+		if seen[binding.Binding] {
+			return nil, fmt.Errorf("services binding %q is duplicated", binding.Binding)
+		}
+		found := false
+		for _, candidate := range apps {
+			if candidate.OrgID == app.OrgID && candidate.Name == binding.Service {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("service binding %q targets unknown Worker %q in this organization", binding.Binding, binding.Service)
+		}
+		if _, ok := activeDeploymentForService(active, app.OrgID, binding.Service); !ok {
+			return nil, fmt.Errorf("service binding %q targets Worker %q without an active deployment", binding.Binding, binding.Service)
+		}
+		seen[binding.Binding] = true
+		normalized = append(normalized, binding)
+	}
+	return normalized, nil
+}
+
+func activeDeploymentForService(active []ActiveDeployment, orgID, name string) (ActiveDeployment, bool) {
+	for _, item := range active {
+		if item.App.OrgID == orgID && item.App.Name == name {
+			return item, true
+		}
+	}
+	return ActiveDeployment{}, false
+}
+
 func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	if len(vars) == 0 {
 		return nil, nil
@@ -1472,7 +1538,7 @@ func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage,
 	return normalized, nil
 }
 
-func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, dbBindings []DatabaseBinding, objectBindings []ObjectStorageBucketBinding, assetConfig AssetConfig) error {
+func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, dbBindings []DatabaseBinding, objectBindings []ObjectStorageBucketBinding, serviceBindings []ServiceBinding, assetConfig AssetConfig) error {
 	seen := make(map[string]string)
 	add := func(name, kind string) error {
 		if existing, exists := seen[name]; exists {
@@ -1509,11 +1575,16 @@ func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[stri
 			return err
 		}
 	}
+	for _, binding := range serviceBindings {
+		if err := add(binding.Binding, "services"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (s *Service) deploymentBindings(deployment Deployment) []Binding {
-	bindings := make([]Binding, 0, len(deployment.KVNamespaces)+len(deployment.Databases)+len(deployment.ObjectStorageBuckets)+1)
+	bindings := make([]Binding, 0, len(deployment.KVNamespaces)+len(deployment.Databases)+len(deployment.ObjectStorageBuckets)+len(deployment.Services)+1)
 	for _, binding := range deployment.KVNamespaces {
 		item := Binding{Kind: "kv", Binding: binding.Binding, NamespaceID: binding.ID}
 		if namespace, err := s.store.GetKVNamespace(binding.ID); err == nil {
@@ -1527,6 +1598,9 @@ func (s *Service) deploymentBindings(deployment Deployment) []Binding {
 			item.DatabaseName = database.Name
 		}
 		bindings = append(bindings, item)
+	}
+	for _, binding := range deployment.Services {
+		bindings = append(bindings, Binding{Kind: BindingKindService, Binding: binding.Binding, Service: binding.Service})
 	}
 	if len(deployment.Assets) > 0 {
 		bindings = append(bindings, Binding{

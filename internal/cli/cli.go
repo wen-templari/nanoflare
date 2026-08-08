@@ -68,6 +68,7 @@ type Project struct {
 	KVNamespaces         []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
 	Databases            []nanoflare.DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Services             []nanoflare.ServiceBinding             `json:"services,omitempty"`
 	Assets               ProjectAssets                          `json:"assets,omitempty"`
 	Auth                 ProjectAuth                            `json:"auth,omitempty"`
 	Secrets              ProjectSecrets                         `json:"secrets,omitempty"`
@@ -479,6 +480,7 @@ func (r *Runner) deploy(args []string) error {
 		KVNamespaces:         append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
 		Databases:            append([]nanoflare.DatabaseBinding(nil), project.Databases...),
 		ObjectStorageBuckets: append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
+		Services:             append([]nanoflare.ServiceBinding(nil), project.Services...),
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,

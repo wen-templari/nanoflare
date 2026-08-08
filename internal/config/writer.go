@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,7 +170,7 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
 		}
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
-			strings.Join(workerBindings(item), ", "))
+			strings.Join(workerBindings(item, active), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		if len(item.Deployment.CompatibilityFlags) > 0 {
 			fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(item.Deployment.CompatibilityFlags))
@@ -205,8 +206,8 @@ func durationTelemetryServices(runtimeAddr string) string {
 	return fmt.Sprintf("    (name = \"nanoflare-duration-collector\", external = (address = %s)),\n", quote(runtimeAddr))
 }
 
-func workerBindings(item nanoflare.ActiveDeployment) []string {
-	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.Databases)+len(item.Deployment.ObjectStorageBuckets)+3)
+func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDeployment) []string {
+	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.Databases)+len(item.Deployment.ObjectStorageBuckets)+len(item.Deployment.Services)+3)
 	bindings = append(bindings,
 		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", quote(item.App.ID)),
 		fmt.Sprintf("(name = \"__NANOFLARE_DEPLOYMENT_ID\", text = %s)", quote(item.Deployment.ID)),
@@ -247,7 +248,21 @@ func workerBindings(item nanoflare.ActiveDeployment) []string {
 	for index, binding := range item.Deployment.ObjectStorageBuckets {
 		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(objectServiceName(item, index))))
 	}
+	for _, binding := range item.Deployment.Services {
+		if target, ok := activeServiceByName(active, item.App.OrgID, binding.Service); ok {
+			bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(deploymentServiceName(target))))
+		}
+	}
 	return bindings
+}
+
+func activeServiceByName(active []nanoflare.ActiveDeployment, orgID, name string) (nanoflare.ActiveDeployment, bool) {
+	for _, item := range active {
+		if item.App.OrgID == orgID && item.App.Name == name {
+			return item, true
+		}
+	}
+	return nanoflare.ActiveDeployment{}, false
 }
 
 func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment) {
@@ -257,11 +272,114 @@ func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment) {
 		return
 	}
 	out.WriteString("  modules = [\n")
-	fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)))
+	if workerEntrypointModule(deployment) {
+		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(workerEntrypointInstrumentationWrapper(deployment.Entrypoint)))
+	} else {
+		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)))
+	}
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(workerdSafeSource(file.Content)))
 	}
 	out.WriteString("  ],\n")
+}
+
+// workerd recognizes a WorkerEntrypoint only when it remains the module's
+// default export. RPC modules therefore use an instrumentation module which
+// leaves that export intact while wrapping its public prototype methods.
+func workerEntrypointModule(deployment nanoflare.Deployment) bool {
+	if deploymentFormat(deployment) != "modules" {
+		return false
+	}
+	for _, file := range deployment.Files {
+		if file.Path == deployment.Entrypoint {
+			return regexp.MustCompile(`(?m)export\s+default\s+class\b`).MatchString(file.Content)
+		}
+	}
+	return false
+}
+
+func workerEntrypointInstrumentationWrapper(entrypoint string) string {
+	return fmt.Sprintf(`import userWorker from %s;
+
+function outputIdentityMarker(env) {
+  const appID = encodeURIComponent(env?.__NANOFLARE_APP_ID || "");
+  const deploymentID = encodeURIComponent(env?.__NANOFLARE_DEPLOYMENT_ID || "");
+  return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
+}
+
+function withOutputIdentity(env, callback) {
+  const marker = outputIdentityMarker(env);
+  const originals = {};
+  const restore = () => {
+    for (const level of Object.keys(originals)) console[level] = originals[level];
+  };
+  for (const level of ["debug", "error", "info", "log", "warn"]) {
+    originals[level] = console[level];
+    console[level] = (...args) => originals[level].call(console, marker, ...args);
+  }
+  try {
+    const result = callback();
+    if (result && typeof result.finally === "function") return result.finally(restore);
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
+
+function recordRuntimeDuration(env, ctx, startedAt, outcome) {
+  const durationMs = Math.max(1, Date.now() - startedAt);
+  ctx?.waitUntil?.(env.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([{
+      scriptName: env.__NANOFLARE_APP_ID,
+      eventTimestamp: Date.now(),
+      durationMs,
+      outcome,
+    }]),
+  }));
+}
+
+for (const name of Object.getOwnPropertyNames(userWorker.prototype)) {
+  if (name === "constructor") continue;
+  const original = userWorker.prototype[name];
+  if (typeof original !== "function") continue;
+  Object.defineProperty(userWorker.prototype, name, {
+    configurable: true,
+    writable: true,
+    value: function (...args) {
+      const env = this.env;
+      const ctx = this.ctx;
+      return withOutputIdentity(env, () => {
+        const startedAt = Date.now();
+        try {
+          const result = original.apply(this, args);
+          if (result && typeof result.then === "function") {
+            return result.then(
+              (value) => {
+                recordRuntimeDuration(env, ctx, startedAt, "ok");
+                return value;
+              },
+              (error) => {
+                recordRuntimeDuration(env, ctx, startedAt, "exception");
+                throw error;
+              },
+            );
+          }
+          recordRuntimeDuration(env, ctx, startedAt, "ok");
+          return result;
+        } catch (error) {
+          recordRuntimeDuration(env, ctx, startedAt, "exception");
+          throw error;
+        }
+      });
+    },
+  });
+}
+
+export default userWorker;`, quote("./"+strings.TrimPrefix(entrypoint, "./")))
 }
 
 // workerd rejects U+00A0 in module text before it evaluates the Worker. JSX

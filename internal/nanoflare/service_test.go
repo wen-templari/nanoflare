@@ -99,6 +99,35 @@ func TestDeployValidatesCronTriggers(t *testing.T) {
 	}
 }
 
+func TestDeployValidatesAndStoresCloudflareStyleServiceBindings(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	target, err := service.CreateApp(CreateAppInput{Name: "identity", Hostname: "identity.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(target.ID, DeployInput{Files: []WorkerFile{{Path: "worker.js", Content: "export default {}"}}, CompatibilityDate: "2025-12-10"}); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := service.CreateApp(CreateAppInput{Name: "api", Hostname: "api.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := service.Deploy(caller.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate: "2025-12-10",
+		Services:          []ServiceBinding{{Binding: "IDENTITY", Service: " identity "}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := deployment.Services; len(got) != 1 || got[0] != (ServiceBinding{Binding: "IDENTITY", Service: "identity"}) {
+		t.Fatalf("service bindings = %#v", got)
+	}
+	if _, err := service.Deploy(caller.ID, DeployInput{Files: []WorkerFile{{Path: "worker.js", Content: "export default {}"}}, CompatibilityDate: "2025-12-10", Services: []ServiceBinding{{Binding: "MISSING", Service: "missing"}}}); err == nil {
+		t.Fatal("Deploy() error = nil, want unknown service error")
+	}
+}
+
 func TestDeployFallsBackFromUnsupportedCompatibilityDate(t *testing.T) {
 	service := NewService(NewStore(), &recordingWriter{})
 	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})

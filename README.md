@@ -31,6 +31,7 @@ Example workers live under `examples/`:
 - [examples/simple-kv](examples/simple-kv/) shows a hello-world counter backed by an explicit KV binding.
 - [examples/gallery-app](examples/gallery-app/) serves a static UI, uploads images to object storage, and stores gallery metadata in KV.
 - [examples/protected-app](examples/protected-app/) protects `/api/auth/*` routes and returns resolved auth information from the Worker.
+- [examples/service-bindings](examples/service-bindings/) shows private Worker-to-Worker HTTP calls and RPC with Cloudflare-style `services` bindings.
 
 Each example directory includes its own README with setup steps and routes to try.
 

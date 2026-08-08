@@ -56,6 +56,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/objectStorageBucketBinding" }
     },
+    "services": {
+      "description": "Private bindings to Workers in the same organization.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/serviceBinding" }
+    },
     "assets": { "$ref": "#/$defs/assets" },
     "auth": { "$ref": "#/$defs/auth" },
     "secrets": { "$ref": "#/$defs/secrets" }
@@ -90,6 +95,15 @@
         "bucket_id": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": true
+    },
+    "serviceBinding": {
+      "type": "object",
+      "required": ["binding", "service"],
+      "properties": {
+        "binding": { "$ref": "#/$defs/bindingName" },
+        "service": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
     },
     "assets": {
       "type": "object",

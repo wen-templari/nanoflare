@@ -1399,9 +1399,10 @@ export interface components {
       database_id?: string;
       database_name?: string;
       /** @enum {string} */
-      kind: "kv" | "db" | "asset" | "object_storage_bucket";
+      kind: "kv" | "db" | "asset" | "object_storage_bucket" | "service";
       namespace_id?: string;
       namespace_name?: string;
+      service?: string;
     };
     CliCodeResponse: {
       /**
@@ -1739,6 +1740,7 @@ export interface components {
       format?: string;
       kv_namespaces?: components["schemas"]["KVBinding"][] | null;
       object_storage_buckets?: components["schemas"]["ObjectStorageBucketBinding"][] | null;
+      services?: components["schemas"]["ServiceBinding"][] | null;
       triggers?: components["schemas"]["TriggerConfig"];
       vars?: {
         [key: string]: unknown;
@@ -2284,6 +2286,10 @@ export interface components {
       /** Format: date-time */
       updated_at: string;
     };
+    ServiceBinding: {
+      binding: string;
+      service: string;
+    };
     SignupInput: {
       /**
        * Format: uri
@@ -2379,6 +2385,7 @@ export interface components {
       object_storage_buckets?: components["schemas"]["ObjectStorageBucketBinding"][] | null;
       /** Format: int64 */
       port: number;
+      services?: components["schemas"]["ServiceBinding"][] | null;
       /** Format: int64 */
       traffic_percent: number;
       triggers?: components["schemas"]["TriggerConfig"];

@@ -215,6 +215,18 @@ func TestLazyManagerEnsuresWorkerOnDemand(t *testing.T) {
 	ensured.Release()
 }
 
+func TestLazyRuntimeClosureIncludesTransitiveSameOrganizationServiceBindings(t *testing.T) {
+	caller := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "caller", OrgID: "org", Name: "caller"}, Deployment: nanoflare.Deployment{ID: "caller-v1", Services: []nanoflare.ServiceBinding{{Binding: "AUTH", Service: "auth"}}}}
+	auth := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "auth", OrgID: "org", Name: "auth"}, Deployment: nanoflare.Deployment{ID: "auth-v1", Services: []nanoflare.ServiceBinding{{Binding: "PROFILE", Service: "profile"}}}}
+	profile := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "profile", OrgID: "org", Name: "profile"}, Deployment: nanoflare.Deployment{ID: "profile-v1"}}
+	otherOrg := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "other", OrgID: "other", Name: "auth"}, Deployment: nanoflare.Deployment{ID: "other-v1"}}
+
+	closure := lazyRuntimeClosure(caller, []nanoflare.ActiveDeployment{caller, auth, profile, otherOrg})
+	if len(closure) != 3 || closure[0].App.ID != "caller" || closure[1].App.ID != "auth" || closure[2].App.ID != "profile" {
+		t.Fatalf("lazy runtime closure = %#v", closure)
+	}
+}
+
 func TestLazyManagerCoalescesConcurrentEnsures(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}

@@ -68,6 +68,48 @@ func TestWorkerdUsesCustomAssetBindingName(t *testing.T) {
 	}
 }
 
+func TestWorkerdGeneratesServiceBindingForActiveWorkerInSameOrganization(t *testing.T) {
+	generated := Workerd([]nanoflare.ActiveDeployment{
+		{App: nanoflare.App{ID: "caller", OrgID: "org", Name: "caller"}, Deployment: nanoflare.Deployment{ID: "caller-v1", CompatibilityDate: "2025-12-10", Services: []nanoflare.ServiceBinding{{Binding: "AUTH", Service: "auth"}}}},
+		{App: nanoflare.App{ID: "auth", OrgID: "org", Name: "auth"}, Deployment: nanoflare.Deployment{ID: "auth-v2", CompatibilityDate: "2025-12-10"}},
+		{App: nanoflare.App{ID: "other-auth", OrgID: "other", Name: "auth"}, Deployment: nanoflare.Deployment{ID: "other-v1", CompatibilityDate: "2025-12-10"}},
+	})
+	if !strings.Contains(generated, `(name = "AUTH", service = "auth-auth-v2")`) {
+		t.Fatalf("config does not contain same-organization service binding:\n%s", generated)
+	}
+}
+
+func TestWorkerdPreservesWorkerEntrypointDefaultExportForRPC(t *testing.T) {
+	generated := Workerd([]nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "rpc", Name: "rpc"},
+		Deployment: nanoflare.Deployment{
+			ID:                "v1",
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `import { WorkerEntrypoint } from "cloudflare:workers"; export default class extends WorkerEntrypoint { add(a, b) { return a + b; } }`}},
+		},
+	}})
+	if !strings.Contains(generated, `name = "__nanoflare_internal_entrypoint__.js"`) {
+		t.Fatalf("RPC WorkerEntrypoint must include its instrumentation module:\n%s", generated)
+	}
+	if !strings.Contains(generated, `export default class extends WorkerEntrypoint`) {
+		t.Fatalf("config does not preserve WorkerEntrypoint module:\n%s", generated)
+	}
+	for _, expected := range []string{
+		`Object.getOwnPropertyNames(userWorker.prototype)`,
+		`original.apply(this, args)`,
+		`value: function (...args)`,
+		`typeof result.then === \"function\"`,
+		`recordRuntimeDuration(env, ctx, startedAt, \"ok\")`,
+		`export default userWorker`,
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("RPC instrumentation is missing %q:\n%s", expected, generated)
+		}
+	}
+}
+
 func TestWorkerdUsesCustomNetworkAllowList(t *testing.T) {
 	config := WorkerdWithOptions(nil, WorkerdOptions{NetworkAllow: ParseNetworkAllow("public, local, 192.168.0.0/16")})
 	if !strings.Contains(config, `(name = "internet", network = (allow = ["public", "local", "192.168.0.0/16"], tlsOptions = (trustBrowserCas = true)))`) {

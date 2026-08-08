@@ -42,6 +42,7 @@ type Deployment struct {
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	BundleSize           int64                        `json:"-"`
 	ObjectKey            string                       `json:"-"`
@@ -123,6 +124,7 @@ type DeployInput struct {
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 }
 
@@ -142,6 +144,7 @@ type WorkerDeployment struct {
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	Bindings             []Binding                    `json:"bindings,omitempty"`
 	Port                 int                          `json:"port"`
@@ -182,10 +185,11 @@ const (
 	BindingKindDatabase            BindingKind = "db"
 	BindingKindAsset               BindingKind = "asset"
 	BindingKindObjectStorageBucket BindingKind = "object_storage_bucket"
+	BindingKindService             BindingKind = "service"
 )
 
 type Binding struct {
-	Kind          BindingKind `json:"kind" enum:"kv,db,asset,object_storage_bucket"`
+	Kind          BindingKind `json:"kind" enum:"kv,db,asset,object_storage_bucket,service"`
 	Binding       string      `json:"binding"`
 	NamespaceID   string      `json:"namespace_id,omitempty"`
 	NamespaceName string      `json:"namespace_name,omitempty"`
@@ -194,6 +198,7 @@ type Binding struct {
 	BucketID      string      `json:"bucket_id,omitempty"`
 	BucketName    string      `json:"bucket_name,omitempty"`
 	AssetCount    int         `json:"asset_count,omitempty"`
+	Service       string      `json:"service,omitempty"`
 }
 
 type Secret struct {
@@ -279,6 +284,13 @@ type DatabaseBinding struct {
 type ObjectStorageBucketBinding struct {
 	Binding  string `json:"binding"`
 	BucketID string `json:"bucket_id"`
+}
+
+// ServiceBinding matches Cloudflare's service-binding configuration. Service
+// is the target Worker's name, scoped to the caller's organization.
+type ServiceBinding struct {
+	Binding string `json:"binding"`
+	Service string `json:"service"`
 }
 
 func (d *DeployInput) UnmarshalJSON(data []byte) error {

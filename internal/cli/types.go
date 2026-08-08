@@ -71,7 +71,7 @@ type generatedBinding struct {
 }
 
 func generateWorkerTypes(project Project, envInterface string) ([]byte, error) {
-	bindings := make([]generatedBinding, 0, len(project.Vars)+len(project.Secrets.Required)+len(project.KVNamespaces)+len(project.Databases)+len(project.ObjectStorageBuckets)+1)
+	bindings := make([]generatedBinding, 0, len(project.Vars)+len(project.Secrets.Required)+len(project.KVNamespaces)+len(project.Databases)+len(project.ObjectStorageBuckets)+len(project.Services)+1)
 	seen := make(map[string]string)
 	add := func(name, typeName, kind string) error {
 		name = strings.TrimSpace(name)
@@ -128,6 +128,11 @@ func generateWorkerTypes(project Project, envInterface string) ([]byte, error) {
 	}
 	for _, binding := range project.ObjectStorageBuckets {
 		if err := add(binding.Binding, "NanoflareObjectStorageBucket", "object_storage_buckets"); err != nil {
+			return nil, err
+		}
+	}
+	for _, binding := range project.Services {
+		if err := add(binding.Binding, "Fetcher", "services"); err != nil {
 			return nil, err
 		}
 	}
