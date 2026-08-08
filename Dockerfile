@@ -6,7 +6,6 @@ RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
-COPY templates ./templates
 RUN CGO_ENABLED=0 go build -trimpath -o /out/nanoflare ./cmd/nanoflare \
     && CGO_ENABLED=0 go build -trimpath -o /out/nanoflare-runner ./cmd/nanoflare-runner \
     && CGO_ENABLED=0 go build -trimpath -o /out/nanoflared ./cmd/nanoflared

@@ -23,6 +23,11 @@
         },
         {
           "type": "json",
+          "path": "packages/create-nanoflare/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
           "path": "packages/cli/npm/*/package.json",
           "jsonpath": "$.version",
           "glob": true

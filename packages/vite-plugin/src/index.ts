@@ -4,7 +4,7 @@ import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 import { Miniflare } from "miniflare";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, join, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { build, normalizePath } from "vite";
 
@@ -38,6 +38,8 @@ export interface NanoflarePluginOptions {
 }
 
 interface NanoflareProjectConfig {
+  [key: string]: unknown;
+  name?: string;
   main?: string;
   vite?: { entry?: string };
   compatibility_date?: string;
@@ -48,6 +50,7 @@ interface NanoflareProjectConfig {
 
 interface ResolvedNanoflarePluginOptions extends NanoflarePluginOptions {
   entry: string;
+  project?: NanoflareProjectConfig;
 }
 
 const workerFileExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"]);
@@ -59,40 +62,95 @@ const defaultCompatibilityDate = "2025-12-10";
  * modules, static files, and browser HMR. Server source changes rebuild the
  * Worker before the next matching request.
  */
-export function nanoflare(options: NanoflarePluginOptions): Plugin {
+export function nanoflare(options: NanoflarePluginOptions = {}): Plugin {
   let config: ResolvedConfig;
   let resolvedOptions: ResolvedNanoflarePluginOptions;
   let server: ViteDevServer | undefined;
   let runtime: Miniflare | undefined;
   let outputDirectory: string | undefined;
+  let buildOutputDirectory: string | undefined;
   let stale = true;
   let rebuilding: Promise<void> | undefined;
 
   return {
     name: "nanoflare:vite-plugin",
     enforce: "post",
-    config(userConfig) {
+    async config(userConfig, env) {
       const root = resolve(userConfig.root ?? process.cwd());
       const ignored = userConfig.server?.watch?.ignored;
       const persistencePaths = getPersistencePaths(options, root);
-
-      if (!persistencePaths.length) return;
+      const buildOptions =
+        env.command === "build" ? await resolvePluginOptions(options, root) : undefined;
+      const workerName = buildOptions?.project?.name ?? "worker";
+      const workerOutDir = `dist/${normalizeWorkerName(workerName)}`;
 
       return {
-        server: {
-          watch: {
-            ignored: [
-              ...(ignored === undefined ? [] : Array.isArray(ignored) ? ignored : [ignored]),
-              ...persistencePaths.map((path) => `${path}/**`),
-            ],
-          },
-        },
+        ...(persistencePaths.length
+          ? {
+              server: {
+                watch: {
+                  ignored: [
+                    ...(ignored === undefined ? [] : Array.isArray(ignored) ? ignored : [ignored]),
+                    ...persistencePaths.map((path) => `${path}/**`),
+                  ],
+                },
+              },
+            }
+          : {}),
+        ...(buildOptions
+          ? {
+              build: {
+                ...userConfig.build,
+                ssr: resolve(root, buildOptions.entry),
+                outDir: workerOutDir,
+                rollupOptions: {
+                  ...userConfig.build?.rollupOptions,
+                  output: {
+                    entryFileNames: "worker.mjs",
+                    chunkFileNames: "chunks/[name]-[hash].mjs",
+                    assetFileNames: "assets/[name]-[hash][extname]",
+                  },
+                },
+              },
+            }
+          : {}),
       };
     },
     configResolved(resolvedConfig) {
       config = resolvedConfig;
+      buildOutputDirectory =
+        resolvedConfig.command === "build"
+          ? resolve(resolvedConfig.root, resolvedConfig.build.outDir)
+          : undefined;
       return resolvePluginOptions(options, config.root).then((nextOptions) => {
         resolvedOptions = nextOptions;
+      });
+    },
+    generateBundle(_, bundle) {
+      if (!buildOutputDirectory || !resolvedOptions.project) return;
+      const outputDirectory = buildOutputDirectory;
+
+      const files = Object.keys(bundle).map((file) =>
+        normalizePath(relative(config.root, join(outputDirectory, file))),
+      );
+      const entry = files.find((file) => file.endsWith("/worker.mjs") || file === "worker.mjs");
+      if (!entry) {
+        throw new Error("[nanoflare] Vite build did not emit the Worker entry module.");
+      }
+
+      this.emitFile({
+        type: "asset",
+        fileName: "nanoflare.json",
+        source: JSON.stringify(
+          {
+            ...resolvedOptions.project,
+            main: entry,
+            files,
+            format: resolvedOptions.project.format ?? "modules",
+          },
+          null,
+          2,
+        ),
       });
     },
     async configureServer(viteServer) {
@@ -224,11 +282,21 @@ async function resolvePluginOptions(
   return {
     ...options,
     entry,
+    project,
     compatibilityDate: options.compatibilityDate ?? project?.compatibility_date,
     bindings: { ...project?.vars, ...options.bindings },
     d1: mergeLocalBindingOptions(getD1Options(project), options.d1),
     r2: mergeLocalBindingOptions(getR2Options(project), options.r2),
   };
+}
+
+function normalizeWorkerName(name: string): string {
+  return (
+    name
+      .trim()
+      .replace(/[^A-Za-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "worker"
+  );
 }
 
 async function readProjectConfig(

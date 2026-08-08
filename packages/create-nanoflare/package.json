@@ -1,0 +1,34 @@
+{
+  "name": "create-nanoflare",
+  "version": "0.1.6",
+  "description": "Create a new Nanoflare Worker",
+  "homepage": "https://github.com/wen-templari/nanoflare#readme",
+  "bugs": "https://github.com/wen-templari/nanoflare/issues",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git"
+  },
+  "bin": {
+    "create-nanoflare": "bin/create-nanoflare.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "templates",
+    "README.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

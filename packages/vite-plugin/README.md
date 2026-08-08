@@ -1,12 +1,15 @@
 # `@nanoflare/vite-plugin`
 
-Run a single React SSR or API Worker in a local Workers runtime during `vite dev`.
-Vite continues to serve browser modules, static files, and client HMR; matching
-document and `/api/*` requests run in Miniflare.
+Run a single React SSR or API Worker in a local Workers runtime during `vite dev`
+and build its deploy artifact with `vite build`. Vite continues to serve browser
+modules, static files, and client HMR; matching document and `/api/*` requests
+run in Miniflare.
 
-`nanoflare()` reads `nanoflare.json` in the Vite root by default. The project
-file supplies the Worker entry, `compatibility_date`, `vars`, database, and
-object-storage binding names, so a minimal configuration is:
+`nanoflare()` reads `nanoflare.json` in the Vite root by default. Its `main`
+field names Worker source code, while the plugin writes a deploy manifest after
+building. The project file supplies the Worker entry, `compatibility_date`,
+`vars`, database, and object-storage binding names, so a minimal configuration
+is:
 
 ```ts
 // vite.config.ts
@@ -19,9 +22,25 @@ export default defineConfig({
 });
 ```
 
-For Vite development, `main` can name source code (for example,
-`"src/worker.ts"`). Projects that retain a deployment artifact in `main` can
-instead configure the Vite source entry in the project file:
+```json
+{
+  "name": "my-worker",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-08"
+}
+```
+
+`vite build` writes the Worker, any code-split chunks, and a deploy manifest to
+`dist/my-worker/`. Deploy the result with the usual command:
+
+```sh
+vite build && nanoflare deploy
+```
+
+`nanoflare deploy` detects the generated manifest automatically. The source
+project config does not need a `files` list or Vite `build.lib` configuration.
+Projects that retain a deployment artifact in `main` can instead configure the
+Vite source entry explicitly:
 
 ```json
 { "vite": { "entry": "src/worker.ts" } }
@@ -44,6 +63,7 @@ exposed. The runtime uses compatibility date `2025-12-10` by default; set
 
 On TypeScript/JavaScript source changes, the plugin rebuilds and replaces the
 local Worker before the next SSR/API request. Server-side HMR, multiple Workers,
-Durable Objects, and remote Nanoflare bindings are deliberately outside this
-first version. D1 and R2 use Miniflare's local emulation; they do not connect to
-Nanoflare's deployed database or object storage services.
+Durable Objects, browser/client builds, and remote Nanoflare bindings are
+deliberately outside this first version. D1 and R2 use Miniflare's local
+emulation; they do not connect to Nanoflare's deployed database or object
+storage services.

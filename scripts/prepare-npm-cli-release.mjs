@@ -13,6 +13,7 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
 
 const root = resolve(import.meta.dirname, "..");
 const source = resolve(root, "packages/cli");
+const createSource = resolve(root, "packages/create-nanoflare");
 const output = resolve(root, "dist/npm");
 const targets = [
   "darwin-arm64",
@@ -72,3 +73,11 @@ await cp(resolve(root, "LICENSE"), resolve(launcher, "LICENSE"));
 for (const target of targets) {
   await copyPackage(resolve(source, "npm", target), resolve(output, target));
 }
+
+const createPackage = resolve(output, "create-nanoflare");
+await mkdir(createPackage, { recursive: true });
+await assertPackageVersion(createSource);
+for (const entry of ["bin", "dist", "templates", "README.md", "package.json"]) {
+  await cp(resolve(createSource, entry), resolve(createPackage, entry), { recursive: true });
+}
+await cp(resolve(root, "LICENSE"), resolve(createPackage, "LICENSE"));

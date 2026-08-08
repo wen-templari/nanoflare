@@ -12,13 +12,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
-	"github.com/clas/nanoflare/templates"
 )
 
 func TestMain(m *testing.M) {
@@ -33,106 +32,120 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestInitCreatesStarterProject(t *testing.T) {
-	withWorkingDirectory(t, t.TempDir())
-	var stdout bytes.Buffer
-	runner := NewRunner(&stdout, io.Discard)
-	runner.Now = func() time.Time {
-		return time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+func TestInitProxiesAllArgumentsAndStreams(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runner := NewRunner(&stdout, &stderr)
+	runner.Stdin = strings.NewReader("prompt response\n")
+	var gotName string
+	var gotArgs []string
+	runner.Command = func(name string, args ...string) *exec.Cmd {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		command := exec.Command(os.Args[0], "-test.run=TestInitProxyHelperProcess", "--")
+		command.Env = append(os.Environ(), "NANOFLARE_INIT_PROXY_HELPER=1")
+		return command
 	}
 
-	if err := runner.Run([]string{"init", "--name", "Hello Worker", "hello"}); err != nil {
+	if err := runner.Run([]string{"init", "worker", "--template", "api", "--overwrite", "--no-interactive"}); err != nil {
 		t.Fatal(err)
 	}
+	if gotName != "npm" {
+		t.Fatalf("command = %q, want npm", gotName)
+	}
+	if want := []string{"create", "nanoflare@latest", "--", "worker", "--template", "api", "--overwrite", "--no-interactive"}; !slices.Equal(gotArgs, want) {
+		t.Fatalf("arguments = %#v, want %#v", gotArgs, want)
+	}
+	if stdout.String() != "prompt response\n" || stderr.String() != "initializer stderr\n" {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
 
-	project := readProject(t, filepath.Join("hello", projectFilename))
-	if project.Name != "Hello Worker" {
-		t.Fatalf("project = %#v", project)
+func TestInitForwardsHelp(t *testing.T) {
+	runner := NewRunner(io.Discard, io.Discard)
+	var gotArgs []string
+	runner.Command = func(_ string, args ...string) *exec.Cmd {
+		gotArgs = append([]string(nil), args...)
+		command := exec.Command(os.Args[0], "-test.run=TestInitProxyHelperProcess", "--")
+		command.Env = append(os.Environ(), "NANOFLARE_INIT_PROXY_HELPER=1")
+		return command
 	}
-	if project.CompatibilityDate != "2026-05-31" || project.Main != "worker.js" || project.Format != "modules" {
-		t.Fatalf("project = %#v", project)
+
+	if err := runner.Run([]string{"init", "--help"}); err != nil {
+		t.Fatal(err)
 	}
-	content, err := os.ReadFile(filepath.Join("hello", "worker.js"))
+	if want := []string{"create", "nanoflare@latest", "--", "--help"}; !slices.Equal(gotArgs, want) {
+		t.Fatalf("arguments = %#v, want %#v", gotArgs, want)
+	}
+}
+
+func TestInitPropagatesNPMFailure(t *testing.T) {
+	runner := NewRunner(io.Discard, io.Discard)
+	runner.Command = func(_ string, _ ...string) *exec.Cmd {
+		command := exec.Command(os.Args[0], "-test.run=TestInitProxyHelperProcess", "--")
+		command.Env = append(os.Environ(), "NANOFLARE_INIT_PROXY_HELPER=1", "NANOFLARE_INIT_PROXY_EXIT=23")
+		return command
+	}
+
+	err := runner.Run([]string{"init", "worker"})
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 23 {
+		t.Fatalf("error = %v, want npm exit status 23", err)
+	}
+}
+
+func TestInitReportsMissingNPM(t *testing.T) {
+	runner := NewRunner(io.Discard, io.Discard)
+	runner.Command = func(_ string, _ ...string) *exec.Cmd { return exec.Command("nanoflare-test-missing-npm") }
+
+	err := runner.Run([]string{"init", "worker"})
+	if err == nil || !strings.Contains(err.Error(), "npm is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInitProxyHelperProcess(t *testing.T) {
+	if os.Getenv("NANOFLARE_INIT_PROXY_HELPER") != "1" {
+		return
+	}
+	_, _ = io.Copy(os.Stdout, os.Stdin)
+	_, _ = io.WriteString(os.Stderr, "initializer stderr\n")
+	if code, err := strconv.Atoi(os.Getenv("NANOFLARE_INIT_PROXY_EXIT")); err == nil && code != 0 {
+		os.Exit(code)
+	}
+	os.Exit(0)
+}
+
+func TestLoadDeploymentProjectUsesViteBuildManifest(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{Name: "hello worker", Main: "src/worker.ts", CompatibilityDate: "2026-08-08"})
+	if err := os.MkdirAll(filepath.Join("dist", "hello-worker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Project{
+		Name:              "hello worker",
+		Main:              "dist/hello-worker/worker.mjs",
+		CompatibilityDate: "2026-08-08",
+		Format:            "modules",
+		Files:             []string{"dist/hello-worker/worker.mjs"},
+	}
+	content, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "hello from nanoflare") {
-		t.Fatalf("starter worker = %q", content)
-	}
-}
-
-func TestInitDoesNotPersistHostname(t *testing.T) {
-	withWorkingDirectory(t, t.TempDir())
-	runner := NewRunner(io.Discard, io.Discard)
-	runner.Now = func() time.Time {
-		return time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
-	}
-
-	if err := runner.Run([]string{"init", "--name", "Hello Worker", "hello"}); err != nil {
+	if err := os.WriteFile(filepath.Join("dist", "hello-worker", projectFilename), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	project := readProject(t, filepath.Join("hello", projectFilename))
-	_ = project
-}
-
-func TestInitListsTemplates(t *testing.T) {
-	var stdout bytes.Buffer
-	runner := NewRunner(&stdout, io.Discard)
-
-	if err := runner.Run([]string{"init", "--list-templates"}); err != nil {
+	path, project, err := loadDeploymentProject()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "starter") || !strings.Contains(got, "basic JavaScript Worker") {
-		t.Fatalf("template listing = %q", got)
-	}
-}
-
-func TestInitTemplateSelection(t *testing.T) {
-	tests := []struct {
-		name       string
-		input      string
-		wantPrompt bool
-	}{
-		{name: "default", input: "\n", wantPrompt: true},
-		{name: "id", input: "starter\n", wantPrompt: true},
-		{name: "number after invalid choice", input: "unknown\n1\n", wantPrompt: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			withWorkingDirectory(t, t.TempDir())
-			var stderr bytes.Buffer
-			runner := NewRunner(io.Discard, &stderr)
-			runner.Stdin = strings.NewReader(test.input)
-			runner.IsInteractive = func() bool { return true }
-
-			if err := runner.Run([]string{"init", "project"}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Stat(filepath.Join("project", "worker.js")); err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(stderr.String(), "Select a template [starter]:") {
-				t.Fatalf("prompt = %q", stderr.String())
-			}
-			if test.name == "number after invalid choice" && !strings.Contains(stderr.String(), "Unknown template") {
-				t.Fatalf("invalid selection was not reported: %q", stderr.String())
-			}
-		})
-	}
-}
-
-func TestInitNonInteractiveDefaultsToStarterWithoutReadingInput(t *testing.T) {
-	withWorkingDirectory(t, t.TempDir())
-	runner := NewRunner(io.Discard, io.Discard)
-	runner.Stdin = errReader{}
-	runner.IsInteractive = func() bool { return false }
-
-	if err := runner.Run([]string{"init", "project"}); err != nil {
+	cwd, err := os.Getwd()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join("project", "worker.js")); err != nil {
-		t.Fatal(err)
+	if path != filepath.Join(cwd, projectFilename) || project.Main != manifest.Main || !slices.Equal(project.Files, manifest.Files) {
+		t.Fatalf("path = %q, project = %#v", path, project)
 	}
 }
 
@@ -305,63 +318,6 @@ export default {
 		t.Fatalf("generated types did not compile: %v\n%s", err, output)
 	}
 }
-
-func TestInitRejectsUnknownTemplateAndNonEmptyDestination(t *testing.T) {
-	withWorkingDirectory(t, t.TempDir())
-	runner := NewRunner(io.Discard, io.Discard)
-	if err := runner.Run([]string{"init", "--template", "missing", "project"}); err == nil || !strings.Contains(err.Error(), "available: starter") {
-		t.Fatalf("unknown template error = %v", err)
-	}
-	if _, err := os.Stat("project"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("project directory created after invalid template: %v", err)
-	}
-	if err := os.Mkdir("project", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join("project", "keep.txt"), []byte("keep"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := runner.Run([]string{"init", "--template", "starter", "project"}); err == nil || !strings.Contains(err.Error(), "not empty") {
-		t.Fatalf("non-empty destination error = %v", err)
-	}
-	if content, err := os.ReadFile(filepath.Join("project", "keep.txt")); err != nil || string(content) != "keep" {
-		t.Fatalf("existing file = %q, %v", content, err)
-	}
-}
-
-func TestInitWritesNestedTemplateFiles(t *testing.T) {
-	withWorkingDirectory(t, t.TempDir())
-	runner := NewRunner(io.Discard, io.Discard)
-	runner.Templates = []templates.Template{{
-		ID:          "nested",
-		Description: "Nested test template",
-		Files: fstest.MapFS{
-			"bundle/README.md":    &fstest.MapFile{Data: []byte("# Nested\n")},
-			"bundle/src/index.js": &fstest.MapFile{Data: []byte("export default {}\n")},
-		},
-		Root: "bundle",
-		Project: func() templates.ProjectConfig {
-			return templates.ProjectConfig{Main: "src/index.js", Format: "modules", Files: []string{"src/index.js"}}
-		},
-	}}
-
-	if err := runner.Run([]string{"init", "--template", "nested", "project"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{"README.md", "src/index.js"} {
-		if _, err := os.Stat(filepath.Join("project", path)); err != nil {
-			t.Fatalf("template file %s: %v", path, err)
-		}
-	}
-	project := readProject(t, filepath.Join("project", projectFilename))
-	if project.Main != "src/index.js" || !slices.Equal(project.Files, []string{"src/index.js"}) {
-		t.Fatalf("project = %#v", project)
-	}
-}
-
-type errReader struct{}
-
-func (errReader) Read([]byte) (int, error) { return 0, errors.New("stdin was read") }
 
 func TestCreateAndDeployWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())

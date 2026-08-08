@@ -1,0 +1,21 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --noEmit",
+    "typegen": "nanoflare types",
+    "deploy": "npm run build && nanoflare deploy"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.7",
+    "hono": "^4.12.33"
+  },
+  "devDependencies": {
+    "@nanoflare/cli": "^0.2.2",
+    "@nanoflare/vite-plugin": "^0.0.4",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  }
+}

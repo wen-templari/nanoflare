@@ -2,10 +2,9 @@
 
 ## [0.0.4](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.0.3...vite-plugin-v0.0.4) (2026-08-08)
 
-
 ### Bug Fixes
 
-* keep CLI platform dependencies lockfile-stable ([93566f4](https://github.com/wen-templari/nanoflare/commit/93566f41eadcec1c7764b59f430aea07e9cbc1b1))
+- keep CLI platform dependencies lockfile-stable ([93566f4](https://github.com/wen-templari/nanoflare/commit/93566f41eadcec1c7764b59f430aea07e9cbc1b1))
 
 ## [0.0.3](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.0.2...vite-plugin-v0.0.3) (2026-08-08)
 
