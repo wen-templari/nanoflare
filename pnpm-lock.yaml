@@ -112,12 +112,6 @@ importers:
         specifier: npm:@voidzero-dev/vite-plus-core@0.2.6
         version: '@voidzero-dev/vite-plus-core@0.2.6(jiti@2.7.0)(typescript@7.0.2)'
 
-  packages/workers-types:
-    devDependencies:
-      typescript:
-        specifier: ~5.8.3
-        version: 5.8.3
-
 packages:
 
   '@babel/code-frame@7.29.7':

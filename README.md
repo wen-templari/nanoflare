@@ -207,10 +207,7 @@ docker build --output type=local,dest=./dist .
 ```
 
 The exported artifacts include the `nanoflare`, `nanoflare-runner`, and
-`nanoflared` binaries under `dist/bin`, the web console under `dist/ui`, and the
-TypeScript Worker binding types under `dist/packages/workers-types`.
-Use them alongside standard Worker runtime types to type `env.KV`,
-`env.ASSETS`, `env.OBJECTS`, and `env.IDENTITY` in TypeScript workers.
+`nanoflared` binaries under `dist/bin` and the web console under `dist/ui`.
 
 ## `nanoflare.json` schema
 
@@ -248,9 +245,8 @@ nanoflare types bindings.d.ts --env-interface CloudflareBindings
 ```
 
 The generated file includes the Nanoflare KV, database, asset, object storage,
-and Worker handler declarations (including scheduled handlers), so it does not
-require `@nanoflare/workers-types`. Add a script such as the following to
-regenerate it during development:
+and Worker handler declarations (including scheduled handlers). Add a script
+such as the following to regenerate it during development:
 
 ```json
 {
