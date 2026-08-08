@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "schema:generate": "pnpm --filter @nanoflare/schema generate",
+    "examples:update-cli": "node scripts/update-example-cli.mjs",
+    "test:examples:update-cli": "node --test scripts/update-example-cli.test.mjs",
     "lint": "vp lint packages",
     "format": "vp format packages",
     "typecheck": "vp lint --type-check packages",
