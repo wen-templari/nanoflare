@@ -4,7 +4,7 @@
   "separate-pull-requests": false,
   "packages": {
     ".": {
-      "release-type": "go",
+      "release-type": "simple",
       "component": "nanoflare",
       "include-component-in-tag": false,
       "include-v-in-tag": true,

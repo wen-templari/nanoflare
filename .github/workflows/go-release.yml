@@ -19,7 +19,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      # Tag pushes do not populate either `github.event.release.tag_name` or
+      # workflow-dispatch inputs. Use the ref name for that event so a tag
+      # created by Release Please also publishes the npm packages.
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || github.event.release.tag_name || inputs.tag }}
 
     steps:
       - name: Check out repository
