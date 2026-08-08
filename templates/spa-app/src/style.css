@@ -1,1 +1,16 @@
-@import "tailwindcss"; body{@apply m-0 bg-cyan-950 text-cyan-50;} main{@apply min-h-screen px-8 py-28;} p{@apply text-xs font-bold tracking-[.25em] text-cyan-300;} h1{@apply max-w-2xl text-6xl font-black tracking-tight;} button{@apply mt-10 border border-cyan-300 px-5 py-3 font-bold hover:bg-cyan-300 hover:text-cyan-950;}
+@import "tailwindcss";
+body {
+  @apply m-0 bg-cyan-950 text-cyan-50;
+}
+main {
+  @apply min-h-screen px-8 py-28;
+}
+p {
+  @apply text-xs font-bold tracking-[.25em] text-cyan-300;
+}
+h1 {
+  @apply max-w-2xl text-6xl font-black tracking-tight;
+}
+button {
+  @apply mt-10 border border-cyan-300 px-5 py-3 font-bold hover:bg-cyan-300 hover:text-cyan-950;
+}

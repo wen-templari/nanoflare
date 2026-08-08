@@ -1,1 +1,10 @@
-import { Hono } from "hono"; const app = new Hono<{ Bindings: Env }>(); app.get("/api/health", (c) => c.json({ status: "ok" })); export default { fetch(request: Request, env: Env) { return new URL(request.url).pathname.startsWith("/api/") ? app.fetch(request, env) : env.ASSETS.fetch(request); } };
+import { Hono } from "hono";
+const app = new Hono<{ Bindings: Env }>();
+app.get("/api/health", (c) => c.json({ status: "ok" }));
+export default {
+  fetch(request: Request, env: Env) {
+    return new URL(request.url).pathname.startsWith("/api/")
+      ? app.fetch(request, env)
+      : env.ASSETS.fetch(request);
+  },
+};

@@ -1,1 +1,10 @@
-{ "compilerOptions": { "lib": ["ES2022", "WebWorker"], "module": "ESNext", "moduleResolution": "bundler", "strict": true, "noEmit": true }, "include": ["worker.ts"] }
+{
+  "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true
+  },
+  "include": ["worker.ts"]
+}

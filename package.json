@@ -8,7 +8,7 @@
     "examples:update-cli": "node scripts/update-example-cli.mjs",
     "test:examples:update-cli": "node --test scripts/update-example-cli.test.mjs",
     "lint": "vp lint packages",
-    "format": "vp format packages",
+    "format": "vp format packages templates",
     "typecheck": "vp lint --type-check packages",
     "dev:ui": "vp run @nanoflare/ui#dev"
   },
