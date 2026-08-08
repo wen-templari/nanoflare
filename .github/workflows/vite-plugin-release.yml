@@ -1,4 +1,4 @@
-name: Publish Vite Plugin
+name: Publish Vite Plugin Release
 
 on:
   push:
