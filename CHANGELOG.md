@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/wen-templari/nanoflare/compare/v0.2.0...v0.2.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* keep CLI platform dependencies lockfile-stable ([93566f4](https://github.com/wen-templari/nanoflare/commit/93566f41eadcec1c7764b59f430aea07e9cbc1b1))
+* keep CLI platform dependencies lockfile-stable ([52be3f8](https://github.com/wen-templari/nanoflare/commit/52be3f8d4a65679a711b49ff70636c115a3e42d5))
+
 ## [0.2.0](https://github.com/wen-templari/nanoflare/compare/v0.1.6...v0.2.0) (2026-08-08)
 
 ### Features
