@@ -14,10 +14,34 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           # A GitHub App token (preferred) or bot PAT is required so that the
           # created tags, releases, and PRs trigger the downstream workflows.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Update CLI version in created templates
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          set -eu
+          branch="$(gh pr list --repo "$GITHUB_REPOSITORY" --head release-please--branches--main --state open --json headRefName --jq '.[0].headRefName')"
+          test -n "$branch"
+          git fetch origin "$branch"
+          git checkout --force -B "$branch" "origin/$branch"
+          node scripts/update-create-template-cli.mjs
+          node scripts/update-create-template-cli.mjs --check
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "release-please[bot]"
+          git config user.email "551147+release-please[bot]@users.noreply.github.com"
+          git add packages/create-nanoflare/templates
+          git commit -m "chore: update create template CLI version"
+          git push origin "HEAD:$branch"

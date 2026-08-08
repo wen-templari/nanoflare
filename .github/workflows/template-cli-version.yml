@@ -1,0 +1,35 @@
+name: Create Template CLI Version
+
+on:
+  pull_request:
+    paths:
+      - VERSION
+      - package.json
+      - packages/create-nanoflare/templates/**
+      - scripts/update-create-template-cli.mjs
+      - scripts/update-create-template-cli.test.mjs
+      - .github/workflows/template-cli-version.yml
+  push:
+    branches:
+      - main
+    paths:
+      - VERSION
+      - package.json
+      - packages/create-nanoflare/templates/**
+      - scripts/update-create-template-cli.mjs
+      - scripts/update-create-template-cli.test.mjs
+      - .github/workflows/template-cli-version.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/update-create-template-cli.test.mjs
+      - run: node scripts/update-create-template-cli.mjs --check
