@@ -5,11 +5,12 @@ on:
     tags:
       - "v*"
       - "!vite-plugin-v*"
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      tag:
-        description: Release tag to upload assets to
-        required: false
+      release_tag:
+        description: Existing core release tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -19,16 +20,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Tag pushes do not populate either `github.event.release.tag_name` or
-      # workflow-dispatch inputs. Use the ref name for that event so a tag
-      # created by Release Please also publishes the npm packages.
-      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || github.event.release.tag_name || inputs.tag }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.release_tag || github.ref_name }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -80,7 +78,6 @@ jobs:
           build_platform windows arm64 "nanoflare"
 
       - name: Prepare npm packages
-        if: env.RELEASE_TAG != ''
         run: |
           set -eu
           ./scripts/build-npm-cli-binaries.sh
@@ -101,7 +98,6 @@ jobs:
           fi
 
       - name: Test packed npm CLI
-        if: env.RELEASE_TAG != ''
         run: |
           set -eu
           test_dir="$(mktemp -d)"
@@ -112,7 +108,6 @@ jobs:
           "$test_dir/node_modules/.bin/nanoflare" --help
 
       - name: Publish npm packages
-        if: env.RELEASE_TAG != ''
         run: |
           set -eu
           for package in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
@@ -130,7 +125,6 @@ jobs:
             dist/npm-tarballs/*.tgz
 
       - name: Upload assets to GitHub release
-        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/checksums.txt --clobber
