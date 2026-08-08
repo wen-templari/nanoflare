@@ -49,12 +49,13 @@ export function InvitePage() {
     setError("");
     try {
       if (!auth.signedIn) await auth.signup(email, password);
-      const { error } = await apiClient.POST("/v1/invites/{token}/accept", {
+      const { data, error } = await apiClient.POST("/v1/invites/{token}/accept", {
         params: { path: { token } },
         body: {},
       });
-      if (error) throw new Error(errorMessage(error, "Could not accept invite"));
+      if (error || !data) throw new Error(errorMessage(error, "Could not accept invite"));
       await auth.refresh();
+      auth.setActiveOrgID(data.membership.org_id);
       void navigate("/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not accept invite");
