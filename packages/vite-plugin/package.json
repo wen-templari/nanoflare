@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/vite-plugin",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "description": "Run a Nanoflare Worker locally during Vite development.",
   "homepage": "https://github.com/wen-templari/nanoflare#readme",
   "bugs": "https://github.com/wen-templari/nanoflare/issues",

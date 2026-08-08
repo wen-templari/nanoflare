@@ -1,6 +1,6 @@
 {
   "name": "create-nanoflare",
-  "version": "0.1.6",
+  "version": "0.3.0",
   "description": "Create a new Nanoflare Worker",
   "homepage": "https://github.com/wen-templari/nanoflare#readme",
   "bugs": "https://github.com/wen-templari/nanoflare/issues",

@@ -1,4 +1,4 @@
 {
-  ".": "0.2.3",
-  "packages/vite-plugin": "0.0.4"
+  ".": "0.3.0",
+  "packages/vite-plugin": "0.1.0"
 }
