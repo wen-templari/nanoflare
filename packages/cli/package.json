@@ -21,12 +21,12 @@
     "test": "node --test"
   },
   "optionalDependencies": {
-    "@nanoflare/cli-darwin-arm64": "0.1.6",
-    "@nanoflare/cli-darwin-x64": "0.1.6",
-    "@nanoflare/cli-linux-arm64": "0.1.6",
-    "@nanoflare/cli-linux-x64": "0.1.6",
-    "@nanoflare/cli-win32-arm64": "0.1.6",
-    "@nanoflare/cli-win32-x64": "0.1.6"
+    "@nanoflare/cli-darwin-arm64": "workspace:*",
+    "@nanoflare/cli-darwin-x64": "workspace:*",
+    "@nanoflare/cli-linux-arm64": "workspace:*",
+    "@nanoflare/cli-linux-x64": "workspace:*",
+    "@nanoflare/cli-win32-arm64": "workspace:*",
+    "@nanoflare/cli-win32-x64": "workspace:*"
   },
   "engines": {
     "node": ">=18"

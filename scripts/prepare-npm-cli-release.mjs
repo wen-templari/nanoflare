@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const [tag] = process.argv.slice(2);
@@ -23,7 +23,7 @@ const targets = [
   "win32-x64",
 ];
 
-async function assertPackageVersion(directory) {
+async function assertPackageVersion(directory, allowWorkspaceOptionalDependencies = false) {
   const manifestPath = resolve(directory, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   if (manifest.version !== version) {
@@ -31,7 +31,10 @@ async function assertPackageVersion(directory) {
   }
   if (manifest.optionalDependencies) {
     for (const [name, dependencyVersion] of Object.entries(manifest.optionalDependencies)) {
-      if (dependencyVersion !== version) {
+      if (
+        dependencyVersion !== version &&
+        !(allowWorkspaceOptionalDependencies && dependencyVersion === "workspace:*")
+      ) {
         throw new Error(`${manifestPath} has ${name}@${dependencyVersion}; expected ${version}`);
       }
     }
@@ -54,10 +57,16 @@ await mkdir(output, { recursive: true });
 
 const launcher = resolve(output, "cli");
 await mkdir(launcher, { recursive: true });
-await assertPackageVersion(source);
+await assertPackageVersion(source, true);
 for (const entry of ["bin", "lib", "README.md", "package.json"]) {
   await cp(resolve(source, entry), resolve(launcher, entry), { recursive: true });
 }
+const launcherManifestPath = resolve(launcher, "package.json");
+const launcherManifest = JSON.parse(await readFile(launcherManifestPath, "utf8"));
+for (const name of Object.keys(launcherManifest.optionalDependencies ?? {})) {
+  launcherManifest.optionalDependencies[name] = version;
+}
+await writeFile(launcherManifestPath, `${JSON.stringify(launcherManifest, null, 2)}\n`);
 await cp(resolve(root, "LICENSE"), resolve(launcher, "LICENSE"));
 
 for (const target of targets) {
