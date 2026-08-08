@@ -102,8 +102,11 @@ jobs:
           npm init --yes --prefix "$test_dir" >/dev/null
           npm install --ignore-scripts --prefix "$test_dir" \
             dist/npm-tarballs/nanoflare-cli-[0-9]*.tgz \
-            dist/npm-tarballs/nanoflare-cli-linux-x64-*.tgz
+            dist/npm-tarballs/nanoflare-cli-linux-x64-*.tgz \
+            dist/npm-tarballs/create-nanoflare-[0-9]*.tgz
           "$test_dir/node_modules/.bin/nanoflare" --help
+          (cd "$test_dir" && ./node_modules/.bin/create-nanoflare smoke-worker --template starter --no-interactive)
+          test -f "$test_dir/smoke-worker/worker.js"
 
       - name: Publish npm packages
         if: env.RELEASE_TAG != ''
@@ -113,6 +116,7 @@ jobs:
             (cd "dist/npm/$package" && npm publish --access public --provenance)
           done
           (cd dist/npm/cli && npm publish --access public --provenance)
+          (cd dist/npm/create-nanoflare && npm publish --access public --provenance)
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4

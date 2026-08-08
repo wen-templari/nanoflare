@@ -284,6 +284,22 @@ for the Worker and reports any names that are missing.
 Initialize, register, and deploy a worker:
 
 ```sh
+npm create nanoflare@latest hello-worker
+cd ./hello-worker
+nanoflare create
+nanoflare deploy
+```
+
+`npm create nanoflare@latest` scaffolds the starter Worker without installing
+dependencies or contacting a Nanoflare server. It prompts for a directory and
+template in an interactive terminal; pass `-- --template starter` to select the
+starter explicitly. The native CLI's `nanoflare init` command remains available
+for existing workflows.
+
+To use the commands above, install `@nanoflare/cli` or run the local repository
+binary. The equivalent local workflow is:
+
+```sh
 ./bin/nanoflare init --template starter --name "Hello worker" ./hello-worker
 cd ./hello-worker
 ../bin/nanoflare create
