@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.3](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.0.2...vite-plugin-v0.0.3) (2026-08-08)
+
+
+### Bug Fixes
+
+* add package repository metadata ([4578122](https://github.com/wen-templari/nanoflare/commit/45781222f5551b3d91674247e989520abd8a0166))
+
 ## [0.0.2](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.0.1...vite-plugin-v0.0.2) (2026-08-08)
 
 
