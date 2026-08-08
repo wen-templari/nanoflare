@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/vite-plugin",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Run a Nanoflare Worker locally during Vite development.",
   "license": "MIT",
   "files": [
