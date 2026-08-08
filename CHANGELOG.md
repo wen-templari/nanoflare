@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/wen-templari/nanoflare/compare/v0.3.0...v0.3.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* approve workerd build script ([a8c450c](https://github.com/wen-templari/nanoflare/commit/a8c450c8c337a471c741f75b1ec6e2bf8a145393))
+* fix ci test ([238c49c](https://github.com/wen-templari/nanoflare/commit/238c49c46d286065d76a828af31786c0b99fa9e0))
+
 ## [0.3.0](https://github.com/wen-templari/nanoflare/compare/v0.2.3...v0.3.0) (2026-08-08)
 
 
