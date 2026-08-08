@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/cli",
-  "version": "0.0.0",
+  "version": "0.1.5",
   "description": "Nanoflare command-line interface",
   "homepage": "https://github.com/wen-templari/nanoflare#readme",
   "bugs": "https://github.com/wen-templari/nanoflare/issues",
@@ -21,12 +21,12 @@
     "test": "node --test"
   },
   "optionalDependencies": {
-    "@nanoflare/cli-darwin-arm64": "0.0.0",
-    "@nanoflare/cli-darwin-x64": "0.0.0",
-    "@nanoflare/cli-linux-arm64": "0.0.0",
-    "@nanoflare/cli-linux-x64": "0.0.0",
-    "@nanoflare/cli-win32-arm64": "0.0.0",
-    "@nanoflare/cli-win32-x64": "0.0.0"
+    "@nanoflare/cli-darwin-arm64": "0.1.5",
+    "@nanoflare/cli-darwin-x64": "0.1.5",
+    "@nanoflare/cli-linux-arm64": "0.1.5",
+    "@nanoflare/cli-linux-x64": "0.1.5",
+    "@nanoflare/cli-win32-arm64": "0.1.5",
+    "@nanoflare/cli-win32-x64": "0.1.5"
   },
   "engines": {
     "node": ">=18"

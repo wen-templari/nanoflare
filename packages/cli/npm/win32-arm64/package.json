@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/cli-win32-arm64",
-  "version": "0.0.0",
+  "version": "0.1.5",
   "description": "Nanoflare CLI binary for Windows ARM64",
   "license": "Apache-2.0",
   "repository": "github:wen-templari/nanoflare",
