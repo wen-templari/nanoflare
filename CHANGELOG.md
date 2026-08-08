@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/wen-templari/nanoflare/compare/v0.2.1...v0.2.2) (2026-08-08)
+
+
+### Bug Fixes
+
+* publish npm packages on core releases ([4e27ece](https://github.com/wen-templari/nanoflare/commit/4e27ece02d529465f5338ea20cc2d3c61c590b2e))
+
 ## [0.2.1](https://github.com/wen-templari/nanoflare/compare/v0.2.0...v0.2.1) (2026-08-08)
 
 
