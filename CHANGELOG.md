@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/wen-templari/nanoflare/compare/v0.2.3...v0.3.0) (2026-08-08)
+
+
+### Features
+
+* add Nanoflare starter templates ([59a81a7](https://github.com/wen-templari/nanoflare/commit/59a81a7b7706d4d69edb075b87d06bb816146a77))
+* **vite-plugin:** add build support ([0b9cf72](https://github.com/wen-templari/nanoflare/commit/0b9cf72209a8a898759b2b7df4041665da4a466a))
+
+
+### Bug Fixes
+
+* derive compatibility fallback date at startup ([621b1bf](https://github.com/wen-templari/nanoflare/commit/621b1bf514c5daa8b9b73ffa9f9061e7da8e7258))
+* keep create templates on current CLI ([212e729](https://github.com/wen-templari/nanoflare/commit/212e729cc1b81984008033f32ced4ea0cf06dccd))
+
 ## [0.2.3](https://github.com/wen-templari/nanoflare/compare/v0.2.2...v0.2.3) (2026-08-08)
 
 

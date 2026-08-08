@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/cli-linux-arm64",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Nanoflare CLI binary for Linux ARM64",
   "homepage": "https://github.com/wen-templari/nanoflare#readme",
   "bugs": "https://github.com/wen-templari/nanoflare/issues",
