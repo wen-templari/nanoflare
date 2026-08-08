@@ -137,13 +137,13 @@ func TestDeployFallsBackFromUnsupportedCompatibilityDate(t *testing.T) {
 
 	deployment, err := service.Deploy(app.ID, DeployInput{
 		Files:             []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
-		CompatibilityDate: "2026-07-31",
+		CompatibilityDate: "2099-01-01",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deployment.CompatibilityDate != LatestSupportedCompatibilityDate {
-		t.Fatalf("compatibility date = %q, want fallback %q", deployment.CompatibilityDate, LatestSupportedCompatibilityDate)
+	if deployment.CompatibilityDate != service.maxCompatibilityDate {
+		t.Fatalf("compatibility date = %q, want fallback %q", deployment.CompatibilityDate, service.maxCompatibilityDate)
 	}
 }
 

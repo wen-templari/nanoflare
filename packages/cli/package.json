@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/cli",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "Nanoflare command-line interface",
   "homepage": "https://github.com/wen-templari/nanoflare#readme",
   "bugs": "https://github.com/wen-templari/nanoflare/issues",

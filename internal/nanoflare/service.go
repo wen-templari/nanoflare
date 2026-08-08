@@ -18,10 +18,6 @@ import (
 	"time"
 )
 
-// LatestSupportedCompatibilityDate is the newest compatibility date understood
-// by the workerd version bundled with Nanoflare.
-const LatestSupportedCompatibilityDate = "2026-07-13"
-
 type ConfigWriter interface {
 	Write([]ActiveDeployment) error
 }
@@ -104,6 +100,7 @@ type Service struct {
 	workerTimeseries     WorkerMetricsTimeseriesReader
 	secrets              *SecretCodec
 	baseHostname         string
+	maxCompatibilityDate string
 	randomHostnameSuffix func() (string, error)
 	kvOrgUsageCacheMu    sync.Mutex
 	kvOrgUsageCache      map[string]orgKVUsageCacheEntry
@@ -118,37 +115,17 @@ type AssetResponse struct {
 }
 
 func NewService(store Repository, writer ConfigWriter) *Service {
-	return &Service{
-		store:                store,
-		writer:               writer,
-		randomHostnameSuffix: randomHostnameSuffix,
-		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
-		kvOrgUsageCacheTTL:   time.Second,
-	}
+	return newService(store, writer, nil)
 }
 
 func NewServiceWithObjects(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
-	return &Service{
-		store:                store,
-		writer:               writer,
-		objects:              objects,
-		randomHostnameSuffix: randomHostnameSuffix,
-		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
-		kvOrgUsageCacheTTL:   time.Second,
-	}
+	return newService(store, writer, objects)
 }
 
 func NewServiceWithConsole(store Repository, writer ConfigWriter, objects ObjectStore, output WorkerOutputReader, traffic WorkerTrafficReader) *Service {
-	service := &Service{
-		store:                store,
-		writer:               writer,
-		objects:              objects,
-		output:               output,
-		traffic:              traffic,
-		randomHostnameSuffix: randomHostnameSuffix,
-		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
-		kvOrgUsageCacheTTL:   time.Second,
-	}
+	service := newService(store, writer, objects)
+	service.output = output
+	service.traffic = traffic
 	if reader, ok := traffic.(DatabaseMetricsTimeseriesReader); ok {
 		service.dbTimeseries = reader
 	}
@@ -162,6 +139,18 @@ func NewServiceWithConsole(store Repository, writer ConfigWriter, objects Object
 		service.workerTimeseries = reader
 	}
 	return service
+}
+
+func newService(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
+	return &Service{
+		store:                store,
+		writer:               writer,
+		objects:              objects,
+		maxCompatibilityDate: time.Now().UTC().Format("2006-01-02"),
+		randomHostnameSuffix: randomHostnameSuffix,
+		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
+		kvOrgUsageCacheTTL:   time.Second,
+	}
 }
 
 type orgKVUsageCacheEntry struct {
@@ -1147,13 +1136,13 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, errors.New("compatibility_date must use YYYY-MM-DD")
 	}
-	latestCompatibilityDate, err := time.Parse("2006-01-02", LatestSupportedCompatibilityDate)
+	maxCompatibilityDate, err := time.Parse("2006-01-02", s.maxCompatibilityDate)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("invalid server compatibility date: %w", err)
 	}
-	if compatibilityDate.After(latestCompatibilityDate) {
-		log.Printf("warning: requested compatibility date %q is newer than this server supports; falling back to %q", input.CompatibilityDate, LatestSupportedCompatibilityDate)
-		input.CompatibilityDate = LatestSupportedCompatibilityDate
+	if compatibilityDate.After(maxCompatibilityDate) {
+		log.Printf("warning: requested compatibility date %q is newer than this server supports; falling back to %q", input.CompatibilityDate, s.maxCompatibilityDate)
+		input.CompatibilityDate = s.maxCompatibilityDate
 	}
 	compatibilityFlags := normalizeCompatibilityFlags(input.CompatibilityFlags)
 	port, err := s.store.NextPort()
