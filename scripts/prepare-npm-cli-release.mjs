@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const [tag] = process.argv.slice(2);
@@ -23,22 +23,30 @@ const targets = [
   "win32-x64",
 ];
 
-async function stampPackage(directory) {
+async function assertPackageVersion(directory) {
   const manifestPath = resolve(directory, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  manifest.version = version;
+  if (manifest.version !== version) {
+    throw new Error(`${manifestPath} has version ${manifest.version}; expected ${version}`);
+  }
   if (manifest.optionalDependencies) {
-    for (const name of Object.keys(manifest.optionalDependencies)) {
-      manifest.optionalDependencies[name] = version;
+    for (const [name, dependencyVersion] of Object.entries(manifest.optionalDependencies)) {
+      if (dependencyVersion !== version) {
+        throw new Error(`${manifestPath} has ${name}@${dependencyVersion}; expected ${version}`);
+      }
     }
   }
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  await cp(resolve(root, "LICENSE"), resolve(directory, "LICENSE"));
 }
 
 async function copyPackage(from, to) {
+  await assertPackageVersion(from);
   await cp(from, to, { recursive: true });
-  await stampPackage(to);
+  await cp(resolve(root, "LICENSE"), resolve(to, "LICENSE"));
+}
+
+const sourceVersion = (await readFile(resolve(root, "VERSION"), "utf8")).trim();
+if (sourceVersion !== version) {
+  throw new Error(`VERSION is ${sourceVersion}; expected ${version} from release tag ${tag}`);
 }
 
 await rm(output, { recursive: true, force: true });
@@ -46,10 +54,11 @@ await mkdir(output, { recursive: true });
 
 const launcher = resolve(output, "cli");
 await mkdir(launcher, { recursive: true });
+await assertPackageVersion(source);
 for (const entry of ["bin", "lib", "README.md", "package.json"]) {
   await cp(resolve(source, entry), resolve(launcher, entry), { recursive: true });
 }
-await stampPackage(launcher);
+await cp(resolve(root, "LICENSE"), resolve(launcher, "LICENSE"));
 
 for (const target of targets) {
   await copyPackage(resolve(source, "npm", target), resolve(output, target));
