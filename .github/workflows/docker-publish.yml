@@ -63,6 +63,8 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=core-${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=core-${{ matrix.target }}
 
   ui-docker:
     runs-on: ubuntu-latest
@@ -105,3 +107,5 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,mode=max,scope=ui
