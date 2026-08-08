@@ -6,7 +6,6 @@ import {
   FolderOpen,
   Globe2,
   KeyRound,
-  ShieldCheck,
   Waypoints,
 } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef } from "react";
@@ -111,18 +110,6 @@ export function WorkerDefinitionFlow({
                 />
               }
             />
-            {protectedRoutes.length ? (
-              <Flow.Node
-                render={
-                  <DefinitionCard
-                    eyebrow="Middleware"
-                    icon={ShieldCheck}
-                    title={`Auth verify (${protectedRoutes.length})`}
-                    tone="orange"
-                  />
-                }
-              />
-            ) : null}
           </Flow.List>
           <Flow.Node
             render={
@@ -147,23 +134,21 @@ export function WorkerDefinitionFlow({
               />
             }
           />
-          {protectedRoutes.length ? (
-            <Flow.Node
-              render={
-                <DefinitionCard
-                  eyebrow="Middleware"
-                  icon={ShieldCheck}
-                  title={`Auth verify (${protectedRoutes.length})`}
-                  tone="orange"
-                />
-              }
-            />
-          ) : null}
         </>
       )}
       <Flow.Node
         render={
-          <DefinitionCard eyebrow="Runtime" icon={Waypoints} title={worker.name} tone="sage" />
+          <DefinitionCard
+            detail={
+              protectedRoutes.length
+                ? `${protectedRoutes.length} protected route${protectedRoutes.length === 1 ? "" : "s"}`
+                : undefined
+            }
+            eyebrow="Runtime"
+            icon={Waypoints}
+            title={worker.name}
+            tone="sage"
+          />
         }
       />
       <Flow.Node
@@ -181,6 +166,7 @@ export function WorkerDefinitionFlow({
 }
 
 type DefinitionCardProps = ComponentPropsWithoutRef<"div"> & {
+  detail?: string;
   eyebrow: string;
   icon: typeof Globe2;
   title: string;
@@ -188,7 +174,7 @@ type DefinitionCardProps = ComponentPropsWithoutRef<"div"> & {
 };
 
 const DefinitionCard = forwardRef<HTMLDivElement, DefinitionCardProps>(function DefinitionCard(
-  { eyebrow, icon: Icon, title, tone, className, ...props },
+  { detail, eyebrow, icon: Icon, title, tone, className, ...props },
   ref,
 ) {
   const toneClass =
@@ -212,6 +198,7 @@ const DefinitionCard = forwardRef<HTMLDivElement, DefinitionCardProps>(function 
         <div className="min-w-0">
           <p className="font-mono text-xs text-kumo-subtle">{eyebrow}</p>
           <h3 className="mt-1.5 truncate text-sm font-semibold text-kumo-default">{title}</h3>
+          {detail ? <p className="mt-1 text-sm text-kumo-subtle">{detail}</p> : null}
         </div>
         <div
           className={cn(
