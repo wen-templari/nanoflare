@@ -2,8 +2,13 @@
   "name": "@nanoflare/cli-win32-arm64",
   "version": "0.1.6",
   "description": "Nanoflare CLI binary for Windows ARM64",
+  "homepage": "https://github.com/wen-templari/nanoflare#readme",
+  "bugs": "https://github.com/wen-templari/nanoflare/issues",
   "license": "Apache-2.0",
-  "repository": "github:wen-templari/nanoflare",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wen-templari/nanoflare.git"
+  },
   "files": [
     "bin"
   ],
