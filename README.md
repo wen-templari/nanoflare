@@ -294,23 +294,22 @@ nanoflare deploy
 dependencies or contacting a Nanoflare server. It prompts for a directory and
 template in an interactive terminal. Templates include `bindings` (KV and object
 storage), `pages` (static pages), `spa`, `ssr`, and `api` (Drizzle and OpenAPI).
-Pass `-- --template starter` to select the minimal Worker explicitly. The native CLI's `nanoflare init` command remains available
-for existing workflows.
+Pass `-- --template starter` to select the minimal Worker explicitly.
 
 To use the commands above, install `@nanoflare/cli` or run the local repository
 binary. The equivalent local workflow is:
 
 ```sh
-./bin/nanoflare init --template starter --name "Hello worker" ./hello-worker
+./bin/nanoflare init ./hello-worker --template starter
 cd ./hello-worker
 ../bin/nanoflare create
 ../bin/nanoflare deploy
 ```
 
-`nanoflare init` prompts for a template in an interactive terminal, or uses the
-starter template in scripts. Pass `--template starter` to select it explicitly,
-and run `nanoflare init --list-templates` to see the available templates. It
-writes the template files and a `nanoflare.json` project file.
+`nanoflare init` is a convenience proxy for `npm create nanoflare@latest`; it
+forwards all initializer arguments, including `--template`, `--overwrite`, and
+interactive controls. Use `nanoflare init --help` for the initializer's available
+options. It requires npm and network access.
 `nanoflare create` registers the worker by its configured name; Nanoflare assigns
 its hostname from the configured base hostname. `nanoflare deploy` resolves that
 name in the selected organization and uploads each file listed in `nanoflare.json`.

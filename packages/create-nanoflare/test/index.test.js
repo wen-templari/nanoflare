@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -113,26 +113,8 @@ test("cancelling an interactive overwrite preserves the destination", async () =
   assert.equal(await readFile(resolve(destination, "keep.txt"), "utf8"), "keep");
 });
 
-test("keeps the npm starter asset aligned with the Go CLI template", async () => {
-  const packageRoot = resolve(import.meta.dirname, "..");
-  const goTemplate = await readFile(
-    resolve(packageRoot, "..", "..", "templates", "starter-worker", "worker.ts"),
-    "utf8",
-  );
-  assert.deepEqual(await readStarterTemplate(), goTemplate);
-});
-
-test("scaffolds every documented template and keeps shared assets aligned", async () => {
+test("scaffolds every documented template", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
-  const packageRoot = resolve(import.meta.dirname, "..");
-  const nativeRoots = {
-    starter: "starter-worker",
-    bindings: "bindings-worker",
-    pages: "pages-app",
-    spa: "spa-app",
-    ssr: "ssr-app",
-    api: "api-worker",
-  };
   for (const id of templateIDs) {
     const result = await run([id, "--template", id, "--no-interactive"], { cwd, stdout: output() });
     assert.equal(result.template, id);
@@ -143,14 +125,5 @@ test("scaffolds every documented template and keeps shared assets aligned", asyn
     } else {
       assert.equal(project.files, undefined);
     }
-    const npmFiles = await readdir(resolve(packageRoot, "templates", id), { recursive: true });
-    const nativeFiles = await readdir(
-      resolve(packageRoot, "..", "..", "templates", nativeRoots[id]),
-      { recursive: true },
-    );
-    assert.deepEqual(
-      npmFiles.filter((file) => file !== "nanoflare.json").sort(),
-      nativeFiles.sort(),
-    );
   }
 });
