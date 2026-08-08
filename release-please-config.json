@@ -24,11 +24,6 @@
         },
         {
           "type": "json",
-          "path": "packages/cli/package.json",
-          "jsonpath": "$.optionalDependencies.*"
-        },
-        {
-          "type": "json",
           "path": "packages/cli/npm/*/package.json",
           "jsonpath": "$.version",
           "glob": true

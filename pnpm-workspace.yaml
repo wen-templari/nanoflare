@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - packages/cli/npm/*
   - tools/*
 
 catalogMode: prefer
