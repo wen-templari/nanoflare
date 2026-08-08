@@ -108,7 +108,7 @@ jobs:
             dist/npm-tarballs/create-nanoflare-[0-9]*.tgz
           "$test_dir/node_modules/.bin/nanoflare" --help
           (cd "$test_dir" && ./node_modules/.bin/create-nanoflare smoke-worker --template starter --no-interactive)
-          test -f "$test_dir/smoke-worker/worker.js"
+          test -f "$test_dir/smoke-worker/worker.ts"
 
       - name: Publish npm packages
         run: |
