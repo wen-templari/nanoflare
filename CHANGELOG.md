@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/wen-templari/nanoflare/compare/v0.2.2...v0.2.3) (2026-08-08)
+
+
+### Bug Fixes
+
+* simplify core release workflow ([82cecdc](https://github.com/wen-templari/nanoflare/commit/82cecdc350b828f6187914050194f1e95b44255a))
+
 ## [0.2.2](https://github.com/wen-templari/nanoflare/compare/v0.2.1...v0.2.2) (2026-08-08)
 
 
