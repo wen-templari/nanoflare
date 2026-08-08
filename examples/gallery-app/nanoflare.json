@@ -4,6 +4,9 @@
   "main": "dist/worker.js",
   "format": "modules",
   "compatibility_date": "2025-12-10",
+  "vite": {
+    "entry": "worker/index.ts"
+  },
   "files": ["dist/worker.js"],
   "db": [
     {
