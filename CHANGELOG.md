@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/wen-templari/nanoflare/compare/v0.3.1...v0.4.0) (2026-08-09)
+
+
+### Features
+
+* generate typed service bindings ([43ba82e](https://github.com/wen-templari/nanoflare/commit/43ba82eeb918f63c263f349a0d7337b69125841a))
+* update cli ([3bcbb7d](https://github.com/wen-templari/nanoflare/commit/3bcbb7d7c8a3d0ddf23ceec59e801e7ba46a1ad3))
+
+
+### Bug Fixes
+
+* add Vite plugin release recovery ([311d9da](https://github.com/wen-templari/nanoflare/commit/311d9da27c616a5d4af6ae527744d29665ac9c7c))
+
 ## [0.3.1](https://github.com/wen-templari/nanoflare/compare/v0.3.0...v0.3.1) (2026-08-08)
 
 
