@@ -21,33 +21,43 @@ func (r *Runner) types(args []string) error {
 	flags.SetOutput(r.Stderr)
 	envInterface := flags.String("env-interface", "Env", "Name of the generated environment interface")
 	check := flags.Bool("check", false, "Check whether generated types are up to date")
+	var configPaths stringSliceFlag
+	flags.Var(&configPaths, "config", "Path to a Worker configuration file (repeatable)")
+	flags.Var(&configPaths, "c", "Path to a Worker configuration file (repeatable)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 1 {
-		return errors.New("usage: nanoflare types [path] [--env-interface Env] [--check]")
-	}
-	if !isTypeScriptIdentifier(*envInterface) {
-		return fmt.Errorf("--env-interface must be a TypeScript identifier, got %q", *envInterface)
-	}
-
-	projectPath, err := filepath.Abs(projectFilename)
-	if err != nil {
-		return err
-	}
-	project, err := loadProjectAtPath(projectPath, false)
-	if err != nil {
-		return err
-	}
-	content, err := generateWorkerTypes(project, *envInterface)
-	if err != nil {
-		return err
+		return errors.New("usage: nanoflare types [path] [-c config] [--env-interface Env] [--check]")
 	}
 	outputPath := defaultTypesFilename
 	if flags.NArg() == 1 {
 		outputPath = flags.Arg(0)
 	}
-	if *check {
+	return r.typesWithOptions(outputPath, *envInterface, *check, configPaths)
+}
+
+type stringSliceFlag []string
+
+func (values *stringSliceFlag) String() string { return strings.Join(*values, ",") }
+func (values *stringSliceFlag) Set(value string) error {
+	*values = append(*values, value)
+	return nil
+}
+
+func (r *Runner) typesWithOptions(outputPath, envInterface string, check bool, configPaths []string) error {
+	if !isTypeScriptIdentifier(envInterface) {
+		return fmt.Errorf("--env-interface must be a TypeScript identifier, got %q", envInterface)
+	}
+	project, serviceTypes, err := loadTypeGenerationProject(configPaths, outputPath)
+	if err != nil {
+		return err
+	}
+	content, err := generateWorkerTypesWithServiceTypes(project, envInterface, serviceTypes)
+	if err != nil {
+		return err
+	}
+	if check {
 		current, readErr := os.ReadFile(outputPath)
 		if readErr == nil && bytes.Equal(current, content) {
 			return nil
@@ -65,12 +75,75 @@ func (r *Runner) types(args []string) error {
 	return nil
 }
 
+// loadTypeGenerationProject resolves source-only configuration paths. The first
+// config is the caller and every later config is available as a typed service
+// target; none of these paths affect deploy-time configuration.
+func loadTypeGenerationProject(configPaths []string, outputPath string) (Project, map[string]string, error) {
+	configsSupplied := len(configPaths) > 0
+	if len(configPaths) == 0 {
+		configPaths = []string{projectFilename}
+	}
+	outputAbsolutePath, err := filepath.Abs(outputPath)
+	if err != nil {
+		return Project{}, nil, err
+	}
+	type targetProject struct {
+		path    string
+		project Project
+	}
+	targets := make(map[string]targetProject, len(configPaths)-1)
+	var caller Project
+	for index, configPath := range configPaths {
+		absolutePath, err := filepath.Abs(configPath)
+		if err != nil {
+			return Project{}, nil, err
+		}
+		project, err := loadProjectAtPath(absolutePath, false)
+		if err != nil {
+			return Project{}, nil, err
+		}
+		if index == 0 {
+			caller = project
+			continue
+		}
+		if previous, exists := targets[project.Name]; exists {
+			return Project{}, nil, fmt.Errorf("service target %q is configured by both %s and %s", project.Name, previous.path, absolutePath)
+		}
+		targets[project.Name] = targetProject{path: absolutePath, project: project}
+	}
+	serviceTypes := make(map[string]string, len(caller.Services))
+	for _, service := range caller.Services {
+		target, exists := targets[service.Service]
+		if !exists {
+			if !configsSupplied {
+				continue // Preserve the existing untyped Fetcher output without -c.
+			}
+			return Project{}, nil, fmt.Errorf("service binding %q targets %q, but no supplied config has that name", service.Binding, service.Service)
+		}
+		entrypoint := filepath.Join(filepath.Dir(target.path), target.project.Main)
+		relativeEntrypoint, err := filepath.Rel(filepath.Dir(outputAbsolutePath), entrypoint)
+		if err != nil {
+			return Project{}, nil, err
+		}
+		relativeEntrypoint = filepath.ToSlash(strings.TrimSuffix(relativeEntrypoint, filepath.Ext(relativeEntrypoint)))
+		if !strings.HasPrefix(relativeEntrypoint, ".") {
+			relativeEntrypoint = "./" + relativeEntrypoint
+		}
+		serviceTypes[service.Binding] = "Service<import(" + strconv.Quote(relativeEntrypoint) + ").default>"
+	}
+	return caller, serviceTypes, nil
+}
+
 type generatedBinding struct {
 	name     string
 	typeName string
 }
 
 func generateWorkerTypes(project Project, envInterface string) ([]byte, error) {
+	return generateWorkerTypesWithServiceTypes(project, envInterface, nil)
+}
+
+func generateWorkerTypesWithServiceTypes(project Project, envInterface string, serviceTypes map[string]string) ([]byte, error) {
 	bindings := make([]generatedBinding, 0, len(project.Vars)+len(project.Secrets.Required)+len(project.KVNamespaces)+len(project.Databases)+len(project.ObjectStorageBuckets)+len(project.Services)+1)
 	seen := make(map[string]string)
 	add := func(name, typeName, kind string) error {
@@ -132,7 +205,11 @@ func generateWorkerTypes(project Project, envInterface string) ([]byte, error) {
 		}
 	}
 	for _, binding := range project.Services {
-		if err := add(binding.Binding, "Fetcher", "services"); err != nil {
+		typeName := "Fetcher"
+		if resolvedType, ok := serviceTypes[binding.Binding]; ok {
+			typeName = resolvedType
+		}
+		if err := add(binding.Binding, typeName, "services"); err != nil {
 			return nil, err
 		}
 	}
@@ -352,4 +429,18 @@ interface NanoflareD1Database {
 
 interface NanoflareAssetFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-}`
+}
+
+interface Fetcher {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
+type Service<T> = Fetcher & {
+  [Method in keyof T as Method extends "fetch"
+    ? never
+    : T[Method] extends (...args: any[]) => any
+      ? Method
+      : never]: T[Method] extends (...args: infer Arguments) => infer Result
+    ? (...args: Arguments) => Promise<Awaited<Result>>
+    : never;
+};`

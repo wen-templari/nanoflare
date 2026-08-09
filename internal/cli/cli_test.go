@@ -319,6 +319,102 @@ export default {
 	}
 }
 
+func TestTypesResolvesTypedServiceBindingsFromRepeatedConfigs(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	apiDir := filepath.Join(workspace, "api-worker")
+	identityDir := filepath.Join(workspace, "identity-worker")
+	if err := os.MkdirAll(apiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProject(filepath.Join(apiDir, projectFilename), Project{
+		Name:              "api-worker",
+		Main:              "worker.ts",
+		CompatibilityDate: "2026-08-01",
+		Files:             []string{"worker.ts"},
+		Services:          []nanoflare.ServiceBinding{{Binding: "IDENTITY", Service: "identity-worker"}},
+	}, os.O_TRUNC); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProject(filepath.Join(identityDir, projectFilename), Project{
+		Name:              "identity-worker",
+		Main:              "worker.ts",
+		CompatibilityDate: "2026-08-01",
+		Files:             []string{"worker.ts"},
+	}, os.O_TRUNC); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "worker.ts"), []byte(`declare class WorkerEntrypoint {}
+
+export default class IdentityWorker extends WorkerEntrypoint {
+  getUser(id: string) { return { id, email: id + "@example.test" }; }
+  async getRoles(id: string) { return [id]; }
+  async fetch(request: Request) { return new Response(request.url); }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(apiDir, "worker.ts"), []byte(`declare const env: Env;
+
+async function callIdentity() {
+  const user = await env.IDENTITY.getUser("ada");
+  const roles = await env.IDENTITY.getRoles(user.id);
+  const response = await env.IDENTITY.fetch(new Request("https://identity.internal"));
+  return { email: user.email, roles, status: response.status };
+}
+
+void callIdentity();
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDirectory(t, apiDir)
+	runner := NewRunner(io.Discard, io.Discard)
+	if err := runner.Run([]string{"types", "-c", "nanoflare.json", "-c", "../identity-worker/nanoflare.json"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(defaultTypesFilename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), `IDENTITY: Service<import("../identity-worker/worker").default>;`) {
+		t.Fatalf("typed service binding missing from generated output:\n%s", generated)
+	}
+	tsc := filepath.Join(repoRoot, "node_modules", ".bin", "tsc")
+	if _, err := os.Stat(tsc); errors.Is(err, os.ErrNotExist) {
+		t.Skip("TypeScript compiler is not installed")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("tsconfig.json", []byte(`{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","lib":["ES2022","DOM"],"strict":true,"noEmit":true},"files":["worker-configuration.d.ts","worker.ts","../identity-worker/worker.ts"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command(tsc, "--project", "tsconfig.json").CombinedOutput()
+	if err != nil {
+		t.Fatalf("typed service bindings did not compile: %v\n%s", err, output)
+	}
+}
+
+func TestTypesRejectsUnresolvedServiceTarget(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{
+		Name:              "api-worker",
+		Main:              "worker.js",
+		CompatibilityDate: "2026-08-01",
+		Files:             []string{"worker.js"},
+		Services:          []nanoflare.ServiceBinding{{Binding: "IDENTITY", Service: "identity-worker"}},
+	})
+	runner := NewRunner(io.Discard, io.Discard)
+	if err := runner.Run([]string{"types", "-c", "nanoflare.json"}); err == nil || !strings.Contains(err.Error(), "no supplied config") {
+		t.Fatalf("unresolved target error = %v", err)
+	}
+}
+
 func TestCreateAndDeployWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
 	var created nanoflare.CreateAppInput

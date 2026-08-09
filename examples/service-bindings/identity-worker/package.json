@@ -1,0 +1,14 @@
+{
+  "name": "@nanoflare/service-bindings-identity-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "deploy": "npm run build && nanoflare deploy"
+  },
+  "devDependencies": {
+    "@nanoflare/cli": "^0.3.1",
+    "typescript": "^5.8.3"
+  }
+}

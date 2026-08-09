@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
   "name": "identity-worker",
-  "main": "worker.js",
+  "main": "dist/worker.js",
   "format": "modules",
   "compatibility_date": "2025-12-10",
-  "files": ["worker.js"]
+  "files": ["dist/worker.js"]
 }

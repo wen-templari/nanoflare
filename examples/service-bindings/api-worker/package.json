@@ -1,0 +1,15 @@
+{
+  "name": "@nanoflare/service-bindings-api-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typegen": "nanoflare types -c nanoflare.json -c ../identity-worker/nanoflare.json",
+    "build": "npm run typegen && tsc -p tsconfig.json",
+    "check": "nanoflare types --check -c nanoflare.json -c ../identity-worker/nanoflare.json && tsc -p tsconfig.json --noEmit",
+    "deploy": "npm run build && nanoflare deploy"
+  },
+  "devDependencies": {
+    "@nanoflare/cli": "^0.3.1",
+    "typescript": "^5.8.3"
+  }
+}

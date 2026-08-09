@@ -26,10 +26,7 @@ func (r *Runner) newRootCommand() *cobra.Command {
 
 	root.AddCommand(
 		r.initCommand(),
-		r.leaf("types [path]", "Generate TypeScript types for the current worker", r.types, func(c *cobra.Command) {
-			c.Flags().String("env-interface", "Env", "Name of the generated environment interface")
-			c.Flags().Bool("check", false, "Check whether generated types are up to date")
-		}),
+		r.typesCommand(),
 		r.workerLeaf("create", "Create the current worker", r.create, apiURLFlag("")),
 		r.workerLeaf("list", "List workers", r.list, apiURLFlag(envOrDefault("NANOFLARED_URL", defaultAPIURL))),
 		r.workerLeaf("delete [worker-id]", "Delete a worker", r.delete, apiURLFlag("")),
@@ -40,6 +37,28 @@ func (r *Runner) newRootCommand() *cobra.Command {
 		r.deploymentCommand(), r.authCommand(), r.secretCommand(), r.kvCommand(), r.dbCommand(), r.objectStorageCommand(),
 	)
 	return root
+}
+
+func (r *Runner) typesCommand() *cobra.Command {
+	var configPaths []string
+	var envInterface string
+	var check bool
+	command := &cobra.Command{
+		Use:   "types [path]",
+		Short: "Generate TypeScript types for the current worker",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			outputPath := defaultTypesFilename
+			if len(args) == 1 {
+				outputPath = args[0]
+			}
+			return r.typesWithOptions(outputPath, envInterface, check, configPaths)
+		},
+	}
+	command.Flags().StringArrayVarP(&configPaths, "config", "c", nil, "Path to a Worker configuration file (repeatable)")
+	command.Flags().StringVar(&envInterface, "env-interface", "Env", "Name of the generated environment interface")
+	command.Flags().BoolVar(&check, "check", false, "Check whether generated types are up to date")
+	return command
 }
 
 func (r *Runner) initCommand() *cobra.Command {

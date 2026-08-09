@@ -258,6 +258,14 @@ such as the following to regenerate it during development:
 
 Use `nanoflare types --check` in CI to ensure the declaration file is current.
 
+For typed service bindings, pass the caller configuration first and each local
+service target with another `-c` flag. These paths are used only to resolve the
+target's TypeScript entrypoint; they do not change the deployed configuration.
+
+```sh
+nanoflare types -c ./api-worker/nanoflare.json -c ../identity-worker/nanoflare.json
+```
+
 ### Required secrets
 
 Store secret values separately from your project configuration:

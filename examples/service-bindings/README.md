@@ -1,7 +1,7 @@
 # Service bindings
 
-This example deploys two Workers in the same Nanoflare organization. The public
-`api-worker` has a private Cloudflare-style service binding to
+This TypeScript example deploys two Workers in the same Nanoflare organization.
+The public `api-worker` has a private Cloudflare-style service binding to
 `identity-worker`:
 
 ```json
@@ -16,7 +16,25 @@ It demonstrates both interfaces provided by a service binding:
 - HTTP: `await env.IDENTITY.fetch(request)`
 
 The identity Worker is private: it does not need a public route for the API
-Worker to call it.
+Worker to call it. During the API build, `nanoflare types` reads both local
+configuration files and generates a typed `IDENTITY` binding. Its RPC methods
+are inferred from the identity Worker's compiled entrypoint and always return
+promises.
+
+## Install and check
+
+Install each example package, then build the identity target before checking the
+API Worker (the generated API declaration imports the target's built entrypoint).
+
+```sh
+cd identity-worker
+npm install
+npm run build
+
+cd ../api-worker
+npm install
+npm run check
+```
 
 ## Deploy
 
@@ -25,12 +43,14 @@ the same active organization.
 
 ```sh
 cd identity-worker
+npm run build
 nanoflare create
-nanoflare deploy
+npm run deploy
 
 cd ../api-worker
+npm run build
 nanoflare create
-nanoflare deploy
+npm run deploy
 ```
 
 ## Routes
