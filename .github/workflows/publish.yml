@@ -44,9 +44,6 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Set up npm
-        run: npm install --global npm@11.17.0
-
       - name: Verify release tag
         run: test "$RELEASE_TAG" = "v$(cat VERSION)"
 
@@ -117,10 +114,10 @@ jobs:
         run: |
           set -eu
           for package in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
-            (cd "dist/npm/$package" && npm publish --access public --provenance)
+            (cd "dist/npm/$package" && npx --yes npm@11.17.0 publish --access public --provenance)
           done
-          (cd dist/npm/cli && npm publish --access public --provenance)
-          (cd dist/npm/create-nanoflare && npm publish --access public --provenance)
+          (cd dist/npm/cli && npx --yes npm@11.17.0 publish --access public --provenance)
+          (cd dist/npm/create-nanoflare && npx --yes npm@11.17.0 publish --access public --provenance)
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -163,9 +160,6 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
           install: false
 
-      - name: Set up npm
-        run: npm install --global npm@11.17.0
-
       - name: Install dependencies
         run: |
           pnpm config set --json allowBuilds '{"workerd":true}' --location project
@@ -192,8 +186,8 @@ jobs:
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org")"
           node -e 'const claims = JSON.parse(Buffer.from(process.argv[1].split(".")[1], "base64url")); console.log(JSON.stringify({ workflow: claims.workflow, workflow_ref: claims.workflow_ref, job_workflow_ref: claims.job_workflow_ref, event_name: claims.event_name, ref: claims.ref }))' "$oidc_token"
-          npm --version
+          npx --yes npm@11.17.0 --version
 
       - name: Publish to npm
         working-directory: packages/vite-plugin
-        run: npm publish --access public --provenance
+        run: npx --yes npm@11.17.0 publish --access public --provenance
