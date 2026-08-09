@@ -801,7 +801,7 @@ func TestNestedHelpIncludesFlags(t *testing.T) {
 	if err := runner.Run([]string{"db", "execute", "--help"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Usage:", "nanoflare db execute <database-id>", "--api-url", "--command", "--file"} {
+	for _, want := range []string{"Usage:", "nanoflare db execute [database-id]", "--api-url", "--binding", "--command", "--file"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("help output missing %q:\n%s", want, stdout.String())
 		}
@@ -818,6 +818,37 @@ func TestCommandTreeRejectsUnknownCommandsAndArguments(t *testing.T) {
 	}
 	if err := runner.Run([]string{"completion"}); err == nil || !strings.Contains(err.Error(), "unknown command \"completion\"") {
 		t.Fatalf("completion error = %v", err)
+	}
+}
+
+func TestCheckValidatesProjectArtifactsAndTypes(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{
+		Name:              "checked-worker",
+		Main:              "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+		KVNamespaces:      []nanoflare.KVBinding{{Binding: "CACHE"}},
+	})
+	if err := os.WriteFile("worker.js", []byte("export default {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	runner := NewRunner(&stdout, io.Discard)
+	if err := runner.Run([]string{"check"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "Validated") {
+		t.Fatalf("check output = %q", stdout.String())
+	}
+	if err := runner.Run([]string{"check", "--types"}); err == nil || !strings.Contains(err.Error(), "generated types are out of date") {
+		t.Fatalf("check --types error = %v", err)
+	}
+	if err := runner.Run([]string{"types"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"check", "--types"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -882,6 +913,29 @@ func TestDBExecuteReportsWritesAndRejectsMultipleStatements(t *testing.T) {
 	}
 	if err := runner.Run([]string{"db", "execute", "--api-url", server.URL, "db-123"}); err == nil || !strings.Contains(err.Error(), "exactly one of --command or --file") {
 		t.Fatalf("missing SQL error = %v", err)
+	}
+}
+
+func TestDBExecuteResolvesConfiguredBinding(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{
+		Name:              "binding-worker",
+		Main:              "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+		Databases:         []nanoflare.DatabaseBinding{{Binding: "APP_DB", DatabaseID: "db-123"}},
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/db/db-123/execute" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(t, w, http.StatusOK, nanoflare.DBQueryResponse{Results: []nanoflare.D1Result{{Success: true}}})
+	}))
+	defer server.Close()
+
+	if err := NewRunner(io.Discard, io.Discard).Run([]string{"db", "execute", "--api-url", server.URL, "--binding", "APP_DB", "--command", "SELECT 1"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1535,14 +1589,23 @@ func TestResponseErrorMessageSupportsProblemDetails(t *testing.T) {
 	}
 }
 
-func TestDeployRequiresExistingWorker(t *testing.T) {
+func TestDeployCreatesMissingWorker(t *testing.T) {
 	withWorkingDirectory(t, t.TempDir())
+	var deployed nanoflare.DeployInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/workers" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
 			writeJSON(t, w, http.StatusOK, []nanoflare.App{})
-			return
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workers":
+			writeJSON(t, w, http.StatusCreated, nanoflare.App{ID: "app-123", Name: "Hello", Hostname: "hello.example.test"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/workers/app-123":
+			writeJSON(t, w, http.StatusOK, nanoflare.App{ID: "app-123", Name: "Hello"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workers/app-123/deployments":
+			decodeRequest(t, r, &deployed)
+			writeJSON(t, w, http.StatusCreated, nanoflare.Deployment{ID: "dep-123", AppID: "app-123", CompatibilityDate: "2025-12-10"})
+		default:
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
 	}))
 	defer server.Close()
 	t.Setenv("NANOFLARED_URL", server.URL)
@@ -1552,9 +1615,105 @@ func TestDeployRequiresExistingWorker(t *testing.T) {
 		CompatibilityDate: "2025-12-10",
 		Files:             []string{"worker.js"},
 	})
+	if err := os.WriteFile("worker.js", []byte("export default {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewRunner(io.Discard, io.Discard).Run([]string{"deploy"}); err != nil {
+		t.Fatal(err)
+	}
+	if deployed.Entrypoint != "worker.js" {
+		t.Fatalf("deployment = %#v", deployed)
+	}
+}
+
+func TestDeployAutomaticallyProvisionsMissingBindingResources(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	var deployed nanoflare.DeployInput
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
+			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/kv/namespaces":
+			writeJSON(t, w, http.StatusOK, []nanoflare.KVNamespace{})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/kv/namespaces":
+			writeJSON(t, w, http.StatusCreated, nanoflare.KVNamespace{ID: "kv-123", Name: "hello-cache"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/db":
+			writeJSON(t, w, http.StatusOK, []nanoflare.Database{})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/db":
+			writeJSON(t, w, http.StatusCreated, nanoflare.Database{ID: "db-123", Name: "hello-db"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/object-storage-buckets":
+			writeJSON(t, w, http.StatusOK, []nanoflare.ObjectStorageBucket{})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/object-storage-buckets":
+			writeJSON(t, w, http.StatusCreated, nanoflare.ObjectStorageBucket{ID: "bucket-123", Name: "hello-objects"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/workers/app-123":
+			writeJSON(t, w, http.StatusOK, nanoflare.App{ID: "app-123", Name: "Hello"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workers/app-123/deployments":
+			decodeRequest(t, r, &deployed)
+			writeJSON(t, w, http.StatusCreated, nanoflare.Deployment{ID: "dep-123", AppID: "app-123", CompatibilityDate: "2025-12-10"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("NANOFLARED_URL", server.URL)
+	writeProjectFile(t, Project{
+		Name:              "Hello",
+		Main:              "worker.js",
+		CompatibilityDate: "2025-12-10",
+		Files:             []string{"worker.js"},
+		KVNamespaces:      []nanoflare.KVBinding{{Binding: "CACHE"}},
+		Databases:         []nanoflare.DatabaseBinding{{Binding: "DB"}},
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{
+			Binding: "OBJECTS",
+		}},
+	})
+	if err := os.WriteFile("worker.js", []byte("export default {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewRunner(io.Discard, io.Discard).Run([]string{"deploy"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := deployed.KVNamespaces[0].ID; got != "kv-123" {
+		t.Fatalf("KV binding id = %q", got)
+	}
+	if got := deployed.Databases[0].DatabaseID; got != "db-123" {
+		t.Fatalf("database binding id = %q", got)
+	}
+	if got := deployed.ObjectStorageBuckets[0].BucketID; got != "bucket-123" {
+		t.Fatalf("bucket binding id = %q", got)
+	}
+}
+
+func TestDeployExplainsMissingProjectConfiguration(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
 
 	err := NewRunner(io.Discard, io.Discard).Run([]string{"deploy"})
-	if err == nil || !strings.Contains(err.Error(), "nanoflare create") {
+	if err == nil {
+		t.Fatal("deploy succeeded without nanoflare.json")
+	}
+	for _, expected := range []string{
+		"no Nanoflare project found",
+		"nanoflare init",
+		`"main": "src/worker.ts"`,
+		"assets.directory",
+		"nanoflare deploy",
+	} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("error missing %q:\n%s", expected, err)
+		}
+	}
+}
+
+func TestDeployPreservesInvalidProjectConfigurationError(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	if err := os.WriteFile(projectFilename, []byte("not JSON"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewRunner(io.Discard, io.Discard).Run([]string{"deploy"})
+	if err == nil || !strings.Contains(err.Error(), "decode") || strings.Contains(err.Error(), "no Nanoflare project found") {
 		t.Fatalf("error = %v", err)
 	}
 }

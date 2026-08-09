@@ -238,6 +238,7 @@ func (r *Runner) deploy(args []string) error {
 	flags.SetOutput(r.Stderr)
 	apiURL := flags.String("api-url", "", "nanoflared base URL")
 	compatibilityDate := flags.String("compatibility-date", "", "worker compatibility date (YYYY-MM-DD)")
+	provision := flags.Bool("provision", true, "create missing KV namespaces, databases, and object-storage buckets")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -253,11 +254,14 @@ func (r *Runner) deploy(args []string) error {
 		date = *compatibilityDate
 	}
 	baseURL := projectAPIURL(*apiURL)
-	app, err := r.projectApp(baseURL, project.Name)
+	app, err := r.ensureProjectApp(baseURL, project)
 	if err != nil {
 		return err
 	}
 	if err := r.validateRequiredSecrets(baseURL, app.ID, project.Secrets.Required); err != nil {
+		return err
+	}
+	if err := r.resolveProjectBindings(baseURL, &project, *provision); err != nil {
 		return err
 	}
 	if err := r.request(http.MethodPatch, baseURL+"/v1/workers/"+app.ID, nanoflare.UpdateAppInput{
@@ -307,6 +311,47 @@ func (r *Runner) deploy(args []string) error {
 	fmt.Fprintf(r.Stdout, "Deployed worker %s as deployment %s\n", app.ID, deployment.ID)
 	if hostname := strings.TrimSpace(app.Hostname); hostname != "" {
 		fmt.Fprintf(r.Stdout, "Worker URL: https://%s\n", hostname)
+	}
+	return nil
+}
+
+// check performs the local half of deployment preflight without creating a
+// Worker, resolving remote resources, or uploading an artifact. It deliberately
+// accepts the same source project and Vite deployment manifest layouts as
+// deploy, so a passing check means the local artifact is ready for deployment.
+func (r *Runner) check(args []string) error {
+	flags := flag.NewFlagSet("check", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	types := flags.Bool("types", false, "also verify worker-configuration.d.ts is current")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: nanoflare check [flags]")
+	}
+	projectPath, project, err := loadDeploymentProject()
+	if err != nil {
+		return err
+	}
+	if _, err := requiredSecretNames(project.Secrets.Required); err != nil {
+		return err
+	}
+	if _, err := generateWorkerTypes(project, "Env"); err != nil {
+		return fmt.Errorf("validate Worker bindings: %w", err)
+	}
+	if _, err := loadWorkerFiles(project.Files); err != nil {
+		return err
+	}
+	if _, err := loadAssetFiles(project.Assets.Directory); err != nil {
+		return err
+	}
+	if *types {
+		if err := r.typesWithOptions(defaultTypesFilename, "Env", true, nil); err != nil {
+			return err
+		}
+	}
+	if projectPath != "" {
+		fmt.Fprintf(r.Stdout, "Validated %s\n", projectPath)
 	}
 	return nil
 }
@@ -992,6 +1037,9 @@ func loadDeploymentProject() (string, Project, error) {
 	}
 	source, err := loadProjectAtPathWithValidation(path, true, false)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", Project{}, missingDeploymentProjectError(path)
+		}
 		return "", Project{}, err
 	}
 	if len(source.Files) > 0 {
@@ -1006,6 +1054,24 @@ func loadDeploymentProject() (string, Project, error) {
 		return "", Project{}, err
 	}
 	return path, project, nil
+}
+
+func missingDeploymentProjectError(path string) error {
+	return fmt.Errorf(`no Nanoflare project found: expected %s
+
+To create a new Worker project in this directory, run:
+  nanoflare init
+
+To deploy existing code, add a nanoflare.json file such as:
+  {
+    "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+    "name": "my-worker",
+    "main": "src/worker.ts",
+    "compatibility_date": "2025-12-10"
+  }
+
+To attach static assets, configure assets.directory alongside main. Then run:
+  nanoflare deploy`, path)
 }
 
 func loadProjectAtPath(path string, migrateAliases bool) (Project, error) {
@@ -1322,6 +1388,164 @@ func (r *Runner) projectApp(baseURL, name string) (nanoflare.App, error) {
 		return nanoflare.App{}, fmt.Errorf("%w: %q; run `nanoflare create` first", errProjectAppNotFound, name)
 	}
 	return *match, nil
+}
+
+// ensureProjectApp gives deploy the same create-on-first-deploy behavior as
+// Wrangler while preserving `nanoflare create` for users who want to register a
+// Worker explicitly.
+func (r *Runner) ensureProjectApp(baseURL string, project Project) (nanoflare.App, error) {
+	app, err := r.projectApp(baseURL, project.Name)
+	if err == nil || !errors.Is(err, errProjectAppNotFound) {
+		return app, err
+	}
+	if err := r.request(http.MethodPost, baseURL+"/v1/workers", nanoflare.CreateAppInput{
+		Name: project.Name,
+		Auth: nanoflare.AuthConfig{ProtectedRoutes: append([]string(nil), project.Auth.ProtectedRoutes...)},
+	}, &app); err != nil {
+		return nanoflare.App{}, err
+	}
+	fmt.Fprintf(r.Stdout, "Created worker %s (%s)\n", app.ID, app.Hostname)
+	return app, nil
+}
+
+// resolveProjectBindings implements Wrangler-style automatic provisioning. A
+// binding with an explicit ID remains pinned; an ID-less binding is resolved by
+// its deterministic project-and-binding name or created when provisioning is
+// enabled. Resolved IDs live in the deployment record, not nanoflare.json.
+func (r *Runner) resolveProjectBindings(baseURL string, project *Project, provision bool) error {
+	for index := range project.KVNamespaces {
+		binding := &project.KVNamespaces[index]
+		if strings.TrimSpace(binding.ID) != "" {
+			continue
+		}
+		id, err := r.resolveKVNamespace(baseURL, autoProvisionedResourceName(project.Name, binding.Binding), provision)
+		if err != nil {
+			return fmt.Errorf("resolve kv_namespaces binding %q: %w", binding.Binding, err)
+		}
+		binding.ID = id
+	}
+	for index := range project.Databases {
+		binding := &project.Databases[index]
+		if strings.TrimSpace(binding.DatabaseID) != "" {
+			continue
+		}
+		id, err := r.resolveDatabase(baseURL, autoProvisionedResourceName(project.Name, binding.Binding), provision)
+		if err != nil {
+			return fmt.Errorf("resolve db binding %q: %w", binding.Binding, err)
+		}
+		binding.DatabaseID = id
+	}
+	for index := range project.ObjectStorageBuckets {
+		binding := &project.ObjectStorageBuckets[index]
+		if strings.TrimSpace(binding.BucketID) != "" {
+			continue
+		}
+		id, err := r.resolveObjectStorageBucket(baseURL, autoProvisionedResourceName(project.Name, binding.Binding), provision)
+		if err != nil {
+			return fmt.Errorf("resolve object_storage_buckets binding %q: %w", binding.Binding, err)
+		}
+		binding.BucketID = id
+	}
+	return nil
+}
+
+func autoProvisionedResourceName(projectName, binding string) string {
+	value := strings.ToLower(strings.TrimSpace(projectName) + "-" + strings.TrimSpace(binding))
+	var out strings.Builder
+	lastDash := false
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
+			out.WriteRune(character)
+			lastDash = false
+		} else if !lastDash {
+			out.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(out.String(), "-")
+}
+
+func (r *Runner) resolveKVNamespace(baseURL, name string, provision bool) (string, error) {
+	var namespaces []nanoflare.KVNamespace
+	if err := r.request(http.MethodGet, baseURL+"/v1/kv/namespaces", nil, &namespaces); err != nil {
+		return "", err
+	}
+	for _, namespace := range namespaces {
+		if namespace.Name == name {
+			return namespace.ID, nil
+		}
+	}
+	if !provision {
+		return "", errors.New("resource has no id; rerun with --provision or configure an explicit id")
+	}
+	var namespace nanoflare.KVNamespace
+	if err := r.request(http.MethodPost, baseURL+"/v1/kv/namespaces", nanoflare.CreateKVNamespaceInput{Name: name}, &namespace); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(r.Stdout, "Provisioned KV namespace %s\t%s\n", namespace.ID, namespace.Name)
+	return namespace.ID, nil
+}
+
+func (r *Runner) resolveDatabase(baseURL, name string, provision bool) (string, error) {
+	var databases []nanoflare.Database
+	if err := r.request(http.MethodGet, baseURL+"/v1/db", nil, &databases); err != nil {
+		return "", err
+	}
+	for _, database := range databases {
+		if database.Name == name {
+			return database.ID, nil
+		}
+	}
+	if !provision {
+		return "", errors.New("resource has no id; rerun with --provision or configure an explicit database_id")
+	}
+	var database nanoflare.Database
+	if err := r.request(http.MethodPost, baseURL+"/v1/db", nanoflare.CreateDatabaseInput{Name: name}, &database); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(r.Stdout, "Provisioned database %s\t%s\n", database.ID, database.Name)
+	return database.ID, nil
+}
+
+func (r *Runner) resolveObjectStorageBucket(baseURL, name string, provision bool) (string, error) {
+	var buckets []nanoflare.ObjectStorageBucket
+	if err := r.request(http.MethodGet, baseURL+"/v1/object-storage-buckets", nil, &buckets); err != nil {
+		return "", err
+	}
+	for _, bucket := range buckets {
+		if bucket.Name == name {
+			return bucket.ID, nil
+		}
+	}
+	if !provision {
+		return "", errors.New("resource has no id; rerun with --provision or configure an explicit bucket_id")
+	}
+	var bucket nanoflare.ObjectStorageBucket
+	if err := r.request(http.MethodPost, baseURL+"/v1/object-storage-buckets", nanoflare.CreateObjectStorageBucketInput{Name: name}, &bucket); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(r.Stdout, "Provisioned object storage bucket %s\t%s\n", bucket.ID, bucket.Name)
+	return bucket.ID, nil
+}
+
+func (r *Runner) databaseIDFromArgs(baseURL string, args []string, bindingName string) (string, error) {
+	if len(args) == 1 {
+		return strings.TrimSpace(args[0]), nil
+	}
+	_, project, err := loadProject()
+	if err != nil {
+		return "", err
+	}
+	for _, binding := range project.Databases {
+		if binding.Binding != bindingName {
+			continue
+		}
+		if id := strings.TrimSpace(binding.DatabaseID); id != "" {
+			return id, nil
+		}
+		return r.resolveDatabase(baseURL, autoProvisionedResourceName(project.Name, binding.Binding), true)
+	}
+	return "", fmt.Errorf("database binding %q is not configured in %s", bindingName, projectFilename)
 }
 
 func projectAPIURL(override string) string {
@@ -1643,14 +1867,15 @@ func (r *Runner) dbExecute(args []string) error {
 	flags := flag.NewFlagSet("db execute", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
+	bindingName := flags.String("binding", "", "database binding in nanoflare.json")
 	command := flags.String("command", "", "SQL statement to run")
 	file := flags.String("file", "", "Path to a file containing one SQL statement")
 	jsonOutput := flags.Bool("json", false, "Print the complete response as JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 1 {
-		return errors.New("usage: nanoflare db execute [flags] <database-id>")
+	if flags.NArg() > 1 || (flags.NArg() == 0 && strings.TrimSpace(*bindingName) == "") || (flags.NArg() == 1 && strings.TrimSpace(*bindingName) != "") {
+		return errors.New("usage: nanoflare db execute [flags] <database-id> or --binding <name>")
 	}
 	sqlText, err := sqlFromFlags(*command, *file)
 	if err != nil {
@@ -1660,7 +1885,11 @@ func (r *Runner) dbExecute(args []string) error {
 		return errors.New("db execute accepts exactly one SQL statement; use migrations for multi-statement schema changes")
 	}
 	var response nanoflare.DBQueryResponse
-	endpoint := strings.TrimRight(*apiURL, "/") + "/v1/db/" + url.PathEscape(flags.Arg(0)) + "/execute"
+	databaseID, err := r.databaseIDFromArgs(strings.TrimRight(*apiURL, "/"), flags.Args(), *bindingName)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(*apiURL, "/") + "/v1/db/" + url.PathEscape(databaseID) + "/execute"
 	input := map[string]any{"statements": []nanoflare.DBStatementRequest{{SQL: sqlText}}}
 	if err := r.request(http.MethodPost, endpoint, input, &response); err != nil {
 		return err
@@ -1707,17 +1936,22 @@ func (r *Runner) dbMigrationsApply(args []string) error {
 	flags.SetOutput(r.Stderr)
 	apiURL := flags.String("api-url", envOrDefault("NANOFLARED_URL", defaultAPIURL), "nanoflared base URL")
 	pathFlag := flags.String("path", "migrations", "migrations directory")
+	bindingName := flags.String("binding", "", "database binding in nanoflare.json")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 1 {
-		return errors.New("usage: nanoflare db migrations apply [flags] <database-id>")
+	if flags.NArg() > 1 || (flags.NArg() == 0 && strings.TrimSpace(*bindingName) == "") || (flags.NArg() == 1 && strings.TrimSpace(*bindingName) != "") {
+		return errors.New("usage: nanoflare db migrations apply [flags] <database-id> or --binding <name>")
 	}
 	entries, err := os.ReadDir(*pathFlag)
 	if err != nil {
 		return err
 	}
-	endpoint := strings.TrimRight(*apiURL, "/") + "/v1/db/" + url.PathEscape(flags.Arg(0)) + "/migrations"
+	databaseID, err := r.databaseIDFromArgs(strings.TrimRight(*apiURL, "/"), flags.Args(), *bindingName)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(*apiURL, "/") + "/v1/db/" + url.PathEscape(databaseID) + "/migrations"
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue

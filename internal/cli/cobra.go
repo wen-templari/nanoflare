@@ -26,6 +26,9 @@ func (r *Runner) newRootCommand() *cobra.Command {
 
 	root.AddCommand(
 		r.initCommand(),
+		r.leaf("check", "Validate the current worker project before deployment", r.check, func(c *cobra.Command) {
+			c.Flags().Bool("types", false, "Also verify worker-configuration.d.ts is current")
+		}),
 		r.typesCommand(),
 		r.workerLeaf("create", "Create the current worker", r.create, apiURLFlag("")),
 		r.workerLeaf("list", "List workers", r.list, apiURLFlag(envOrDefault("NANOFLARED_URL", defaultAPIURL))),
@@ -33,6 +36,7 @@ func (r *Runner) newRootCommand() *cobra.Command {
 		r.workerLeaf("deploy", "Deploy the current worker", r.deploy, func(c *cobra.Command) {
 			apiURLFlag("")(c)
 			c.Flags().String("compatibility-date", "", "Worker compatibility date (YYYY-MM-DD)")
+			c.Flags().Bool("provision", true, "Create missing KV namespaces, databases, and object-storage buckets")
 		}),
 		r.deploymentCommand(), r.authCommand(), r.secretCommand(), r.kvCommand(), r.dbCommand(), r.objectStorageCommand(),
 	)
@@ -196,8 +200,9 @@ func (r *Runner) dbCommand() *cobra.Command {
 	db := &cobra.Command{Use: "db", Short: "Manage SQLite databases"}
 	showHelpWhenEmpty(db)
 	api := apiURLFlag(envOrDefault("NANOFLARED_URL", defaultAPIURL))
-	execute := r.leaf("execute <database-id>", "Run one SQL statement", r.dbExecute, func(c *cobra.Command) {
+	execute := r.leaf("execute [database-id]", "Run one SQL statement", r.dbExecute, func(c *cobra.Command) {
 		api(c)
+		c.Flags().String("binding", "", "Database binding in nanoflare.json")
 		c.Flags().String("command", "", "SQL statement to run")
 		c.Flags().String("file", "", "Path to a file containing one SQL statement")
 		c.Flags().Bool("json", false, "Print the complete response as JSON")
@@ -207,7 +212,11 @@ func (r *Runner) dbCommand() *cobra.Command {
 	db.AddCommand(r.leaf("create <name>", "Create a database", r.dbCreate, api), r.leaf("list", "List databases", r.dbList, api), r.leaf("delete <database-id>", "Delete a database", r.dbDelete, api), execute)
 	migrations := &cobra.Command{Use: "migrations", Short: "Create and apply database migrations"}
 	showHelpWhenEmpty(migrations)
-	migrations.AddCommand(r.leaf("create <name>", "Create a timestamped migration file", r.dbMigrationsCreate, func(c *cobra.Command) { c.Flags().String("path", "migrations", "Migrations directory") }), r.leaf("apply <database-id>", "Apply migration files to a database", r.dbMigrationsApply, func(c *cobra.Command) { api(c); c.Flags().String("path", "migrations", "Migrations directory") }))
+	migrations.AddCommand(r.leaf("create <name>", "Create a timestamped migration file", r.dbMigrationsCreate, func(c *cobra.Command) { c.Flags().String("path", "migrations", "Migrations directory") }), r.leaf("apply [database-id]", "Apply migration files to a database", r.dbMigrationsApply, func(c *cobra.Command) {
+		api(c)
+		c.Flags().String("path", "migrations", "Migrations directory")
+		c.Flags().String("binding", "", "Database binding in nanoflare.json")
+	}))
 	db.AddCommand(migrations)
 	return db
 }

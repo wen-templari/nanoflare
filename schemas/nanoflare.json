@@ -70,7 +70,7 @@
     "bindingName": { "type": "string", "minLength": 1 },
     "kvBinding": {
       "type": "object",
-      "required": ["binding", "id"],
+      "required": ["binding"],
       "properties": {
         "binding": { "$ref": "#/$defs/bindingName" },
         "id": { "type": "string", "minLength": 1 },
@@ -80,7 +80,7 @@
     },
     "databaseBinding": {
       "type": "object",
-      "required": ["binding", "database_id"],
+      "required": ["binding"],
       "properties": {
         "binding": { "$ref": "#/$defs/bindingName" },
         "database_id": { "type": "string", "minLength": 1 }
@@ -89,7 +89,7 @@
     },
     "objectStorageBucketBinding": {
       "type": "object",
-      "required": ["binding", "bucket_id"],
+      "required": ["binding"],
       "properties": {
         "binding": { "$ref": "#/$defs/bindingName" },
         "bucket_id": { "type": "string", "minLength": 1 }
