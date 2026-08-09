@@ -178,7 +178,8 @@ jobs:
         working-directory: packages/vite-plugin
         run: npm pack --dry-run
 
-      - name: Verify npm OIDC access
+      - name: Verify trusted publishing access
+        working-directory: ${{ runner.temp }}
         run: |
           test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
           test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
@@ -186,8 +187,8 @@ jobs:
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org")"
           node -e 'const claims = JSON.parse(Buffer.from(process.argv[1].split(".")[1], "base64url")); console.log(JSON.stringify({ workflow: claims.workflow, workflow_ref: claims.workflow_ref, job_workflow_ref: claims.job_workflow_ref, event_name: claims.event_name, ref: claims.ref }))' "$oidc_token"
-          npx --yes npm@11.17.0 --version
+          pnpm --version
 
       - name: Publish to npm
         working-directory: packages/vite-plugin
-        run: npx --yes npm@11.17.0 publish --access public --provenance
+        run: pnpm publish --access public --provenance --no-git-checks
