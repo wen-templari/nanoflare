@@ -1,32 +1,35 @@
-name: Publish Core Release
+name: Publish Release
 
 on:
   push:
     tags:
       - "v*"
-      - "!vite-plugin-v*"
-  workflow_call:
+      - "vite-plugin-v*"
+  workflow_dispatch:
     inputs:
-      release_tag:
-        description: Existing core release tag to publish
+      tag:
+        description: Existing release tag to build and publish
         required: true
         type: string
 
-permissions:
-  contents: write
-  id-token: write
-
 jobs:
-  build:
+  core:
+    if: startsWith(inputs.tag || github.ref_name, 'v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    concurrency:
+      group: core-publish-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
     env:
-      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -41,6 +44,9 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      - name: Verify release tag
+        run: test "$RELEASE_TAG" = "v$(cat VERSION)"
+
       - name: Build release archives
         run: |
           set -eu
@@ -51,7 +57,7 @@ jobs:
             goos=$1
             goarch=$2
             commands=$3
-            archive="nanoflare-${RELEASE_TAG:-dev}-${goos}-${goarch}.tar.gz"
+            archive="nanoflare-${RELEASE_TAG}-${goos}-${goarch}.tar.gz"
             package_dir="dist/nanoflare-${goos}-${goarch}"
 
             rm -rf "$package_dir"
@@ -89,13 +95,7 @@ jobs:
           done
 
       - name: Create checksums
-        run: |
-          set -eu
-          if [ -d dist/npm-tarballs ]; then
-            shasum -a 256 dist/*.tar.gz dist/npm-tarballs/*.tgz > dist/checksums.txt
-          else
-            (cd dist && shasum -a 256 *.tar.gz > checksums.txt)
-          fi
+        run: shasum -a 256 dist/*.tar.gz dist/npm-tarballs/*.tgz > dist/checksums.txt
 
       - name: Test packed npm CLI
         run: |
@@ -122,7 +122,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: go-release-assets
+          name: core-release-assets-${{ env.RELEASE_TAG }}
           path: |
             dist/*.tar.gz
             dist/checksums.txt
@@ -132,3 +132,52 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/checksums.txt --clobber
+
+  vite-plugin:
+    if: startsWith(inputs.tag || github.ref_name, 'vite-plugin-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: vite-plugin-publish-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@v1
+        with:
+          version: 11.17.0
+          runtime: node@24
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+          install: false
+
+      - name: Install dependencies
+        run: |
+          pnpm config set --json allowBuilds '{"workerd":true}' --location project
+          pnpm install --frozen-lockfile
+
+      - name: Verify release tag
+        run: |
+          set -eu
+          version="$(node -p "require('./packages/vite-plugin/package.json').version")"
+          test "$RELEASE_TAG" = "vite-plugin-v$version"
+
+      - name: Test package
+        run: pnpm --filter @nanoflare/vite-plugin test
+
+      - name: Verify package contents
+        working-directory: packages/vite-plugin
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        working-directory: packages/vite-plugin
+        run: npm publish --access public --provenance
