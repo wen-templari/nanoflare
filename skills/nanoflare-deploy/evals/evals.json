@@ -1,0 +1,17 @@
+{
+  "skill_name": "nanoflare-deploy",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create a production Docker Compose deployment for Nanoflare at platform.acme.test. Our company ingress already terminates TLS and can reach a private Traefik service. Use GHCR release v1.4.2, managed PostgreSQL and S3-compatible object storage, and require OIDC console login. Give me the files and a launch checklist.",
+      "expected_output": "A private-network Compose deployment with all three Nanoflare images pinned to v1.4.2, required environment variables, UI, Traefik discovery, managed-service configuration, OIDC inputs, and no development credentials.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Scaffold a self-hosted Nanoflare stack for an on-prem environment. We need local Postgres and MinIO volumes, worker egress through http://proxy.corp:8080 with our mounted CA, logs in Loki, metrics in Prometheus, and backups for Worker databases. Public TLS is handled by our F5 before it reaches the Docker host.",
+      "expected_output": "A hardened Compose and environment scaffold with private services, durable volumes, optional observability, egress proxy/CA settings, Litestream settings, and verification/rollback instructions.",
+      "files": []
+    }
+  ]
+}

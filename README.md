@@ -289,12 +289,11 @@ never written to this file:
 deploying, `nanoflare deploy` checks that every declared secret is configured
 for the Worker and reports any names that are missing.
 
-Initialize, register, and deploy a worker:
+Initialize and deploy a worker:
 
 ```sh
 npm create nanoflare@latest hello-worker
 cd ./hello-worker
-nanoflare create
 nanoflare deploy
 ```
 
@@ -310,7 +309,6 @@ binary. The equivalent local workflow is:
 ```sh
 ./bin/nanoflare init ./hello-worker --template starter
 cd ./hello-worker
-../bin/nanoflare create
 ../bin/nanoflare deploy
 ```
 
@@ -318,10 +316,15 @@ cd ./hello-worker
 forwards all initializer arguments, including `--template`, `--overwrite`, and
 interactive controls. Use `nanoflare init --help` for the initializer's available
 options. It requires npm and network access.
-`nanoflare create` registers the worker by its configured name; Nanoflare assigns
-its hostname from the configured base hostname. `nanoflare deploy` resolves that
-name in the selected organization and uploads each file listed in `nanoflare.json`.
-After a successful deployment, it prints the worker's public URL.
+Use `nanoflare check` before deployment to validate the current project
+configuration and deployable Worker/assets without changing platform state.
+Add `--types` when `worker-configuration.d.ts` is committed and must be current.
+`nanoflare deploy` registers a missing worker by its configured name, resolves
+or provisions any ID-less resource bindings, and uploads each file listed in
+`nanoflare.json`. Nanoflare assigns a missing worker's hostname from the
+configured base hostname. Run `nanoflare create` only when registration must
+happen before the first deployment. After a successful deployment, the CLI
+prints the worker's public URL.
 Use `--api-url`, or set `NANOFLARED_URL`, when `nanoflared` is not listening on
 `http://127.0.0.1:8080`. CLI authentication is stored at
 the OS user-config directory by default (`~/Library/Application Support/nanoflare/auth.json`
@@ -487,8 +490,20 @@ and any configured object storage bindings such as `env.OBJECTS`. Existing proje
 compatible: one file uses service-worker syntax and multiple files use
 ES-module syntax.
 
-KV namespaces are explicit and follow Cloudflare's `kv_namespaces` pattern. Create
-namespaces first:
+KV namespaces follow Cloudflare's `kv_namespaces` pattern. Bindings with an
+explicit ID stay pinned. For a Wrangler-style managed binding, omit the ID and
+`nanoflare deploy` resolves or provisions a namespace named from the Worker and
+binding (for example, `hello-worker-sessions`) without rewriting the project
+file:
+
+```json
+{
+  "kv_namespaces": [{ "binding": "SESSIONS" }]
+}
+```
+
+Pass `--provision=false` to require all resource IDs to be explicit. Create
+namespaces first when sharing an existing resource:
 
 ```sh
 nanoflare kv namespace create sessions
@@ -518,7 +533,15 @@ export default {
 };
 ```
 
-SQLite databases use explicit `db` bindings. Create a database first:
+SQLite databases use `db` bindings and support the same automatic provisioning:
+
+```json
+{
+  "db": [{ "binding": "DB" }]
+}
+```
+
+Create a database first when sharing an existing resource:
 
 ```sh
 nanoflare db create app-data
@@ -556,6 +579,7 @@ nanoflare db execute db_123 --file query.sql
 nanoflare db execute db_123 --command "SELECT id, body FROM messages" --json
 nanoflare db migrations create add_messages
 nanoflare db migrations apply db_123
+nanoflare db migrations apply --binding DB
 ```
 
 `db execute` runs exactly one SQL statement. Query results are printed as a
@@ -612,8 +636,9 @@ export default {
 };
 ```
 
-Object storage buckets use explicit storage-oriented CLI commands. Create
-buckets first:
+Object storage buckets use storage-oriented CLI commands. A binding without a
+`bucket_id` is resolved or provisioned on deploy; create a bucket first when
+sharing an existing resource:
 
 ```sh
 nanoflare object-storage bucket create customer-files

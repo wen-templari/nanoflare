@@ -1,0 +1,23 @@
+{
+  "skill_name": "nanoflare-build",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create a TypeScript Hono API Worker named inventory-api. It needs a PRODUCT_CACHE KV namespace, an inventory SQLite database, an uploads object-storage bucket, an API_KEY secret, and a daily cron. Include nanoflare.json, scripts, generated-type workflow, migration commands, and the exact resource/deploy commands.",
+      "expected_output": "A consistent module Worker scaffold with explicit binding placeholders, a required secret declaration, cron, type generation/check, build/deploy scripts, and resource/migration commands.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Scaffold a Vite React SPA with a Nanoflare Worker for /api/*. The Worker should use static assets with SPA fallback, an app database, and a local persisted D1 setup for development. Explain what stays local and give the production deployment steps.",
+      "expected_output": "A Vite-oriented scaffold that keeps browser/HMR work in Vite, uses a Worker API and assets configuration, distinguishes local D1 emulation from the deployed database, and supplies a build then deploy workflow.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Build two Nanoflare Workers: identity-worker provides typed RPC methods privately, and api-worker exposes public HTTP routes through a service binding called IDENTITY. Include both configs, typegen commands, and correct deployment order.",
+      "expected_output": "Two module Worker scaffolds with a same-organization service binding, repeated-config type generation, and target-before-caller deployment steps.",
+      "files": []
+    }
+  ]
+}
