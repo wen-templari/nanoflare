@@ -42,6 +42,29 @@ func TestDecodeJSONAllowsBodiesLargerThanOneMiB(t *testing.T) {
 	}
 }
 
+func TestDeployAllowsOnePointFiveMiBWorkerBundle(t *testing.T) {
+	dir := t.TempDir()
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := newTestServer(service)
+	app := createApp(t, server, "Large bundle", "large.example.com")
+	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: strings.Repeat("x", 3<<19)}}, "")
+	detail, err := service.WorkerDetail(app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Deployment == nil {
+		t.Fatal("deployment was not stored")
+	}
+	if got, want := detail.Deployment.BundleSize, int64(3<<19); got != want {
+		t.Fatalf("bundle size = %d, want %d", got, want)
+	}
+}
+
 func newTestServerWithAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator) *testServer {
 	return &testServer{NewServerWithAuth(service, traefik, token, auth)}
 }
