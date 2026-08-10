@@ -28,6 +28,20 @@ func newTestServer(service *nanoflare.Service) *testServer {
 	return &testServer{NewServer(service)}
 }
 
+func TestDecodeJSONAllowsBodiesLargerThanOneMiB(t *testing.T) {
+	body := `{"content":"` + strings.Repeat("x", 1<<20+1) + `"}`
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	var decoded struct {
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(request, &decoded); err != nil {
+		t.Fatalf("decodeJSON() error = %v", err)
+	}
+	if got, want := len(decoded.Content), 1<<20+1; got != want {
+		t.Fatalf("decoded content length = %d, want %d", got, want)
+	}
+}
+
 func newTestServerWithAuth(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator) *testServer {
 	return &testServer{NewServerWithAuth(service, traefik, token, auth)}
 }

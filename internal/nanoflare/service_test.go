@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+func TestDeploymentFilesAllowsBundlesLargerThanOneMiB(t *testing.T) {
+	files, entrypoint, err := deploymentFiles([]WorkerFile{{Path: "worker.js", Content: strings.Repeat("x", 1<<20+1)}}, "worker.js")
+	if err != nil {
+		t.Fatalf("deploymentFiles() error = %v", err)
+	}
+	if len(files) != 1 || files[0].Size != 1<<20+1 {
+		t.Fatalf("files = %#v", files)
+	}
+	if entrypoint != "worker.js" {
+		t.Fatalf("entrypoint = %q, want worker.js", entrypoint)
+	}
+}
+
 func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.T) {
 	store := newObjectBackedRepo()
 	objects := newMemoryObjectStore()

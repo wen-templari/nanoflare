@@ -12,6 +12,8 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
+const maxJSONBodySize = 10 << 20
+
 func writeRuntimeError(w http.ResponseWriter, err error) {
 	if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
 		writeError(w, http.StatusPaymentRequired, err)
@@ -82,7 +84,7 @@ func writeWorkerError(w http.ResponseWriter, err error) {
 
 func decodeJSON(r *http.Request, target any) error {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxJSONBodySize))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(target)
 }

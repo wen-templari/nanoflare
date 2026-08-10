@@ -1260,8 +1260,9 @@ func workerFormat(format string, fileCount int) (string, error) {
 	}
 }
 
+const maxWorkerBundleSize = 10 << 20
+
 func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, string, error) {
-	const maxBundleSize = 1 << 20
 	if len(files) == 0 {
 		return nil, "", errors.New("files are required")
 	}
@@ -1280,8 +1281,8 @@ func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, strin
 		file.Name = path.Base(file.Path)
 		file.Size = int64(len(file.Content))
 		totalSize += len(file.Content)
-		if totalSize > maxBundleSize {
-			return nil, "", fmt.Errorf("worker files exceed %d byte limit", maxBundleSize)
+		if totalSize > maxWorkerBundleSize {
+			return nil, "", fmt.Errorf("worker files exceed %d byte limit", maxWorkerBundleSize)
 		}
 		result = append(result, file)
 	}
