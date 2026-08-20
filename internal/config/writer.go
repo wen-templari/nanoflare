@@ -172,12 +172,20 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(workerBindings(item, active), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
-		if len(item.Deployment.CompatibilityFlags) > 0 {
-			fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(item.Deployment.CompatibilityFlags))
-		}
+		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(outputIdentityCompatibilityFlags(item.Deployment.CompatibilityFlags)))
 		out.WriteString(");\n")
 	}
 	return out.String()
+}
+
+func outputIdentityCompatibilityFlags(flags []string) []string {
+	result := append([]string(nil), flags...)
+	for _, flag := range result {
+		if flag == "nodejs_als" || flag == "nodejs_compat" {
+			return result
+		}
+	}
+	return append(result, "nodejs_als")
 }
 
 func normalizedNetworkAllow(allow []string) []string {
@@ -268,7 +276,7 @@ func activeServiceByName(active []nanoflare.ActiveDeployment, orgID, name string
 func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment) {
 	deployment := item.Deployment
 	if deploymentFormat(deployment) == "service-worker" {
-		fmt.Fprintf(out, "  serviceWorkerScript = %s,\n", quote(serviceWorkerWrapper(workerdSafeSource(deployment.Files[0].Content), deployment.Databases, deployment.ObjectStorageBuckets)))
+		fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(deployment.Files[0].Content), deployment.Databases, deployment.ObjectStorageBuckets)))
 		return
 	}
 	out.WriteString("  modules = [\n")
@@ -299,7 +307,8 @@ func workerEntrypointModule(deployment nanoflare.Deployment) bool {
 }
 
 func workerEntrypointInstrumentationWrapper(entrypoint string) string {
-	return fmt.Sprintf(`import userWorker from %s;
+	return fmt.Sprintf(`import { AsyncLocalStorage } from "node:async_hooks";
+import userWorker from %s;
 
 function outputIdentityMarker(env) {
   const appID = encodeURIComponent(env?.__NANOFLARE_APP_ID || "");
@@ -307,34 +316,20 @@ function outputIdentityMarker(env) {
   return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
 }
 
-function withOutputIdentity(env, callback) {
-  const marker = outputIdentityMarker(env);
-  const originals = {};
-  const wrappers = {};
-  const restore = () => {
-    for (const level of Object.keys(originals)) {
-      if (console[level] === wrappers[level]) console[level] = originals[level];
+const outputIdentity = new AsyncLocalStorage();
+for (const level of ["debug", "error", "info", "log", "warn"]) {
+  const original = console[level];
+  console[level] = (...args) => {
+    const marker = outputIdentity.getStore();
+    if (!marker || (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output "))) {
+      return original.apply(console, args);
     }
+    return original.call(console, marker, ...args);
   };
-  for (const level of ["debug", "error", "info", "log", "warn"]) {
-    originals[level] = console[level];
-    wrappers[level] = (...args) => {
-      if (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output ")) {
-        return originals[level].apply(console, args);
-      }
-      return originals[level].call(console, marker, ...args);
-    };
-    console[level] = wrappers[level];
-  }
-  try {
-    const result = callback();
-    if (result && typeof result.finally === "function") return result.finally(restore);
-    restore();
-    return result;
-  } catch (error) {
-    restore();
-    throw error;
-  }
+}
+
+function withOutputIdentity(env, callback) {
+  return outputIdentity.run(outputIdentityMarker(env), callback);
 }
 
 function recordRuntimeDuration(env, ctx, startedAt, outcome) {
@@ -400,7 +395,8 @@ func workerdSafeSource(source string) string {
 }
 
 func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return fmt.Sprintf(`import userWorker from %s;
+	return fmt.Sprintf(`import { AsyncLocalStorage } from "node:async_hooks";
+import userWorker from %s;
 
 const assetBindingName = %s;
 const dbBindingNames = %s;
@@ -412,36 +408,20 @@ function outputIdentityMarker(env) {
   return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
 }
 
-function withOutputIdentity(env, callback) {
-  const marker = outputIdentityMarker(env);
-  const originals = {};
-  const wrappers = {};
-  const restore = () => {
-    for (const level of Object.keys(originals)) {
-      if (console[level] === wrappers[level]) console[level] = originals[level];
+const outputIdentity = new AsyncLocalStorage();
+for (const level of ["debug", "error", "info", "log", "warn"]) {
+  const original = console[level];
+  console[level] = (...args) => {
+    const marker = outputIdentity.getStore();
+    if (!marker || (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output "))) {
+      return original.apply(console, args);
     }
+    return original.call(console, marker, ...args);
   };
-  for (const level of ["debug", "error", "info", "log", "warn"]) {
-    originals[level] = console[level];
-    wrappers[level] = (...args) => {
-      if (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output ")) {
-        return originals[level].apply(console, args);
-      }
-      return originals[level].call(console, marker, ...args);
-    };
-    console[level] = wrappers[level];
-  }
-  try {
-    const result = callback();
-    if (result && typeof result.finally === "function") {
-      return result.finally(restore);
-    }
-    restore();
-    return result;
-  } catch (error) {
-    restore();
-    throw error;
-  }
+}
+
+function withOutputIdentity(env, callback) {
+  return outputIdentity.run(outputIdentityMarker(env), callback);
 }
 
 function recordRuntimeDuration(env, ctx, startedAt, outcome) {
@@ -786,7 +766,9 @@ export default {
 }
 
 func serviceWorkerWrapper(script string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return `function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
+	return `import { AsyncLocalStorage } from "node:async_hooks";
+
+function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
   const durationMs = Math.max(1, Date.now() - startedAt);
   const payload = [{
     scriptName: globalThis.__NANOFLARE_APP_ID,
@@ -811,36 +793,20 @@ function __nanoflareOutputIdentityMarker() {
   return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
 }
 
-function __nanoflareWithOutputIdentity(callback) {
-  const marker = __nanoflareOutputIdentityMarker();
-  const originals = {};
-  const wrappers = {};
-  const restore = () => {
-    for (const level of Object.keys(originals)) {
-      if (console[level] === wrappers[level]) console[level] = originals[level];
+const __nanoflareOutputIdentity = new AsyncLocalStorage();
+for (const level of ["debug", "error", "info", "log", "warn"]) {
+  const original = console[level];
+  console[level] = (...args) => {
+    const marker = __nanoflareOutputIdentity.getStore();
+    if (!marker || (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output "))) {
+      return original.apply(console, args);
     }
+    return original.call(console, marker, ...args);
   };
-  for (const level of ["debug", "error", "info", "log", "warn"]) {
-    originals[level] = console[level];
-    wrappers[level] = (...args) => {
-      if (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output ")) {
-        return originals[level].apply(console, args);
-      }
-      return originals[level].call(console, marker, ...args);
-    };
-    console[level] = wrappers[level];
-  }
-  try {
-    const result = callback();
-    if (result && typeof result.finally === "function") {
-      return result.finally(restore);
-    }
-    restore();
-    return result;
-  } catch (error) {
-    restore();
-    throw error;
-  }
+}
+
+function __nanoflareWithOutputIdentity(callback) {
+  return __nanoflareOutputIdentity.run(__nanoflareOutputIdentityMarker(), callback);
 }
 
 function __nanoflareScheduledEvent(request) {
