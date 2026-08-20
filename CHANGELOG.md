@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.1](https://github.com/wen-templari/nanoflare/compare/v0.4.0...v0.4.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* prevent repeated worker output identity markers ([5e234d3](https://github.com/wen-templari/nanoflare/commit/5e234d3323c32f08a6a99aac26e246c20b456370))
+* prevent repeated worker output identity markers ([bcc9dd0](https://github.com/wen-templari/nanoflare/commit/bcc9dd0c6d2f66cd64d13fc4b87d8785773fd05b))
+* raise worker deployment size limit ([3d76f0d](https://github.com/wen-templari/nanoflare/commit/3d76f0dcb79149ae9bafa0a695f3791cc977f1b4))
+* scope worker log identity to async context ([cbe1af7](https://github.com/wen-templari/nanoflare/commit/cbe1af7060da77a853908c6d3140a2a7a7e9e965))
+* scope worker log identity to async context ([4ced291](https://github.com/wen-templari/nanoflare/commit/4ced291db24180d353fa6b6693cf51ccfd9edcc5))
+
 ## [0.4.0](https://github.com/wen-templari/nanoflare/compare/v0.3.1...v0.4.0) (2026-08-09)
 
 
