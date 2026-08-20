@@ -411,14 +411,29 @@ func TestWorkerdOutputIdentityWrappersAreSafeForOverlappingRequests(t *testing.T
 				Deployment: deployment,
 			}})
 			for _, expected := range []string{
-				`if (console[level] === wrappers[level]) console[level] = originals[level]`,
+				`import { AsyncLocalStorage } from \"node:async_hooks\"`,
+				`new AsyncLocalStorage()`,
+				`.getStore()`,
+				`.run(`,
 				`args[0].startsWith(\"[[nanoflare-output \")`,
-				`return originals[level].apply(console, args)`,
+				`compatibilityFlags = ["nodejs_als"]`,
 			} {
 				if !strings.Contains(generated, expected) {
 					t.Fatalf("output identity wrapper is missing %q:\n%s", expected, generated)
 				}
 			}
+			for _, obsolete := range []string{`const originals = {}`, `console[level] = originals[level]`, `.finally(restore)`} {
+				if strings.Contains(generated, obsolete) {
+					t.Fatalf("output identity still uses time-scoped global console mutation %q:\n%s", obsolete, generated)
+				}
+			}
 		})
+	}
+}
+
+func TestOutputIdentityCompatibilityFlagsPreserveNodeCompatibility(t *testing.T) {
+	flags := outputIdentityCompatibilityFlags([]string{"nodejs_compat", "custom"})
+	if got := strings.Join(flags, ","); got != "nodejs_compat,custom" {
+		t.Fatalf("nodejs_compat should provide AsyncLocalStorage without adding a redundant flag: %s", got)
 	}
 }

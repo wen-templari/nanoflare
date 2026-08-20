@@ -27,11 +27,12 @@ transforms:
       if !exists(.level) { .level = "info" }
       if exists(.app_id) { .worker_id = .app_id }
       if exists(.deployment_id) { .deployment_id = .deployment_id }
-      parsed, err = parse_regex(.message, r'\[\[nanoflare-output app=(?P<worker_id>[^ ]+) deployment=(?P<deployment_id>[^\]]+)\]\]\s*(?P<message>.*)')
-      if err == null {
+      parsed, err = parse_regex(.message, r'^\[\[nanoflare-output app=(?P<worker_id>[^ ]*) deployment=(?P<deployment_id>[^\]]*)\]\]\s*(?P<message>.*)')
+      while err == null {
         .worker_id = parsed.worker_id
         .deployment_id = parsed.deployment_id
         .message = parsed.message
+        parsed, err = parse_regex(.message, r'^\[\[nanoflare-output app=(?P<worker_id>[^ ]*) deployment=(?P<deployment_id>[^\]]*)\]\]\s*(?P<message>.*)')
       }
       if !exists(.worker_id) { .worker_id = "" }
       if !exists(.deployment_id) { .deployment_id = "" }
