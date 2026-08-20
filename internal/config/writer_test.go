@@ -378,3 +378,47 @@ func TestTraefikGeneratesControlPlaneAuthRouter(t *testing.T) {
 		t.Fatalf("callback router unexpectedly contains prefix middleware:\n%s", config)
 	}
 }
+
+func TestWorkerdOutputIdentityWrappersAreSafeForOverlappingRequests(t *testing.T) {
+	deployments := []nanoflare.Deployment{
+		{
+			ID:                "modules",
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("ok"); } };`}},
+		},
+		{
+			ID:                "rpc",
+			Entrypoint:        "worker.js",
+			Format:            "modules",
+			CompatibilityDate: "2025-12-10",
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default class Worker { fetch() { return new Response("ok"); } }`}},
+		},
+		{
+			ID:                "service-worker",
+			Entrypoint:        "worker.js",
+			Format:            "service-worker",
+			CompatibilityDate: "2025-12-10",
+			Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `addEventListener("fetch", event => event.respondWith(new Response("ok")));`}},
+		},
+	}
+
+	for _, deployment := range deployments {
+		t.Run(deployment.ID, func(t *testing.T) {
+			generated := Workerd([]nanoflare.ActiveDeployment{{
+				App:        nanoflare.App{ID: "app"},
+				Deployment: deployment,
+			}})
+			for _, expected := range []string{
+				`if (console[level] === wrappers[level]) console[level] = originals[level]`,
+				`args[0].startsWith(\"[[nanoflare-output \")`,
+				`return originals[level].apply(console, args)`,
+			} {
+				if !strings.Contains(generated, expected) {
+					t.Fatalf("output identity wrapper is missing %q:\n%s", expected, generated)
+				}
+			}
+		})
+	}
+}

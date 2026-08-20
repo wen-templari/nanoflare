@@ -310,12 +310,21 @@ function outputIdentityMarker(env) {
 function withOutputIdentity(env, callback) {
   const marker = outputIdentityMarker(env);
   const originals = {};
+  const wrappers = {};
   const restore = () => {
-    for (const level of Object.keys(originals)) console[level] = originals[level];
+    for (const level of Object.keys(originals)) {
+      if (console[level] === wrappers[level]) console[level] = originals[level];
+    }
   };
   for (const level of ["debug", "error", "info", "log", "warn"]) {
     originals[level] = console[level];
-    console[level] = (...args) => originals[level].call(console, marker, ...args);
+    wrappers[level] = (...args) => {
+      if (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output ")) {
+        return originals[level].apply(console, args);
+      }
+      return originals[level].call(console, marker, ...args);
+    };
+    console[level] = wrappers[level];
   }
   try {
     const result = callback();
@@ -406,14 +415,21 @@ function outputIdentityMarker(env) {
 function withOutputIdentity(env, callback) {
   const marker = outputIdentityMarker(env);
   const originals = {};
+  const wrappers = {};
   const restore = () => {
     for (const level of Object.keys(originals)) {
-      console[level] = originals[level];
+      if (console[level] === wrappers[level]) console[level] = originals[level];
     }
   };
   for (const level of ["debug", "error", "info", "log", "warn"]) {
     originals[level] = console[level];
-    console[level] = (...args) => originals[level].call(console, marker, ...args);
+    wrappers[level] = (...args) => {
+      if (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output ")) {
+        return originals[level].apply(console, args);
+      }
+      return originals[level].call(console, marker, ...args);
+    };
+    console[level] = wrappers[level];
   }
   try {
     const result = callback();
@@ -798,14 +814,21 @@ function __nanoflareOutputIdentityMarker() {
 function __nanoflareWithOutputIdentity(callback) {
   const marker = __nanoflareOutputIdentityMarker();
   const originals = {};
+  const wrappers = {};
   const restore = () => {
     for (const level of Object.keys(originals)) {
-      console[level] = originals[level];
+      if (console[level] === wrappers[level]) console[level] = originals[level];
     }
   };
   for (const level of ["debug", "error", "info", "log", "warn"]) {
     originals[level] = console[level];
-    console[level] = (...args) => originals[level].call(console, marker, ...args);
+    wrappers[level] = (...args) => {
+      if (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output ")) {
+        return originals[level].apply(console, args);
+      }
+      return originals[level].call(console, marker, ...args);
+    };
+    console[level] = wrappers[level];
   }
   try {
     const result = callback();
