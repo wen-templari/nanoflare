@@ -1,10 +1,79 @@
 # k6 Stress Test Results
 
-Date: 2026-07-22
+Last updated: 2026-08-23
 
 ## Summary
 
-The k6 stress tests were run against the local `nanoflared` control plane and internal worker gateway on `127.0.0.1:8080`. Proxy environment variables were explicitly cleared for the test commands so localhost traffic did not route through the shell proxy:
+The plain Worker path improved substantially after the August 23 deployment-resolution, cold-start, and duration-telemetry optimizations. A true two-minute hold at 50 concurrent VUs completed 315,377 requests at 2,627.9 requests per second with no failures. Average latency was 19.0 ms, p95 was 27.2 ms, and p99 was 35.1 ms. Fixed holds at 100, 150, and 250 VUs also passed with no failures.
+
+A subsequent 250-VU, 10-minute soak completed 1,518,246 requests at 2,530.2 requests per second with no failures or interrupted iterations. Its 194.1 ms p95 and 257.5 ms p99 remained comfortably below threshold, with no time-dependent throughput decay.
+
+For an apples-to-apples comparison with the earlier test profile, which ramped from zero to 50 VUs over two minutes, the optimized Worker completed 239,635 requests at 1,996.3 requests per second. The July run completed 16,809 requests at 139.8 requests per second. That is a 14.3x throughput increase, while p95 latency fell from 290.0 ms to 20.7 ms, a 92.9% reduction.
+
+The k6 `sustained` profile previously used one ramping stage, despite its name. It now uses constant VUs for the full requested duration. Future sustained results should therefore be compared with the new 50-VU hold, not the older ramp results.
+
+KV and object-storage results below remain the latest recorded storage runs. Database scenarios are implemented but still need result artifacts. The earlier multi-worker connection-exhaustion boundary also needs to be retested against the optimized build.
+
+## August 23 Optimized Worker Retest
+
+### Environment
+
+- Git revision: `27a41ed` (`improve cold start performance`), including the preceding gateway lookup and telemetry optimization in `f5481a1`.
+- Service under test: host-run optimized `nanoflared` on `127.0.0.1:8080`.
+- Load generator: k6 v2.1.0 on Darwin/arm64.
+- Route: internal Worker gateway, `/internal/http/workers/{workerID}/plain`.
+- Worker: `6e3998ebd8bef447d16db9f0d73308aa87e15b47bb9dad15` (`load-test-worker`).
+- Scenario: `plain`, no think time.
+- Thresholds: failures below 1%, p95 below 500 ms, and p99 below 1 second.
+- Local proxy variables were cleared and localhost was placed in `NO_PROXY`.
+
+The fixed-concurrency result can be reproduced with:
+
+```sh
+ROUTE_VIA=internal \
+BASE_URL=http://127.0.0.1:8080 \
+WORKER_ID=6e3998ebd8bef447d16db9f0d73308aa87e15b47bb9dad15 \
+SCENARIO=plain PROFILE=sustained VUS=50 DURATION=2m THINK_TIME=0 \
+k6 run --summary-export var/k6-results/plain_50vus_optimized_hold_20260823.json \
+  scripts/k6/worker-load.js
+```
+
+### Results
+
+| Run                              |       Load shape |  Requests |     RPS | Failed |      Avg |      p95 |          p99 |      Max | Result |
+| -------------------------------- | ---------------: | --------: | ------: | -----: | -------: | -------: | -----------: | -------: | ------ |
+| Optimized fixed-concurrency hold |    50 VUs for 2m |   315,377 | 2,627.9 |  0.00% |  19.0 ms |  27.2 ms |      35.1 ms | 125.6 ms | Pass   |
+| Optimized fixed-concurrency hold |   100 VUs for 2m |   305,423 | 2,544.5 |  0.00% |  39.2 ms |  68.5 ms |      88.4 ms | 212.3 ms | Pass   |
+| Optimized fixed-concurrency hold |   150 VUs for 2m |   315,471 | 2,628.1 |  0.00% |  57.0 ms | 104.7 ms |     135.6 ms | 258.5 ms | Pass   |
+| Optimized fixed-concurrency hold |   250 VUs for 2m |   296,512 | 2,470.2 |  0.00% | 101.1 ms | 196.7 ms |     257.7 ms | 616.4 ms | Pass   |
+| Optimized saturation soak        |  250 VUs for 10m | 1,518,246 | 2,530.2 |  0.00% |  98.7 ms | 194.1 ms |     257.5 ms | 679.0 ms | Pass   |
+| Optimized legacy-compatible ramp | 0→50 VUs over 2m |   239,635 | 1,996.3 |  0.00% |  12.5 ms |  20.7 ms |      26.9 ms |  54.9 ms | Pass   |
+| July baseline ramp               | 0→50 VUs over 2m |    16,809 |   139.8 |  0.00% | 168.4 ms | 290.0 ms | Not retained | 422.3 ms | Pass   |
+
+Artifacts:
+
+- `var/k6-results/plain_50vus_optimized_hold_20260823.json`
+- `var/k6-results/plain_50vus_optimized_hold_20260823.log`
+- `var/k6-results/plain_50vus_optimized_20260823.json`
+- `var/k6-results/plain_50vus_optimized_20260823.log`
+- `var/k6-results/plain_100vus_optimized_hold_20260823.json`
+- `var/k6-results/plain_150vus_optimized_hold_20260823.json`
+- `var/k6-results/plain_250vus_optimized_hold_20260823.json`
+- `var/k6-results/plain_250vus_optimized_soak_10m_20260823.json`
+
+### Interpretation
+
+The optimization moved the plain Worker path well beyond the old local 50-VU boundary. The 50-VU fixed hold processed about 52.6 requests per second per active VU while remaining far inside every latency and failure threshold. There was no visible degradation during any two-minute hold or during the 10-minute saturation soak.
+
+Throughput plateaus around 2,500–2,630 requests per second from 50 through 250 VUs. Increasing concurrency beyond 50 therefore adds queueing latency rather than capacity: p95 rises from 27.2 ms at 50 VUs to 194.1 ms during the 250-VU soak while throughput changes by less than 4%. For this machine and request path, 50–150 VUs is the efficient operating range; 250 VUs is a validated stable saturation load.
+
+The post-test cumulative server metrics showed zero Worker gateway errors and approximately 99.9% upstream connection reuse. The repository pool had all 25 connections open and a substantial cumulative wait count. Because these counters were not captured immediately before each run, they do not prove the pool is the limiting resource, but deployment-resolution database waits are the leading saturation hypothesis and should be measured as per-run deltas.
+
+The hold is the new regression baseline for a warm single Worker through the internal gateway. It does not include Traefik, KV, database, object storage, cold-start latency, or multiple Workers. Those paths should be measured separately rather than extrapolated from this result.
+
+## Historical July 22 Runs
+
+The earlier k6 stress tests were run against the local `nanoflared` control plane and internal worker gateway on `127.0.0.1:8080`. Proxy environment variables were explicitly cleared for the test commands so localhost traffic did not route through the shell proxy:
 
 ```sh
 env -u http_proxy -u https_proxy -u all_proxy \
@@ -16,7 +85,7 @@ The single-worker tests now show stable behavior for plain Worker fetches, KV re
 
 The multi-worker tests found a clear short-run boundary: 20 VUs passed cleanly, 30 VUs stayed under the 1% failure threshold, and 40 VUs collapsed. Longer multi-worker runs degraded over time and eventually produced `dial tcp 127.0.0.1:8080: connect: can't assign requested address`, indicating local connection/address exhaustion in the internal gateway/runtime-manager path or its client/server connection lifecycle.
 
-## Environment
+### Environment
 
 - Service under test: `nanoflared` on `127.0.0.1:8080`
 - Current run mode observed during later tests: `go run ./cmd/nanoflared -addr :8080 -config-dir ./var/generated -litestream-enabled`
@@ -26,7 +95,7 @@ The multi-worker tests found a clear short-run boundary: 20 VUs passed cleanly, 
 - Primary worker: `6e3998ebd8bef447d16db9f0d73308aa87e15b47bb9dad15`
 - Multi-worker set: 5 deployed workers from `var/k6-results/multi-worker-ids.txt`
 
-## Results
+### Results
 
 | Scenario                                                       |   Load | Duration | Requests |   RPS | Failed |      Avg |      p95 |       Max | Result               |
 | -------------------------------------------------------------- | -----: | -------: | -------: | ----: | -----: | -------: | -------: | --------: | -------------------- |
@@ -48,37 +117,37 @@ The multi-worker tests found a clear short-run boundary: 20 VUs passed cleanly, 
 | Multi-worker port-guarded soak                                 | 20 VUs |       5m |   21,014 |  69.9 |  3.28% | 132.1 ms | 257.8 ms |  533.7 ms | Fail                 |
 | Multi-worker debug after soak                                  |  5 VUs |      20s |      951 |  47.4 | 81.91% |  40.0 ms | 103.6 ms |  238.5 ms | Fail                 |
 
-## Findings
+### Historical Findings
 
-### 1. Plain Worker Fetch Is Stable At 50 VUs
+#### 1. Plain Worker Fetch Was Stable At 50 VUs
 
 The plain Worker scenario completed 16,809 requests with 0 failures at about 140 requests per second. This gives a clean baseline for gateway plus `workerd` overhead without stateful storage.
 
 The p95 latency was 290 ms. This is acceptable for a local stress baseline but leaves limited headroom before the configured 500 ms p95 threshold.
 
-### 2. KV Reads, Latest KV Writes, And Latest Mixed Plain/KV Traffic Are Stable At 25 VUs
+#### 2. KV Reads, Latest KV Writes, And Latest Mixed Plain/KV Traffic Were Stable At 25 VUs
 
 KV reads completed with 0 failures in both the initial run and the later rerun at 25 VUs. The first KV write run at the same concurrency failed 5.01% of requests, but the latest rerun on Wednesday, July 22, 2026 passed with 0 failures, 8,649 requests, 71.9 requests per second, and p95 latency of 236.4 ms. The mixed plain/KV scenario also changed materially: the first run failed at 4.19%, while the rerun passed with 0 failures.
 
 This points to the earlier KV write and mixed-traffic failures being sensitive to process state or the older write path, not an unavoidable 25-VU concurrency limit. After restarting `nanoflared` onto the newer KV write implementation, the live metrics also showed 0 worker-gateway errors, very high connection reuse, and 0 Postgres connection-pool waits during the reruns.
 
-### 3. Static Assets Are Fastest Of The Main User-Traffic Paths
+#### 3. Static Assets Were Fastest Of The Main User-Traffic Paths
 
 Static assets ran at 98.2 requests per second with p95 latency of 149 ms and a 0.75% failure rate, which stayed below the 1% threshold. Asset serving is not the first bottleneck in this local test setup.
 
-### 4. Object Storage Through Worker Binding Is Stable At 25 VUs
+#### 4. Object Storage Through Worker Binding Was Stable At 25 VUs
 
 The object storage test through the Worker binding completed with 0 failures at 25 VUs. Average latency was 173.3 ms and p95 was 242.1 ms.
 
 An earlier object test through console object routes failed because the control API requires authentication and org headers. The Worker-binding path is the better user-traffic test for R2-style object behavior.
 
-### 5. Control Plane Is Stable With Correct Auth Headers
+#### 5. Control Plane Was Stable With Correct Auth Headers
 
 The read-only control API scenario initially failed because the bearer token alone was not enough; the API also requires `X-Nanoflare-Org-ID`. After adding the `ORG_ID` header support to the k6 script, the control API read test passed at 25 VUs with 0 failures.
 
 The low-rate control write/deploy test also passed with 0 failures. That test was intentionally run at lower load to avoid creating thousands of namespaces/deployments in the local database.
 
-### 6. Multi-Worker Traffic Has A Sharp Boundary
+#### 6. Multi-Worker Traffic Had A Sharp Boundary
 
 The multi-worker scenario was clean at 20 VUs and still under threshold at 30 VUs. At 40 VUs it collapsed to a 65.44% failure rate.
 
@@ -90,7 +159,7 @@ dial tcp 127.0.0.1:8080: connect: can't assign requested address
 
 This points to local address/socket exhaustion rather than ordinary HTTP-level failures from the application.
 
-### 7. Longer Multi-Worker Runs Degrade Over Time
+#### 7. Longer Multi-Worker Runs Degraded Over Time
 
 A 20-VU, 5-minute multi-worker run failed with a 3.28% request failure rate. After that run, even a short 5-VU debug run failed heavily with the same `can't assign requested address` error.
 
@@ -98,24 +167,21 @@ The corrected port-specific guard showed that `127.0.0.1:8080` did not accumulat
 
 ## Recommended Next Steps
 
-1. Push the KV write boundary higher.
-   KV writes no longer fail at 25 VUs in the latest rerun, so the next useful step is to run `kv_write` at 30 VUs and 40 VUs and identify the new failure point, if any.
+1. Re-run every stateful path with the corrected constant-VU profile.
+   Run `kv_read`, `kv_write`, `objects`, `db_read`, `db_write`, `db_mixed`, and `db_multi` against the optimized build. Database scenarios currently have no recorded result artifacts.
 
-2. Investigate connection reuse in the internal gateway path.
-   The repeated `can't assign requested address` errors suggest k6 or the gateway path is burning through local ephemeral ports. Confirm whether connections are being reused and whether response bodies are always closed in the Go proxy/client path.
+2. Investigate the 2.5k–2.6k RPS plateau before adding more VUs.
+   Capture repository-pool wait deltas, database query time, CPU, and runtime latency during a repeat 50/150/250 curve. The current cumulative metrics suggest the 25-connection repository pool or deployment-resolution queries may be the next bottleneck.
 
-3. Add k6 options for connection behavior.
-   Run comparison tests with explicit connection reuse settings, for example default reuse versus `--no-connection-reuse`, to separate k6 client behavior from server-side connection lifecycle.
+3. Re-run multi-worker traffic before carrying forward the July diagnosis.
+   The deployment-resolution optimization directly changes the gateway path exercised by that scenario. Repeat fixed 20, 30, 40, and 50 VU runs, then run a soak below the newly observed boundary.
 
-4. Keep server-side metrics on for comparison runs.
-   Record open file descriptors, Go goroutines, active `net/http` connections, Postgres connection pool stats, and workerd process counts over time. In the latest 25-VU KV write rerun, the Postgres pool reached 23 open idle connections with 0 wait events, which is a useful new baseline.
+4. Confirm the production ingress path separately.
+   The August 23 retest intentionally isolates the internal Worker gateway. Run the same fixed hold through Traefik to quantify ingress overhead and validate router-level telemetry.
 
-5. Keep long soaks below the observed cliff.
-   Based on these runs, 20 VUs for multi-worker traffic is not safe for long local soaks yet. Use shorter runs or lower VUs until the connection exhaustion issue is understood.
-
-6. Re-run the matrix after fixes.
-   The useful regression matrix is: `plain`, `kv_read`, `kv_write`, `assets`, `objects_worker_binding`, `mixed_app_worker_binding`, `control_api_with_org`, and `multi_worker` at 20/30/40 VUs.
+5. Capture system telemetry with each boundary run.
+   Record CPU, memory, open file descriptors, Go goroutines, socket state, Postgres pool stats, and workerd process count. k6 latency alone cannot identify the next limiting resource.
 
 ## Bottom Line
 
-Single-worker app traffic is currently healthy, including the latest `kv_read`, `kv_write`, and mixed plain/KV reruns at 25 VUs. Control-plane traffic is healthy when auth and org headers are included. Multi-worker traffic still exposes the most serious issue: a sharp failure cliff and longer-run connection/address exhaustion on the local machine. The next engineering focus should shift from "KV writes are broken at 25 VUs" to "find the new single-worker KV/mixed limit and continue investigating connection lifecycle behavior in the multi-worker internal gateway/runtime path."
+The optimized warm single-Worker gateway is healthy through a fixed 250 VUs and a 10-minute saturation soak. The soak sustained 2,530.2 requests per second across 1.52 million requests with no failures and 194.1 ms p95 latency. The directly comparable ramp result is 14.3x faster than the July baseline. Practical throughput plateaus near 2.6k RPS, so the next useful work is bottleneck attribution rather than blindly increasing concurrency. Stateful storage, production ingress, multi-worker traffic, and cold starts still need fresh runs on the optimized build.

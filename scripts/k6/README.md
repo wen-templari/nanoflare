@@ -87,6 +87,10 @@ Sustained load:
 PROFILE=sustained VUS=100 DURATION=10m k6 run scripts/k6/worker-load.js
 ```
 
+The sustained profile starts all configured VUs immediately and holds them for
+the full duration. Step and spike profiles continue to ramp through their
+configured stages. Result summaries retain average, p90, p95, and p99 latency.
+
 Spike:
 
 ```sh

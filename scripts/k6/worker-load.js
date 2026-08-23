@@ -1,17 +1,14 @@
-import http from "k6/http";
 import { check, sleep } from "k6";
 import exec from "k6/execution";
+import http from "k6/http";
 
 // Exercise the production ingress path by default: k6 -> Traefik -> workerd.
 // Set ROUTE_VIA=internal only when diagnosing the nanoflared worker gateway.
 const routeVia = __ENV.ROUTE_VIA || "traefik";
-const defaultBaseURL =
-  routeVia === "internal" ? "http://127.0.0.1:8080" : "http://127.0.0.1:8088";
+const defaultBaseURL = routeVia === "internal" ? "http://127.0.0.1:8080" : "http://127.0.0.1:8088";
 const baseURL = (__ENV.BASE_URL || defaultBaseURL).replace(/\/$/, "");
 // Console object routes remain available for object-storage-specific tests.
-const controlBaseURL = (
-  __ENV.CONTROL_BASE_URL || "http://127.0.0.1:8080"
-).replace(/\/$/, "");
+const controlBaseURL = (__ENV.CONTROL_BASE_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
 const workerID = __ENV.WORKER_ID || "";
 const workerIDs = splitList(__ENV.WORKER_IDS || workerID);
 const hostname = __ENV.HOSTNAME || "";
@@ -47,9 +44,6 @@ function stagesForProfile() {
   if (profile === "smoke") {
     return [{ duration: "30s", target: 1 }];
   }
-  if (profile === "sustained") {
-    return [{ duration: __ENV.DURATION || "10m", target: Number(__ENV.VUS || "100") }];
-  }
   if (profile === "spike") {
     return [
       { duration: "30s", target: 25 },
@@ -68,7 +62,13 @@ function stagesForProfile() {
 }
 
 export const options = {
-  stages: stagesForProfile(),
+  ...(profile === "sustained"
+    ? {
+        vus: Number(__ENV.VUS || "100"),
+        duration: __ENV.DURATION || "10m",
+      }
+    : { stages: stagesForProfile() }),
+  summaryTrendStats: ["avg", "min", "med", "max", "p(90)", "p(95)", "p(99)"],
   thresholds: {
     http_req_failed: ["rate<0.01"],
     http_req_duration: ["p(95)<500", "p(99)<1000"],
@@ -203,7 +203,10 @@ export function setup() {
       );
     }
   }
-  if (!["db_read", "db_write", "db_mixed", "db_multi"].includes(scenario) && scenario.startsWith("db_")) {
+  if (
+    !["db_read", "db_write", "db_mixed", "db_multi"].includes(scenario) &&
+    scenario.startsWith("db_")
+  ) {
     throw new Error(`unknown database scenario ${scenario}`);
   }
   if (!Number.isInteger(databaseCount) || databaseCount < 1) {
