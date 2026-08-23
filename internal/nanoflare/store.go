@@ -94,6 +94,7 @@ type Repository interface {
 	RevokePartnerConnectionTokens(string, time.Time) error
 	CreateApp(App) error
 	CountAppsByOrg(string) (int, error)
+	GetApp(string) (App, error)
 	ListApps() ([]App, error)
 	ListAppsByOrg(string) ([]App, error)
 	UpdateApp(App) error
@@ -130,6 +131,7 @@ type Repository interface {
 	SetActive(appID, deploymentID string) error
 	SetActiveTraffic(appID string, traffic []DeploymentTraffic) error
 	ActiveDeployments() ([]ActiveDeployment, error)
+	ActiveDeploymentsForApp(string) ([]ActiveDeployment, error)
 	ListDeployments() ([]DeploymentRecord, error)
 	AppIDForCapability(string) (string, error)
 	KVList(capability, namespaceID string) ([]WorkerKVKey, error)
@@ -981,6 +983,16 @@ func (s *Store) CountAppsByOrg(orgID string) (int, error) {
 	return count, nil
 }
 
+func (s *Store) GetApp(appID string) (App, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	app, ok := s.apps[appID]
+	if !ok {
+		return App{}, ErrAppNotFound
+	}
+	return app, nil
+}
+
 func (s *Store) ListApps() ([]App, error) {
 	return s.ListAppsByOrg("")
 }
@@ -1559,6 +1571,27 @@ func (s *Store) ActiveDeployments() ([]ActiveDeployment, error) {
 		if active[i].App.ID != active[j].App.ID {
 			return active[i].App.ID < active[j].App.ID
 		}
+		return active[i].Deployment.CreatedAt.After(active[j].Deployment.CreatedAt)
+	})
+	return active, nil
+}
+
+func (s *Store) ActiveDeploymentsForApp(appID string) ([]ActiveDeployment, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	app, ok := s.apps[appID]
+	if !ok {
+		return nil, ErrAppNotFound
+	}
+	traffic := s.active[appID]
+	active := make([]ActiveDeployment, 0, len(traffic))
+	for _, deployment := range s.deployments[appID] {
+		percent := traffic[deployment.ID]
+		if percent > 0 {
+			active = append(active, ActiveDeployment{App: app, Deployment: deployment, TrafficPercent: percent})
+		}
+	}
+	sort.Slice(active, func(i, j int) bool {
 		return active[i].Deployment.CreatedAt.After(active[j].Deployment.CreatedAt)
 	})
 	return active, nil

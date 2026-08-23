@@ -14,6 +14,7 @@ const (
 	defaultDurationTelemetryWindow       = 24 * time.Hour
 	defaultDurationTelemetryRecentWindow = 24 * time.Hour
 	defaultDurationTelemetryBucketSize   = 5 * time.Minute
+	defaultDurationTelemetryPersistEvery = 5 * time.Second
 )
 
 type DurationTraceEvent struct {
@@ -46,6 +47,9 @@ type DurationTelemetry struct {
 	bucketSize   time.Duration
 	now          func() time.Time
 	persistPath  string
+	persistEvery time.Duration
+	lastPersist  time.Time
+	persisting   bool
 }
 
 func NewDurationTelemetry() *DurationTelemetry {
@@ -55,6 +59,7 @@ func NewDurationTelemetry() *DurationTelemetry {
 		recentWindow: defaultDurationTelemetryRecentWindow,
 		bucketSize:   defaultDurationTelemetryBucketSize,
 		now:          time.Now,
+		persistEvery: defaultDurationTelemetryPersistEvery,
 	}
 }
 
@@ -69,8 +74,6 @@ func NewPersistentDurationTelemetry(path string) (*DurationTelemetry, error) {
 
 func (t *DurationTelemetry) RecordBatch(events []DurationTraceEvent) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	now := t.now().UTC()
 	for _, event := range events {
 		if event.ScriptName == "" || event.DurationMs < 0 {
@@ -87,10 +90,25 @@ func (t *DurationTelemetry) RecordBatch(events []DurationTraceEvent) {
 		})
 	}
 	t.pruneLocked(now)
-	if err := t.persistLocked(); err != nil {
-		// Telemetry should never break worker requests; keep the in-memory view fresh.
+	var snapshot map[string][]durationSample
+	if t.persistPath != "" && !t.persisting && (t.lastPersist.IsZero() || now.Sub(t.lastPersist) >= t.persistEvery) {
+		t.persisting = true
+		t.lastPersist = now
+		snapshot = t.snapshotLocked()
+	}
+	t.mu.Unlock()
+
+	if snapshot == nil {
 		return
 	}
+	err := t.persistSnapshot(snapshot)
+	t.mu.Lock()
+	t.persisting = false
+	if err != nil {
+		// Telemetry should never break worker requests; retry on the next batch.
+		t.lastPersist = time.Time{}
+	}
+	t.mu.Unlock()
 }
 
 func (t *DurationTelemetry) Stats(appID string) DurationStats {
@@ -192,14 +210,22 @@ func (t *DurationTelemetry) load() error {
 	return nil
 }
 
-func (t *DurationTelemetry) persistLocked() error {
+func (t *DurationTelemetry) snapshotLocked() map[string][]durationSample {
+	snapshot := make(map[string][]durationSample, len(t.samples))
+	for appID, samples := range t.samples {
+		snapshot[appID] = append([]durationSample(nil), samples...)
+	}
+	return snapshot
+}
+
+func (t *DurationTelemetry) persistSnapshot(samples map[string][]durationSample) error {
 	if t.persistPath == "" {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(t.persistPath), 0o700); err != nil {
 		return err
 	}
-	data, err := json.Marshal(t.samples)
+	data, err := json.Marshal(samples)
 	if err != nil {
 		return err
 	}

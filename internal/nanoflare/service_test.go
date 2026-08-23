@@ -86,6 +86,56 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 	}
 }
 
+func TestWorkerRuntimeDeploymentLoadsOnlyRequestedWorker(t *testing.T) {
+	repo := &runtimeResolutionRepo{objectBackedRepo: newObjectBackedRepo()}
+	objects := newMemoryObjectStore()
+	service := NewServiceWithObjects(repo, &recordingWriter{}, objects)
+
+	target, err := service.CreateApp(CreateAppInput{Name: "Target", Hostname: "target.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetDeployment, err := service.Deploy(target.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "target"}},
+		CompatibilityDate: "2025-12-10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.CreateApp(CreateAppInput{Name: "Other", Hostname: "other.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDeployment, err := service.Deploy(other.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "other"}},
+		CompatibilityDate: "2025-12-10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo.getAppCalls = 0
+	repo.activeDeploymentsCalls = 0
+	repo.activeDeploymentsForAppCalls = 0
+	objects.gets = nil
+	active, _, ok, err := service.WorkerRuntimeDeploymentWithPreference(target.ID, "/plain", targetDeployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || active.Deployment.ID != targetDeployment.ID {
+		t.Fatalf("active deployment = %#v, want %s", active, targetDeployment.ID)
+	}
+	if repo.getAppCalls != 1 || repo.activeDeploymentsForAppCalls != 1 || repo.activeDeploymentsCalls != 0 {
+		t.Fatalf("repository calls = get app:%d active for app:%d all active:%d", repo.getAppCalls, repo.activeDeploymentsForAppCalls, repo.activeDeploymentsCalls)
+	}
+	if len(objects.gets) != 1 || objects.gets[0] != target.ID+":"+targetDeployment.ObjectKey {
+		t.Fatalf("object reads = %#v, want only requested deployment", objects.gets)
+	}
+	if strings.Contains(objects.gets[0], otherDeployment.ObjectKey) {
+		t.Fatalf("object reads unexpectedly hydrated other deployment %s", otherDeployment.ID)
+	}
+}
+
 func TestDeployValidatesCronTriggers(t *testing.T) {
 	service := NewService(NewStore(), &recordingWriter{})
 	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
@@ -1006,6 +1056,7 @@ func (w *failAfterWriter) Write([]ActiveDeployment) error {
 
 type memoryObjectStore struct {
 	objects map[string]ObjectBody
+	gets    []string
 }
 
 func newMemoryObjectStore() *memoryObjectStore {
@@ -1039,6 +1090,7 @@ func (s *memoryObjectStore) Put(appID, path string, contentType string, data []b
 }
 
 func (s *memoryObjectStore) Get(appID, path string) (ObjectBody, error) {
+	s.gets = append(s.gets, appID+":"+path)
 	data, ok := s.objects[appID+":"+path]
 	if !ok {
 		return ObjectBody{}, ErrObjectNotFound
@@ -1076,6 +1128,28 @@ func (s *memoryObjectStore) Delete(appID, path string) error {
 
 type objectBackedRepo struct {
 	*Store
+}
+
+type runtimeResolutionRepo struct {
+	*objectBackedRepo
+	getAppCalls                  int
+	activeDeploymentsCalls       int
+	activeDeploymentsForAppCalls int
+}
+
+func (r *runtimeResolutionRepo) GetApp(appID string) (App, error) {
+	r.getAppCalls++
+	return r.Store.GetApp(appID)
+}
+
+func (r *runtimeResolutionRepo) ActiveDeployments() ([]ActiveDeployment, error) {
+	r.activeDeploymentsCalls++
+	return r.objectBackedRepo.ActiveDeployments()
+}
+
+func (r *runtimeResolutionRepo) ActiveDeploymentsForApp(appID string) ([]ActiveDeployment, error) {
+	r.activeDeploymentsForAppCalls++
+	return r.Store.ActiveDeploymentsForApp(appID)
 }
 
 type countingKVUsageRepo struct {

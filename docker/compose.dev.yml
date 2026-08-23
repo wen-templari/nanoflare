@@ -70,6 +70,32 @@ services:
       - ./loki/loki-config.yml:/etc/loki/config.yml:ro
       - loki-data:/loki
 
+  tempo:
+    image: grafana/tempo:2.10.7
+    command: -config.file=/etc/tempo/tempo.yml
+    ports:
+      - "3200:3200"
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+
+  alloy:
+    image: grafana/alloy:v1.18.1
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:12345:12345"
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - tempo
+
   vector:
     image: timberio/vector:0.46.1-alpine
     command: --config /etc/vector/vector.yaml
@@ -97,11 +123,14 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - loki
+      - tempo
 
 volumes:
   postgres-data:
   minio-data:
   prometheus-data:
   loki-data:
+  tempo-data:
+  alloy-data:
   vector-data:
   grafana-data:

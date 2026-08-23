@@ -1,0 +1,33 @@
+logging {
+  level = "info"
+}
+
+otelcol.receiver.otlp "nanoflare" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    traces = [otelcol.processor.batch.nanoflare.input]
+  }
+}
+
+otelcol.processor.batch "nanoflare" {
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+
+    tls {
+      insecure = true
+    }
+  }
+}

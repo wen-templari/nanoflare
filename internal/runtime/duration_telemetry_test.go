@@ -98,6 +98,38 @@ func TestPersistentDurationTelemetrySurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestPersistentDurationTelemetryBatchesDiskWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duration-telemetry.json")
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	telemetry, err := NewPersistentDurationTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	telemetry.now = func() time.Time { return now }
+	telemetry.RecordBatch([]DurationTraceEvent{{ScriptName: "alpha", EventTimestamp: float64(now.UnixMilli()), DurationMs: 10}})
+	telemetry.RecordBatch([]DurationTraceEvent{{ScriptName: "alpha", EventTimestamp: float64(now.UnixMilli()), DurationMs: 20}})
+
+	restarted, err := NewPersistentDurationTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return now }
+	if got := restarted.Stats("alpha").DurationMsAvg; got != 10 {
+		t.Fatalf("average before persistence interval = %v, want 10", got)
+	}
+
+	now = now.Add(defaultDurationTelemetryPersistEvery)
+	telemetry.RecordBatch([]DurationTraceEvent{{ScriptName: "alpha", EventTimestamp: float64(now.UnixMilli()), DurationMs: 30}})
+	restarted, err = NewPersistentDurationTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return now }
+	if got := restarted.Stats("alpha").DurationMsAvg; got != 20 {
+		t.Fatalf("average after persistence interval = %v, want 20", got)
+	}
+}
+
 func BenchmarkDurationTelemetryRecordBatchInMemory(b *testing.B) {
 	telemetry := NewDurationTelemetry()
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)

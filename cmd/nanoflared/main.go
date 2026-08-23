@@ -25,6 +25,7 @@ import (
 	"github.com/clas/nanoflare/internal/oidc"
 	"github.com/clas/nanoflare/internal/runner"
 	"github.com/clas/nanoflare/internal/runtime"
+	"github.com/clas/nanoflare/internal/telemetry"
 )
 
 type runtimePublisher interface {
@@ -77,6 +78,8 @@ func main() {
 		controlOIDCSecret   = flag.String("control-oidc-client-secret", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_SECRET"), "OIDC client secret for console login")
 		controlOIDCPublic   = flag.String("control-oidc-public-url", os.Getenv("NANOFLARE_CONTROL_OIDC_PUBLIC_URL"), "Public console base URL for OIDC login callbacks, for example https://console.example.com")
 		controlOIDCDirect   = flag.Bool("control-oidc-direct-login", envBoolOrDefault("NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN", false), "start console OIDC login directly instead of showing the login form first")
+		otelEndpoint        = flag.String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "optional OTLP/gRPC endpoint URL for distributed traces")
+		otelSampleRatio     = flag.Float64("otel-sample-ratio", envFloatOrDefault("NANOFLARE_OTEL_SAMPLE_RATIO", 0.1), "fraction of root traces to sample, from 0 to 1")
 	)
 	flag.Parse()
 
@@ -95,6 +98,24 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	shutdownTracing, err := telemetry.ConfigureTracing(ctx, telemetry.TracingConfig{
+		Endpoint:    *otelEndpoint,
+		ServiceName: envOrDefault("OTEL_SERVICE_NAME", "nanoflared"),
+		SampleRatio: *otelSampleRatio,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(ctx); err != nil {
+			log.Printf("shut down OpenTelemetry tracing: %v", err)
+		}
+	}()
+	if strings.TrimSpace(*otelEndpoint) != "" {
+		log.Printf("exporting OpenTelemetry traces to %s", *otelEndpoint)
+	}
 
 	var store nanoflare.Repository = nanoflare.NewStore()
 	var objectStore nanoflare.ObjectStore
@@ -313,6 +334,18 @@ func envBoolOrDefault(name string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return parsed
+}
+
+func envFloatOrDefault(name string, fallback float64) float64 {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -691,6 +691,22 @@ The development Compose stack also starts Prometheus at
 metrics endpoint, and Prometheus scrapes them every 15 seconds. `nanoflared`
 queries Prometheus to serve the console's Monitoring view.
 
+The Compose stack also starts Grafana Alloy and Tempo for OpenTelemetry traces.
+Alloy accepts OTLP/gRPC at `http://127.0.0.1:4317` and OTLP/HTTP at
+`http://127.0.0.1:4318`, then forwards spans to Tempo at
+`http://127.0.0.1:3200`. Enable tracing for a host-run control plane with:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 \
+OTEL_SERVICE_NAME=nanoflared \
+NANOFLARE_OTEL_SAMPLE_RATIO=1 \
+go run ./cmd/nanoflared -addr :8080 -config-dir ./var/generated
+```
+
+The gateway trace breaks Worker requests into deployment resolution, runtime
+ensure, upstream time-to-first-byte, and response-copy spans. Grafana provisions
+Tempo, Prometheus, and Loki data sources automatically.
+
 The Compose stack also starts Vector and Loki for logs. Vector labels worker
 output with its worker and deployment IDs before writing it to Loki; Grafana at
 `http://127.0.0.1:3000` can query all platform services. For a host-run runtime,

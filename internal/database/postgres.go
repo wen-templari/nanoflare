@@ -1842,6 +1842,10 @@ func (p *Postgres) ListApps() ([]nanoflare.App, error) {
 	return p.ListAppsByOrg("")
 }
 
+func (p *Postgres) GetApp(appID string) (nanoflare.App, error) {
+	return p.getApp(appID)
+}
+
 func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM workers`
 	var rows *sql.Rows
@@ -2128,13 +2132,28 @@ func (p *Postgres) DeleteDeployment(id string) error {
 }
 
 func (p *Postgres) ActiveDeployments() ([]nanoflare.ActiveDeployment, error) {
-	rows, err := p.db.Query(`
+	return p.activeDeployments("")
+}
+
+func (p *Postgres) ActiveDeploymentsForApp(appID string) ([]nanoflare.ActiveDeployment, error) {
+	return p.activeDeployments(appID)
+}
+
+func (p *Postgres) activeDeployments(appID string) ([]nanoflare.ActiveDeployment, error) {
+	query := `
 SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
 	d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.compatibility_flags, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.services, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
 FROM deployments d
 JOIN workers a ON a.id = d.worker_id
 WHERE d.traffic_percent > 0
-ORDER BY a.id, d.created_at DESC`)
+	`
+	var rows *sql.Rows
+	var err error
+	if appID == "" {
+		rows, err = p.db.Query(query + ` ORDER BY a.id, d.created_at DESC`)
+	} else {
+		rows, err = p.db.Query(query+` AND d.worker_id = $1 ORDER BY d.created_at DESC`, appID)
+	}
 	if err != nil {
 		return nil, err
 	}

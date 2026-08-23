@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -11,7 +12,14 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var gatewayTracer = otel.Tracer("github.com/clas/nanoflare/internal/api/worker-gateway")
 
 func (s *Server) registerAppRoutes() {
 	base := "/v1/organizations/{orgID}/workers"
@@ -303,67 +311,107 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
+	parent := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, gatewaySpan := gatewayTracer.Start(parent, "worker.gateway", trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(
+		attribute.String("http.request.method", r.Method),
+	))
+	defer gatewaySpan.End()
+	r = r.WithContext(ctx)
+
 	appID, runtimePort, requestPath, ok := appGatewayPath(r.URL.Path)
 	if !ok {
+		gatewaySpan.SetStatus(codes.Error, "invalid worker gateway path")
 		http.NotFound(w, r)
 		return
 	}
+	gatewaySpan.SetAttributes(
+		attribute.String("nanoflare.worker.id", appID),
+		attribute.String("http.route", "/internal/http/workers/{worker_id}/{path}"),
+		attribute.Bool("nanoflare.runtime.explicit_port", runtimePort != 0),
+	)
 	_, _, escapedRequestPath, escapedOK := appGatewayPath(r.URL.EscapedPath())
 	if !escapedOK {
 		escapedRequestPath = requestPath
 	}
-	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeploymentWithPreference(appID, requestPath, stickyDeploymentID(r, appID))
+	resolveCtx, resolveSpan := gatewayTracer.Start(r.Context(), "worker.resolve_deployment")
+	active, runWorkerFirst, ok, err := s.service.WorkerRuntimeDeploymentWithPreferenceContext(resolveCtx, appID, requestPath, stickyDeploymentID(r, appID))
 	if err != nil {
+		recordSpanError(resolveSpan, err)
+	}
+	resolveSpan.SetAttributes(
+		attribute.Bool("nanoflare.deployment.found", ok),
+		attribute.Bool("nanoflare.worker.run_first", runWorkerFirst),
+	)
+	resolveSpan.End()
+	if err != nil {
+		gatewaySpan.SetStatus(codes.Error, err.Error())
 		writeWorkerError(w, err)
 		return
 	}
 	if !ok {
+		gatewaySpan.SetStatus(codes.Error, "worker deployment not found")
 		writeWorkerError(w, nanoflare.ErrAppNotFound)
 		return
 	}
+	gatewaySpan.SetAttributes(attribute.String("nanoflare.deployment.id", active.Deployment.ID))
 	setStickyDeploymentCookie(w, appID, active.Deployment.ID)
 	if !runWorkerFirst {
+		_, assetSpan := gatewayTracer.Start(r.Context(), "worker.asset_lookup")
 		response, handled, err := s.service.PublicAssetForDeployment(active, requestPath)
 		if err != nil {
+			recordSpanError(assetSpan, err)
+		}
+		assetSpan.SetAttributes(attribute.Bool("nanoflare.asset.handled", handled))
+		assetSpan.End()
+		if err != nil {
+			gatewaySpan.SetStatus(codes.Error, err.Error())
 			writeWorkerError(w, err)
 			return
 		}
 		if handled && response.StatusCode == http.StatusOK {
+			_, assetWriteSpan := gatewayTracer.Start(r.Context(), "worker.response_copy")
 			writeAssetResponse(w, r, response)
+			assetWriteSpan.End()
 			return
 		}
-		port, release, err := s.ensureWorker(r, active, runtimePort)
+		port, release, err := s.ensureWorkerTraced(r, active, runtimePort)
 		if err != nil {
+			gatewaySpan.SetStatus(codes.Error, err.Error())
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
 		defer release()
 		workerResponse, err := s.workerResponse(r, port, requestPath, escapedRequestPath)
 		if err != nil {
+			gatewaySpan.SetStatus(codes.Error, err.Error())
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
 		defer workerResponse.Body.Close()
 		if handled && workerResponse.StatusCode == http.StatusNotFound {
+			_, assetWriteSpan := gatewayTracer.Start(r.Context(), "worker.response_copy")
 			writeAssetResponse(w, r, response)
+			assetWriteSpan.End()
 			return
 		}
-		writeWorkerResponse(w, workerResponse)
+		writeWorkerResponse(r.Context(), w, workerResponse)
 		return
 	}
-	port, release, err := s.ensureWorker(r, active, runtimePort)
+	port, release, err := s.ensureWorkerTraced(r, active, runtimePort)
 	if err != nil {
+		gatewaySpan.SetStatus(codes.Error, err.Error())
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
 	defer release()
 	workerResponse, err := s.workerResponse(r, port, requestPath, escapedRequestPath)
 	if err != nil {
+		gatewaySpan.SetStatus(codes.Error, err.Error())
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
 	defer workerResponse.Body.Close()
-	writeWorkerResponse(w, workerResponse)
+	writeWorkerResponse(r.Context(), w, workerResponse)
 }
 
 func stickyDeploymentID(r *http.Request, appID string) string {
@@ -439,7 +487,25 @@ func (s *Server) ensureWorker(r *http.Request, active nanoflare.ActiveDeployment
 	return ensured.Port, ensured.Release, nil
 }
 
+func (s *Server) ensureWorkerTraced(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (int, func(), error) {
+	_, span := gatewayTracer.Start(r.Context(), "worker.runtime_ensure", trace.WithAttributes(
+		attribute.Bool("nanoflare.runtime.explicit_port", runtimePort != 0),
+	))
+	port, release, err := s.ensureWorker(r, active, runtimePort)
+	if err != nil {
+		recordSpanError(span, err)
+	} else {
+		span.SetAttributes(attribute.Int("nanoflare.runtime.port", port))
+	}
+	span.End()
+	return port, release, err
+}
+
 func (s *Server) workerResponse(r *http.Request, port int, requestPath, escapedRequestPath string) (*http.Response, error) {
+	ctx, span := gatewayTracer.Start(r.Context(), "worker.upstream_ttfb", trace.WithAttributes(
+		attribute.Int("server.port", port),
+	))
+	defer span.End()
 	target := &url.URL{
 		Scheme:   "http",
 		Host:     "127.0.0.1:" + strconv.Itoa(port),
@@ -447,12 +513,17 @@ func (s *Server) workerResponse(r *http.Request, port int, requestPath, escapedR
 		RawPath:  escapedRequestPath,
 		RawQuery: r.URL.RawQuery,
 	}
-	request, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
+	request, err := http.NewRequestWithContext(ctx, r.Method, target.String(), r.Body)
 	if err != nil {
+		recordSpanError(span, err)
 		return nil, err
 	}
 	s.workerGatewayMetrics.requests.Add(1)
-	trace := &httptrace.ClientTrace{
+	var getConnAt time.Time
+	clientTrace := &httptrace.ClientTrace{
+		GetConn: func(string) {
+			getConnAt = time.Now()
+		},
 		GotConn: func(info httptrace.GotConnInfo) {
 			s.workerGatewayMetrics.connections.Add(1)
 			if info.Reused {
@@ -461,25 +532,48 @@ func (s *Server) workerResponse(r *http.Request, port int, requestPath, escapedR
 			if info.WasIdle {
 				s.workerGatewayMetrics.idle.Add(1)
 			}
+			attributes := []attribute.KeyValue{
+				attribute.Bool("network.connection.reused", info.Reused),
+				attribute.Bool("network.connection.was_idle", info.WasIdle),
+			}
+			if !getConnAt.IsZero() {
+				attributes = append(attributes, attribute.Float64("network.connection.wait_ms", float64(time.Since(getConnAt))/float64(time.Millisecond)))
+			}
+			span.AddEvent("connection.acquired", trace.WithAttributes(attributes...))
 		},
+		GotFirstResponseByte: func() { span.AddEvent("first_response_byte") },
 	}
-	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
 	request.Header = r.Header.Clone()
 	request.Host = r.Host
+	otel.GetTextMapPropagator().Inject(request.Context(), propagation.HeaderCarrier(request.Header))
 	response, err := s.workerClient.Do(request)
 	if err != nil {
 		s.workerGatewayMetrics.errors.Add(1)
+		recordSpanError(span, err)
 		return nil, err
 	}
+	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	return response, nil
 }
 
-func writeWorkerResponse(w http.ResponseWriter, response *http.Response) {
+func writeWorkerResponse(ctx context.Context, w http.ResponseWriter, response *http.Response) {
+	_, span := gatewayTracer.Start(ctx, "worker.response_copy")
+	defer span.End()
 	for key, values := range response.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	written, err := io.Copy(w, response.Body)
+	span.SetAttributes(attribute.Int64("http.response.body.size", written))
+	if err != nil {
+		recordSpanError(span, err)
+	}
+}
+
+func recordSpanError(span trace.Span, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
 }

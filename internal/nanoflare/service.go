@@ -16,7 +16,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
+
+var runtimeResolutionTracer = otel.Tracer("github.com/clas/nanoflare/internal/nanoflare/runtime-resolution")
 
 type ConfigWriter interface {
 	Write([]ActiveDeployment) error
@@ -1810,6 +1816,29 @@ func (s *Service) activeDeployments() ([]ActiveDeployment, error) {
 	return active, nil
 }
 
+func (s *Service) activeDeploymentsForApp(appID string) ([]ActiveDeployment, error) {
+	active, err := s.store.ActiveDeploymentsForApp(appID)
+	if err != nil {
+		return nil, err
+	}
+	if len(active) == 0 {
+		return active, nil
+	}
+	for i := range active {
+		if err := s.hydrateDeploymentFiles(&active[i].Deployment); err != nil {
+			return nil, err
+		}
+	}
+	secretValues, err := s.resolvedSecretValues(appID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range active {
+		active[i].App.SecretValues = secretValues
+	}
+	return active, nil
+}
+
 func (s *Service) hydrateDeploymentFiles(deployment *Deployment) error {
 	if len(deployment.Files) > 0 {
 		if deployment.BundleSize == 0 {
@@ -2997,14 +3026,31 @@ func (s *Service) WorkerRuntimeDeployment(appID, requestPath string) (ActiveDepl
 }
 
 func (s *Service) WorkerRuntimeDeploymentWithPreference(appID, requestPath, preferredDeploymentID string) (ActiveDeployment, bool, bool, error) {
-	if _, _, err := s.worker(appID); err != nil {
+	return s.WorkerRuntimeDeploymentWithPreferenceContext(context.Background(), appID, requestPath, preferredDeploymentID)
+}
+
+func (s *Service) WorkerRuntimeDeploymentWithPreferenceContext(ctx context.Context, appID, requestPath, preferredDeploymentID string) (ActiveDeployment, bool, bool, error) {
+	_, workerSpan := runtimeResolutionTracer.Start(ctx, "runtime.load_worker")
+	if _, err := s.store.GetApp(appID); err != nil {
+		workerSpan.RecordError(err)
+		workerSpan.SetStatus(codes.Error, err.Error())
+		workerSpan.End()
 		return ActiveDeployment{}, false, false, err
 	}
-	active, err := s.activeDeployments()
+	workerSpan.End()
+
+	_, activeSpan := runtimeResolutionTracer.Start(ctx, "runtime.load_active_deployments")
+	active, err := s.activeDeploymentsForApp(appID)
 	if err != nil {
+		activeSpan.RecordError(err)
+		activeSpan.SetStatus(codes.Error, err.Error())
+		activeSpan.End()
 		return ActiveDeployment{}, false, false, err
 	}
-	selected := selectWeightedDeploymentWithPreference(activeForAppDeployments(active, appID), strings.TrimSpace(preferredDeploymentID))
+	activeSpan.SetAttributes(attribute.Int("nanoflare.worker.active_deployment.count", len(active)))
+	activeSpan.End()
+
+	selected := selectWeightedDeploymentWithPreference(active, strings.TrimSpace(preferredDeploymentID))
 	if selected == nil {
 		return ActiveDeployment{}, false, false, nil
 	}
