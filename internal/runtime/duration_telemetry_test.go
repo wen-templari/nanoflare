@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -127,6 +129,92 @@ func TestPersistentDurationTelemetryBatchesDiskWrites(t *testing.T) {
 	restarted.now = func() time.Time { return now }
 	if got := restarted.Stats("alpha").DurationMsAvg; got != 20 {
 		t.Fatalf("average after persistence interval = %v, want 20", got)
+	}
+}
+
+func TestDurationTelemetryBoundsSamplesPerBucket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duration-telemetry.json")
+	now := time.Date(2026, 7, 10, 12, 2, 0, 0, time.UTC)
+	telemetry, err := NewPersistentDurationTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	telemetry.now = func() time.Time { return now }
+	events := make([]DurationTraceEvent, 10_000)
+	for index := range events {
+		events[index] = DurationTraceEvent{
+			ScriptName:     "alpha",
+			EventTimestamp: float64(now.UnixMilli()),
+			DurationMs:     float64(index%100 + 1),
+		}
+	}
+	telemetry.RecordBatch(events)
+
+	buckets := telemetry.workers["alpha"]
+	if len(buckets) != 1 {
+		t.Fatalf("buckets = %d, want 1", len(buckets))
+	}
+	if got := len(buckets[0].Samples); got != durationTelemetrySamplesPerBucket {
+		t.Fatalf("retained samples = %d, want %d", got, durationTelemetrySamplesPerBucket)
+	}
+	stats := telemetry.Stats("alpha")
+	if stats.DurationMsAvg != 50.5 {
+		t.Fatalf("average = %v, want 50.5", stats.DurationMsAvg)
+	}
+	if stats.DurationMsP95 < 80 || stats.DurationMsP95 > 100 {
+		t.Fatalf("sampled p95 = %v, want a representative upper-tail value", stats.DurationMsP95)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > 10_000 {
+		t.Fatalf("persisted telemetry = %d bytes, want at most 10 KB", info.Size())
+	}
+}
+
+func TestPersistentDurationTelemetryMigratesLegacyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duration-telemetry.json")
+	now := time.Now().UTC()
+	legacy := map[string][]durationSample{
+		"alpha": {
+			{Timestamp: now.Add(-time.Minute), DurationMs: 10, Outcome: "ok"},
+			{Timestamp: now.Add(-time.Minute), DurationMs: 30, Outcome: "ok"},
+		},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	telemetry, err := NewPersistentDurationTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	telemetry.now = func() time.Time { return now }
+	stats := telemetry.Stats("alpha")
+	if !stats.Available || stats.DurationMsAvg != 20 || stats.DurationMsP95 != 30 {
+		t.Fatalf("migrated stats = %#v", stats)
+	}
+	telemetry.RecordBatch([]DurationTraceEvent{{
+		ScriptName:     "alpha",
+		EventTimestamp: float64(now.UnixMilli()),
+		DurationMs:     20,
+	}})
+
+	var persisted durationTelemetryDisk
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Version != durationTelemetryDiskVersion {
+		t.Fatalf("persisted version = %d, want %d", persisted.Version, durationTelemetryDiskVersion)
 	}
 }
 

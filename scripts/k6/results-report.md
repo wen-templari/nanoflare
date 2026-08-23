@@ -21,12 +21,15 @@ temporary Workers, then held 50 VUs for five minutes while selecting Workers
 round-robin through the internal gateway. Every Worker was exercised during the
 first 100 iterations and repeatedly thereafter.
 
-| Workers | Load shape                              |  Requests |      RPS | Failed |      Avg |      p95 |       p99 |    Max | Result   |
-| ------: | --------------------------------------- | --------: | -------: | -----: | -------: | -------: | --------: | -----: | -------- |
-|     100 | 50 VUs for 5 min                        |   694,549 |  2,184.1 |  0.00% | 21.52 ms | 30.65 ms |  43.19 ms | 1.62 s | Pass     |
-|     100 | 100 VUs for 2 min, before runtime cache |   261,253 |  1,864.6 |  0.00% | 45.86 ms | 79.88 ms | 114.50 ms | 3.06 s | Degraded |
-|     100 | 100 VUs for 2 min, with runtime cache   | 2,379,526 | 17,073.0 |  0.00% |  4.68 ms |  9.84 ms |  20.24 ms | 1.83 s | Pass     |
-|     100 | 150 VUs for 2 min, with runtime cache   | 2,131,967 | 15,342.3 |  0.00% |  7.87 ms | 17.76 ms |  35.74 ms | 3.71 s | Degraded |
+| Workers | Load shape                              |  Requests |      RPS | Failed |      Avg |      p95 |       p99 |       Max | Result   |
+| ------: | --------------------------------------- | --------: | -------: | -----: | -------: | -------: | --------: | --------: | -------- |
+|     100 | 50 VUs for 5 min                        |   694,549 |  2,184.1 |  0.00% | 21.52 ms | 30.65 ms |  43.19 ms |    1.62 s | Pass     |
+|     100 | 100 VUs for 2 min, before runtime cache |   261,253 |  1,864.6 |  0.00% | 45.86 ms | 79.88 ms | 114.50 ms |    3.06 s | Degraded |
+|     100 | 100 VUs for 2 min, with runtime cache   | 2,379,526 | 17,073.0 |  0.00% |  4.68 ms |  9.84 ms |  20.24 ms |    1.83 s | Pass     |
+|     100 | 150 VUs for 2 min, with runtime cache   | 2,131,967 | 15,342.3 |  0.00% |  7.87 ms | 17.76 ms |  35.74 ms |    3.71 s | Degraded |
+|     100 | 100 VUs for 2 min, bounded telemetry    | 2,760,902 | 19,914.7 |  0.00% |  4.03 ms |  7.89 ms |  13.78 ms | 321.79 ms | Pass     |
+|     100 | 150 VUs for 2 min, bounded telemetry    | 2,788,848 | 20,036.0 |  0.00% |  5.94 ms | 11.96 ms |  21.70 ms | 451.02 ms | Pass     |
+|     100 | 250 VUs for 2 min, bounded telemetry    | 2,828,949 | 20,224.7 |  0.00% |  9.45 ms | 19.89 ms |  35.13 ms | 537.19 ms | Pass     |
 
 All 1,389,098 response checks passed: every request returned HTTP 200 and the
 body identified the expected Worker. There were no interrupted iterations and
@@ -48,12 +51,27 @@ invalidation on Worker updates, deployment changes, traffic changes, secret
 rollouts, rollback, and deletion, reduced the comparable run to 262 cumulative
 pool waits. Throughput improved 9.2x, p95 fell 87.7%, and p99 fell 82.3%.
 
-The post-change curve now reaches CPU saturation between 100 and 150 VUs. At
+The runtime-cache-only curve reached CPU saturation between 100 and 150 VUs. At
 150 VUs, throughput fell 10.1% while p95 rose 80.5%, despite zero request
-failures. A process sample showed the remaining hot path dominated by HTTP
-proxying, garbage collection, and duration-telemetry maintenance rather than
-repository access. On this machine, 100 VUs is the efficient operating point
-for a 100-Worker fleet after the runtime cache.
+failures. Process sampling and a 649 MB telemetry file identified duration
+maintenance as the next target: every request was retained for 24 hours, every
+Worker was scanned during pruning, and the complete history was rewritten every
+five seconds.
+
+Duration telemetry now stores exact count and duration totals in five-minute
+buckets, plus a bounded reservoir for percentile estimates. The existing file
+is migrated with a streaming reader. On the test dataset, the first flush
+reduced the file from 649 MB to 150 KB and idle daemon RSS from approximately
+4.6 GB to 34 MB. After the 100-Worker holds, the file remained below 250 KB and
+daemon RSS during the 250-VU run was approximately 175 MB.
+
+The new 100-VU result improved throughput another 16.6% over the runtime-cache
+build while lowering p95 by 19.8% and p99 by 31.9%. More importantly, 150 VUs
+no longer collapsed: it delivered 30.6% more throughput than the prior 150-VU
+run, with p95 down 32.7% and p99 down 39.3%. Throughput plateaued near 20,000
+reported requests per second from 150 through 250 VUs while latency rose with
+concurrency. A fresh 250-VU process sample did not show duration telemetry in
+active stacks; the application hot path was the HTTP gateway and proxy.
 
 Artifact:
 
@@ -61,6 +79,10 @@ Artifact:
 - `var/k6-results/high_worker_count_100w_100vus_2m_telemetry_20260823.json`
 - `var/k6-results/high_worker_count_100w_100vus_2m_runtime_cache_20260823.json`
 - `var/k6-results/high_worker_count_100w_150vus_2m_runtime_cache_20260823.json`
+- `var/k6-results/high_worker_count_100w_100vus_2m_duration_buckets_20260823.json`
+- `var/k6-results/high_worker_count_100w_150vus_2m_duration_buckets_20260823.json`
+- `var/k6-results/high_worker_count_100w_250vus_2m_duration_buckets_20260823.json`
+- `var/k6-results/nanoflared_100w_250vus_duration_buckets_20260823.sample.txt`
 
 ## August 23 Optimized Worker Retest
 
