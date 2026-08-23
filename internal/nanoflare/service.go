@@ -3030,15 +3030,6 @@ func (s *Service) WorkerRuntimeDeploymentWithPreference(appID, requestPath, pref
 }
 
 func (s *Service) WorkerRuntimeDeploymentWithPreferenceContext(ctx context.Context, appID, requestPath, preferredDeploymentID string) (ActiveDeployment, bool, bool, error) {
-	_, workerSpan := runtimeResolutionTracer.Start(ctx, "runtime.load_worker")
-	if _, err := s.store.GetApp(appID); err != nil {
-		workerSpan.RecordError(err)
-		workerSpan.SetStatus(codes.Error, err.Error())
-		workerSpan.End()
-		return ActiveDeployment{}, false, false, err
-	}
-	workerSpan.End()
-
 	_, activeSpan := runtimeResolutionTracer.Start(ctx, "runtime.load_active_deployments")
 	active, err := s.activeDeploymentsForApp(appID)
 	if err != nil {
@@ -3049,6 +3040,19 @@ func (s *Service) WorkerRuntimeDeploymentWithPreferenceContext(ctx context.Conte
 	}
 	activeSpan.SetAttributes(attribute.Int("nanoflare.worker.active_deployment.count", len(active)))
 	activeSpan.End()
+	if len(active) == 0 {
+		// Active deployments already include their app. Only query the app
+		// separately when there is no deployment, so missing workers remain
+		// distinguishable from registered workers that have not deployed yet.
+		_, workerSpan := runtimeResolutionTracer.Start(ctx, "runtime.load_worker")
+		_, err := s.store.GetApp(appID)
+		if err != nil {
+			workerSpan.RecordError(err)
+			workerSpan.SetStatus(codes.Error, err.Error())
+		}
+		workerSpan.End()
+		return ActiveDeployment{}, false, false, err
+	}
 
 	selected := selectWeightedDeploymentWithPreference(active, strings.TrimSpace(preferredDeploymentID))
 	if selected == nil {

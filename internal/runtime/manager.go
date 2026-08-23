@@ -17,6 +17,11 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
+const (
+	runtimeHealthCheckInitialInterval = 2 * time.Millisecond
+	runtimeHealthCheckMaxInterval     = 2 * time.Millisecond
+)
+
 type ConfigWriter interface {
 	WriteWorkerd(string, []nanoflare.ActiveDeployment) error
 	WriteTraefik([]nanoflare.ActiveDeployment) error
@@ -282,8 +287,9 @@ func (m *Manager) availablePort() (int, error) {
 func (m *Manager) waitHealthy(process Process, active []nanoflare.ActiveDeployment) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.healthTimeout)
 	defer cancel()
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
+	interval := runtimeHealthCheckInitialInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
 		if socketsReady(m.portHost, active) {
 			return nil
@@ -296,7 +302,9 @@ func (m *Manager) waitHealthy(process Process, active []nanoflare.ActiveDeployme
 			return fmt.Errorf("workerd failed before becoming healthy: %w", err)
 		case <-ctx.Done():
 			return fmt.Errorf("workerd health check: %w", ctx.Err())
-		case <-ticker.C:
+		case <-timer.C:
+			interval = min(interval*2, runtimeHealthCheckMaxInterval)
+			timer.Reset(interval)
 		}
 	}
 }

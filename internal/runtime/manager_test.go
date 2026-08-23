@@ -209,10 +209,22 @@ func TestLazyManagerEnsuresWorkerOnDemand(t *testing.T) {
 	if ensured.Port == 0 {
 		t.Fatal("Ensure() port = 0, want allocated runtime port")
 	}
+	if !ensured.ColdStart {
+		t.Fatal("first Ensure() ColdStart = false, want true")
+	}
 	if launcher.count() != 1 {
 		t.Fatalf("launches = %d, want 1", launcher.count())
 	}
 	ensured.Release()
+
+	reused, err := manager.Ensure(context.Background(), deployments(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.ColdStart {
+		t.Fatal("reused Ensure() ColdStart = true, want false")
+	}
+	reused.Release()
 }
 
 func TestLazyRuntimeClosureIncludesTransitiveSameOrganizationServiceBindings(t *testing.T) {

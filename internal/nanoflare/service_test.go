@@ -125,7 +125,7 @@ func TestWorkerRuntimeDeploymentLoadsOnlyRequestedWorker(t *testing.T) {
 	if !ok || active.Deployment.ID != targetDeployment.ID {
 		t.Fatalf("active deployment = %#v, want %s", active, targetDeployment.ID)
 	}
-	if repo.getAppCalls != 1 || repo.activeDeploymentsForAppCalls != 1 || repo.activeDeploymentsCalls != 0 {
+	if repo.getAppCalls != 0 || repo.activeDeploymentsForAppCalls != 1 || repo.activeDeploymentsCalls != 0 {
 		t.Fatalf("repository calls = get app:%d active for app:%d all active:%d", repo.getAppCalls, repo.activeDeploymentsForAppCalls, repo.activeDeploymentsCalls)
 	}
 	if len(objects.gets) != 1 || objects.gets[0] != target.ID+":"+targetDeployment.ObjectKey {
@@ -133,6 +133,21 @@ func TestWorkerRuntimeDeploymentLoadsOnlyRequestedWorker(t *testing.T) {
 	}
 	if strings.Contains(objects.gets[0], otherDeployment.ObjectKey) {
 		t.Fatalf("object reads unexpectedly hydrated other deployment %s", otherDeployment.ID)
+	}
+}
+
+func TestWorkerRuntimeDeploymentDistinguishesMissingAndUndeployedWorkers(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	app, err := service.CreateApp(CreateAppInput{Name: "Undeployed", Hostname: "undeployed.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, ok, err := service.WorkerRuntimeDeployment(app.ID, "/plain"); err != nil || ok {
+		t.Fatalf("undeployed worker = ok %v, error %v; want ok false without error", ok, err)
+	}
+	if _, _, _, err := service.WorkerRuntimeDeployment("missing", "/plain"); !errors.Is(err, ErrAppNotFound) {
+		t.Fatalf("missing worker error = %v, want ErrAppNotFound", err)
 	}
 }
 

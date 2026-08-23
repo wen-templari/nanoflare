@@ -707,6 +707,11 @@ The gateway trace breaks Worker requests into deployment resolution, runtime
 ensure, upstream time-to-first-byte, and response-copy spans. Grafana provisions
 Tempo, Prometheus, and Loki data sources automatically.
 
+Lazy cold starts add `worker.runtime_start` beneath `worker.runtime_ensure`,
+with child spans for runtime preparation, configuration writing, process launch,
+and HTTP port readiness. The ensure span records
+`nanoflare.runtime.cold_start` so cold and reused requests can be compared.
+
 The Compose stack also starts Vector and Loki for logs. Vector labels worker
 output with its worker and deployment IDs before writing it to Loki; Grafana at
 `http://127.0.0.1:3000` can query all platform services. For a host-run runtime,

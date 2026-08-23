@@ -22,6 +22,7 @@ import (
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtime"
+	"github.com/clas/nanoflare/internal/telemetry"
 )
 
 func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
@@ -167,6 +168,25 @@ func BenchmarkWorkerdGatewayEndToEnd(b *testing.B) {
 	if err != nil {
 		b.Skip("workerd is not installed")
 	}
+	benchmarkServiceName := os.Getenv("OTEL_SERVICE_NAME")
+	if benchmarkServiceName == "" {
+		benchmarkServiceName = "nanoflare-cold-start-benchmark"
+	}
+	shutdownTracing, err := telemetry.ConfigureTracing(context.Background(), telemetry.TracingConfig{
+		Endpoint:    os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		ServiceName: benchmarkServiceName,
+		SampleRatio: 1,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(ctx); err != nil {
+			b.Errorf("shut down benchmark tracing: %v", err)
+		}
+	}()
 	previousLogOutput := log.Writer()
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(previousLogOutput)

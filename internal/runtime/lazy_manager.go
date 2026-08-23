@@ -12,11 +12,18 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
+var lazyRuntimeTracer = otel.Tracer("github.com/clas/nanoflare/internal/runtime/lazy-manager")
+
 type EnsuredWorker struct {
-	Port    int
-	Release func()
+	Port      int
+	ColdStart bool
+	Release   func()
 }
 
 type LazyManager struct {
@@ -125,12 +132,12 @@ func (m *LazyManager) Write(active []nanoflare.ActiveDeployment) error {
 
 func (m *LazyManager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (EnsuredWorker, error) {
 	for {
-		worker, starter, err := m.worker(active)
+		worker, starter, coldStart, err := m.worker(active)
 		if err != nil {
 			return EnsuredWorker{}, err
 		}
 		if starter {
-			m.start(worker, active)
+			m.start(ctx, worker, active)
 		}
 		select {
 		case <-worker.ready:
@@ -158,7 +165,7 @@ func (m *LazyManager) Ensure(ctx context.Context, active nanoflare.ActiveDeploym
 		}
 		port := worker.port
 		m.mu.Unlock()
-		return EnsuredWorker{Port: port, Release: func() { m.release(worker) }}, nil
+		return EnsuredWorker{Port: port, ColdStart: coldStart, Release: func() { m.release(worker) }}, nil
 	}
 }
 
@@ -186,16 +193,16 @@ func (m *LazyManager) Close() error {
 	return firstErr
 }
 
-func (m *LazyManager) worker(active nanoflare.ActiveDeployment) (*lazyWorker, bool, error) {
+func (m *LazyManager) worker(active nanoflare.ActiveDeployment) (*lazyWorker, bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, false, errors.New("runtime manager is closed")
+		return nil, false, false, errors.New("runtime manager is closed")
 	}
 	key := workerKey(active)
 	if current := m.workers[key]; current != nil {
 		if current.deploymentID == active.Deployment.ID {
-			return current, false, nil
+			return current, false, current.starting, nil
 		}
 		delete(m.workers, key)
 		go m.stopWorker(current)
@@ -216,18 +223,34 @@ func (m *LazyManager) worker(active nanoflare.ActiveDeployment) (*lazyWorker, bo
 		ready:        make(chan struct{}),
 	}
 	m.workers[key] = worker
-	return worker, true, nil
+	return worker, true, true, nil
 }
 
-func (m *LazyManager) start(worker *lazyWorker, active nanoflare.ActiveDeployment) {
+func (m *LazyManager) start(parent context.Context, worker *lazyWorker, active nanoflare.ActiveDeployment) {
+	ctx, startSpan := lazyRuntimeTracer.Start(parent, "worker.runtime_start", trace.WithAttributes(
+		attribute.String("nanoflare.worker.id", active.App.ID),
+		attribute.String("nanoflare.deployment.id", active.Deployment.ID),
+	))
+	defer startSpan.End()
+	fail := func(err error) {
+		recordLazyRuntimeSpanError(startSpan, err)
+		m.failStart(worker, err)
+	}
+
+	_, prepareSpan := lazyRuntimeTracer.Start(ctx, "worker.runtime_prepare")
 	m.mu.Lock()
 	available := append([]nanoflare.ActiveDeployment(nil), m.active...)
 	m.mu.Unlock()
 	generation, err := m.withRuntimePorts(lazyRuntimeClosure(active, available))
 	if err != nil {
-		m.failStart(worker, err)
+		recordLazyRuntimeSpanError(prepareSpan, err)
+		prepareSpan.End()
+		fail(err)
 		return
 	}
+	prepareSpan.SetAttributes(attribute.Int("nanoflare.runtime.worker_count", len(generation)))
+	prepareSpan.End()
+	startSpan.SetAttributes(attribute.Int("nanoflare.runtime.worker_count", len(generation)))
 	routed := generation[0]
 	for _, item := range generation {
 		if item.App.ID == active.App.ID && item.Deployment.ID == active.Deployment.ID {
@@ -239,37 +262,51 @@ func (m *LazyManager) start(worker *lazyWorker, active nanoflare.ActiveDeploymen
 	m.generation++
 	configPath := filepath.Join(m.configDir, fmt.Sprintf("workerd-lazy-%06d-%s-%s.capnp", m.generation, active.App.ID, active.Deployment.ID))
 	m.mu.Unlock()
+	_, configSpan := lazyRuntimeTracer.Start(ctx, "worker.runtime_config_write", trace.WithAttributes(
+		attribute.String("nanoflare.runtime.config_file", filepath.Base(configPath)),
+	))
 	if err := m.writer.WriteWorkerd(configPath, generation); err != nil {
-		m.failStart(worker, err)
+		recordLazyRuntimeSpanError(configSpan, err)
+		configSpan.End()
+		fail(err)
 		return
 	}
+	configSpan.End()
 	if err := m.ensureStillCurrent(worker); err != nil {
 		os.Remove(configPath)
-		m.failStart(worker, err)
+		fail(err)
 		return
 	}
+	_, launchSpan := lazyRuntimeTracer.Start(ctx, "worker.runtime_process_launch")
 	process, err := m.launcher.Launch(configPath, generation)
 	if err != nil {
+		recordLazyRuntimeSpanError(launchSpan, err)
+		launchSpan.End()
 		os.Remove(configPath)
-		m.failStart(worker, fmt.Errorf("start workerd: %w", err))
+		fail(fmt.Errorf("start workerd: %w", err))
 		return
 	}
+	launchSpan.End()
 	if err := m.ensureStillCurrent(worker); err != nil {
 		_ = m.stopWorker(&lazyWorker{configPath: configPath, process: process})
-		m.failStart(worker, err)
+		fail(err)
 		return
 	}
 	pool := &pool{configPath: configPath, process: process, active: generation}
+	_, readySpan := lazyRuntimeTracer.Start(ctx, "worker.runtime_port_ready")
 	if err := m.waitHealthy(process, generation); err != nil {
+		recordLazyRuntimeSpanError(readySpan, err)
+		readySpan.End()
 		_ = m.stopWorker(&lazyWorker{configPath: pool.configPath, process: pool.process})
-		m.failStart(worker, err)
+		fail(err)
 		return
 	}
+	readySpan.End()
 	m.mu.Lock()
 	if m.closed || m.workers[worker.key] != worker {
 		m.mu.Unlock()
 		_ = m.stopWorker(&lazyWorker{configPath: configPath, process: process})
-		m.failStart(worker, errors.New("runtime manager is closed"))
+		fail(errors.New("runtime manager is closed"))
 		return
 	}
 	worker.configPath = configPath
@@ -279,6 +316,11 @@ func (m *LazyManager) start(worker *lazyWorker, active nanoflare.ActiveDeploymen
 	close(worker.ready)
 	m.mu.Unlock()
 	go m.watchLazy(worker)
+}
+
+func recordLazyRuntimeSpanError(span trace.Span, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
 }
 
 func (m *LazyManager) ensureStillCurrent(worker *lazyWorker) error {
@@ -463,8 +505,9 @@ func (m *LazyManager) availablePort() (int, error) {
 func (m *LazyManager) waitHealthy(process Process, active []nanoflare.ActiveDeployment) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.healthTimeout)
 	defer cancel()
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
+	interval := runtimeHealthCheckInitialInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
 		if socketsReady(m.portHost, active) {
 			return nil
@@ -477,7 +520,9 @@ func (m *LazyManager) waitHealthy(process Process, active []nanoflare.ActiveDepl
 			return fmt.Errorf("workerd failed before becoming healthy: %w", err)
 		case <-ctx.Done():
 			return fmt.Errorf("workerd health check: %w", ctx.Err())
-		case <-ticker.C:
+		case <-timer.C:
+			interval = min(interval*2, runtimeHealthCheckMaxInterval)
+			timer.Reset(interval)
 		}
 	}
 }

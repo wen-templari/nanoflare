@@ -470,32 +470,35 @@ func writeAssetResponse(w http.ResponseWriter, r *http.Request, response nanofla
 	_, _ = w.Write(response.Body)
 }
 
-func (s *Server) ensureWorker(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (int, func(), error) {
+func (s *Server) ensureWorker(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (int, func(), bool, error) {
 	if runtimePort != 0 {
-		return runtimePort, func() {}, nil
+		return runtimePort, func() {}, false, nil
 	}
 	if s.runtime == nil {
 		if active.Deployment.Port == 0 {
-			return 0, nil, nanoflare.ErrAppNotFound
+			return 0, nil, false, nanoflare.ErrAppNotFound
 		}
-		return active.Deployment.Port, func() {}, nil
+		return active.Deployment.Port, func() {}, false, nil
 	}
 	ensured, err := s.runtime.Ensure(r.Context(), active)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, false, err
 	}
-	return ensured.Port, ensured.Release, nil
+	return ensured.Port, ensured.Release, ensured.ColdStart, nil
 }
 
 func (s *Server) ensureWorkerTraced(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (int, func(), error) {
-	_, span := gatewayTracer.Start(r.Context(), "worker.runtime_ensure", trace.WithAttributes(
+	ctx, span := gatewayTracer.Start(r.Context(), "worker.runtime_ensure", trace.WithAttributes(
 		attribute.Bool("nanoflare.runtime.explicit_port", runtimePort != 0),
 	))
-	port, release, err := s.ensureWorker(r, active, runtimePort)
+	port, release, coldStart, err := s.ensureWorker(r.WithContext(ctx), active, runtimePort)
 	if err != nil {
 		recordSpanError(span, err)
 	} else {
-		span.SetAttributes(attribute.Int("nanoflare.runtime.port", port))
+		span.SetAttributes(
+			attribute.Int("nanoflare.runtime.port", port),
+			attribute.Bool("nanoflare.runtime.cold_start", coldStart),
+		)
 	}
 	span.End()
 	return port, release, err
