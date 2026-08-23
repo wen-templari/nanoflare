@@ -134,6 +134,29 @@ func TestWorkerRuntimeDeploymentLoadsOnlyRequestedWorker(t *testing.T) {
 	if strings.Contains(objects.gets[0], otherDeployment.ObjectKey) {
 		t.Fatalf("object reads unexpectedly hydrated other deployment %s", otherDeployment.ID)
 	}
+
+	active, _, ok, err = service.WorkerRuntimeDeploymentWithPreference(target.ID, "/plain", targetDeployment.ID)
+	if err != nil || !ok || active.Deployment.ID != targetDeployment.ID {
+		t.Fatalf("cached active deployment = %#v, ok %v, error %v", active, ok, err)
+	}
+	if repo.activeDeploymentsForAppCalls != 1 || len(objects.gets) != 1 {
+		t.Fatalf("cached repository calls = %d, object reads = %d; want 1 each", repo.activeDeploymentsForAppCalls, len(objects.gets))
+	}
+
+	replacement, err := service.Deploy(target.ID, DeployInput{
+		Files:             []WorkerFile{{Path: "worker.js", Content: "replacement"}},
+		CompatibilityDate: "2025-12-10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, _, ok, err = service.WorkerRuntimeDeploymentWithPreference(target.ID, "/plain", targetDeployment.ID)
+	if err != nil || !ok || active.Deployment.ID != replacement.ID {
+		t.Fatalf("replacement active deployment = %#v, ok %v, error %v; want %s", active, ok, err, replacement.ID)
+	}
+	if repo.activeDeploymentsForAppCalls != 2 {
+		t.Fatalf("repository calls after cache invalidation = %d, want 2", repo.activeDeploymentsForAppCalls)
+	}
 }
 
 func TestWorkerRuntimeDeploymentDistinguishesMissingAndUndeployedWorkers(t *testing.T) {
@@ -961,8 +984,16 @@ func TestPutSecretRollsActiveDeploymentAndExposesVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cached, _, ok, err := service.WorkerRuntimeDeployment(app.ID, "/")
+	if err != nil || !ok || cached.Deployment.ID != first.ID {
+		t.Fatalf("cached deployment before secret rollout = %#v, ok %v, error %v", cached, ok, err)
+	}
 	if err := service.PutSecret(app.ID, "DB_CONNECTION_STRING", "postgres://secret"); err != nil {
 		t.Fatal(err)
+	}
+	rolled, _, ok, err := service.WorkerRuntimeDeployment(app.ID, "/")
+	if err != nil || !ok || rolled.Deployment.ID == first.ID || rolled.App.SecretValues["DB_CONNECTION_STRING"] != "postgres://secret" {
+		t.Fatalf("cached deployment after secret rollout = %#v, ok %v, error %v", rolled, ok, err)
 	}
 
 	detail, err := service.WorkerDetail(app.ID)

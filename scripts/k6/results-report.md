@@ -12,7 +12,55 @@ For an apples-to-apples comparison with the earlier test profile, which ramped f
 
 The k6 `sustained` profile previously used one ramping stage, despite its name. It now uses constant VUs for the full requested duration. Future sustained results should therefore be compared with the new 50-VU hold, not the older ramp results.
 
-KV and object-storage results below remain the latest recorded storage runs. Database scenarios are implemented but still need result artifacts. The earlier multi-worker connection-exhaustion boundary also needs to be retested against the optimized build.
+KV and object-storage results below remain the latest recorded storage runs. Database scenarios are implemented but still need result artifacts. A new 100-Worker internal-gateway hold passed cleanly; larger 250-, 500-, and 1,000-Worker fleet sizes remain to be tested.
+
+## August 23 High Worker Count Retest
+
+The self-provisioning high-worker-count scenario created and deployed 100
+temporary Workers, then held 50 VUs for five minutes while selecting Workers
+round-robin through the internal gateway. Every Worker was exercised during the
+first 100 iterations and repeatedly thereafter.
+
+| Workers | Load shape                              |  Requests |      RPS | Failed |      Avg |      p95 |       p99 |    Max | Result   |
+| ------: | --------------------------------------- | --------: | -------: | -----: | -------: | -------: | --------: | -----: | -------- |
+|     100 | 50 VUs for 5 min                        |   694,549 |  2,184.1 |  0.00% | 21.52 ms | 30.65 ms |  43.19 ms | 1.62 s | Pass     |
+|     100 | 100 VUs for 2 min, before runtime cache |   261,253 |  1,864.6 |  0.00% | 45.86 ms | 79.88 ms | 114.50 ms | 3.06 s | Degraded |
+|     100 | 100 VUs for 2 min, with runtime cache   | 2,379,526 | 17,073.0 |  0.00% |  4.68 ms |  9.84 ms |  20.24 ms | 1.83 s | Pass     |
+|     100 | 150 VUs for 2 min, with runtime cache   | 2,131,967 | 15,342.3 |  0.00% |  7.87 ms | 17.76 ms |  35.74 ms | 3.71 s | Degraded |
+
+All 1,389,098 response checks passed: every request returned HTTP 200 and the
+body identified the expected Worker. There were no interrupted iterations and
+no time-dependent throughput collapse. The 1.62-second maximum captures the
+worst individual cold or queued request, while the p95 and p99 remained well
+inside the configured 500 ms and 1 second thresholds.
+
+The first cleanup attempt returned HTTP 500 for 80 deletes even though all 100
+Workers were removed; a follow-up organization listing confirmed zero test
+Workers remained. The test cleanup now retries non-204 responses and treats a
+subsequent 404 as successful confirmation. A two-Worker verification run
+confirmed the corrected cleanup path.
+
+At the original 100-VU boundary, Prometheus recorded 806,872 repository-pool
+waits totaling 7,708,665 ms during 261,253 gateway requests: 3.1 waits and 29.5
+ms of pool wait per request. Upstream connection reuse was 99.8% and gateway
+errors remained zero. Caching hydrated runtime deployments per Worker, with
+invalidation on Worker updates, deployment changes, traffic changes, secret
+rollouts, rollback, and deletion, reduced the comparable run to 262 cumulative
+pool waits. Throughput improved 9.2x, p95 fell 87.7%, and p99 fell 82.3%.
+
+The post-change curve now reaches CPU saturation between 100 and 150 VUs. At
+150 VUs, throughput fell 10.1% while p95 rose 80.5%, despite zero request
+failures. A process sample showed the remaining hot path dominated by HTTP
+proxying, garbage collection, and duration-telemetry maintenance rather than
+repository access. On this machine, 100 VUs is the efficient operating point
+for a 100-Worker fleet after the runtime cache.
+
+Artifact:
+
+- `var/k6-results/high_worker_count_100w_50vus_5m_20260823.json`
+- `var/k6-results/high_worker_count_100w_100vus_2m_telemetry_20260823.json`
+- `var/k6-results/high_worker_count_100w_100vus_2m_runtime_cache_20260823.json`
+- `var/k6-results/high_worker_count_100w_150vus_2m_runtime_cache_20260823.json`
 
 ## August 23 Optimized Worker Retest
 

@@ -126,6 +126,34 @@ SCENARIO=many_workers ROUTE_VIA=internal WORKER_IDS=worker-a,worker-b,worker-c \
   k6 run scripts/k6/worker-load.js
 ```
 
+## High worker count
+
+`high-worker-count.js` provisions a temporary fleet, deploys a minimal Worker to
+every member, and sends requests round-robin through the internal gateway. The
+first `WORKER_COUNT` load iterations touch every Worker exactly once, so this
+exercises fleet size and cold runtime activation instead of applying more VUs to
+a small fixed set. The test deletes the fleet in `teardown`.
+
+The organization must be on the paid usage level because default organizations
+are limited to three Workers. The API token needs `workers:write` and
+`deployments:write`.
+
+```sh
+API_TOKEN=<token> ORG_ID=<paid-org-id> \
+  WORKER_COUNT=100 VUS=50 DURATION=5m \
+  k6 run scripts/k6/high-worker-count.js
+```
+
+Start with 100 Workers, then repeat with 250, 500, and 1,000 while watching
+memory, file descriptors, workerd process churn, cold-start latency, and
+Postgres pool waits. Provisioning uses batches of 10 by default; adjust
+`PROVISION_BATCH_SIZE` when control-plane load itself becomes a bottleneck.
+
+Set `KEEP_WORKERS=1` only when the provisioned fleet is needed for diagnosis.
+The test then prints the retained Worker IDs instead of deleting them. If k6 is
+forcibly killed before `teardown`, delete Workers whose names start with
+`k6-high-count-` before the next run.
+
 Useful knobs:
 
 ```sh

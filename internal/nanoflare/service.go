@@ -112,6 +112,9 @@ type Service struct {
 	kvOrgUsageCache      map[string]orgKVUsageCacheEntry
 	kvOrgUsageCacheTTL   time.Duration
 	restoreCounts        sync.Map // map[databaseID + result]*atomic.Uint64
+	runtimeDeploymentsMu sync.RWMutex
+	runtimeDeployments   map[string][]ActiveDeployment
+	runtimeVersions      map[string]uint64
 }
 
 type AssetResponse struct {
@@ -156,6 +159,8 @@ func newService(store Repository, writer ConfigWriter, objects ObjectStore) *Ser
 		randomHostnameSuffix: randomHostnameSuffix,
 		kvOrgUsageCache:      make(map[string]orgKVUsageCacheEntry),
 		kvOrgUsageCacheTTL:   time.Second,
+		runtimeDeployments:   make(map[string][]ActiveDeployment),
+		runtimeVersions:      make(map[string]uint64),
 	}
 }
 
@@ -597,6 +602,7 @@ func (s *Service) UpdateApp(appID string, input UpdateAppInput) (App, error) {
 	if err := s.store.UpdateApp(app); err != nil {
 		return App{}, err
 	}
+	s.invalidateRuntimeDeployments(appID)
 	active, err := s.activeDeployments()
 	if err != nil {
 		return App{}, err
@@ -742,6 +748,7 @@ func (s *Service) UpdateAppForOrg(orgID, appID string, input UpdateAppInput) (Ap
 	if err := s.store.UpdateApp(app); err != nil {
 		return App{}, err
 	}
+	s.invalidateRuntimeDeployments(appID)
 	active, err := s.activeDeployments()
 	if err != nil {
 		return App{}, err
@@ -811,6 +818,7 @@ func (s *Service) DeleteApp(appID string) error {
 	if err := s.store.DeleteApp(appID); err != nil {
 		return err
 	}
+	s.invalidateRuntimeDeployments(appID)
 	active, err := s.activeDeployments()
 	if err != nil {
 		return err
@@ -936,13 +944,16 @@ func (s *Service) SetDeploymentTraffic(appID string, traffic []DeploymentTraffic
 	if err := s.store.SetActiveTraffic(appID, traffic); err != nil {
 		return nil, err
 	}
+	s.invalidateRuntimeDeployments(appID)
 	active, err := s.activeDeployments()
 	if err != nil {
 		_ = s.store.SetActiveTraffic(appID, previousTraffic)
+		s.invalidateRuntimeDeployments(appID)
 		return nil, err
 	}
 	if err := s.writer.Write(active); err != nil {
 		_ = s.store.SetActiveTraffic(appID, previousTraffic)
+		s.invalidateRuntimeDeployments(appID)
 		return nil, fmt.Errorf("write generated config: %w", err)
 	}
 	return s.WorkerDeployments(appID)
@@ -1214,6 +1225,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		s.cleanupDeploymentObject(deployment)
 		return Deployment{}, err
 	}
+	s.invalidateRuntimeDeployments(appID)
 	active, err := s.activeDeployments()
 	if err != nil {
 		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, deployment); rollbackErr != nil {
@@ -1839,6 +1851,38 @@ func (s *Service) activeDeploymentsForApp(appID string) ([]ActiveDeployment, err
 	return active, nil
 }
 
+func (s *Service) runtimeDeploymentsForApp(appID string) ([]ActiveDeployment, error) {
+	s.runtimeDeploymentsMu.RLock()
+	active, ok := s.runtimeDeployments[appID]
+	version := s.runtimeVersions[appID]
+	s.runtimeDeploymentsMu.RUnlock()
+	if ok {
+		return active, nil
+	}
+
+	active, err := s.activeDeploymentsForApp(appID)
+	if err != nil {
+		return nil, err
+	}
+	s.runtimeDeploymentsMu.Lock()
+	if s.runtimeVersions[appID] == version {
+		if cached, exists := s.runtimeDeployments[appID]; exists {
+			active = cached
+		} else {
+			s.runtimeDeployments[appID] = active
+		}
+	}
+	s.runtimeDeploymentsMu.Unlock()
+	return active, nil
+}
+
+func (s *Service) invalidateRuntimeDeployments(appID string) {
+	s.runtimeDeploymentsMu.Lock()
+	delete(s.runtimeDeployments, appID)
+	s.runtimeVersions[appID]++
+	s.runtimeDeploymentsMu.Unlock()
+}
+
 func (s *Service) hydrateDeploymentFiles(deployment *Deployment) error {
 	if len(deployment.Files) > 0 {
 		if deployment.BundleSize == 0 {
@@ -1921,6 +1965,7 @@ func (s *Service) rolloutSecretsIfActive(appID string) error {
 	if err := s.store.Activate(next); err != nil {
 		return err
 	}
+	s.invalidateRuntimeDeployments(appID)
 	updated, err := s.activeDeployments()
 	if err != nil {
 		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, next); rollbackErr != nil {
@@ -1957,6 +2002,7 @@ func (s *Service) cleanupDeploymentAssets(deployment Deployment) {
 }
 
 func (s *Service) rollbackDeployment(appID string, previousTraffic []DeploymentTraffic, deployment Deployment) error {
+	defer s.invalidateRuntimeDeployments(appID)
 	if err := s.store.SetActiveTraffic(appID, previousTraffic); err != nil {
 		return err
 	}
@@ -3031,7 +3077,7 @@ func (s *Service) WorkerRuntimeDeploymentWithPreference(appID, requestPath, pref
 
 func (s *Service) WorkerRuntimeDeploymentWithPreferenceContext(ctx context.Context, appID, requestPath, preferredDeploymentID string) (ActiveDeployment, bool, bool, error) {
 	_, activeSpan := runtimeResolutionTracer.Start(ctx, "runtime.load_active_deployments")
-	active, err := s.activeDeploymentsForApp(appID)
+	active, err := s.runtimeDeploymentsForApp(appID)
 	if err != nil {
 		activeSpan.RecordError(err)
 		activeSpan.SetStatus(codes.Error, err.Error())
