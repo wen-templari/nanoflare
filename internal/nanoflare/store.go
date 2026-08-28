@@ -1,10 +1,13 @@
 package nanoflare
 
 import (
+	"encoding/base64"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 var (
@@ -16,6 +19,7 @@ var (
 	ErrKVNamespaceNotFound         = errors.New("kv namespace not found")
 	ErrKVNamespaceInUse            = errors.New("kv namespace is still referenced by a deployment")
 	ErrKVNamespaceNotBound         = errors.New("kv namespace is not bound by the app's active deployment")
+	ErrInvalidKVCursor             = errors.New("invalid KV list cursor")
 	ErrDatabaseExists              = errors.New("database already exists")
 	ErrDatabaseNotFound            = errors.New("database not found")
 	ErrDatabaseInUse               = errors.New("database is still referenced by a deployment")
@@ -135,8 +139,9 @@ type Repository interface {
 	ListDeployments() ([]DeploymentRecord, error)
 	AppIDForCapability(string) (string, error)
 	KVList(capability, namespaceID string) ([]WorkerKVKey, error)
+	KVListPage(capability, namespaceID string, options RuntimeKVListOptions) (RuntimeKVListResult, error)
 	KVGet(capability, namespaceID, key string) ([]byte, bool, error)
-	KVPut(capability, namespaceID, key string, value []byte) error
+	KVPut(capability, namespaceID, key string, value []byte, options ...RuntimeKVPutOptions) error
 	KVDelete(capability, namespaceID, key string) error
 	KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error)
 	KVStorageBytesByOrg(orgID string) (int64, error)
@@ -179,9 +184,14 @@ type Store struct {
 	deployments         map[string][]Deployment
 	active              map[string]map[string]int
 	capabilityToApp     map[string]string
-	kv                  map[string]map[string][]byte
+	kv                  map[string]map[string]runtimeKVValue
 	kvMetrics           map[string]KVNamespaceMetrics
 	objectMetrics       map[string]ObjectStorageBucketMetrics
+}
+
+type runtimeKVValue struct {
+	Value      []byte
+	Expiration *time.Time
 }
 
 func NewStore() *Store {
@@ -211,7 +221,7 @@ func NewStore() *Store {
 		deployments:         make(map[string][]Deployment),
 		active:              make(map[string]map[string]int),
 		capabilityToApp:     make(map[string]string),
-		kv:                  make(map[string]map[string][]byte),
+		kv:                  make(map[string]map[string]runtimeKVValue),
 		kvMetrics:           make(map[string]KVNamespaceMetrics),
 		objectMetrics:       make(map[string]ObjectStorageBucketMetrics),
 	}
@@ -1629,8 +1639,8 @@ func (s *Store) AppIDForCapability(capability string) (string, error) {
 }
 
 func (s *Store) KVGet(capability, namespaceID, key string) ([]byte, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if capability != "" {
 		if _, ok := s.capabilityToApp[capability]; !ok {
 			return nil, false, ErrInvalidCapability
@@ -1640,12 +1650,16 @@ func (s *Store) KVGet(capability, namespaceID, key string) ([]byte, bool, error)
 		return nil, false, ErrKVNamespaceNotFound
 	}
 	value, ok := s.kv[namespaceID][key]
-	return append([]byte(nil), value...), ok, nil
+	if ok && runtimeKVExpired(value, time.Now()) {
+		s.deleteRuntimeKVValueLocked(namespaceID, key, value)
+		return nil, false, nil
+	}
+	return append([]byte(nil), value.Value...), ok, nil
 }
 
 func (s *Store) KVList(capability, namespaceID string) ([]WorkerKVKey, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if capability != "" {
 		if _, ok := s.capabilityToApp[capability]; !ok {
 			return nil, ErrInvalidCapability
@@ -1654,15 +1668,67 @@ func (s *Store) KVList(capability, namespaceID string) ([]WorkerKVKey, error) {
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return nil, ErrKVNamespaceNotFound
 	}
+	s.purgeExpiredKVLocked(namespaceID, time.Now())
 	items := make([]WorkerKVKey, 0, len(s.kv[namespaceID]))
 	for key, value := range s.kv[namespaceID] {
-		items = append(items, WorkerKVKey{Key: key, Size: int64(len(value))})
+		items = append(items, WorkerKVKey{Key: key, Size: int64(len(value.Value))})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
 	return items, nil
 }
 
-func (s *Store) KVPut(capability, namespaceID, key string, value []byte) error {
+func (s *Store) KVListPage(capability, namespaceID string, options RuntimeKVListOptions) (RuntimeKVListResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if capability != "" {
+		if _, ok := s.capabilityToApp[capability]; !ok {
+			return RuntimeKVListResult{}, ErrInvalidCapability
+		}
+	}
+	if _, ok := s.kvNamespaces[namespaceID]; !ok {
+		return RuntimeKVListResult{}, ErrKVNamespaceNotFound
+	}
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	after, err := DecodeRuntimeKVCursor(options.Cursor)
+	if err != nil {
+		return RuntimeKVListResult{}, err
+	}
+	s.purgeExpiredKVLocked(namespaceID, time.Now())
+	keys := make([]string, 0, len(s.kv[namespaceID]))
+	for key := range s.kv[namespaceID] {
+		if key <= after || !strings.HasPrefix(key, options.Prefix) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	complete := len(keys) <= limit
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	result := RuntimeKVListResult{Keys: make([]RuntimeKVListKey, 0, len(keys)), ListComplete: complete}
+	for _, key := range keys {
+		value := s.kv[namespaceID][key]
+		item := RuntimeKVListKey{Name: key}
+		if value.Expiration != nil {
+			expiration := value.Expiration.Unix()
+			item.Expiration = &expiration
+		}
+		result.Keys = append(result.Keys, item)
+	}
+	if !complete && len(keys) > 0 {
+		result.Cursor = EncodeRuntimeKVCursor(keys[len(keys)-1])
+	}
+	return result, nil
+}
+
+func (s *Store) KVPut(capability, namespaceID, key string, value []byte, options ...RuntimeKVPutOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if capability != "" {
@@ -1674,15 +1740,15 @@ func (s *Store) KVPut(capability, namespaceID, key string, value []byte) error {
 		return ErrKVNamespaceNotFound
 	}
 	if s.kv[namespaceID] == nil {
-		s.kv[namespaceID] = make(map[string][]byte)
+		s.kv[namespaceID] = make(map[string]runtimeKVValue)
 	}
-	s.kv[namespaceID][key] = append([]byte(nil), value...)
+	s.kv[namespaceID][key] = runtimeKVValue{Value: append([]byte(nil), value...), Expiration: runtimeKVExpiration(options)}
 	return nil
 }
 
 func (s *Store) KVValueSize(capability, namespaceID, key string) (int64, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if capability != "" {
 		if _, ok := s.capabilityToApp[capability]; !ok {
 			return 0, false, ErrInvalidCapability
@@ -1695,10 +1761,14 @@ func (s *Store) KVValueSize(capability, namespaceID, key string) (int64, bool, e
 	if !ok {
 		return 0, false, nil
 	}
-	return int64(len(value)), true, nil
+	if runtimeKVExpired(value, time.Now()) {
+		s.deleteRuntimeKVValueLocked(namespaceID, key, value)
+		return 0, false, nil
+	}
+	return int64(len(value.Value)), true, nil
 }
 
-func (s *Store) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error) {
+func (s *Store) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte, options ...RuntimeKVPutOptions) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if capability != "" {
@@ -1710,10 +1780,10 @@ func (s *Store) KVPutWithSizeDelta(capability, namespaceID, key string, value []
 		return 0, ErrKVNamespaceNotFound
 	}
 	if s.kv[namespaceID] == nil {
-		s.kv[namespaceID] = make(map[string][]byte)
+		s.kv[namespaceID] = make(map[string]runtimeKVValue)
 	}
-	oldSize := int64(len(s.kv[namespaceID][key]))
-	s.kv[namespaceID][key] = append([]byte(nil), value...)
+	oldSize := int64(len(s.kv[namespaceID][key].Value))
+	s.kv[namespaceID][key] = runtimeKVValue{Value: append([]byte(nil), value...), Expiration: runtimeKVExpiration(options)}
 	delta := int64(len(value)) - oldSize
 	metrics := s.kvMetrics[namespaceID]
 	metrics.Size += delta
@@ -1750,7 +1820,7 @@ func (s *Store) KVDeleteWithSizeDelta(capability, namespaceID, key string) (int6
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return 0, ErrKVNamespaceNotFound
 	}
-	oldSize := int64(len(s.kv[namespaceID][key]))
+	oldSize := int64(len(s.kv[namespaceID][key].Value))
 	delete(s.kv[namespaceID], key)
 	delta := -oldSize
 	metrics := s.kvMetrics[namespaceID]
@@ -1762,12 +1832,65 @@ func (s *Store) KVDeleteWithSizeDelta(capability, namespaceID, key string) (int6
 	return delta, nil
 }
 
+func runtimeKVExpiration(options []RuntimeKVPutOptions) *time.Time {
+	if len(options) == 0 {
+		return nil
+	}
+	return cloneTime(options[0].Expiration)
+}
+
+func runtimeKVExpired(value runtimeKVValue, now time.Time) bool {
+	return value.Expiration != nil && !value.Expiration.After(now)
+}
+
+func cloneTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func (s *Store) deleteRuntimeKVValueLocked(namespaceID, key string, value runtimeKVValue) {
+	delete(s.kv[namespaceID], key)
+	metrics := s.kvMetrics[namespaceID]
+	metrics.Size -= int64(len(value.Value))
+	if metrics.Size < 0 {
+		metrics.Size = 0
+	}
+	s.kvMetrics[namespaceID] = metrics
+}
+
+func (s *Store) purgeExpiredKVLocked(namespaceID string, now time.Time) {
+	for key, value := range s.kv[namespaceID] {
+		if runtimeKVExpired(value, now) {
+			s.deleteRuntimeKVValueLocked(namespaceID, key, value)
+		}
+	}
+}
+
+func EncodeRuntimeKVCursor(key string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+func DecodeRuntimeKVCursor(cursor string) (string, error) {
+	if cursor == "" {
+		return "", nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil || !utf8.Valid(decoded) || EncodeRuntimeKVCursor(string(decoded)) != cursor {
+		return "", ErrInvalidKVCursor
+	}
+	return string(decoded), nil
+}
+
 func (s *Store) KVNamespaceMetrics(namespaceID string) (KVNamespaceMetrics, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if _, ok := s.kvNamespaces[namespaceID]; !ok {
 		return KVNamespaceMetrics{}, ErrKVNamespaceNotFound
 	}
+	s.purgeExpiredKVLocked(namespaceID, time.Now())
 	metrics := s.kvMetrics[namespaceID]
 	metrics.Available = true
 	return metrics, nil
@@ -1813,13 +1936,14 @@ func (s *Store) AdjustKVNamespaceSize(namespaceID string, delta int64) error {
 }
 
 func (s *Store) KVStorageBytesByOrg(orgID string) (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var total int64
 	for namespaceID, namespace := range s.kvNamespaces {
 		if namespace.OrgID != orgID {
 			continue
 		}
+		s.purgeExpiredKVLocked(namespaceID, time.Now())
 		total += s.kvMetrics[namespaceID].Size
 	}
 	return total, nil

@@ -2,10 +2,14 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
@@ -39,9 +43,58 @@ func TestRuntimeKVRejectsInvalidRequests(t *testing.T) {
 	runtimeKVRequest(t, server, http.MethodGet, "/.?urlencoded=true", token, namespaceID, nil, http.StatusBadRequest)
 	runtimeKVRequest(t, server, http.MethodGet, "/"+strings.Repeat("a", maxKVKeySize+1)+"?urlencoded=true", token, namespaceID, nil, http.StatusBadRequest)
 	runtimeKVRequest(t, server, http.MethodPut, "/large?urlencoded=true", token, namespaceID, make([]byte, maxKVValueSize+1), http.StatusRequestEntityTooLarge)
-	runtimeKVRequest(t, server, http.MethodGet, "/?prefix=a", token, namespaceID, nil, http.StatusNotImplemented)
 	runtimeKVRequest(t, server, http.MethodPost, "/bulk/get", token, namespaceID, []byte(`{"keys":["a"]}`), http.StatusNotImplemented)
-	runtimeKVRequest(t, server, http.MethodPut, "/ttl?urlencoded=true&expiration_ttl=60", token, namespaceID, []byte("value"), http.StatusNotImplemented)
+	runtimeKVRequest(t, server, http.MethodPut, "/ttl?urlencoded=true&expiration_ttl=59", token, namespaceID, []byte("value"), http.StatusBadRequest)
+	runtimeKVRequest(t, server, http.MethodPut, "/ttl?urlencoded=true&expiration_ttl=60&expiration=9999999999", token, namespaceID, []byte("value"), http.StatusBadRequest)
+	runtimeKVRequest(t, server, http.MethodGet, "/?key_count_limit=1001", token, namespaceID, nil, http.StatusBadRequest)
+	runtimeKVRequest(t, server, http.MethodGet, "/?cursor=not-valid!", token, namespaceID, nil, http.StatusBadRequest)
+	runtimeKVRequest(t, server, http.MethodGet, "/missing?urlencoded=true&cache_ttl=60", token, namespaceID, nil, http.StatusNotImplemented)
+}
+
+func TestRuntimeKVSupportsExpirationAndDeletionSafePagination(t *testing.T) {
+	store, token, namespaceID, server := runtimeKVFixture(t)
+	future := time.Now().Add(2 * time.Hour).Unix()
+	runtimeKVRequest(t, server, http.MethodPut, "/grant%3Aone?urlencoded=true&expiration_ttl=600", token, namespaceID, []byte("one"), http.StatusNoContent)
+	runtimeKVRequest(t, server, http.MethodPut, "/grant%3Atwo?urlencoded=true&expiration="+strconv.FormatInt(future, 10), token, namespaceID, []byte("two"), http.StatusNoContent)
+	runtimeKVRequest(t, server, http.MethodPut, "/other?urlencoded=true", token, namespaceID, []byte("other"), http.StatusNoContent)
+
+	first := runtimeKVListRequest(t, server, "/?prefix=grant%3A&key_count_limit=1", token, namespaceID)
+	if first.ListComplete || len(first.Keys) != 1 || first.Keys[0].Name != "grant:one" || first.Keys[0].Expiration == nil || first.Cursor == "" {
+		t.Fatalf("first list page = %#v", first)
+	}
+	runtimeKVRequest(t, server, http.MethodDelete, "/grant%3Aone?urlencoded=true", token, namespaceID, nil, http.StatusNoContent)
+	second := runtimeKVListRequest(t, server, "/?prefix=grant%3A&key_count_limit=1&cursor="+url.QueryEscape(first.Cursor), token, namespaceID)
+	if !second.ListComplete || len(second.Keys) != 1 || second.Keys[0].Name != "grant:two" || second.Keys[0].Expiration == nil {
+		t.Fatalf("second list page after deleting first page = %#v", second)
+	}
+	runtimeKVRequest(t, server, http.MethodPut, "/grant%3Atwo?urlencoded=true", token, namespaceID, []byte("two"), http.StatusNoContent)
+
+	expired := time.Now().Add(-time.Minute)
+	if _, err := store.KVPutWithSizeDelta(token, namespaceID, "grant:expired", []byte("expired"), nanoflare.RuntimeKVPutOptions{Expiration: &expired}); err != nil {
+		t.Fatal(err)
+	}
+	runtimeKVRequest(t, server, http.MethodGet, "/grant%3Aexpired?urlencoded=true", token, namespaceID, nil, http.StatusNotFound)
+	remaining := runtimeKVListRequest(t, server, "/?prefix=grant%3A", token, namespaceID)
+	if len(remaining.Keys) != 1 || remaining.Keys[0].Name != "grant:two" || remaining.Keys[0].Expiration != nil {
+		t.Fatalf("list with expired key = %#v", remaining)
+	}
+	metrics, err := store.KVNamespaceMetrics(namespaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.Size != int64(len("two")+len("other")) {
+		t.Fatalf("KV size after purging expired key = %d", metrics.Size)
+	}
+}
+
+func runtimeKVListRequest(t testing.TB, server http.Handler, path, token, namespaceID string) nanoflare.RuntimeKVListResult {
+	t.Helper()
+	body := runtimeKVRequest(t, server, http.MethodGet, path, token, namespaceID, nil, http.StatusOK)
+	var result nanoflare.RuntimeKVListResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode KV list response %q: %v", body, err)
+	}
+	return result
 }
 
 func TestRuntimeTokenSurvivesRedeployAndIsNotPublic(t *testing.T) {

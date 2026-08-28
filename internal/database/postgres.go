@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -430,8 +431,11 @@ CREATE TABLE IF NOT EXISTS runtime_kv (
 	kv_namespace_id text NOT NULL REFERENCES kv_namespaces(id),
 	key text NOT NULL,
 	value bytea NOT NULL,
+	expires_at timestamptz,
 	PRIMARY KEY (kv_namespace_id, key)
 );
+ALTER TABLE runtime_kv ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+CREATE INDEX IF NOT EXISTS runtime_kv_expiration_idx ON runtime_kv (kv_namespace_id, expires_at) WHERE expires_at IS NOT NULL;
 CREATE TABLE IF NOT EXISTS kv_namespace_metrics (
 	kv_namespace_id text PRIMARY KEY REFERENCES kv_namespaces(id) ON DELETE CASCADE,
 	reads bigint NOT NULL DEFAULT 0,
@@ -2290,7 +2294,7 @@ func (p *Postgres) KVGet(capability, namespaceID, key string) ([]byte, bool, err
 		return nil, false, err
 	}
 	var value []byte
-	err := p.db.QueryRow(`SELECT value FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key).Scan(&value)
+	err := p.db.QueryRow(`SELECT value FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2 AND (expires_at IS NULL OR expires_at > NOW())`, namespaceID, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -2307,7 +2311,7 @@ func (p *Postgres) KVValueSize(capability, namespaceID, key string) (int64, bool
 		return 0, false, err
 	}
 	var size int64
-	err := p.db.QueryRow(`SELECT octet_length(value) FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2`, namespaceID, key).Scan(&size)
+	err := p.db.QueryRow(`SELECT octet_length(value) FROM runtime_kv WHERE kv_namespace_id = $1 AND key = $2 AND (expires_at IS NULL OR expires_at > NOW())`, namespaceID, key).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -2323,7 +2327,10 @@ func (p *Postgres) KVList(capability, namespaceID string) ([]nanoflare.WorkerKVK
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return nil, err
 	}
-	rows, err := p.db.Query(`SELECT key, octet_length(value) FROM runtime_kv WHERE kv_namespace_id = $1 ORDER BY key`, namespaceID)
+	if err := p.purgeExpiredKV(namespaceID); err != nil {
+		return nil, err
+	}
+	rows, err := p.db.Query(`SELECT key, octet_length(value), expires_at FROM runtime_kv WHERE kv_namespace_id = $1 ORDER BY key COLLATE "C"`, namespaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -2331,7 +2338,8 @@ func (p *Postgres) KVList(capability, namespaceID string) ([]nanoflare.WorkerKVK
 	keys := []nanoflare.WorkerKVKey{}
 	for rows.Next() {
 		var item nanoflare.WorkerKVKey
-		if err := rows.Scan(&item.Key, &item.Size); err != nil {
+		var expiration *time.Time
+		if err := rows.Scan(&item.Key, &item.Size, &expiration); err != nil {
 			return nil, err
 		}
 		keys = append(keys, item)
@@ -2339,7 +2347,116 @@ func (p *Postgres) KVList(capability, namespaceID string) ([]nanoflare.WorkerKVK
 	return keys, rows.Err()
 }
 
-func (p *Postgres) KVPut(capability, namespaceID, key string, value []byte) error {
+func (p *Postgres) KVListPage(capability, namespaceID string, options nanoflare.RuntimeKVListOptions) (nanoflare.RuntimeKVListResult, error) {
+	if capability != "" {
+		if _, err := p.AppIDForCapability(capability); err != nil {
+			return nanoflare.RuntimeKVListResult{}, err
+		}
+	}
+	if _, err := p.GetKVNamespace(namespaceID); err != nil {
+		return nanoflare.RuntimeKVListResult{}, err
+	}
+	after, err := nanoflare.DecodeRuntimeKVCursor(options.Cursor)
+	if err != nil {
+		return nanoflare.RuntimeKVListResult{}, err
+	}
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	if err := p.purgeExpiredKV(namespaceID); err != nil {
+		return nanoflare.RuntimeKVListResult{}, err
+	}
+	rows, err := p.db.Query(`
+SELECT key, expires_at
+FROM runtime_kv
+WHERE kv_namespace_id = $1
+  AND key COLLATE "C" > $2 COLLATE "C"
+  AND key LIKE $3 ESCAPE E'\\'
+ORDER BY key COLLATE "C"
+LIMIT $4`, namespaceID, after, escapeKVLikePrefix(options.Prefix)+"%", limit+1)
+	if err != nil {
+		return nanoflare.RuntimeKVListResult{}, err
+	}
+	defer rows.Close()
+	keys := make([]nanoflare.RuntimeKVListKey, 0, limit+1)
+	for rows.Next() {
+		var key string
+		var expiration *time.Time
+		if err := rows.Scan(&key, &expiration); err != nil {
+			return nanoflare.RuntimeKVListResult{}, err
+		}
+		item := nanoflare.RuntimeKVListKey{Name: key}
+		if expiration != nil {
+			unix := expiration.Unix()
+			item.Expiration = &unix
+		}
+		keys = append(keys, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nanoflare.RuntimeKVListResult{}, err
+	}
+	complete := len(keys) <= limit
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	result := nanoflare.RuntimeKVListResult{Keys: keys, ListComplete: complete}
+	if !complete && len(keys) > 0 {
+		result.Cursor = nanoflare.EncodeRuntimeKVCursor(keys[len(keys)-1].Name)
+	}
+	return result, nil
+}
+
+func escapeKVLikePrefix(prefix string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+}
+
+func postgresKVExpiration(options []nanoflare.RuntimeKVPutOptions) any {
+	if len(options) == 0 || options[0].Expiration == nil {
+		return nil
+	}
+	return *options[0].Expiration
+}
+
+func (p *Postgres) purgeExpiredKV(namespaceID string) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`DELETE FROM runtime_kv WHERE kv_namespace_id = $1 AND expires_at <= NOW() RETURNING octet_length(value)`, namespaceID)
+	if err != nil {
+		return err
+	}
+	var removed int64
+	for rows.Next() {
+		var size int64
+		if err := rows.Scan(&size); err != nil {
+			rows.Close()
+			return err
+		}
+		removed += size
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if removed > 0 {
+		if _, err := tx.Exec(`
+INSERT INTO kv_namespace_metrics (kv_namespace_id, reads, writes, size) VALUES ($1, 0, 0, 0)
+ON CONFLICT (kv_namespace_id) DO UPDATE SET size = GREATEST(kv_namespace_metrics.size - $2, 0)`, namespaceID, removed); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (p *Postgres) KVPut(capability, namespaceID, key string, value []byte, options ...nanoflare.RuntimeKVPutOptions) error {
 	if capability != "" {
 		if _, err := p.AppIDForCapability(capability); err != nil {
 			return err
@@ -2349,12 +2466,12 @@ func (p *Postgres) KVPut(capability, namespaceID, key string, value []byte) erro
 		return err
 	}
 	_, err := p.db.Exec(`
-INSERT INTO runtime_kv (kv_namespace_id, key, value) VALUES ($1, $2, $3)
-ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value`, namespaceID, key, value)
+	INSERT INTO runtime_kv (kv_namespace_id, key, value, expires_at) VALUES ($1, $2, $3, $4)
+	ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at`, namespaceID, key, value, postgresKVExpiration(options))
 	return err
 }
 
-func (p *Postgres) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error) {
+func (p *Postgres) KVPutWithSizeDelta(capability, namespaceID, key string, value []byte, options ...nanoflare.RuntimeKVPutOptions) (int64, error) {
 	if capability != "" {
 		if _, err := p.AppIDForCapability(capability); err != nil {
 			return 0, err
@@ -2377,8 +2494,8 @@ func (p *Postgres) KVPutWithSizeDelta(capability, namespaceID, key string, value
 		oldSize = 0
 	}
 	if _, err := tx.Exec(`
-INSERT INTO runtime_kv (kv_namespace_id, key, value) VALUES ($1, $2, $3)
-ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value`, namespaceID, key, value); err != nil {
+	INSERT INTO runtime_kv (kv_namespace_id, key, value, expires_at) VALUES ($1, $2, $3, $4)
+	ON CONFLICT (kv_namespace_id, key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at`, namespaceID, key, value, postgresKVExpiration(options)); err != nil {
 		return 0, err
 	}
 	delta := int64(len(value)) - oldSize
@@ -2459,6 +2576,9 @@ func (p *Postgres) KVNamespaceMetrics(namespaceID string) (nanoflare.KVNamespace
 	if _, err := p.GetKVNamespace(namespaceID); err != nil {
 		return nanoflare.KVNamespaceMetrics{}, err
 	}
+	if err := p.purgeExpiredKV(namespaceID); err != nil {
+		return nanoflare.KVNamespaceMetrics{}, err
+	}
 	var metrics nanoflare.KVNamespaceMetrics
 	err := p.db.QueryRow(`
 SELECT reads, writes, size
@@ -2505,10 +2625,10 @@ ON CONFLICT (kv_namespace_id) DO UPDATE SET size = GREATEST(kv_namespace_metrics
 func (p *Postgres) KVStorageBytesByOrg(orgID string) (int64, error) {
 	var size int64
 	err := p.db.QueryRow(`
-SELECT COALESCE(SUM(m.size), 0)
-FROM kv_namespaces n
-LEFT JOIN kv_namespace_metrics m ON m.kv_namespace_id = n.id
-WHERE n.org_id = $1`, orgID).Scan(&size)
+	SELECT COALESCE(SUM(octet_length(k.value)), 0)
+	FROM kv_namespaces n
+	LEFT JOIN runtime_kv k ON k.kv_namespace_id = n.id AND (k.expires_at IS NULL OR k.expires_at > NOW())
+	WHERE n.org_id = $1`, orgID).Scan(&size)
 	return size, err
 }
 

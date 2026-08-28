@@ -20,7 +20,8 @@ The current repository is the first runnable integration slice of `nanoflared`. 
   replacement.
 - App-scoped runtime KV capabilities with PostgreSQL persistence when configured.
 - Explicit Cloudflare-style KV namespace bindings with native `env.BINDING`
-  `get`, `put`, and `delete` operations.
+  `get`, `put`, `delete`, and paginated `list` operations, including key
+  expiration.
 - A Cloudflare-style static assets binding for deployed assets through
   `env.ASSETS.fetch(...)`.
 - A bucket-scoped, Cloudflare R2-style `env.OBJECTS` binding backed by MinIO, with `put`, `get`, `head`, and `delete` operations plus object metadata/body helpers.
@@ -532,6 +533,11 @@ export default {
   },
 };
 ```
+
+KV writes accept Cloudflare-compatible `expiration` and `expirationTtl`
+options. Lists support `prefix`, `limit`, and `cursor`, and object-form reads
+such as `get("key", { type: "json" })` are handled by `workerd`. Bulk KV
+operations, value metadata, and `cacheTtl` remain unsupported.
 
 SQLite databases use `db` bindings and support the same automatic provisioning:
 

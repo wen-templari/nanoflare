@@ -85,7 +85,7 @@ type kvValueSizer interface {
 }
 
 type kvWriteOptimizer interface {
-	KVPutWithSizeDelta(capability, namespaceID, key string, value []byte) (int64, error)
+	KVPutWithSizeDelta(capability, namespaceID, key string, value []byte, options ...RuntimeKVPutOptions) (int64, error)
 	KVDeleteWithSizeDelta(capability, namespaceID, key string) (int64, error)
 }
 
@@ -2189,6 +2189,10 @@ func (s *Service) KVGet(capability, namespaceID, key string) ([]byte, bool, erro
 }
 
 func (s *Service) KVPut(capability, namespaceID, key string, value []byte) error {
+	return s.KVPutWithOptions(capability, namespaceID, key, value, RuntimeKVPutOptions{})
+}
+
+func (s *Service) KVPutWithOptions(capability, namespaceID, key string, value []byte, options RuntimeKVPutOptions) error {
 	oldSize, _, err := s.kvValueSize(capability, namespaceID, key)
 	if err != nil {
 		return err
@@ -2199,15 +2203,19 @@ func (s *Service) KVPut(capability, namespaceID, key string, value []byte) error
 		return err
 	}
 	if optimized, ok := s.store.(kvWriteOptimizer); ok {
-		appliedDelta, err := optimized.KVPutWithSizeDelta(capability, namespaceID, key, value)
+		appliedDelta, err := optimized.KVPutWithSizeDelta(capability, namespaceID, key, value, options)
 		if err != nil {
 			s.invalidateKVOrgUsageCache(orgID)
 			return err
 		}
-		s.adjustKVOrgUsageCache(orgID, appliedDelta)
+		if appliedDelta != delta {
+			s.invalidateKVOrgUsageCache(orgID)
+		} else {
+			s.adjustKVOrgUsageCache(orgID, appliedDelta)
+		}
 		return nil
 	}
-	if err := s.store.KVPut(capability, namespaceID, key, value); err != nil {
+	if err := s.store.KVPut(capability, namespaceID, key, value, options); err != nil {
 		s.invalidateKVOrgUsageCache(orgID)
 		return err
 	}
@@ -2217,6 +2225,10 @@ func (s *Service) KVPut(capability, namespaceID, key string, value []byte) error
 	}
 	s.adjustKVOrgUsageCache(orgID, delta)
 	return nil
+}
+
+func (s *Service) KVListPage(capability, namespaceID string, options RuntimeKVListOptions) (RuntimeKVListResult, error) {
+	return s.store.KVListPage(capability, namespaceID, options)
 }
 
 func (s *Service) KVDelete(capability, namespaceID, key string) error {
@@ -2234,7 +2246,15 @@ func (s *Service) KVDelete(capability, namespaceID, key string) error {
 			s.invalidateKVOrgUsageCache(orgID)
 			return err
 		}
-		s.adjustKVOrgUsageCache(orgID, delta)
+		logicalDelta := int64(0)
+		if ok {
+			logicalDelta = -oldSize
+		}
+		if delta != logicalDelta {
+			s.invalidateKVOrgUsageCache(orgID)
+		} else {
+			s.adjustKVOrgUsageCache(orgID, delta)
+		}
 		return nil
 	}
 	if err := s.store.KVDelete(capability, namespaceID, key); err != nil {

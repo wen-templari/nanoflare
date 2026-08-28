@@ -70,13 +70,61 @@ interface NanoflareObjectStorageBucket {
   delete(key: string): Promise<void>;
 }
 
+interface NanoflareKVNamespaceGetOptions<Type> {
+  type?: Type;
+}
+
+interface NanoflareKVNamespacePutOptions {
+  expiration?: number;
+  expirationTtl?: number;
+}
+
+interface NanoflareKVNamespaceListOptions {
+  limit?: number;
+  prefix?: string | null;
+  cursor?: string | null;
+}
+
+interface NanoflareKVNamespaceListKey<Metadata = unknown> {
+  name: string;
+  expiration?: number;
+  metadata?: Metadata;
+}
+
+interface NanoflareKVNamespaceListResult<Metadata = unknown> {
+  keys: NanoflareKVNamespaceListKey<Metadata>[];
+  list_complete: boolean;
+  cursor?: string;
+}
+
 interface NanoflareKVNamespace {
-  get(key: string): Promise<string | null>;
+  get(
+    key: string,
+    options?: Partial<NanoflareKVNamespaceGetOptions<undefined>>,
+  ): Promise<string | null>;
+  get(key: string, type: "text"): Promise<string | null>;
   get<T = unknown>(key: string, type: "json"): Promise<T | null>;
   get(key: string, type: "arrayBuffer"): Promise<ArrayBuffer | null>;
   get(key: string, type: "stream"): Promise<ReadableStream | null>;
-  put(key: string, value: string | ArrayBuffer | ArrayBufferView | ReadableStream): Promise<void>;
+  get(key: string, options: NanoflareKVNamespaceGetOptions<"text">): Promise<string | null>;
+  get<T = unknown>(key: string, options: NanoflareKVNamespaceGetOptions<"json">): Promise<T | null>;
+  get(
+    key: string,
+    options: NanoflareKVNamespaceGetOptions<"arrayBuffer">,
+  ): Promise<ArrayBuffer | null>;
+  get(
+    key: string,
+    options: NanoflareKVNamespaceGetOptions<"stream">,
+  ): Promise<ReadableStream | null>;
+  put(
+    key: string,
+    value: string | ArrayBuffer | ArrayBufferView | ReadableStream,
+    options?: NanoflareKVNamespacePutOptions,
+  ): Promise<void>;
   delete(key: string): Promise<void>;
+  list<Metadata = unknown>(
+    options?: NanoflareKVNamespaceListOptions,
+  ): Promise<NanoflareKVNamespaceListResult<Metadata>>;
 }
 
 type NanoflareD1BindValue = string | number | boolean | null | ArrayBuffer | ArrayBufferView;
@@ -149,5 +197,5 @@ type Service<T> = Fetcher & {
 
 interface Env {
   ASSETS: NanoflareAssetFetcher;
-  IDENTITY: Service<import("../identity-worker/dist/worker").default>;
+  IDENTITY: Fetcher;
 }
