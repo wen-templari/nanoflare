@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+  "name": "oauth-mcp-calculator",
+  "main": "dist/worker.js",
+  "format": "modules",
+  "compatibility_date": "2025-12-10",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "files": ["dist/worker.js"],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "f074df24a65e8e7211ee5a109d72ebeae1166e038e94b717"
+    }
+  ],
+  "auth": {}
+}

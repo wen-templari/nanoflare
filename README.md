@@ -33,6 +33,7 @@ Example workers live under `examples/`:
 - [examples/gallery-app](examples/gallery-app/) serves a static UI, uploads images to object storage, and stores gallery metadata in KV.
 - [examples/protected-app](examples/protected-app/) protects `/api/auth/*` routes and returns resolved auth information from the Worker.
 - [examples/service-bindings](examples/service-bindings/) shows private Worker-to-Worker HTTP calls and RPC with Cloudflare-style `services` bindings.
+- [examples/oauth-mcp-calculator](examples/oauth-mcp-calculator/) runs an MCP v2 calculator protected by OAuth 2.1 and backed by Nanoflare KV.
 
 Each example directory includes its own README with setup steps and routes to try.
 

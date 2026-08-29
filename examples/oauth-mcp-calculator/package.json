@@ -1,0 +1,22 @@
+{
+  "name": "@nanoflare/oauth-mcp-calculator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "$npm_execpath run nf-typegen && vite build",
+    "nf-typegen": "nanoflare types",
+    "deploy": "$npm_execpath run build && nanoflare deploy",
+    "check": "nanoflare types --check && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.5.2"
+  },
+  "devDependencies": {
+    "@nanoflare/cli": "^0.1.5",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  }
+}
