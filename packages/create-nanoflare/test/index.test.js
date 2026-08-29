@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { helpMessage, parseArgs, readStarterTemplate, run } from "../dist/index.js";
 
-const templateIDs = ["starter", "bindings", "pages", "spa", "ssr", "api"];
+const templateIDs = ["starter", "bindings", "pages", "spa", "ssr", "api", "mcp", "oauth-mcp"];
 
 function output() {
   let text = "";
@@ -41,6 +41,8 @@ test("prints help without creating a project", async () => {
   });
   assert.equal(result.status, "help");
   assert.equal(stdout.text, helpMessage);
+  assert.match(stdout.text, /mcp\s+A public MCP Worker/);
+  assert.match(stdout.text, /oauth-mcp\s+An OAuth-protected MCP Worker/);
 });
 
 test("creates a starter project with the directory name and UTC date", async () => {
@@ -83,7 +85,7 @@ test("rejects unknown templates and preserves non-empty directories unless overw
   const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
   await assert.rejects(
     run(["worker", "--template", "missing", "--no-interactive"], { cwd, stdout: output() }),
-    /Unknown template/,
+    /Unknown template.*mcp, oauth-mcp/,
   );
   const destination = resolve(cwd, "worker");
   await mkdir(destination);
@@ -93,6 +95,54 @@ test("rejects unknown templates and preserves non-empty directories unless overw
   await run(["worker", "--overwrite", "--no-interactive"], { cwd, stdout: output() });
   await assert.rejects(readFile(resolve(destination, "keep.txt")), { code: "ENOENT" });
   await readFile(resolve(destination, "worker.ts"));
+});
+
+test("scaffolds public and OAuth MCP templates with the expected dependencies", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
+  const now = new Date("2026-08-29T12:00:00Z");
+
+  await run(["public-echo", "--template", "mcp", "--no-interactive"], {
+    cwd,
+    now,
+    stdout: output(),
+  });
+  const publicDirectory = resolve(cwd, "public-echo");
+  const publicProject = JSON.parse(
+    await readFile(resolve(publicDirectory, "nanoflare.json"), "utf8"),
+  );
+  const publicPackage = JSON.parse(
+    await readFile(resolve(publicDirectory, "package.json"), "utf8"),
+  );
+  assert.equal(publicProject.name, "public-echo");
+  assert.equal(publicProject.compatibility_date, "2026-08-29");
+  assert.equal(publicProject.kv_namespaces, undefined);
+  assert.equal(publicPackage.dependencies["@modelcontextprotocol/server"], "^2.0.0");
+  assert.equal(publicPackage.dependencies["@cloudflare/workers-oauth-provider"], undefined);
+  assert.equal(publicPackage.devDependencies["@nanoflare/vite-plugin"], "^0.1.0");
+  assert.match(await readFile(resolve(publicDirectory, "src/worker.ts"), "utf8"), /"echo"/);
+  assert.match(await readFile(resolve(publicDirectory, "vite.config.ts"), "utf8"), /noExternal/);
+
+  await run(["private-echo", "--template", "oauth-mcp", "--no-interactive"], {
+    cwd,
+    now,
+    stdout: output(),
+  });
+  const oauthDirectory = resolve(cwd, "private-echo");
+  const oauthProject = JSON.parse(
+    await readFile(resolve(oauthDirectory, "nanoflare.json"), "utf8"),
+  );
+  const oauthPackage = JSON.parse(await readFile(resolve(oauthDirectory, "package.json"), "utf8"));
+  assert.equal(oauthProject.name, "private-echo");
+  assert.equal(oauthProject.compatibility_date, "2026-08-29");
+  assert.deepEqual(oauthProject.compatibility_flags, ["global_fetch_strictly_public"]);
+  assert.deepEqual(oauthProject.kv_namespaces, [
+    { binding: "OAUTH_KV", id: "replace-with-oauth-kv-namespace-id" },
+  ]);
+  assert.equal(oauthPackage.dependencies["@cloudflare/workers-oauth-provider"], "^0.10.3");
+  assert.match(
+    await readFile(resolve(oauthDirectory, "src/worker-runtime.d.ts"), "utf8"),
+    /cloudflare:workers/,
+  );
 });
 
 test("cancelling an interactive overwrite preserves the destination", async () => {
@@ -120,7 +170,7 @@ test("scaffolds every documented template", async () => {
     assert.equal(result.template, id);
     const project = JSON.parse(await readFile(resolve(cwd, id, "nanoflare.json"), "utf8"));
     assert.equal(project.name, id);
-    if (["pages", "spa"].includes(id)) {
+    if (["pages", "spa", "oauth-mcp"].includes(id)) {
       assert.ok(project.files.includes("dist/worker.js"));
     } else {
       assert.equal(project.files, undefined);

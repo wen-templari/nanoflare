@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+  "name": "{{projectName}}",
+  "main": "dist/worker.js",
+  "format": "modules",
+  "compatibility_date": "{{compatibilityDate}}",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "files": ["dist/worker.js"],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "replace-with-oauth-kv-namespace-id"
+    }
+  ],
+  "auth": {}
+}

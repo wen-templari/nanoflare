@@ -16,5 +16,7 @@ nanoflare deploy
 ```
 
 Use `-- --template <name>` to select `starter`, `bindings`, `pages`, `spa`,
-`ssr`, or `api`. Resource templates mark the IDs to replace in
-`nanoflare.json`; `api` includes an initial SQL migration and OpenAPI endpoint.
+`ssr`, `api`, `mcp`, or `oauth-mcp`. Resource templates mark the IDs to replace
+in `nanoflare.json`; `api` includes an initial SQL migration and OpenAPI
+endpoint. `mcp` creates a public MCP endpoint, while `oauth-mcp` adds OAuth 2.1
+with PKCE and KV-backed authorization state.
