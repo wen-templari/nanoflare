@@ -35,6 +35,8 @@ export const templates: Template[] = [
   { id: "spa", description: "A React SPA with a Worker API route", directory: "spa" },
   { id: "ssr", description: "A React SSR app with Hono", directory: "ssr" },
   { id: "api", description: "A documented Hono and Drizzle API", directory: "api" },
+  { id: "mcp", description: "A public MCP Worker", directory: "mcp" },
+  { id: "oauth-mcp", description: "An OAuth-protected MCP Worker", directory: "oauth-mcp" },
 ];
 
 export const helpMessage = `Usage: create-nanoflare [OPTION]... [DIRECTORY]
@@ -54,6 +56,8 @@ Available templates:
   spa                                 A React SPA with a Worker API route
   ssr                                 A React SSR app with Hono
   api                                 A documented Hono and Drizzle API
+  mcp                                 A public MCP Worker
+  oauth-mcp                           An OAuth-protected MCP Worker
 `;
 
 export function parseArgs(args: string[]): ParsedArgs {

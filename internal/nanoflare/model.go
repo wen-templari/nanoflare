@@ -634,6 +634,27 @@ type WorkerKVKey struct {
 	Size int64  `json:"size"`
 }
 
+type RuntimeKVPutOptions struct {
+	Expiration *time.Time
+}
+
+type RuntimeKVListOptions struct {
+	Prefix string
+	Cursor string
+	Limit  int
+}
+
+type RuntimeKVListKey struct {
+	Name       string `json:"name"`
+	Expiration *int64 `json:"expiration,omitempty"`
+}
+
+type RuntimeKVListResult struct {
+	Keys         []RuntimeKVListKey `json:"keys"`
+	ListComplete bool               `json:"list_complete"`
+	Cursor       string             `json:"cursor,omitempty"`
+}
+
 type ObjectHTTPMetadata struct {
 	ContentType string `json:"contentType,omitempty"`
 }

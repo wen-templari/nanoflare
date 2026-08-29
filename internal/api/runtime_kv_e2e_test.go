@@ -95,7 +95,7 @@ func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
 			if response.StatusCode != http.StatusOK {
 				t.Fatalf("worker status = %d, body = %s", response.StatusCode, body)
 			}
-			if got, want := string(body), `{"text":"hello","json":{"ok":true},"missing":null}`; got != want {
+			if got, want := string(body), `{"text":"hello","json":{"ok":true},"missing":null,"firstKey":"grant:a","firstComplete":false,"secondKey":"grant:b","secondComplete":true}`; got != want {
 				t.Fatalf("worker body = %s, want %s", got, want)
 			}
 			return
@@ -862,13 +862,26 @@ func (s *e2eObjectStore) Delete(appID, path string) error {
 
 const nativeKVWorker = `export default {
   async fetch(request, env) {
-    await env.KV.put("text", "hello");
+	await env.KV.put("text", "hello", { expirationTtl: 600 });
     await env.KV.put("json", JSON.stringify({ ok: true }));
     const text = await env.KV.get("text");
-    const json = await env.KV.get("json", "json");
+	const json = await env.KV.get("json", { type: "json" });
+	await env.KV.put("grant:a", "a");
+	await env.KV.put("grant:b", "b");
+	const first = await env.KV.list({ prefix: "grant:", limit: 1 });
+	await env.KV.delete(first.keys[0].name);
+	const second = await env.KV.list({ prefix: "grant:", limit: 1, cursor: first.cursor });
     await env.KV.delete("text");
     const missing = await env.KV.get("text");
-    return Response.json({ text, json, missing });
+	return Response.json({
+	  text,
+	  json,
+	  missing,
+	  firstKey: first.keys[0].name,
+	  firstComplete: first.list_complete,
+	  secondKey: second.keys[0].name,
+	  secondComplete: second.list_complete,
+	});
   },
 	};`
 

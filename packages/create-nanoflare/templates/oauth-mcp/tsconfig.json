@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "vite.config.ts", "worker-configuration.d.ts"]
+}

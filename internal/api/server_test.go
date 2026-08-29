@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1261,6 +1262,58 @@ func TestGatewayReusesWorkerConnections(t *testing.T) {
 	}
 	if got := server.workerGatewayMetrics.reused.Load(); got == 0 {
 		t.Fatal("gateway reused connections = 0, want at least one reused connection")
+	}
+}
+
+func TestGatewayPreservesWorkerRedirects(t *testing.T) {
+	dir := t.TempDir()
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(
+		filepath.Join(dir, "workerd.capnp"),
+		filepath.Join(dir, "traefik.yml"),
+		"http://nanoflared/internal/auth/verify",
+		"127.0.0.1",
+	))
+	server := newTestServer(service)
+	app := createApp(t, server, "Redirect", "redirect.example.com")
+	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return Response.redirect("https://client.example/callback", 302); } }`}}, "")
+
+	callbackRequests := 0
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callbackRequests++
+		_, _ = w.Write([]byte("callback"))
+	}))
+	t.Cleanup(callback.Close)
+
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", callback.URL+"/oauth/callback?code=test")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(worker.Close)
+	workerURL, err := url.Parse(worker.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, portValue, err := net.SplitHostPort(workerURL.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerPort, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/http/workers/"+app.ID+"/"+strconv.Itoa(workerPort)+"/authorize", nil)
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("gateway redirect status = %d, want %d", recorder.Code, http.StatusFound)
+	}
+	if got, want := recorder.Header().Get("Location"), callback.URL+"/oauth/callback?code=test"; got != want {
+		t.Fatalf("gateway redirect location = %q, want %q", got, want)
+	}
+	if callbackRequests != 0 {
+		t.Fatalf("gateway followed redirect with %d callback requests", callbackRequests)
 	}
 }
 

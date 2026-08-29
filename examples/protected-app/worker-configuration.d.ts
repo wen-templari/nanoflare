@@ -5,6 +5,29 @@ interface NanoflareObjectHTTPMetadata {
   contentType?: string;
 }
 
+interface NanoflareScheduledController {
+  scheduledTime: number;
+  cron: string;
+  noRetry(): void;
+}
+
+interface NanoflareExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+interface NanoflareWorkerHandler<Env = unknown> {
+  fetch?: (
+    request: Request,
+    env: Env,
+    ctx: NanoflareExecutionContext,
+  ) => Response | Promise<Response>;
+  scheduled?: (
+    controller: NanoflareScheduledController,
+    env: Env,
+    ctx: NanoflareExecutionContext,
+  ) => void | Promise<void>;
+}
+
 interface NanoflareObjectStorageObject {
   key: string;
   size: number;
@@ -47,13 +70,61 @@ interface NanoflareObjectStorageBucket {
   delete(key: string): Promise<void>;
 }
 
+interface NanoflareKVNamespaceGetOptions<Type> {
+  type?: Type;
+}
+
+interface NanoflareKVNamespacePutOptions {
+  expiration?: number;
+  expirationTtl?: number;
+}
+
+interface NanoflareKVNamespaceListOptions {
+  limit?: number;
+  prefix?: string | null;
+  cursor?: string | null;
+}
+
+interface NanoflareKVNamespaceListKey<Metadata = unknown> {
+  name: string;
+  expiration?: number;
+  metadata?: Metadata;
+}
+
+interface NanoflareKVNamespaceListResult<Metadata = unknown> {
+  keys: NanoflareKVNamespaceListKey<Metadata>[];
+  list_complete: boolean;
+  cursor?: string;
+}
+
 interface NanoflareKVNamespace {
-  get(key: string): Promise<string | null>;
+  get(
+    key: string,
+    options?: Partial<NanoflareKVNamespaceGetOptions<undefined>>,
+  ): Promise<string | null>;
+  get(key: string, type: "text"): Promise<string | null>;
   get<T = unknown>(key: string, type: "json"): Promise<T | null>;
   get(key: string, type: "arrayBuffer"): Promise<ArrayBuffer | null>;
   get(key: string, type: "stream"): Promise<ReadableStream | null>;
-  put(key: string, value: string | ArrayBuffer | ArrayBufferView | ReadableStream): Promise<void>;
+  get(key: string, options: NanoflareKVNamespaceGetOptions<"text">): Promise<string | null>;
+  get<T = unknown>(key: string, options: NanoflareKVNamespaceGetOptions<"json">): Promise<T | null>;
+  get(
+    key: string,
+    options: NanoflareKVNamespaceGetOptions<"arrayBuffer">,
+  ): Promise<ArrayBuffer | null>;
+  get(
+    key: string,
+    options: NanoflareKVNamespaceGetOptions<"stream">,
+  ): Promise<ReadableStream | null>;
+  put(
+    key: string,
+    value: string | ArrayBuffer | ArrayBufferView | ReadableStream,
+    options?: NanoflareKVNamespacePutOptions,
+  ): Promise<void>;
   delete(key: string): Promise<void>;
+  list<Metadata = unknown>(
+    options?: NanoflareKVNamespaceListOptions,
+  ): Promise<NanoflareKVNamespaceListResult<Metadata>>;
 }
 
 type NanoflareD1BindValue = string | number | boolean | null | ArrayBuffer | ArrayBufferView;
@@ -109,6 +180,20 @@ interface NanoflareD1Database {
 interface NanoflareAssetFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
+
+interface Fetcher {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
+type Service<T> = Fetcher & {
+  [Method in keyof T as Method extends "fetch"
+    ? never
+    : T[Method] extends (...args: any[]) => any
+      ? Method
+      : never]: T[Method] extends (...args: infer Arguments) => infer Result
+    ? (...args: Arguments) => Promise<Awaited<Result>>
+    : never;
+};
 
 interface Env {
   ASSETS: NanoflareAssetFetcher;
