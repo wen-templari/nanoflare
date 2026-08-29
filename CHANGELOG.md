@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.0](https://github.com/wen-templari/nanoflare/compare/v0.4.0...v0.5.0) (2026-08-29)
+
+
+### Features
+
+* add gateway tracing and reduce request latency ([f5481a1](https://github.com/wen-templari/nanoflare/commit/f5481a11cfadbea6b4181c9e538088e5884a8d64))
+* add MCP worker templates ([c25d62d](https://github.com/wen-templari/nanoflare/commit/c25d62df02d397c7ebcff11951ce98d5fcb74e11))
+* add OAuth MCP calculator example ([051af17](https://github.com/wen-templari/nanoflare/commit/051af1792a58788bc57dfa367d05f86950c9d535))
+* add OAuth provider KV and MCP templates ([607374f](https://github.com/wen-templari/nanoflare/commit/607374f4f73f1e6d4f2fc0ba1f46e92c301e27b6))
+* support OAuth provider KV operations ([8eaa9d4](https://github.com/wen-templari/nanoflare/commit/8eaa9d471c0d4aacefc050cf3759bd9839c6df6a))
+
+
+### Bug Fixes
+
+* bound duration telemetry storage ([70da06e](https://github.com/wen-templari/nanoflare/commit/70da06eca6d75da808fc23ec1c9b099c042e5e81))
+* cache worker runtime deployments ([3c84335](https://github.com/wen-templari/nanoflare/commit/3c84335f13ad8a68f57d1ec06c9f71be50013d3d))
+* preserve worker redirects in gateway ([761a407](https://github.com/wen-templari/nanoflare/commit/761a40706f216df5ef5ca467116d6a963c0105a9))
+* prevent repeated worker output identity markers ([5e234d3](https://github.com/wen-templari/nanoflare/commit/5e234d3323c32f08a6a99aac26e246c20b456370))
+* prevent repeated worker output identity markers ([bcc9dd0](https://github.com/wen-templari/nanoflare/commit/bcc9dd0c6d2f66cd64d13fc4b87d8785773fd05b))
+* raise worker deployment size limit ([3d76f0d](https://github.com/wen-templari/nanoflare/commit/3d76f0dcb79149ae9bafa0a695f3791cc977f1b4))
+* scope worker log identity to async context ([cbe1af7](https://github.com/wen-templari/nanoflare/commit/cbe1af7060da77a853908c6d3140a2a7a7e9e965))
+* scope worker log identity to async context ([4ced291](https://github.com/wen-templari/nanoflare/commit/4ced291db24180d353fa6b6693cf51ccfd9edcc5))
+
 ## [0.4.0](https://github.com/wen-templari/nanoflare/compare/v0.3.1...v0.4.0) (2026-08-09)
 
 
