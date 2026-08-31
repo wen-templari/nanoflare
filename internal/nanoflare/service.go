@@ -164,6 +164,15 @@ func newService(store Repository, writer ConfigWriter, objects ObjectStore) *Ser
 	}
 }
 
+// SetMaxCompatibilityDate configures the newest date accepted by the runtime.
+func (s *Service) SetMaxCompatibilityDate(date string) error {
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return fmt.Errorf("invalid maximum compatibility date %q: %w", date, err)
+	}
+	s.maxCompatibilityDate = date
+	return nil
+}
+
 type orgKVUsageCacheEntry struct {
 	size      int64
 	expiresAt time.Time

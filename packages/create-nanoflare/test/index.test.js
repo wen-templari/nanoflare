@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { helpMessage, parseArgs, readStarterTemplate, run } from "../dist/index.js";
+import {
+  helpMessage,
+  latestCompatibilityDate,
+  parseArgs,
+  readStarterTemplate,
+  run,
+} from "../dist/index.js";
 
 const templateIDs = ["starter", "bindings", "pages", "spa", "ssr", "api", "mcp", "oauth-mcp"];
 
@@ -74,6 +80,23 @@ test("creates a starter project with the directory name and UTC date", async () 
   assert.match(stdout.text, /nanoflare create/);
 });
 
+test("warns and uses the latest supported compatibility date when today is newer", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
+  const stderr = output();
+  await run(["future-worker", "--template", "starter", "--no-interactive"], {
+    cwd,
+    stderr,
+    stdout: output(),
+    now: new Date("2026-08-31T12:00:00Z"),
+  });
+
+  const project = JSON.parse(
+    await readFile(resolve(cwd, "future-worker", "nanoflare.json"), "utf8"),
+  );
+  assert.equal(project.compatibility_date, latestCompatibilityDate);
+  assert.match(stderr.text, /Warning: compatibility date 2026-08-31 .* using 2026-07-06 instead/);
+});
+
 test("prompts for a missing directory and template", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
   const answers = ["prompted-worker", "starter"];
@@ -114,7 +137,7 @@ test("scaffolds public and OAuth MCP templates with the expected dependencies", 
     await readFile(resolve(publicDirectory, "package.json"), "utf8"),
   );
   assert.equal(publicProject.name, "public-echo");
-  assert.equal(publicProject.compatibility_date, "2026-08-29");
+  assert.equal(publicProject.compatibility_date, latestCompatibilityDate);
   assert.equal(publicProject.kv_namespaces, undefined);
   assert.equal(publicPackage.dependencies["@modelcontextprotocol/server"], "^2.0.0");
   assert.equal(publicPackage.dependencies["@cloudflare/workers-oauth-provider"], undefined);
@@ -133,7 +156,7 @@ test("scaffolds public and OAuth MCP templates with the expected dependencies", 
   );
   const oauthPackage = JSON.parse(await readFile(resolve(oauthDirectory, "package.json"), "utf8"));
   assert.equal(oauthProject.name, "private-echo");
-  assert.equal(oauthProject.compatibility_date, "2026-08-29");
+  assert.equal(oauthProject.compatibility_date, latestCompatibilityDate);
   assert.deepEqual(oauthProject.compatibility_flags, ["global_fetch_strictly_public"]);
   assert.deepEqual(oauthProject.kv_namespaces, [
     { binding: "OAUTH_KV", id: "replace-with-oauth-kv-namespace-id" },

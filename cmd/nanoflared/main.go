@@ -226,6 +226,14 @@ func main() {
 		log.Printf("using Loki worker output at %s", *lokiURL)
 	}
 	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, outputReader, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
+	compatibilityDate, err := runtime.CompatibilityDate(*workerd)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := service.SetMaxCompatibilityDate(compatibilityDate); err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("workerd compatibility date: %s", compatibilityDate)
 	litestream := database.NewLitestreamSupervisor(*litestreamEnabled, *litestreamBin, *litestreamConfig)
 	if litestream.Enabled() && strings.TrimSpace(*litestreamConfig) == "" {
 		replica, err := generatedLitestreamReplicaConfig()
