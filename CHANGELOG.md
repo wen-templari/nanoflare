@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/wen-templari/nanoflare/compare/v0.5.0...v0.5.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* cap worker compatibility dates ([6d6fafd](https://github.com/wen-templari/nanoflare/commit/6d6fafd697c788d7ef8d50314b5c08b704dfdae9))
+* cap worker compatibility dates ([2fd0a3d](https://github.com/wen-templari/nanoflare/commit/2fd0a3d16ed5617ddff65a7a7c77c78a9796ce86))
+
 ## [0.5.0](https://github.com/wen-templari/nanoflare/compare/v0.4.0...v0.5.0) (2026-08-29)
 
 
