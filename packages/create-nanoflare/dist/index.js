@@ -5,6 +5,8 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const templatesDirectory = resolve(packageDirectory, "templates");
+// Keep this aligned with the workerd version bundled in the Nanoflare image.
+export const latestCompatibilityDate = "2026-07-06";
 export const templates = [
   { id: "starter", description: "A minimal TypeScript Worker", directory: "starter" },
   {
@@ -109,8 +111,13 @@ function projectName(directory) {
     throw new Error("Choose a project directory with a name");
   return name;
 }
-function compatibilityDate(now) {
-  return now.toISOString().slice(0, 10);
+function compatibilityDate(now, stderr) {
+  const currentDate = now.toISOString().slice(0, 10);
+  if (currentDate <= latestCompatibilityDate) return currentDate;
+  stderr.write(
+    `Warning: compatibility date ${currentDate} is newer than the bundled workerd supports; using ${latestCompatibilityDate} instead\n`,
+  );
+  return latestCompatibilityDate;
 }
 function destinationInside(path, root) {
   const pathRelativeToRoot = relative(root, path);
@@ -120,7 +127,7 @@ function destinationInside(path, root) {
     !isAbsolute(pathRelativeToRoot)
   );
 }
-async function writeTemplate(template, destination, name, now) {
+async function writeTemplate(template, destination, name, date) {
   const source = resolve(templatesDirectory, template.directory);
   if (!destinationInside(source, templatesDirectory)) throw new Error("Invalid template path");
   for (const entry of await readdir(source)) {
@@ -134,14 +141,13 @@ async function writeTemplate(template, destination, name, now) {
   const project = await readFile(projectPath, "utf8");
   await writeFile(
     projectPath,
-    project
-      .replaceAll("{{projectName}}", name)
-      .replaceAll("{{compatibilityDate}}", compatibilityDate(now)),
+    project.replaceAll("{{projectName}}", name).replaceAll("{{compatibilityDate}}", date),
   );
 }
 export async function run(args, options = {}) {
   const parsed = parseArgs(args);
   const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
   const prompt = options.prompt ?? promptWithReadline;
   const interactive = parsed.interactive ?? options.interactive ?? isInteractiveTerminal();
   const cwd = options.cwd ?? process.cwd();
@@ -182,7 +188,7 @@ export async function run(args, options = {}) {
     await emptyDirectory(destination);
   }
   await mkdir(destination, { recursive: true });
-  await writeTemplate(template, destination, name, now);
+  await writeTemplate(template, destination, name, compatibilityDate(now, stderr));
   stdout.write(
     `\nScaffolded a Nanoflare Worker in ${destination}\n\nNext steps:\n  cd ${directory}\n  nanoflare create\n  nanoflare deploy\n`,
   );

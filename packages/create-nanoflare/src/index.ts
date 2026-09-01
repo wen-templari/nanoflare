@@ -21,8 +21,12 @@ type RunOptions = {
   interactive?: boolean;
   now?: Date;
   prompt?: (message: string) => Promise<string>;
+  stderr?: Output;
   stdout?: Output;
 };
+
+// Keep this aligned with the workerd version bundled in the Nanoflare image.
+export const latestCompatibilityDate = "2026-07-06";
 
 export const templates: Template[] = [
   { id: "starter", description: "A minimal TypeScript Worker", directory: "starter" },
@@ -139,8 +143,13 @@ function projectName(directory: string): string {
   return name;
 }
 
-function compatibilityDate(now: Date): string {
-  return now.toISOString().slice(0, 10);
+function compatibilityDate(now: Date, stderr: Output): string {
+  const currentDate = now.toISOString().slice(0, 10);
+  if (currentDate <= latestCompatibilityDate) return currentDate;
+  stderr.write(
+    `Warning: compatibility date ${currentDate} is newer than the bundled workerd supports; using ${latestCompatibilityDate} instead\n`,
+  );
+  return latestCompatibilityDate;
 }
 
 function destinationInside(path: string, root: string): boolean {
@@ -156,7 +165,7 @@ async function writeTemplate(
   template: Template,
   destination: string,
   name: string,
-  now: Date,
+  date: string,
 ): Promise<void> {
   const source = resolve(templatesDirectory, template.directory);
   if (!destinationInside(source, templatesDirectory)) throw new Error("Invalid template path");
@@ -171,9 +180,7 @@ async function writeTemplate(
   const project = await readFile(projectPath, "utf8");
   await writeFile(
     projectPath,
-    project
-      .replaceAll("{{projectName}}", name)
-      .replaceAll("{{compatibilityDate}}", compatibilityDate(now)),
+    project.replaceAll("{{projectName}}", name).replaceAll("{{compatibilityDate}}", date),
   );
 }
 
@@ -183,6 +190,7 @@ export async function run(
 ): Promise<{ status: "help" } | { status: "created"; destination: string; template: string }> {
   const parsed = parseArgs(args);
   const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
   const prompt = options.prompt ?? promptWithReadline;
   const interactive = parsed.interactive ?? options.interactive ?? isInteractiveTerminal();
   const cwd = options.cwd ?? process.cwd();
@@ -226,7 +234,7 @@ export async function run(
   }
 
   await mkdir(destination, { recursive: true });
-  await writeTemplate(template, destination, name, now);
+  await writeTemplate(template, destination, name, compatibilityDate(now, stderr));
   stdout.write(
     `\nScaffolded a Nanoflare Worker in ${destination}\n\nNext steps:\n  cd ${directory}\n  nanoflare create\n  nanoflare deploy\n`,
   );

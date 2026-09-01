@@ -231,6 +231,9 @@ func TestDeployValidatesAndStoresCloudflareStyleServiceBindings(t *testing.T) {
 
 func TestDeployFallsBackFromUnsupportedCompatibilityDate(t *testing.T) {
 	service := NewService(NewStore(), &recordingWriter{})
+	if err := service.SetMaxCompatibilityDate("2026-07-06"); err != nil {
+		t.Fatal(err)
+	}
 	app, err := service.CreateApp(CreateAppInput{Name: "Hello", Hostname: "hello.example.com"})
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +248,16 @@ func TestDeployFallsBackFromUnsupportedCompatibilityDate(t *testing.T) {
 	}
 	if deployment.CompatibilityDate != service.maxCompatibilityDate {
 		t.Fatalf("compatibility date = %q, want fallback %q", deployment.CompatibilityDate, service.maxCompatibilityDate)
+	}
+	if deployment.CompatibilityDate != "2026-07-06" {
+		t.Fatalf("compatibility date = %q, want detected date", deployment.CompatibilityDate)
+	}
+}
+
+func TestSetMaxCompatibilityDateRejectsInvalidDate(t *testing.T) {
+	service := NewService(NewStore(), &recordingWriter{})
+	if err := service.SetMaxCompatibilityDate("July 6, 2026"); err == nil {
+		t.Fatal("SetMaxCompatibilityDate() error = nil, want invalid date error")
 	}
 }
 

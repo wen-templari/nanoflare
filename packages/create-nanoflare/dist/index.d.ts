@@ -18,8 +18,10 @@ type RunOptions = {
   interactive?: boolean;
   now?: Date;
   prompt?: (message: string) => Promise<string>;
+  stderr?: Output;
   stdout?: Output;
 };
+export declare const latestCompatibilityDate = "2026-07-06";
 export declare const templates: Template[];
 export declare const helpMessage =
   "Usage: create-nanoflare [OPTION]... [DIRECTORY]\n\nCreate a new Nanoflare Worker. When running in a terminal, the CLI starts in interactive mode.\n\nOptions:\n  -t, --template NAME                 use a specific template\n  --overwrite                         remove existing files if target directory is not empty\n  --interactive / --no-interactive    force interactive or non-interactive mode\n  -h, --help                          display this help message\n\nAvailable templates:\n  starter                             A minimal TypeScript Worker\n  bindings                            A Hono Worker with KV and object storage\n  pages                               A Vite and Tailwind static site\n  spa                                 A React SPA with a Worker API route\n  ssr                                 A React SSR app with Hono\n  api                                 A documented Hono and Drizzle API\n  mcp                                 A public MCP Worker\n  oauth-mcp                           An OAuth-protected MCP Worker\n";
