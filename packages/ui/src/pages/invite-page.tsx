@@ -63,7 +63,17 @@ export function InvitePage() {
       auth.setActiveOrgID(data.membership.org_id);
       void navigate("/", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not accept invite");
+      const message = err instanceof Error ? err.message : "Could not accept invite";
+      if (message === "invalid email or password") {
+        setError(
+          "The email or password is incorrect. Check your credentials, or create a new account.",
+        );
+      } else if (message === "user already exists") {
+        setSignupMode(false);
+        setError("An account already exists for this email. Use your existing account to sign in.");
+      } else {
+        setError(message);
+      }
     } finally {
       setSubmitting(false);
     }
