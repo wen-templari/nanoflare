@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 
 import type { AuthSession, Organization } from "./types";
 
-import { apiClient, authToken, clearAuth, saveActiveOrg, saveAuth } from "./api";
+import { apiClient, authToken, clearAuth, errorMessage, saveActiveOrg, saveAuth } from "./api";
 
 type AuthContextValue = {
   ready: boolean;
@@ -93,7 +93,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       path === "/v1/auth/login"
         ? await apiClient.POST("/v1/auth/login", { body: { email, password }, parseAs: "json" })
         : await apiClient.POST("/v1/auth/signup", { body: { email, password }, parseAs: "json" });
-    if (result.error || !result.data) throw new Error(result.error?.error || "Login failed");
+    if (result.error || !result.data) {
+      throw new Error(
+        errorMessage(
+          result.error,
+          path === "/v1/auth/login" ? "Could not sign in" : "Could not create account",
+        ),
+      );
+    }
     const session = result.data as AuthSession;
     const orgID = session.active_org_id || session.organizations[0]?.id || "";
     saveAuth(session.access_token, orgID);
