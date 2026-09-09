@@ -16,6 +16,7 @@ export function InvitePage() {
   const [invite, setInvite] = useState<OrganizationInvite | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [signupMode, setSignupMode] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,13 +43,17 @@ export function InvitePage() {
   }, [token]);
 
   if (!token) return <Navigate to="/login" replace />;
+  if (!auth.ready) return <div className="min-h-screen bg-kumo-canvas" />;
 
   async function accept(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
     setError("");
     try {
-      if (!auth.signedIn) await auth.signup(email, password);
+      if (!auth.signedIn) {
+        if (signupMode) await auth.signup(email, password);
+        else await auth.login(email, password);
+      }
       const { data, error } = await apiClient.POST("/v1/invites/{token}/accept", {
         params: { path: { token } },
         body: {},
@@ -85,6 +90,11 @@ export function InvitePage() {
               )}
               {!auth.signedIn && (
                 <>
+                  <Text size="sm" variant="secondary">
+                    {signupMode
+                      ? "Create an account to accept this invite."
+                      : "Sign in with your existing account to accept this invite."}
+                  </Text>
                   <Input
                     autoComplete="email"
                     label="Email"
@@ -94,7 +104,7 @@ export function InvitePage() {
                     onChange={(event) => setEmail(event.currentTarget.value)}
                   />
                   <SensitiveInput
-                    autoComplete="new-password"
+                    autoComplete={signupMode ? "new-password" : "current-password"}
                     label="Password"
                     required
                     value={password}
@@ -108,8 +118,25 @@ export function InvitePage() {
                 </Text>
               )}
               <Button icon={Check} loading={submitting} type="submit">
-                Accept invite
+                {auth.signedIn
+                  ? "Accept invite"
+                  : signupMode
+                    ? "Create account and accept"
+                    : "Sign in and accept"}
               </Button>
+              {!auth.signedIn && (
+                <Button
+                  className="w-full justify-center"
+                  onClick={() => {
+                    setSignupMode((value) => !value);
+                    setError("");
+                  }}
+                  type="button"
+                  variant="primary"
+                >
+                  {signupMode ? "Use existing account" : "Create a new account"}
+                </Button>
+              )}
             </div>
           </form>
         </LayerCard>
