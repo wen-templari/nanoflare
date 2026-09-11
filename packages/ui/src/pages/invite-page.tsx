@@ -1,6 +1,6 @@
 import { Banner, Button, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
 import { Check, UserPlus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 
 import type { OrganizationInvite } from "../app/types";
@@ -9,6 +9,12 @@ import { apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import { Input } from "../components/ui/input";
 
+type OIDCConfig = {
+  directLogin: boolean;
+  enabled: boolean;
+  loading: boolean;
+};
+
 export function InvitePage() {
   const { token = "" } = useParams();
   const auth = useAuth();
@@ -16,8 +22,15 @@ export function InvitePage() {
   const [invite, setInvite] = useState<OrganizationInvite | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [signupMode, setSignupMode] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [oidcConfig, setOIDCConfig] = useState<OIDCConfig>({
+    directLogin: false,
+    enabled: false,
+    loading: true,
+  });
+  const startedDirectLogin = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,14 +54,63 @@ export function InvitePage() {
     };
   }, [token]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOIDCConfig() {
+      try {
+        const { data } = await apiClient.GET("/v1/auth/oidc/config");
+        if (!cancelled) {
+          setOIDCConfig({
+            directLogin: Boolean(data?.direct_login),
+            enabled: Boolean(data?.enabled),
+            loading: false,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setOIDCConfig({ directLogin: false, enabled: false, loading: false });
+        }
+      }
+    }
+    void loadOIDCConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const shouldStartDirectLogin =
+    auth.ready &&
+    oidcConfig.directLogin &&
+    oidcConfig.enabled &&
+    !auth.signedIn &&
+    !startedDirectLogin.current;
+
+  useEffect(() => {
+    if (!shouldStartDirectLogin) return;
+    startedDirectLogin.current = true;
+    startOIDCLogin();
+  }, [shouldStartDirectLogin]);
+
   if (!token) return <Navigate to="/login" replace />;
+  if (!auth.ready || oidcConfig.loading || shouldStartDirectLogin) {
+    return <div className="min-h-screen bg-kumo-canvas" />;
+  }
+
+  function startOIDCLogin() {
+    const params = new URLSearchParams();
+    params.set("next", `/invites/${token}`);
+    window.location.assign(`/v1/auth/oidc/start?${params.toString()}`);
+  }
 
   async function accept(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
     setError("");
     try {
-      if (!auth.signedIn) await auth.signup(email, password);
+      if (!auth.signedIn) {
+        if (signupMode) await auth.signup(email, password);
+        else await auth.login(email, password);
+      }
       const { data, error } = await apiClient.POST("/v1/invites/{token}/accept", {
         params: { path: { token } },
         body: {},
@@ -58,7 +120,17 @@ export function InvitePage() {
       auth.setActiveOrgID(data.membership.org_id);
       void navigate("/", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not accept invite");
+      const message = err instanceof Error ? err.message : "Could not accept invite";
+      if (message === "invalid email or password") {
+        setError(
+          "The email or password is incorrect. Check your credentials, or create a new account.",
+        );
+      } else if (message === "user already exists") {
+        setSignupMode(false);
+        setError("An account already exists for this email. Use your existing account to sign in.");
+      } else {
+        setError(message);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -83,8 +155,29 @@ export function InvitePage() {
                   {invite.org_name || "this organization"} as {invite.role}.
                 </Text>
               )}
-              {!auth.signedIn && (
+              {!auth.signedIn && oidcConfig.enabled && (
                 <>
+                  <Text size="sm" variant="secondary">
+                    Continue with your organization's single sign-on provider. Your account will be
+                    created automatically if needed.
+                  </Text>
+                  <Button
+                    className="w-full justify-center"
+                    onClick={startOIDCLogin}
+                    type="button"
+                    variant="secondary"
+                  >
+                    Sign in with SSO
+                  </Button>
+                </>
+              )}
+              {!auth.signedIn && !oidcConfig.enabled && (
+                <>
+                  <Text size="sm" variant="secondary">
+                    {signupMode
+                      ? "Create an account to accept this invite."
+                      : "Sign in with your existing account to accept this invite."}
+                  </Text>
                   <Input
                     autoComplete="email"
                     label="Email"
@@ -94,7 +187,7 @@ export function InvitePage() {
                     onChange={(event) => setEmail(event.currentTarget.value)}
                   />
                   <SensitiveInput
-                    autoComplete="new-password"
+                    autoComplete={signupMode ? "new-password" : "current-password"}
                     label="Password"
                     required
                     value={password}
@@ -107,9 +200,28 @@ export function InvitePage() {
                   Accept this invite with your signed-in account.
                 </Text>
               )}
-              <Button icon={Check} loading={submitting} type="submit">
-                Accept invite
-              </Button>
+              {(auth.signedIn || !oidcConfig.enabled) && (
+                <Button icon={Check} loading={submitting} type="submit">
+                  {auth.signedIn
+                    ? "Accept invite"
+                    : signupMode
+                      ? "Create account and accept"
+                      : "Sign in and accept"}
+                </Button>
+              )}
+              {!auth.signedIn && !oidcConfig.enabled && (
+                <Button
+                  className="w-full justify-center"
+                  onClick={() => {
+                    setSignupMode((value) => !value);
+                    setError("");
+                  }}
+                  type="button"
+                  variant="primary"
+                >
+                  {signupMode ? "Use existing account" : "Create a new account"}
+                </Button>
+              )}
             </div>
           </form>
         </LayerCard>
