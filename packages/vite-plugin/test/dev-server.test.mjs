@@ -31,6 +31,7 @@ test("runs an API request in the local Worker", async () => {
     count: 3,
     configMessage: "from nanoflare.json",
     pathname: "/api/greeting",
+    nodePath: "worker",
   });
 });
 

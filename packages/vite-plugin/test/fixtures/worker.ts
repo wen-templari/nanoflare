@@ -1,3 +1,5 @@
+import path from "node:path";
+
 export default {
   async fetch(request: Request, env: { MESSAGE: string; COUNT: number; CONFIG_MESSAGE: string }) {
     if (new URL(request.url).pathname === "/api/upload") {
@@ -15,6 +17,7 @@ export default {
       count: env.COUNT,
       configMessage: env.CONFIG_MESSAGE,
       pathname: new URL(request.url).pathname,
+      nodePath: path.basename("/nanoflare/worker"),
     });
   },
 };

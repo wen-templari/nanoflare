@@ -59,7 +59,9 @@ For example, it can use `renderToReadableStream()` and return its result in a
 `Response`. Values in `.dev.vars` become string bindings; explicit `bindings`
 override those values. Only environment variable names listed in `env` are
 exposed. The runtime uses compatibility date `2025-12-10` by default; set
-`compatibilityDate` to match a different deployment target.
+`compatibilityDate` and `compatibilityFlags` to match a different deployment
+target. When a project file is present, its `compatibility_date` and
+`compatibility_flags` are passed to the local runtime automatically.
 
 On TypeScript/JavaScript source changes, the plugin rebuilds and replaces the
 local Worker before the next SSR/API request. Server-side HMR, multiple Workers,

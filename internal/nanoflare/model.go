@@ -37,6 +37,7 @@ type Deployment struct {
 	Format               string                       `json:"format"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
 	CompatibilityFlags   []string                     `json:"compatibility_flags,omitempty"`
+	DNS                  DNSSelection                 `json:"dns,omitempty"`
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
@@ -119,6 +120,7 @@ type DeployInput struct {
 	Format               string                       `json:"format,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
 	CompatibilityFlags   []string                     `json:"compatibility_flags,omitempty"`
+	DNS                  DNSSelection                 `json:"dns,omitempty"`
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
@@ -139,6 +141,7 @@ type WorkerDeployment struct {
 	AssetCount           int                          `json:"asset_count,omitempty"`
 	CompatibilityDate    string                       `json:"compatibility_date"`
 	CompatibilityFlags   []string                     `json:"compatibility_flags,omitempty"`
+	DNS                  DNSSelection                 `json:"dns,omitempty"`
 	Triggers             TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
@@ -172,6 +175,7 @@ type ConsoleDeployment struct {
 	AssetCount         int           `json:"asset_count,omitempty"`
 	CompatibilityDate  string        `json:"compatibility_date"`
 	CompatibilityFlags []string      `json:"compatibility_flags,omitempty"`
+	DNS                DNSSelection  `json:"dns,omitempty"`
 	Triggers           TriggerConfig `json:"triggers,omitempty"`
 	State              string        `json:"state" enum:"active,inactive"`
 	TrafficPercent     int           `json:"traffic_percent"`
@@ -268,6 +272,12 @@ type AssetConfig struct {
 
 type TriggerConfig struct {
 	Crons []string `json:"crons,omitempty"`
+}
+
+// DNSSelection chooses a platform-managed resolver profile. An empty profile
+// inherits the platform default.
+type DNSSelection struct {
+	Profile string `json:"profile,omitempty"`
 }
 
 type KVBinding struct {

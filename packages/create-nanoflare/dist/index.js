@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const templatesDirectory = resolve(packageDirectory, "templates");
 // Keep this aligned with the workerd version bundled in the Nanoflare image.
-export const latestCompatibilityDate = "2026-07-06";
+export const latestCompatibilityDate = "2026-09-11";
 export const templates = [
   { id: "starter", description: "A minimal TypeScript Worker", directory: "starter" },
   {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/dnsresolver"
 	"github.com/clas/nanoflare/internal/egress"
 	"github.com/clas/nanoflare/internal/runner"
 	"github.com/clas/nanoflare/internal/runtime"
@@ -28,6 +29,8 @@ func main() {
 		egressCAFiles        = flag.String("workerd-egress-ca-files", os.Getenv("NANOFLARE_WORKERD_EGRESS_CA_FILES"), "comma-separated corporate CA PEM files")
 		egressNoProxy        = flag.String("workerd-egress-no-proxy", os.Getenv("NANOFLARE_WORKERD_EGRESS_NO_PROXY"), "comma-separated Worker destinations that bypass the egress proxy")
 		egressAddr           = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
+		dnsConfigValue       = flag.String("dns-config", os.Getenv("NANOFLARE_DNS_CONFIG"), "inline JSON or path to the platform DNS profile configuration")
+		dnsAddr              = flag.String("dns-addr", envOrDefault("NANOFLARE_DNS_ADDR", "127.0.0.1:8083"), "private Worker DNS adapter address")
 		portHost             = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
 		portStart            = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
 		nanoflareRuntimeAddr = flag.String("nanoflare-runtime-addr", "127.0.0.1:8081", "nanoflared private runtime KV API address reachable from workerd")
@@ -60,6 +63,24 @@ func main() {
 	)
 	writer.SetNanoflareRuntimeAddr(*nanoflareRuntimeAddr)
 	writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
+	dnsConfig, err := dnsresolver.LoadConfig(*dnsConfigValue)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dnsServer, err := dnsresolver.New(dnsConfig, *dnsAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := dnsServer.Start(); err != nil {
+		log.Fatal(err)
+	}
+	writer.SetWorkerdDNSAddr(dnsServer.Addr())
+	writer.SetDNSProfiles(dnsConfig.ProfileNames())
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = dnsServer.Close(ctx)
+	}()
 	if strings.TrimSpace(*egressProxyURL) != "" {
 		adapter, err := egress.New(egress.Config{ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy), Addr: *egressAddr})
 		if err != nil {

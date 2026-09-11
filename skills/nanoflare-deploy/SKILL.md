@@ -63,7 +63,7 @@ Traefik API defaults in a production artifact.
    internet.
 6. Add optional features only when requested: control-plane OIDC, protected
    Worker-route OIDC, Litestream backups, corporate fetch egress proxy/CA/no-
-   proxy policy, and the logging/metrics stack. Explain their required external
+   proxy policy, private DNS profiles, and the logging/metrics stack. Explain their required external
    dependencies and keep their credentials out of Compose literals.
 7. Validate syntax with `docker compose config`, start dependencies, wait for
    PostgreSQL health, then verify control-plane, UI, Traefik discovery, and a

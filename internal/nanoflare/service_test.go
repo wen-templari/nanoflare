@@ -37,6 +37,7 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 		Files:              []WorkerFile{{Path: "worker.js", Content: "export default {}"}},
 		CompatibilityDate:  "2025-12-10",
 		CompatibilityFlags: []string{" nodejs_compat ", ""},
+		DNS:                DNSSelection{Profile: " corporate "},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -69,12 +70,18 @@ func TestDeployStoresFilesInObjectStorageAndHydratesActiveDeployment(t *testing.
 	if len(detail.Deployment.CompatibilityFlags) != 1 || detail.Deployment.CompatibilityFlags[0] != "nodejs_compat" {
 		t.Fatalf("worker deployment compatibility flags = %#v", detail.Deployment.CompatibilityFlags)
 	}
+	if detail.Deployment.DNS.Profile != "corporate" {
+		t.Fatalf("worker deployment DNS = %#v", detail.Deployment.DNS)
+	}
 	consoleDeployments, err := service.WorkerDeployments(app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(consoleDeployments) != 1 || consoleDeployments[0].CommitHash != "0123456789abcdef" || consoleDeployments[0].CommitMessage != "Ship metadata" || consoleDeployments[0].CreatedBy != "deploy@example.com" {
 		t.Fatalf("console deployment metadata = %#v", consoleDeployments)
+	}
+	if consoleDeployments[0].DNS.Profile != "corporate" {
+		t.Fatalf("console deployment DNS = %#v", consoleDeployments[0].DNS)
 	}
 
 	active, err := service.ActiveDeployments()

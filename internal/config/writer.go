@@ -23,6 +23,8 @@ type Writer struct {
 	runtimeAddr  string
 	networkAllow []string
 	egressAddr   string
+	dnsAddr      string
+	dnsProfiles  map[string]bool
 }
 
 type TraefikWriter interface {
@@ -35,6 +37,8 @@ type RuntimeWriter struct {
 	runtimeAddr  string
 	networkAllow []string
 	egressAddr   string
+	dnsAddr      string
+	dnsProfiles  map[string]bool
 }
 
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
@@ -59,6 +63,10 @@ func (w *RuntimeWriter) SetNanoflareRuntimeAddr(addr string) {
 
 func (w *Writer) SetWorkerdEgressAddr(addr string)        { w.egressAddr = strings.TrimSpace(addr) }
 func (w *RuntimeWriter) SetWorkerdEgressAddr(addr string) { w.egressAddr = strings.TrimSpace(addr) }
+func (w *Writer) SetWorkerdDNSAddr(addr string)           { w.dnsAddr = strings.TrimSpace(addr) }
+func (w *RuntimeWriter) SetWorkerdDNSAddr(addr string)    { w.dnsAddr = strings.TrimSpace(addr) }
+func (w *Writer) SetDNSProfiles(profiles []string)        { w.dnsProfiles = profileSet(profiles) }
+func (w *RuntimeWriter) SetDNSProfiles(profiles []string) { w.dnsProfiles = profileSet(profiles) }
 
 func DefaultNetworkAllow() []string {
 	return []string{"public", "10.0.0.0/8"}
@@ -95,7 +103,10 @@ func (w *Writer) Write(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *Writer) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr})))
+	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
+		return err
+	}
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr})))
 }
 
 func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
@@ -103,7 +114,31 @@ func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *RuntimeWriter) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr})))
+	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
+		return err
+	}
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr})))
+}
+
+func profileSet(profiles []string) map[string]bool {
+	result := make(map[string]bool, len(profiles))
+	for _, profile := range profiles {
+		result[profile] = true
+	}
+	return result
+}
+
+func validateDNSProfiles(active []nanoflare.ActiveDeployment, profiles map[string]bool) error {
+	if len(profiles) == 0 {
+		return nil
+	}
+	for _, item := range active {
+		profile := strings.TrimSpace(item.Deployment.DNS.Profile)
+		if profile != "" && !profiles[profile] {
+			return fmt.Errorf("worker %q selects unknown DNS profile %q", item.App.Name, profile)
+		}
+	}
+	return nil
 }
 
 func (w *RuntimeWriter) WriteTraefik(active []nanoflare.ActiveDeployment) error {
@@ -122,6 +157,7 @@ type WorkerdOptions struct {
 	RuntimeAddr  string
 	NetworkAllow []string
 	EgressAddr   string
+	DNSAddr      string
 }
 
 func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOptions) string {
@@ -142,6 +178,10 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(deploymentServiceName(item)), workerName(deploymentServiceName(item)))
 	}
 	for _, item := range active {
+		if dnsAddr := strings.TrimSpace(options.DNSAddr); dnsAddr != "" && dnsCompatibilityEnabled(item.Deployment) {
+			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"X-Nanoflare-DNS-Profile\", value = %s)]))),\n",
+				quote(dnsServiceName(item)), quote(dnsAddr), quote(item.Deployment.DNS.Profile))
+		}
 		for index, binding := range item.Deployment.KVNamespaces {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-KV-Namespace-ID\", value = %s)]))),\n",
 				quote(kvServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.ID))
@@ -164,13 +204,15 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	}
 	out.WriteString("  ]\n);\n")
 	for _, item := range active {
+		nodeCompatibility := effectiveNodeCompatibility(item.Deployment)
+		dnsEnabled := strings.TrimSpace(options.DNSAddr) != "" && nodeCompatibility.runtime
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(deploymentServiceName(item)))
-		writeWorkerSource(&out, item)
+		writeWorkerSource(&out, item, dnsEnabled, nodeCompatibility.v2)
 		if strings.TrimSpace(options.EgressAddr) != "" {
 			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
 		}
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
-			strings.Join(workerBindings(item, active), ", "))
+			strings.Join(workerBindings(item, active, dnsEnabled), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
 		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(outputIdentityCompatibilityFlags(item.Deployment.CompatibilityFlags)))
 		out.WriteString(");\n")
@@ -214,13 +256,16 @@ func durationTelemetryServices(runtimeAddr string) string {
 	return fmt.Sprintf("    (name = \"nanoflare-duration-collector\", external = (address = %s)),\n", quote(runtimeAddr))
 }
 
-func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDeployment) []string {
+func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDeployment, dnsEnabled bool) []string {
 	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.Databases)+len(item.Deployment.ObjectStorageBuckets)+len(item.Deployment.Services)+3)
 	bindings = append(bindings,
 		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", quote(item.App.ID)),
 		fmt.Sprintf("(name = \"__NANOFLARE_DEPLOYMENT_ID\", text = %s)", quote(item.Deployment.ID)),
 		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
 	)
+	if dnsEnabled {
+		bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DNS\", service = %s)", quote(dnsServiceName(item))))
+	}
 	varNames := make([]string, 0, len(item.Deployment.Vars))
 	for name := range item.Deployment.Vars {
 		varNames = append(varNames, name)
@@ -273,10 +318,16 @@ func activeServiceByName(active []nanoflare.ActiveDeployment, orgID, name string
 	return nanoflare.ActiveDeployment{}, false
 }
 
-func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment) {
+func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment, dnsEnabled, nodeCompatibilityV2 bool) {
 	deployment := item.Deployment
 	if deploymentFormat(deployment) == "service-worker" {
-		fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(deployment.Files[0].Content), deployment.Databases, deployment.ObjectStorageBuckets)))
+		source := deployment.Files[0].Content
+		if dnsEnabled {
+			source = rewriteDNSImports(source, nodeCompatibilityV2)
+			fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s), (name = \"nanoflare-internal:dns\", esModule = %s), (name = \"nanoflare-internal:dns/promises\", esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)), quote(dnsShimSource()), quote(dnsPromisesShimSource()))
+			return
+		}
+		fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)))
 		return
 	}
 	out.WriteString("  modules = [\n")
@@ -286,9 +337,140 @@ func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment) {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)))
 	}
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
-		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(workerdSafeSource(file.Content)))
+		source := file.Content
+		if dnsEnabled {
+			source = rewriteDNSImports(source, nodeCompatibilityV2)
+		}
+		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(workerdSafeSource(source)))
+	}
+	if dnsEnabled {
+		fmt.Fprintf(out, "    (name = \"nanoflare-internal:dns\", esModule = %s),\n", quote(dnsShimSource()))
+		fmt.Fprintf(out, "    (name = \"nanoflare-internal:dns/promises\", esModule = %s),\n", quote(dnsPromisesShimSource()))
 	}
 	out.WriteString("  ],\n")
+}
+
+const (
+	nodeCompatibilityDefaultDate   = "2026-08-04"
+	nodeCompatibilityV2ImpliedDate = "2024-09-23"
+)
+
+type nodeCompatibility struct {
+	runtime bool
+	v2      bool
+}
+
+// effectiveNodeCompatibility mirrors Cloudflare's date and flag rules. The
+// disable flags win here so Nanoflare never injects a shim that depends on a
+// Node runtime API the deployment explicitly disabled.
+func effectiveNodeCompatibility(deployment nanoflare.Deployment) nodeCompatibility {
+	flags := make(map[string]bool, len(deployment.CompatibilityFlags))
+	for _, flag := range deployment.CompatibilityFlags {
+		flags[flag] = true
+	}
+
+	runtimeEnabled := deployment.CompatibilityDate >= nodeCompatibilityDefaultDate || flags["nodejs_compat"]
+	if flags["no_nodejs_compat"] {
+		runtimeEnabled = false
+	}
+
+	v2Enabled := deployment.CompatibilityDate >= nodeCompatibilityDefaultDate || flags["nodejs_compat_v2"]
+	if deployment.CompatibilityDate >= nodeCompatibilityV2ImpliedDate && flags["nodejs_compat"] {
+		v2Enabled = true
+	}
+	if flags["no_nodejs_compat_v2"] {
+		v2Enabled = false
+	}
+
+	return nodeCompatibility{runtime: runtimeEnabled, v2: v2Enabled}
+}
+
+func dnsCompatibilityEnabled(deployment nanoflare.Deployment) bool {
+	return effectiveNodeCompatibility(deployment).runtime
+}
+
+func rewriteDNSImports(source string, includeBareImports bool) string {
+	replacements := []struct{ old, new string }{
+		{`"node:dns/promises"`, `"nanoflare-internal:dns/promises"`},
+		{`'node:dns/promises'`, `'nanoflare-internal:dns/promises'`},
+		{`"node:dns"`, `"nanoflare-internal:dns"`},
+		{`'node:dns'`, `'nanoflare-internal:dns'`},
+	}
+	if includeBareImports {
+		replacements = append(replacements,
+			struct{ old, new string }{`"dns/promises"`, `"nanoflare-internal:dns/promises"`},
+			struct{ old, new string }{`'dns/promises'`, `'nanoflare-internal:dns/promises'`},
+			struct{ old, new string }{`"dns"`, `"nanoflare-internal:dns"`},
+			struct{ old, new string }{`'dns'`, `'nanoflare-internal:dns'`},
+		)
+	}
+	for _, replacement := range replacements {
+		source = strings.ReplaceAll(source, replacement.old, replacement.new)
+	}
+	return source
+}
+
+func dnsShimSource() string {
+	return `import { env } from "cloudflare:workers";
+import nativeDNS from "node:dns";
+
+function normalizeOptions(options) {
+  if (typeof options === "number") return { family: options, all: false };
+  if (options == null) return { family: 0, all: false };
+  let family = options.family || 0;
+  if (family === "IPv4") family = 4;
+  if (family === "IPv6") family = 6;
+  return { family: Number(family), all: Boolean(options.all) };
+}
+
+async function lookupResult(hostname, options) {
+  const normalized = normalizeOptions(options);
+  if (![0, 4, 6].includes(normalized.family)) {
+    const error = new TypeError("family must be 0, 4, or 6");
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+  const response = await env.__NANOFLARE_DNS.fetch("http://nanoflare.dns/lookup", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ hostname: String(hostname), family: normalized.family }),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    const error = new Error(body.error || "hostname lookup failed");
+    error.code = body.code || "EAI_AGAIN";
+    error.hostname = hostname;
+    error.syscall = "getaddrinfo";
+    throw error;
+  }
+  if (!body.addresses?.length) {
+    const error = new Error("hostname lookup returned no addresses");
+    error.code = "ENOTFOUND";
+    throw error;
+  }
+  return normalized.all ? body.addresses : body.addresses[0];
+}
+
+export function lookup(hostname, options, callback) {
+  if (typeof options === "function") { callback = options; options = undefined; }
+  if (typeof callback !== "function") throw new TypeError("callback must be a function");
+  const normalized = normalizeOptions(options);
+  lookupResult(hostname, options).then(
+    (result) => normalized.all ? callback(null, result) : callback(null, result.address, result.family),
+    (error) => callback(error),
+  );
+}
+
+export const promises = { ...nativeDNS.promises, lookup: lookupResult };
+export * from "node:dns";
+export default { ...nativeDNS, lookup, promises };`
+}
+
+func dnsPromisesShimSource() string {
+	return `import { promises } from "nanoflare-internal:dns";
+export * from "node:dns/promises";
+export const lookup = promises.lookup;
+export default promises;`
 }
 
 // workerd recognizes a WorkerEntrypoint only when it remains the module's
@@ -1125,6 +1307,10 @@ func kvServiceName(item nanoflare.ActiveDeployment, index int) string {
 
 func assetServiceName(item nanoflare.ActiveDeployment) string {
 	return "assets-" + deploymentServiceName(item)
+}
+
+func dnsServiceName(item nanoflare.ActiveDeployment) string {
+	return "dns-" + deploymentServiceName(item)
 }
 
 func dbServiceName(item nanoflare.ActiveDeployment, index int) string {

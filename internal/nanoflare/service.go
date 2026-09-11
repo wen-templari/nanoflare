@@ -867,6 +867,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		AssetCount:           len(active.Deployment.Assets),
 		CompatibilityDate:    active.Deployment.CompatibilityDate,
 		CompatibilityFlags:   append([]string(nil), active.Deployment.CompatibilityFlags...),
+		DNS:                  active.Deployment.DNS,
 		Triggers:             active.Deployment.Triggers,
 		Vars:                 cloneVars(active.Deployment.Vars),
 		KVNamespaces:         append([]KVBinding(nil), active.Deployment.KVNamespaces...),
@@ -919,6 +920,7 @@ func (s *Service) WorkerDeployments(appID string) ([]ConsoleDeployment, error) {
 			AssetCount:         len(record.Deployment.Assets),
 			CompatibilityDate:  record.Deployment.CompatibilityDate,
 			CompatibilityFlags: append([]string(nil), record.Deployment.CompatibilityFlags...),
+			DNS:                record.Deployment.DNS,
 			Triggers:           record.Deployment.Triggers,
 			State:              state,
 			TrafficPercent:     record.TrafficPercent,
@@ -1171,6 +1173,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		input.CompatibilityDate = s.maxCompatibilityDate
 	}
 	compatibilityFlags := normalizeCompatibilityFlags(input.CompatibilityFlags)
+	dns := DNSSelection{Profile: strings.TrimSpace(input.DNS.Profile)}
 	port, err := s.store.NextPort()
 	if err != nil {
 		return Deployment{}, err
@@ -1191,6 +1194,7 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Format:               format,
 		CompatibilityDate:    input.CompatibilityDate,
 		CompatibilityFlags:   compatibilityFlags,
+		DNS:                  dns,
 		Triggers:             triggers,
 		Vars:                 vars,
 		KVNamespaces:         kvNamespaces,

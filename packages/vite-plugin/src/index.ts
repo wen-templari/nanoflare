@@ -29,6 +29,8 @@ export interface NanoflarePluginOptions {
   env?: string[];
   /** The Workers compatibility date passed to the local runtime. */
   compatibilityDate?: string;
+  /** Workers compatibility flags passed to the local runtime. */
+  compatibilityFlags?: string[];
   /** Local D1 bindings, optionally persisted to a directory or enabled with `true`. */
   d1?: { bindings?: string[]; persist?: boolean | string };
   /** Local R2 bindings, optionally persisted to a directory or enabled with `true`. */
@@ -43,6 +45,7 @@ interface NanoflareProjectConfig {
   main?: string;
   vite?: { entry?: string };
   compatibility_date?: string;
+  compatibility_flags?: string[];
   vars?: Record<string, BindingValue>;
   db?: Array<{ binding?: string }>;
   object_storage_buckets?: Array<{ binding?: string }>;
@@ -252,6 +255,7 @@ export function nanoflare(options: NanoflarePluginOptions = {}): Plugin {
       modulesRoot: outputDirectory,
       scriptPath: join(outputDirectory, "worker.mjs"),
       compatibilityDate: resolvedOptions.compatibilityDate ?? defaultCompatibilityDate,
+      compatibilityFlags: resolvedOptions.compatibilityFlags,
       bindings: await getBindings(resolvedOptions, config.root),
       d1Databases: resolvedOptions.d1?.bindings,
       d1Persist: resolvePersistencePath(resolvedOptions.d1?.persist, config.root),
@@ -284,6 +288,7 @@ async function resolvePluginOptions(
     entry,
     project,
     compatibilityDate: options.compatibilityDate ?? project?.compatibility_date,
+    compatibilityFlags: options.compatibilityFlags ?? project?.compatibility_flags,
     bindings: { ...project?.vars, ...options.bindings },
     d1: mergeLocalBindingOptions(getD1Options(project), options.d1),
     r2: mergeLocalBindingOptions(getR2Options(project), options.r2),

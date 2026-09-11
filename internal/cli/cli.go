@@ -57,6 +57,7 @@ type Project struct {
 	Format               string                                 `json:"format,omitempty"`
 	CompatibilityDate    string                                 `json:"compatibility_date"`
 	CompatibilityFlags   []string                               `json:"compatibility_flags,omitempty"`
+	DNS                  nanoflare.DNSSelection                 `json:"dns,omitempty"`
 	Triggers             nanoflare.TriggerConfig                `json:"triggers,omitempty"`
 	Vars                 map[string]json.RawMessage             `json:"vars,omitempty"`
 	Files                []string                               `json:"files"`
@@ -249,6 +250,9 @@ func (r *Runner) deploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateCompatibilityFlags(project.CompatibilityFlags); err != nil {
+		return err
+	}
 	date := project.CompatibilityDate
 	if *compatibilityDate != "" {
 		date = *compatibilityDate
@@ -290,6 +294,7 @@ func (r *Runner) deploy(args []string) error {
 		Format:               project.Format,
 		CompatibilityDate:    date,
 		CompatibilityFlags:   append([]string(nil), project.CompatibilityFlags...),
+		DNS:                  project.DNS,
 		Triggers:             project.Triggers,
 		Vars:                 cloneProjectVars(project.Vars),
 		KVNamespaces:         append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
@@ -333,6 +338,9 @@ func (r *Runner) check(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateCompatibilityFlags(project.CompatibilityFlags); err != nil {
+		return err
+	}
 	if _, err := requiredSecretNames(project.Secrets.Required); err != nil {
 		return err
 	}
@@ -352,6 +360,22 @@ func (r *Runner) check(args []string) error {
 	}
 	if projectPath != "" {
 		fmt.Fprintf(r.Stdout, "Validated %s\n", projectPath)
+	}
+	return nil
+}
+
+func validateCompatibilityFlags(flags []string) error {
+	present := make(map[string]bool, len(flags))
+	for _, flag := range flags {
+		present[strings.TrimSpace(flag)] = true
+	}
+	for _, pair := range [][2]string{
+		{"nodejs_compat", "no_nodejs_compat"},
+		{"nodejs_compat_v2", "no_nodejs_compat_v2"},
+	} {
+		if present[pair[0]] && present[pair[1]] {
+			return fmt.Errorf("compatibility flags %q and %q conflict", pair[0], pair[1])
+		}
 	}
 	return nil
 }

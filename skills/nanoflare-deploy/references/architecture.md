@@ -52,6 +52,9 @@ below that base hostname. Configure wildcard DNS and routing for that zone.
 - Set `NANOFLARE_WORKERD_EGRESS_PROXY_URL`, CA files, and no-proxy destinations
   only when Worker global `fetch()` must traverse a corporate proxy. Keep the
   no-proxy policy aligned with `NANOFLARE_WORKERD_NETWORK_ALLOW`.
+- Worker `node:dns` hostname lookup uses the runner host resolver by default.
+  Set `NANOFLARE_DNS_CONFIG` to inline JSON or a mounted JSON file containing
+  named system/custom-server profiles; keep the DNS adapter on loopback.
 - For host-run runtime logging, configure Vector socket and Loki URL. Compose
   logging normally uses Vector's Docker source.
 

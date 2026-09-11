@@ -464,6 +464,7 @@ func TestCreateAndDeployWorker(t *testing.T) {
 		Main:               "worker.js",
 		CompatibilityDate:  "2025-12-10",
 		CompatibilityFlags: []string{"nodejs_compat"},
+		DNS:                nanoflare.DNSSelection{Profile: "corporate"},
 		Triggers:           nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}},
 		Vars: map[string]json.RawMessage{
 			"API_HOST": json.RawMessage(`"example.com"`),
@@ -522,6 +523,9 @@ func TestCreateAndDeployWorker(t *testing.T) {
 	}
 	if len(deployed.CompatibilityFlags) != 1 || deployed.CompatibilityFlags[0] != "nodejs_compat" {
 		t.Fatalf("deploy compatibility flags = %#v", deployed.CompatibilityFlags)
+	}
+	if deployed.DNS.Profile != "corporate" {
+		t.Fatalf("deploy DNS profile = %#v", deployed.DNS)
 	}
 	if deployed.CommitHash != commitHash || deployed.CommitMessage != "Deploy hello worker" {
 		t.Fatalf("deploy git metadata = hash %q message %q, want hash %q message %q", deployed.CommitHash, deployed.CommitMessage, commitHash, "Deploy hello worker")
@@ -856,6 +860,24 @@ func TestCheckValidatesProjectArtifactsAndTypes(t *testing.T) {
 	}
 	if err := runner.Run([]string{"check", "--types"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCheckRejectsConflictingNodeCompatibilityFlags(t *testing.T) {
+	withWorkingDirectory(t, t.TempDir())
+	writeProjectFile(t, Project{
+		Name:               "conflicting-worker",
+		Main:               "worker.js",
+		CompatibilityDate:  "2026-09-11",
+		CompatibilityFlags: []string{"nodejs_compat", "no_nodejs_compat"},
+		Files:              []string{"worker.js"},
+	})
+	if err := os.WriteFile("worker.js", []byte("export default {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := NewRunner(io.Discard, io.Discard).Run([]string{"check"})
+	if err == nil || !strings.Contains(err.Error(), `"nodejs_compat" and "no_nodejs_compat" conflict`) {
+		t.Fatalf("check error = %v", err)
 	}
 }
 

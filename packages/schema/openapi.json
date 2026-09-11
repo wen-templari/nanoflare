@@ -379,6 +379,9 @@
             },
             "type": ["array", "null"]
           },
+          "dns": {
+            "$ref": "#/components/schemas/DNSSelection"
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -786,6 +789,15 @@
           }
         },
         "required": ["sql"],
+        "type": "object"
+      },
+      "DNSSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "Database": {
@@ -1198,6 +1210,9 @@
               "$ref": "#/components/schemas/DatabaseBinding"
             },
             "type": ["array", "null"]
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DNSSelection"
           },
           "entrypoint": {
             "type": "string"
@@ -2795,6 +2810,9 @@
               "$ref": "#/components/schemas/DatabaseBinding"
             },
             "type": ["array", "null"]
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DNSSelection"
           },
           "entrypoint": {
             "type": "string"

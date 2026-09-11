@@ -20,7 +20,7 @@ COPY packages/ui ./
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runtime-base
-ARG WORKERD_VERSION=1.20260706.1
+ARG WORKERD_VERSION=1.20260911.1
 RUN npm install -g workerd@${WORKERD_VERSION}
 
 FROM litestream/litestream:latest AS litestream

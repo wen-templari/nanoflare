@@ -1424,6 +1424,7 @@ export interface components {
       commit_message?: string;
       compatibility_date: string;
       compatibility_flags?: string[] | null;
+      dns?: components["schemas"]["DNSSelection"];
       /** Format: date-time */
       created_at: string;
       created_by?: string;
@@ -1592,6 +1593,9 @@ export interface components {
       params?: unknown[] | null;
       sql: string;
     };
+    DNSSelection: {
+      profile?: string;
+    };
     Database: {
       /**
        * Format: uri
@@ -1735,6 +1739,7 @@ export interface components {
       compatibility_date: string;
       compatibility_flags?: string[] | null;
       db?: components["schemas"]["DatabaseBinding"][] | null;
+      dns?: components["schemas"]["DNSSelection"];
       entrypoint?: string;
       files: components["schemas"]["WorkerFile"][] | null;
       format?: string;
@@ -2378,6 +2383,7 @@ export interface components {
       created_at: string;
       created_by?: string;
       db?: components["schemas"]["DatabaseBinding"][] | null;
+      dns?: components["schemas"]["DNSSelection"];
       entrypoint: string;
       format: string;
       id: string;

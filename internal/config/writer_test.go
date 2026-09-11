@@ -131,6 +131,103 @@ func TestWorkerdUsesConfiguredEgress(t *testing.T) {
 	}
 }
 
+func TestWorkerdAddsPrivateDNSLookupAdapter(t *testing.T) {
+	active := []nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "oracle"},
+		Deployment: nanoflare.Deployment{
+			ID: "v1", CompatibilityDate: "2025-12-10", CompatibilityFlags: []string{"nodejs_compat"}, DNS: nanoflare.DNSSelection{Profile: "corporate"},
+			Entrypoint: "worker.js", Format: "modules", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import dns from "node:dns"; export default { fetch() { return dns.promises.lookup("db.internal"); } };`}},
+		},
+	}}
+	generated := WorkerdWithOptions(active, WorkerdOptions{DNSAddr: "127.0.0.1:8083"})
+	for _, expected := range []string{
+		`(name = "dns-oracle-v1", external = (address = "127.0.0.1:8083"`,
+		`(name = "X-Nanoflare-DNS-Profile", value = "corporate")`,
+		`(name = "__NANOFLARE_DNS", service = "dns-oracle-v1")`,
+		`import dns from \"nanoflare-internal:dns\"`,
+		`export function lookup(hostname, options, callback)`,
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, generated)
+		}
+	}
+}
+
+func TestDNSAdapterFollowsNodeCompatibilityDateAndFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		date    string
+		flags   []string
+		enabled bool
+	}{
+		{name: "before default without flags", date: "2026-08-03", enabled: false},
+		{name: "before default with opt in", date: "2026-08-03", flags: []string{"nodejs_compat"}, enabled: true},
+		{name: "on default without flags", date: "2026-08-04", enabled: true},
+		{name: "after default with complete opt out", date: "2026-09-11", flags: []string{"no_nodejs_compat", "no_nodejs_compat_v2"}, enabled: false},
+		{name: "v2 alone does not enable runtime APIs", date: "2024-09-22", flags: []string{"nodejs_compat_v2"}, enabled: false},
+		{name: "runtime disable prevents the DNS shim", date: "2026-09-11", flags: []string{"no_nodejs_compat"}, enabled: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deployment := nanoflare.Deployment{CompatibilityDate: test.date, CompatibilityFlags: test.flags}
+			if got := dnsCompatibilityEnabled(deployment); got != test.enabled {
+				t.Fatalf("dnsCompatibilityEnabled() = %v, want %v", got, test.enabled)
+			}
+		})
+	}
+}
+
+func TestNodeCompatibilityV2FollowsDateAndFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		date    string
+		flags   []string
+		enabled bool
+	}{
+		{name: "old date requires explicit v2", date: "2024-09-22", flags: []string{"nodejs_compat"}, enabled: false},
+		{name: "old date explicit v2", date: "2024-09-22", flags: []string{"nodejs_compat", "nodejs_compat_v2"}, enabled: true},
+		{name: "v2 implied by v1", date: "2024-09-23", flags: []string{"nodejs_compat"}, enabled: true},
+		{name: "implied v2 can be disabled", date: "2024-09-23", flags: []string{"nodejs_compat", "no_nodejs_compat_v2"}, enabled: false},
+		{name: "v2 defaults on", date: "2026-08-04", enabled: true},
+		{name: "v2 defaults off explicitly", date: "2026-08-04", flags: []string{"no_nodejs_compat_v2"}, enabled: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deployment := nanoflare.Deployment{CompatibilityDate: test.date, CompatibilityFlags: test.flags}
+			if got := effectiveNodeCompatibility(deployment).v2; got != test.enabled {
+				t.Fatalf("effectiveNodeCompatibility().v2 = %v, want %v", got, test.enabled)
+			}
+		})
+	}
+}
+
+func TestDNSImportRewriteRequiresV2ForBareSpecifiers(t *testing.T) {
+	source := `import nodeDNS from "node:dns"; import bareDNS from "dns";`
+	withoutV2 := rewriteDNSImports(source, false)
+	if !strings.Contains(withoutV2, `"nanoflare-internal:dns"`) || !strings.Contains(withoutV2, `from "dns"`) {
+		t.Fatalf("v1 rewrite = %q", withoutV2)
+	}
+	withV2 := rewriteDNSImports(source, true)
+	if strings.Contains(withV2, `from "node:dns"`) || strings.Contains(withV2, `from "dns"`) {
+		t.Fatalf("v2 rewrite left a DNS import unchanged: %q", withV2)
+	}
+}
+
+func TestRuntimeWriterRejectsUnknownDNSProfile(t *testing.T) {
+	dir := t.TempDir()
+	writer := NewRuntimeWriter(dir+"/workerd.capnp", nil)
+	writer.SetWorkerdDNSAddr("127.0.0.1:8083")
+	writer.SetDNSProfiles([]string{"system", "corporate"})
+	err := writer.WriteWorkerd(dir+"/workerd.capnp", []nanoflare.ActiveDeployment{{
+		App: nanoflare.App{Name: "oracle"}, Deployment: nanoflare.Deployment{DNS: nanoflare.DNSSelection{Profile: "missing"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), `unknown DNS profile "missing"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestWorkerdIncludesVarsAndSecretsBindings(t *testing.T) {
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret", SecretValues: map[string]string{"DB_URL": "postgres://secret"}},

@@ -87,14 +87,14 @@ test("warns and uses the latest supported compatibility date when today is newer
     cwd,
     stderr,
     stdout: output(),
-    now: new Date("2026-08-31T12:00:00Z"),
+    now: new Date("2026-09-30T12:00:00Z"),
   });
 
   const project = JSON.parse(
     await readFile(resolve(cwd, "future-worker", "nanoflare.json"), "utf8"),
   );
   assert.equal(project.compatibility_date, latestCompatibilityDate);
-  assert.match(stderr.text, /Warning: compatibility date 2026-08-31 .* using 2026-07-06 instead/);
+  assert.match(stderr.text, /Warning: compatibility date 2026-09-30 .* using 2026-09-11 instead/);
 });
 
 test("prompts for a missing directory and template", async () => {
@@ -122,7 +122,7 @@ test("rejects unknown templates and preserves non-empty directories unless overw
 
 test("scaffolds public and OAuth MCP templates with the expected dependencies", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "create-nanoflare-"));
-  const now = new Date("2026-08-29T12:00:00Z");
+  const now = new Date("2026-09-29T12:00:00Z");
 
   await run(["public-echo", "--template", "mcp", "--no-interactive"], {
     cwd,

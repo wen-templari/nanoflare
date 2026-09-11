@@ -162,6 +162,58 @@ the adapter, so treat the no-proxy list as an explicit egress policy. Keep it
 aligned with the private destinations intended to be allowed by
 `NANOFLARE_WORKERD_NETWORK_ALLOW`.
 
+### Private DNS and `node:dns` lookup
+
+Nanoflare supplies the `dns.lookup()` and `dns.promises.lookup()` methods that
+workerd does not implement. By default they use the resolver configuration of
+the process that launches workerd (`nanoflare-runner` in split deployments, or
+`nanoflared` in direct mode). Results include every returned IPv4/IPv6 address
+when `{ "all": true }` is requested, and honor `family: 4` and `family: 6`.
+
+Platform administrators can define named resolver profiles with inline JSON or
+a JSON file through `NANOFLARE_DNS_CONFIG` (equivalently, `-dns-config`):
+
+```json
+{
+  "defaultProfile": "system",
+  "profiles": {
+    "system": { "resolver": "system" },
+    "corporate": {
+      "servers": ["10.0.0.53:53", "10.0.0.54:53"],
+      "timeout": "5s"
+    }
+  }
+}
+```
+
+Select a non-default profile for a deployment in `nanoflare.json`:
+
+```json
+{
+  "compatibility_date": "2026-09-11",
+  "dns": { "profile": "corporate" }
+}
+```
+
+Node.js compatibility is enabled by the compatibility date starting with
+`2026-08-04`. For an older date, add `"compatibility_flags":
+["nodejs_compat"]`. If Node.js compatibility is explicitly disabled with
+`no_nodejs_compat`, Nanoflare does not install the DNS lookup adapter.
+
+Workers without `dns.profile` inherit `defaultProfile`. Unknown profiles fail
+deployment, and lookup errors retain Node-style codes such as `ENOTFOUND`,
+`ETIMEOUT`, and `EAI_AGAIN`. The adapter is private and listens on
+`127.0.0.1:8083` by default; change that with `NANOFLARE_DNS_ADDR` only when the
+runtime topology requires it.
+
+Nanoflare transparently redirects `node:dns` and `node:dns/promises` imports
+when Node.js compatibility is enabled. Bare `dns` imports are redirected only
+when Node.js compatibility v2 is enabled. Other DNS methods continue to use
+workerd's built-in public DNS-over-HTTPS implementation. Raw
+outbound socket hostname resolution remains workerd-managed; clients such as
+node-oracledb that enumerate addresses with `lookup()` use the private resolver
+before opening their sockets, including subsequent listener redirects.
+
 For a split control plane, start `nanoflare-runner` separately and point
 `nanoflared` at its authenticated control API:
 

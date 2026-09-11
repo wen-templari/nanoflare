@@ -23,6 +23,8 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "dns": { "$ref": "#/$defs/dns" },
+    "dns": { "$ref": "#/$defs/dns" },
     "triggers": {
       "type": "object",
       "properties": {
@@ -68,6 +70,22 @@
   "additionalProperties": true,
   "$defs": {
     "bindingName": { "type": "string", "minLength": 1 },
+    "dns": {
+      "description": "Selects a platform-managed private DNS profile. Omit profile to inherit the platform default.",
+      "type": "object",
+      "properties": {
+        "profile": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "dns": {
+      "description": "Selects a platform-managed private DNS profile. Omit profile to inherit the platform default.",
+      "type": "object",
+      "properties": {
+        "profile": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "kvBinding": {
       "type": "object",
       "required": ["binding"],
