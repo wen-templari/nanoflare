@@ -100,3 +100,55 @@ func TestWorkerdGlobalOutboundUsesConfiguredEgressProxy(t *testing.T) {
 	output, _ := io.ReadAll(stderr)
 	t.Fatalf("workerd did not become ready: %s", output)
 }
+
+func TestWorkerdRequestURLUsesForwardedPublicProtocol(t *testing.T) {
+	workerd, err := exec.LookPath("workerd")
+	if err != nil {
+		t.Skip("workerd is not installed")
+	}
+	port := availablePort(t)
+	active := []nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "public-url", Name: "Public URL", Hostname: "worker.example.com", CreatedAt: time.Now().UTC()},
+		Deployment: nanoflare.Deployment{
+			ID: "deployment", AppID: "public-url", Port: port, Entrypoint: "worker.js", Format: "modules", CompatibilityDate: "2025-12-10", CreatedAt: time.Now().UTC(),
+			Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch(request) { return new Response(request.url); } };`}},
+		},
+	}}
+	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
+	if err := os.WriteFile(configPath, []byte(config.Workerd(active)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := exec.CommandContext(ctx, workerd, "serve", configPath)
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); _ = command.Wait() }()
+
+	client := &http.Client{Timeout: time.Second}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		request, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/oauth/callback?code=test", port), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Host = "worker.example.com"
+		request.Header.Set("X-Forwarded-Proto", "https")
+		response, err := client.Do(request)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if got, want := string(body), "https://worker.example.com/oauth/callback?code=test"; response.StatusCode != http.StatusOK || got != want {
+			t.Fatalf("worker request URL = %q (status %d), want %q", got, response.StatusCode, want)
+		}
+		return
+	}
+	output, _ := io.ReadAll(stderr)
+	t.Fatalf("workerd did not become ready: %s", output)
+}

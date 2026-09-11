@@ -159,7 +159,7 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
-		fmt.Fprintf(&out, "    (name = %s, address = %s, http = (), service = %s),\n",
+		fmt.Fprintf(&out, "    (name = %s, address = %s, http = (forwardedProtoHeader = \"X-Forwarded-Proto\"), service = %s),\n",
 			quote(deploymentServiceName(item)), quote(fmt.Sprintf("*:%d", item.Deployment.Port)), quote(deploymentServiceName(item)))
 	}
 	out.WriteString("  ]\n);\n")
@@ -1178,6 +1178,7 @@ func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost 
 	var out strings.Builder
 	out.WriteString("http:\n  middlewares:\n    nanoflare-auth:\n      forwardAuth:\n")
 	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Nanoflare-User-JWT\n          - X-Nanoflare-User-Email\n", yamlQuote(authURL))
+	out.WriteString("    nanoflare-public-url:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Proto: \"https\"\n")
 	backendBase := nanoflaredGatewayBase(authURL)
 	apps := uniqueActiveApps(active)
 	for _, item := range apps {
@@ -1192,10 +1193,10 @@ func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost 
 	}
 	for _, item := range apps {
 		name := identifier(item.App.ID)
-		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      priority: 1\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - %s-prefix\n      service: %s\n      tls: {}\n",
+		fmt.Fprintf(&out, "    %s:\n      rule: %s\n      priority: 1\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - nanoflare-public-url\n        - %s-prefix\n      service: %s\n      tls: {}\n",
 			name, yamlQuote("Host(`"+item.App.Hostname+"`)"), name, name)
 		for index, route := range item.App.Auth.ProtectedRoutes {
-			fmt.Fprintf(&out, "    %s-auth-%d:\n      rule: %s\n      priority: %d\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - nanoflare-auth\n        - %s-prefix\n      service: %s\n      tls: {}\n",
+			fmt.Fprintf(&out, "    %s-auth-%d:\n      rule: %s\n      priority: %d\n      entryPoints:\n        - web\n        - websecure\n      middlewares:\n        - nanoflare-public-url\n        - nanoflare-auth\n        - %s-prefix\n      service: %s\n      tls: {}\n",
 				name, index, yamlQuote(protectedRouteRule(item.App.Hostname, route)), protectedRoutePriority(route), name, name)
 		}
 	}
@@ -1205,7 +1206,7 @@ func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost 
 	}
 	for _, item := range apps {
 		name := identifier(item.App.ID)
-		fmt.Fprintf(&out, "    %s:\n      loadBalancer:\n        servers:\n          - url: %s\n",
+		fmt.Fprintf(&out, "    %s:\n      loadBalancer:\n        passHostHeader: true\n        servers:\n          - url: %s\n",
 			name, yamlQuote(backendBase))
 	}
 	return out.String()

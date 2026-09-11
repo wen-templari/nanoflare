@@ -25,6 +25,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`(name = "nanoflare-duration-collector", external = (address = "127.0.0.1:8081"))`,
 		`address = "*:9001"`,
+		`http = (forwardedProtoHeader = "X-Forwarded-Proto")`,
 		`(name = "kv-hello-app-0", external = (address = "127.0.0.1:8081"`,
 		`(name = "X-Nanoflare-KV-Namespace-ID", value = "kvns-1")`,
 		`(name = "KV", kvNamespace = "kv-hello-app-0")`,
@@ -300,11 +301,15 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 		`address: "http://nanoflared:8080/internal/auth/verify"`,
 		`- X-Nanoflare-User-JWT`,
 		`- X-Nanoflare-User-Email`,
+		`nanoflare-public-url:`,
+		`X-Forwarded-Proto: "https"`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
 		`- web`,
 		`- websecure`,
+		`- nanoflare-public-url`,
 		`- hello_app-prefix`,
 		`prefix: "/internal/http/workers/hello-app"`,
+		`passHostHeader: true`,
 		`url: "http://nanoflared:8080"`,
 	} {
 		if !strings.Contains(config, expected) {
