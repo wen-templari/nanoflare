@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0](https://github.com/wen-templari/nanoflare/compare/v0.5.0...v0.6.0) (2026-09-11)
+
+
+### Features
+
+* support custom DNS for Node.js workers ([8c94576](https://github.com/wen-templari/nanoflare/commit/8c945768c8a17ef51b2d7990885c13aed3b17694))
+
+
+### Bug Fixes
+
+* cap worker compatibility dates ([6d6fafd](https://github.com/wen-templari/nanoflare/commit/6d6fafd697c788d7ef8d50314b5c08b704dfdae9))
+* cap worker compatibility dates ([2fd0a3d](https://github.com/wen-templari/nanoflare/commit/2fd0a3d16ed5617ddff65a7a7c77c78a9796ce86))
+* clarify invite authentication errors ([265bb36](https://github.com/wen-templari/nanoflare/commit/265bb36a9a0def38d4d0f41221f07fe0375c560c))
+* preserve public worker request URLs ([5baf7de](https://github.com/wen-templari/nanoflare/commit/5baf7de834dd12cbdecf6f3b213c8b88ab2b083d))
+* sign in existing users from invite links ([75d0fc0](https://github.com/wen-templari/nanoflare/commit/75d0fc001303a679a6410d2fe095aca9df909ec1))
+* sign in existing users from invite links ([ba2c57d](https://github.com/wen-templari/nanoflare/commit/ba2c57d936d8334778f5dc969543f8e2f3c5dd6d))
+* use SSO for organization invites ([1caa3b2](https://github.com/wen-templari/nanoflare/commit/1caa3b28c556bca570b0d3e2715145ff33221db8))
+
 ## [0.5.0](https://github.com/wen-templari/nanoflare/compare/v0.4.0...v0.5.0) (2026-08-29)
 
 

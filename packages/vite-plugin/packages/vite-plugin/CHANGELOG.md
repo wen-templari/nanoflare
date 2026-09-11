@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.1.0...vite-plugin-v0.2.0) (2026-09-11)
+
+
+### Features
+
+* support custom DNS for Node.js workers ([8c94576](https://github.com/wen-templari/nanoflare/commit/8c945768c8a17ef51b2d7990885c13aed3b17694))
+
 ## [0.1.0](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.0.4...vite-plugin-v0.1.0) (2026-08-08)
 
 
