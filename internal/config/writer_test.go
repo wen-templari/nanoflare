@@ -153,6 +153,32 @@ func TestWorkerdAddsPrivateDNSLookupAdapter(t *testing.T) {
 	}
 }
 
+func TestWorkerdRewritesDNSImportsRelativeToNestedModules(t *testing.T) {
+	active := []nanoflare.ActiveDeployment{{
+		App: nanoflare.App{ID: "oracle"},
+		Deployment: nanoflare.Deployment{
+			ID: "v1", CompatibilityDate: "2026-09-11", CompatibilityFlags: []string{"nodejs_compat"}, DNS: nanoflare.DNSSelection{Profile: "corporate"},
+			Entrypoint: "dist/worker.js", Format: "modules", Files: []nanoflare.WorkerFile{{Path: "dist/worker.js", Content: `import dns from "node:dns"; import promises from "node:dns/promises";`}},
+		},
+	}}
+
+	generated := WorkerdWithOptions(active, WorkerdOptions{DNSAddr: "127.0.0.1:8083"})
+	for _, expected := range []string{
+		`(name = "nanoflare-internal:dns", esModule = `,
+		`(name = "nanoflare-internal:dns/promises", esModule = `,
+		`import dns from \"../nanoflare-internal:dns\"`,
+		`import promises from \"../nanoflare-internal:dns/promises\"`,
+		`import { promises } from \"../nanoflare-internal:dns\"`,
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("config does not contain %q:\n%s", expected, generated)
+		}
+	}
+	if strings.Contains(generated, `dist/nanoflare-internal:dns`) {
+		t.Fatalf("config resolves the DNS shim beneath the entrypoint directory:\n%s", generated)
+	}
+}
+
 func TestDNSAdapterFollowsNodeCompatibilityDateAndFlags(t *testing.T) {
 	tests := []struct {
 		name    string

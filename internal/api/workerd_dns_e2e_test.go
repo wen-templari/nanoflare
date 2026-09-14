@@ -17,7 +17,7 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
-func TestWorkerdNodeDNSLookupUsesHostResolver(t *testing.T) {
+func TestWorkerdNestedNodeDNSImportsUseHostResolver(t *testing.T) {
 	workerd, err := exec.LookPath("workerd")
 	if err != nil {
 		t.Skip("workerd is not installed")
@@ -35,13 +35,15 @@ func TestWorkerdNodeDNSLookupUsesHostResolver(t *testing.T) {
 	active := []nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "dns", RuntimeToken: "secret"},
 		Deployment: nanoflare.Deployment{
-			ID: "deployment", AppID: "dns", Port: port, Entrypoint: "worker.js", Format: "modules", CompatibilityDate: "2025-12-10",
+			ID: "deployment", AppID: "dns", Port: port, Entrypoint: "dist/worker.js", Format: "modules", CompatibilityDate: "2025-12-10",
 			CompatibilityFlags: []string{"nodejs_compat"},
-			Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import dns from "node:dns";
+			Files: []nanoflare.WorkerFile{{Path: "dist/worker.js", Content: `import dns from "node:dns";
+import dnsPromises from "node:dns/promises";
 export default { async fetch() {
   const promise = await dns.promises.lookup("localhost", { all: true, family: 4 });
+  const directPromise = await dnsPromises.lookup("localhost", { all: true, family: 4 });
   const callback = await new Promise((resolve, reject) => dns.lookup("localhost", { all: true, family: 4 }, (error, addresses) => error ? reject(error) : resolve(addresses)));
-  return Response.json({ promise, callback });
+  return Response.json({ promise, directPromise, callback });
 } };`}},
 		},
 	}}
@@ -71,7 +73,7 @@ export default { async fetch() {
 		}
 		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
-		if response.StatusCode == http.StatusOK && strings.Contains(string(body), `"promise":[`) && strings.Contains(string(body), `"callback":[`) && strings.Count(string(body), `"family":4`) >= 2 {
+		if response.StatusCode == http.StatusOK && strings.Contains(string(body), `"promise":[`) && strings.Contains(string(body), `"directPromise":[`) && strings.Contains(string(body), `"callback":[`) && strings.Count(string(body), `"family":4`) >= 3 {
 			return
 		}
 		t.Fatalf("worker response = %d %q", response.StatusCode, body)

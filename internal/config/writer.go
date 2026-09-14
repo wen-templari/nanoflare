@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -339,7 +340,7 @@ func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment, dn
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		source := file.Content
 		if dnsEnabled {
-			source = rewriteDNSImports(source, nodeCompatibilityV2)
+			source = rewriteDNSImportsForModule(source, nodeCompatibilityV2, file.Path)
 		}
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(workerdSafeSource(source)))
 	}
@@ -390,24 +391,42 @@ func dnsCompatibilityEnabled(deployment nanoflare.Deployment) bool {
 }
 
 func rewriteDNSImports(source string, includeBareImports bool) string {
+	return rewriteDNSImportsForModule(source, includeBareImports, "")
+}
+
+func rewriteDNSImportsForModule(source string, includeBareImports bool, modulePath string) string {
+	dnsModule := relativeModuleSpecifier(modulePath, "nanoflare-internal:dns")
+	dnsPromisesModule := relativeModuleSpecifier(modulePath, "nanoflare-internal:dns/promises")
 	replacements := []struct{ old, new string }{
-		{`"node:dns/promises"`, `"nanoflare-internal:dns/promises"`},
-		{`'node:dns/promises'`, `'nanoflare-internal:dns/promises'`},
-		{`"node:dns"`, `"nanoflare-internal:dns"`},
-		{`'node:dns'`, `'nanoflare-internal:dns'`},
+		{`"node:dns/promises"`, `"` + dnsPromisesModule + `"`},
+		{`'node:dns/promises'`, `'` + dnsPromisesModule + `'`},
+		{`"node:dns"`, `"` + dnsModule + `"`},
+		{`'node:dns'`, `'` + dnsModule + `'`},
 	}
 	if includeBareImports {
 		replacements = append(replacements,
-			struct{ old, new string }{`"dns/promises"`, `"nanoflare-internal:dns/promises"`},
-			struct{ old, new string }{`'dns/promises'`, `'nanoflare-internal:dns/promises'`},
-			struct{ old, new string }{`"dns"`, `"nanoflare-internal:dns"`},
-			struct{ old, new string }{`'dns'`, `'nanoflare-internal:dns'`},
+			struct{ old, new string }{`"dns/promises"`, `"` + dnsPromisesModule + `"`},
+			struct{ old, new string }{`'dns/promises'`, `'` + dnsPromisesModule + `'`},
+			struct{ old, new string }{`"dns"`, `"` + dnsModule + `"`},
+			struct{ old, new string }{`'dns'`, `'` + dnsModule + `'`},
 		)
 	}
 	for _, replacement := range replacements {
 		source = strings.ReplaceAll(source, replacement.old, replacement.new)
 	}
 	return source
+}
+
+func relativeModuleSpecifier(modulePath, target string) string {
+	moduleDir := path.Dir(path.Clean(modulePath))
+	if moduleDir == "." {
+		return target
+	}
+	relativeRoot, err := filepath.Rel(filepath.FromSlash(moduleDir), ".")
+	if err != nil {
+		return target
+	}
+	return path.Join(filepath.ToSlash(relativeRoot), target)
 }
 
 func dnsShimSource() string {
@@ -467,7 +486,8 @@ export default { ...nativeDNS, lookup, promises };`
 }
 
 func dnsPromisesShimSource() string {
-	return `import { promises } from "nanoflare-internal:dns";
+	dnsModule := relativeModuleSpecifier("nanoflare-internal:dns/promises", "nanoflare-internal:dns")
+	return `import { promises } from "` + dnsModule + `";
 export * from "node:dns/promises";
 export const lookup = promises.lookup;
 export default promises;`
