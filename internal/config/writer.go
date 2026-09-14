@@ -486,7 +486,8 @@ export default { ...nativeDNS, lookup, promises };`
 }
 
 func dnsPromisesShimSource() string {
-	return `import { promises } from "nanoflare-internal:dns";
+	dnsModule := relativeModuleSpecifier("nanoflare-internal:dns/promises", "nanoflare-internal:dns")
+	return `import { promises } from "` + dnsModule + `";
 export * from "node:dns/promises";
 export const lookup = promises.lookup;
 export default promises;`

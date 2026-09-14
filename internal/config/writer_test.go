@@ -168,6 +168,7 @@ func TestWorkerdRewritesDNSImportsRelativeToNestedModules(t *testing.T) {
 		`(name = "nanoflare-internal:dns/promises", esModule = `,
 		`import dns from \"../nanoflare-internal:dns\"`,
 		`import promises from \"../nanoflare-internal:dns/promises\"`,
+		`import { promises } from \"../nanoflare-internal:dns\"`,
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, generated)
