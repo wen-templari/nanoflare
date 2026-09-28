@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,7 +32,9 @@ type LazyManager struct {
 	configDir     string
 	portHost      string
 	portBind      string
+	portStart     int
 	nextPort      int
+	reservedPorts map[int]bool
 	healthTimeout time.Duration
 	stopTimeout   time.Duration
 	idleTimeout   time.Duration
@@ -74,7 +75,9 @@ func NewLazyManager(writer ConfigWriter, launcher Launcher, configDir, portHost 
 		configDir:     configDir,
 		portHost:      portHost,
 		portBind:      "0.0.0.0",
+		portStart:     portStart,
 		nextPort:      portStart,
+		reservedPorts: make(map[int]bool),
 		healthTimeout: healthTimeout,
 		stopTimeout:   stopTimeout,
 		idleTimeout:   idleTimeout,
@@ -248,6 +251,7 @@ func (m *LazyManager) start(parent context.Context, worker *lazyWorker, active n
 		fail(err)
 		return
 	}
+	defer m.releaseRuntimePorts(generation)
 	prepareSpan.SetAttributes(attribute.Int("nanoflare.runtime.worker_count", len(generation)))
 	prepareSpan.End()
 	startSpan.SetAttributes(attribute.Int("nanoflare.runtime.worker_count", len(generation)))
@@ -480,6 +484,7 @@ func (m *LazyManager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]n
 	for i := range result {
 		port, err := m.availablePort()
 		if err != nil {
+			m.releaseRuntimePorts(result[:i])
 			return nil, err
 		}
 		result[i].Deployment.Port = port
@@ -490,16 +495,24 @@ func (m *LazyManager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]n
 func (m *LazyManager) availablePort() (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for port := m.nextPort; port <= 65535; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort(m.portBind, fmt.Sprint(port)))
-		if err != nil {
-			continue
-		}
-		listener.Close()
-		m.nextPort = port + 1
-		return port, nil
+	port, err := findAvailableRuntimePort(m.portBind, m.portStart, m.nextPort, m.reservedPorts)
+	if err != nil {
+		return 0, err
 	}
-	return 0, errors.New("no runtime ports available")
+	m.nextPort = port + 1
+	if m.nextPort > 65535 {
+		m.nextPort = m.portStart
+	}
+	m.reservedPorts[port] = true
+	return port, nil
+}
+
+func (m *LazyManager) releaseRuntimePorts(active []nanoflare.ActiveDeployment) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, item := range active {
+		delete(m.reservedPorts, item.Deployment.Port)
+	}
 }
 
 func (m *LazyManager) waitHealthy(process Process, active []nanoflare.ActiveDeployment) error {

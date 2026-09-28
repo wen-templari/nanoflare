@@ -196,6 +196,60 @@ func TestManagerSkipsPortBusyOnWildcardBind(t *testing.T) {
 	}
 }
 
+func TestManagerReusesFreePortAfterAllocatorWraps(t *testing.T) {
+	portStart := availablePort(t)
+	manager := NewManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", portStart, time.Second, time.Second)
+	manager.nextPort = 65536
+	defer manager.Close()
+
+	port, err := manager.availablePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port != portStart {
+		t.Fatalf("availablePort() = %d, want wrapped port %d", port, portStart)
+	}
+}
+
+func TestLazyManagerReusesFreePortAfterAllocatorWraps(t *testing.T) {
+	portStart := availablePort(t)
+	manager := NewLazyManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), "127.0.0.1", portStart, time.Second, time.Second, time.Second)
+	manager.nextPort = 65536
+	defer manager.Close()
+
+	port, err := manager.availablePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port != portStart {
+		t.Fatalf("availablePort() = %d, want wrapped port %d", port, portStart)
+	}
+}
+
+func TestManagerDoesNotAllocateReservedPortAfterWrap(t *testing.T) {
+	manager := NewManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", 65535, time.Second, time.Second)
+	defer manager.Close()
+
+	if _, err := manager.availablePort(); err != nil {
+		t.Skipf("port 65535 is unavailable: %v", err)
+	}
+	if port, err := manager.availablePort(); err == nil {
+		t.Fatalf("availablePort() = %d, want no ports available", port)
+	}
+}
+
+func TestLazyManagerDoesNotAllocateReservedPortAfterWrap(t *testing.T) {
+	manager := NewLazyManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), "127.0.0.1", 65535, time.Second, time.Second, time.Second)
+	defer manager.Close()
+
+	if _, err := manager.availablePort(); err != nil {
+		t.Skipf("port 65535 is unavailable: %v", err)
+	}
+	if port, err := manager.availablePort(); err == nil {
+		t.Fatalf("availablePort() = %d, want no ports available", port)
+	}
+}
+
 func TestLazyManagerEnsuresWorkerOnDemand(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}

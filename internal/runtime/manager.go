@@ -45,7 +45,9 @@ type Manager struct {
 	canonicalConfig string
 	portHost        string
 	portBind        string
+	portStart       int
 	nextPort        int
+	reservedPorts   map[int]bool
 	healthTimeout   time.Duration
 	stopTimeout     time.Duration
 	retireDelay     time.Duration
@@ -80,7 +82,9 @@ func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConf
 		canonicalConfig: canonicalConfig,
 		portHost:        portHost,
 		portBind:        "0.0.0.0",
+		portStart:       portStart,
 		nextPort:        portStart,
+		reservedPorts:   make(map[int]bool),
 		healthTimeout:   healthTimeout,
 		stopTimeout:     stopTimeout,
 		retireDelay:     250 * time.Millisecond,
@@ -146,6 +150,7 @@ func (m *Manager) prepare(active []nanoflare.ActiveDeployment) (string, []nanofl
 	if err != nil {
 		return "", nil, err
 	}
+	defer m.releaseRuntimePorts(generation)
 	m.generation++
 	configPath := filepath.Join(m.configDir, fmt.Sprintf("workerd-%06d.capnp", m.generation))
 	if err := m.writer.WriteWorkerd(configPath, generation); err != nil {
@@ -264,6 +269,7 @@ func (m *Manager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]nanof
 	for i := range result {
 		port, err := m.availablePort()
 		if err != nil {
+			m.releaseRuntimePorts(result[:i])
 			return nil, err
 		}
 		result[i].Deployment.Port = port
@@ -272,13 +278,35 @@ func (m *Manager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]nanof
 }
 
 func (m *Manager) availablePort() (int, error) {
-	for port := m.nextPort; port <= 65535; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort(m.portBind, fmt.Sprint(port)))
+	port, err := findAvailableRuntimePort(m.portBind, m.portStart, m.nextPort, m.reservedPorts)
+	if err != nil {
+		return 0, err
+	}
+	m.nextPort = port + 1
+	if m.nextPort > 65535 {
+		m.nextPort = m.portStart
+	}
+	m.reservedPorts[port] = true
+	return port, nil
+}
+
+func (m *Manager) releaseRuntimePorts(active []nanoflare.ActiveDeployment) {
+	for _, item := range active {
+		delete(m.reservedPorts, item.Deployment.Port)
+	}
+}
+
+func findAvailableRuntimePort(bind string, start, next int, reserved map[int]bool) (int, error) {
+	for offset := 0; offset <= 65535-start; offset++ {
+		port := start + (next-start+offset)%(65536-start)
+		if reserved[port] {
+			continue
+		}
+		listener, err := net.Listen("tcp", net.JoinHostPort(bind, fmt.Sprint(port)))
 		if err != nil {
 			continue
 		}
 		listener.Close()
-		m.nextPort = port + 1
 		return port, nil
 	}
 	return 0, errors.New("no runtime ports available")
