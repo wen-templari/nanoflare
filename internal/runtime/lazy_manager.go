@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,6 +32,7 @@ type LazyManager struct {
 	configDir     string
 	portHost      string
 	portBind      string
+	portStart     int
 	nextPort      int
 	healthTimeout time.Duration
 	stopTimeout   time.Duration
@@ -74,6 +74,7 @@ func NewLazyManager(writer ConfigWriter, launcher Launcher, configDir, portHost 
 		configDir:     configDir,
 		portHost:      portHost,
 		portBind:      "0.0.0.0",
+		portStart:     portStart,
 		nextPort:      portStart,
 		healthTimeout: healthTimeout,
 		stopTimeout:   stopTimeout,
@@ -490,16 +491,15 @@ func (m *LazyManager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]n
 func (m *LazyManager) availablePort() (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for port := m.nextPort; port <= 65535; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort(m.portBind, fmt.Sprint(port)))
-		if err != nil {
-			continue
-		}
-		listener.Close()
-		m.nextPort = port + 1
-		return port, nil
+	port, err := findAvailableRuntimePort(m.portBind, m.portStart, m.nextPort)
+	if err != nil {
+		return 0, err
 	}
-	return 0, errors.New("no runtime ports available")
+	m.nextPort = port + 1
+	if m.nextPort > 65535 {
+		m.nextPort = m.portStart
+	}
+	return port, nil
 }
 
 func (m *LazyManager) waitHealthy(process Process, active []nanoflare.ActiveDeployment) error {

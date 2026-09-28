@@ -196,6 +196,36 @@ func TestManagerSkipsPortBusyOnWildcardBind(t *testing.T) {
 	}
 }
 
+func TestManagerReusesFreePortAfterAllocatorWraps(t *testing.T) {
+	portStart := availablePort(t)
+	manager := NewManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", portStart, time.Second, time.Second)
+	manager.nextPort = 65536
+	defer manager.Close()
+
+	port, err := manager.availablePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port != portStart {
+		t.Fatalf("availablePort() = %d, want wrapped port %d", port, portStart)
+	}
+}
+
+func TestLazyManagerReusesFreePortAfterAllocatorWraps(t *testing.T) {
+	portStart := availablePort(t)
+	manager := NewLazyManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), "127.0.0.1", portStart, time.Second, time.Second, time.Second)
+	manager.nextPort = 65536
+	defer manager.Close()
+
+	port, err := manager.availablePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port != portStart {
+		t.Fatalf("availablePort() = %d, want wrapped port %d", port, portStart)
+	}
+}
+
 func TestLazyManagerEnsuresWorkerOnDemand(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}

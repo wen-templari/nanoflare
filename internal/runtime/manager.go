@@ -45,6 +45,7 @@ type Manager struct {
 	canonicalConfig string
 	portHost        string
 	portBind        string
+	portStart       int
 	nextPort        int
 	healthTimeout   time.Duration
 	stopTimeout     time.Duration
@@ -80,6 +81,7 @@ func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConf
 		canonicalConfig: canonicalConfig,
 		portHost:        portHost,
 		portBind:        "0.0.0.0",
+		portStart:       portStart,
 		nextPort:        portStart,
 		healthTimeout:   healthTimeout,
 		stopTimeout:     stopTimeout,
@@ -272,13 +274,25 @@ func (m *Manager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]nanof
 }
 
 func (m *Manager) availablePort() (int, error) {
-	for port := m.nextPort; port <= 65535; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort(m.portBind, fmt.Sprint(port)))
+	port, err := findAvailableRuntimePort(m.portBind, m.portStart, m.nextPort)
+	if err != nil {
+		return 0, err
+	}
+	m.nextPort = port + 1
+	if m.nextPort > 65535 {
+		m.nextPort = m.portStart
+	}
+	return port, nil
+}
+
+func findAvailableRuntimePort(bind string, start, next int) (int, error) {
+	for offset := 0; offset <= 65535-start; offset++ {
+		port := start + (next-start+offset)%(65536-start)
+		listener, err := net.Listen("tcp", net.JoinHostPort(bind, fmt.Sprint(port)))
 		if err != nil {
 			continue
 		}
 		listener.Close()
-		m.nextPort = port + 1
 		return port, nil
 	}
 	return 0, errors.New("no runtime ports available")
