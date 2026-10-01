@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtimeassets"
 )
 
 type Writer struct {
@@ -324,10 +325,10 @@ func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment, dn
 		source := deployment.Files[0].Content
 		if dnsEnabled {
 			source = rewriteDNSImports(source, nodeCompatibilityV2)
-			fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s), (name = \"nanoflare-internal:dns\", esModule = %s), (name = \"nanoflare-internal:dns/promises\", esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)), quote(dnsShimSource()), quote(dnsPromisesShimSource()))
+			fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s), (name = \"nanoflare-internal:runtime-bindings\", esModule = %s), (name = \"nanoflare-internal:dns\", esModule = %s), (name = \"nanoflare-internal:dns/promises\", esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)), quote(runtimeassets.BindingsModule), quote(dnsShimSource()), quote(dnsPromisesShimSource()))
 			return
 		}
-		fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)))
+		fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s), (name = \"nanoflare-internal:runtime-bindings\", esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)), quote(runtimeassets.BindingsModule))
 		return
 	}
 	out.WriteString("  modules = [\n")
@@ -336,6 +337,7 @@ func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment, dn
 	} else {
 		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)))
 	}
+	fmt.Fprintf(out, "    (name = \"nanoflare-internal:runtime-bindings\", esModule = %s),\n", quote(runtimeassets.BindingsModule))
 	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
 		source := file.Content
 		if dnsEnabled {
@@ -578,6 +580,7 @@ func workerdSafeSource(source string) string {
 
 func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
 	return fmt.Sprintf(`import { AsyncLocalStorage } from "node:async_hooks";
+import { wrapEnv as wrapRuntimeEnv } from "nanoflare-internal:runtime-bindings";
 import userWorker from %s;
 
 const assetBindingName = %s;
@@ -621,283 +624,6 @@ function recordRuntimeDuration(env, ctx, startedAt, outcome) {
   }));
 }
 
-function wrapAssetBinding(binding) {
-  if (!binding) return binding;
-  return {
-    fetch(input, init) {
-      if (typeof input === "string" && input.startsWith("/")) {
-        return binding.fetch(new Request("https://assets.local" + input, init));
-      }
-      return binding.fetch(input, init);
-    },
-  };
-}
-
-function buildObjectBody(response, object) {
-  if (!response) return null;
-  return {
-    key: object.key,
-    size: object.size,
-    etag: object.etag,
-    httpEtag: object.httpEtag,
-    uploaded: new Date(object.uploaded),
-    httpMetadata: object.httpMetadata ?? {},
-    body: response.body,
-    get bodyUsed() {
-      return response.bodyUsed;
-    },
-    arrayBuffer() {
-      return response.arrayBuffer();
-    },
-    text() {
-      return response.text();
-    },
-    json() {
-      return response.json();
-    },
-    blob() {
-      return response.blob();
-    },
-  };
-}
-
-async function objectBindingError(bindingName, operation, response) {
-  const detail = (await response.text()).trim();
-  return new Error(detail ? bindingName + "." + operation + " failed: " + response.status + " - " + detail : bindingName + "." + operation + " failed: " + response.status);
-}
-
-async function toObjectRequestInit(value, options) {
-  if (value instanceof Request || value instanceof Response) {
-    const contentLength = value.headers.get("content-length");
-    return {
-      body: value.body,
-      contentType: value.headers.get("content-type") || options?.httpMetadata?.contentType || "",
-      size: contentLength ? Number(contentLength) : undefined,
-    };
-  }
-  if (typeof value === "string") {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || "",
-      size: new TextEncoder().encode(value).byteLength,
-    };
-  }
-  if (value instanceof ArrayBuffer) {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || "",
-      size: value.byteLength,
-    };
-  }
-  if (ArrayBuffer.isView(value)) {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || "",
-      size: value.byteLength,
-    };
-  }
-  if (value instanceof Blob) {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || value.type || "",
-      size: value.size,
-    };
-  }
-  return {
-    body: value,
-    contentType: options?.httpMetadata?.contentType || (value instanceof Blob ? value.type : ""),
-    size: undefined,
-  };
-}
-
-function wrapObjectsBinding(bindingName, binding) {
-  if (!binding) return binding;
-  return {
-    async put(key, value, options) {
-      const init = await toObjectRequestInit(value, options);
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
-        method: "PUT",
-        headers: init.contentType ? { "content-type": init.contentType } : undefined,
-        body: init.body,
-      }));
-      if (!response.ok) throw await objectBindingError(bindingName, "put", response);
-      const raw = await response.text();
-      if (!raw.trim()) {
-        return {
-          key,
-          size: init.size ?? 0,
-          etag: "",
-          httpEtag: "",
-          uploaded: new Date(),
-          httpMetadata: {
-            contentType: init.contentType || "",
-          },
-        };
-      }
-      const object = JSON.parse(raw);
-      object.uploaded = new Date(object.uploaded);
-      return object;
-    },
-    async get(key) {
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key)));
-      if (response.status === 404) return null;
-      if (!response.ok) throw await objectBindingError(bindingName, "get", response);
-      const object = {
-        key: response.headers.get("x-nanoflare-object-key") || key,
-        size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-nanoflare-object-etag") || "",
-        httpEtag: response.headers.get("etag") || "",
-        uploaded: response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString(),
-        httpMetadata: {
-          contentType: response.headers.get("content-type") || "",
-        },
-      };
-      return buildObjectBody(response, object);
-    },
-    async head(key) {
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
-        method: "HEAD",
-      }));
-      if (response.status === 404) return null;
-      if (!response.ok) throw await objectBindingError(bindingName, "head", response);
-      return {
-        key: response.headers.get("x-nanoflare-object-key") || key,
-        size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-nanoflare-object-etag") || "",
-        httpEtag: response.headers.get("etag") || "",
-        uploaded: new Date(response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString()),
-        httpMetadata: {
-          contentType: response.headers.get("content-type") || "",
-        },
-      };
-    },
-    async delete(key) {
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
-        method: "DELETE",
-      }));
-      if (!response.ok) throw await objectBindingError(bindingName, "delete", response);
-    },
-  };
-}
-
-async function dbRequest(bindingName, binding, payload) {
-  const response = await binding.fetch(new Request("https://db.local/internal/runtime/db/query", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  }));
-  if (!response.ok) {
-    const detail = (await response.text()).trim();
-    throw new Error(detail ? bindingName + " query failed: " + response.status + " - " + detail : bindingName + " query failed: " + response.status);
-  }
-  return response.json();
-}
-
-function makePreparedStatement(bindingName, binding, sql, params = []) {
-  return {
-    __sql: sql,
-    __params: params,
-    bind(...values) {
-      return makePreparedStatement(bindingName, binding, sql, values);
-    },
-    async run() {
-      const response = await dbRequest(bindingName, binding, { method: "run", statements: [{ sql, params }] });
-      return response.results?.[0] ?? { success: true, meta: {}, results: [] };
-    },
-    async all() {
-      return this.run();
-    },
-    async raw(options) {
-      const response = await dbRequest(bindingName, binding, { method: "raw", column_names: !!options?.columnNames, statements: [{ sql, params }] });
-      return response.raw ?? [];
-    },
-    async first(columnName) {
-      const response = await dbRequest(bindingName, binding, { method: "first", first_column: columnName || "", statements: [{ sql, params }] });
-      return response.first ?? null;
-    },
-  };
-}
-
-function wrapDBBinding(bindingName, binding) {
-  if (!binding) return binding;
-  return {
-    prepare(sql) {
-      return makePreparedStatement(bindingName, binding, String(sql));
-    },
-    async batch(statements) {
-      const response = await dbRequest(bindingName, binding, {
-        method: "batch",
-        statements: statements.map((statement) => ({ sql: statement.__sql || statement.sql, params: statement.__params || statement.params || [] })),
-      });
-      return response.results ?? [];
-    },
-    async exec(sql) {
-      const response = await dbRequest(bindingName, binding, { method: "exec", statements: [{ sql: String(sql) }] });
-      return response.exec ?? { count: 0, duration: 0 };
-    },
-    withSession(initialBookmark) {
-      let bookmark = typeof initialBookmark === "string" && initialBookmark !== "first-primary" && initialBookmark !== "first-unconstrained" ? initialBookmark : null;
-      const base = this;
-      return {
-        prepare(sql) {
-          const statement = base.prepare(sql);
-          return {
-            bind(...values) {
-              const bound = statement.bind(...values);
-              return {
-                async run() {
-                  const result = await bound.run();
-                  bookmark = result?.meta?.bookmark || bookmark;
-                  return result;
-                },
-                all() { return this.run(); },
-                raw(options) { return bound.raw(options); },
-                first(columnName) { return bound.first(columnName); },
-              };
-            },
-            run: statement.run,
-            all: statement.all,
-            raw: statement.raw,
-            first: statement.first,
-          };
-        },
-        batch(statements) {
-          return base.batch(statements);
-        },
-        getBookmark() {
-          return bookmark;
-        },
-      };
-    },
-  };
-}
-
-function wrapEnv(env) {
-  if (!env) return env;
-  const wrapped = Object.create(env);
-  if (env[assetBindingName]) {
-    Object.defineProperty(wrapped, assetBindingName, {
-      value: wrapAssetBinding(env[assetBindingName]),
-      enumerable: true,
-    });
-  }
-  for (const name of objectBindingNames) {
-    if (!env[name]) continue;
-    Object.defineProperty(wrapped, name, {
-      value: wrapObjectsBinding(name, env[name]),
-      enumerable: true,
-    });
-  }
-  for (const name of dbBindingNames) {
-    if (!env[name]) continue;
-    Object.defineProperty(wrapped, name, {
-      value: wrapDBBinding(name, env[name]),
-      enumerable: true,
-    });
-  }
-  return wrapped;
-}
-
 function scheduledController(request) {
   const url = new URL(request.url);
   const cron = url.searchParams.get("cron") || "* * * * *";
@@ -913,7 +639,7 @@ async function runScheduled(request, env, ctx) {
   return withOutputIdentity(env, async () => {
     const startedAt = Date.now();
     try {
-      await userWorker.scheduled(scheduledController(request), wrapEnv(env), ctx);
+      await userWorker.scheduled(scheduledController(request), wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames), ctx);
       recordRuntimeDuration(env, ctx, startedAt, "ok");
       return new Response(null, { status: 204 });
     } catch (error) {
@@ -935,7 +661,7 @@ export default {
         if (typeof userWorker.fetch !== "function") {
           return new Response("fetch handler not found", { status: 404 });
         }
-        const response = await userWorker.fetch(request, wrapEnv(env), ctx);
+        const response = await userWorker.fetch(request, wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames), ctx);
         recordRuntimeDuration(env, ctx, startedAt, "ok");
         return response;
       } catch (error) {
@@ -949,6 +675,7 @@ export default {
 
 func serviceWorkerWrapper(script string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
 	return `import { AsyncLocalStorage } from "node:async_hooks";
+import { installGlobalBindings } from "nanoflare-internal:runtime-bindings";
 
 function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
   const durationMs = Math.max(1, Date.now() - startedAt);
@@ -1060,216 +787,10 @@ globalThis.addEventListener = function(type, listener, options) {
   }, options);
 };
 
-function __nanoflareBuildObjectBody(response, object) {
-  if (!response) return null;
-  return {
-    key: object.key,
-    size: object.size,
-    etag: object.etag,
-    httpEtag: object.httpEtag,
-    uploaded: new Date(object.uploaded),
-    httpMetadata: object.httpMetadata ?? {},
-    body: response.body,
-    get bodyUsed() {
-      return response.bodyUsed;
-    },
-    arrayBuffer() {
-      return response.arrayBuffer();
-    },
-    text() {
-      return response.text();
-    },
-    json() {
-      return response.json();
-    },
-    blob() {
-      return response.blob();
-    },
-  };
-}
-
-async function __nanoflareObjectBindingError(bindingName, operation, response) {
-  const detail = (await response.text()).trim();
-  return new Error(detail ? bindingName + "." + operation + " failed: " + response.status + " - " + detail : bindingName + "." + operation + " failed: " + response.status);
-}
-
-async function __nanoflareToObjectRequestInit(value, options) {
-  if (value instanceof Request || value instanceof Response) {
-    const contentLength = value.headers.get("content-length");
-    return {
-      body: value.body,
-      contentType: value.headers.get("content-type") || options?.httpMetadata?.contentType || "",
-      size: contentLength ? Number(contentLength) : undefined,
-    };
-  }
-  if (typeof value === "string") {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || "",
-      size: new TextEncoder().encode(value).byteLength,
-    };
-  }
-  if (value instanceof ArrayBuffer) {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || "",
-      size: value.byteLength,
-    };
-  }
-  if (ArrayBuffer.isView(value)) {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || "",
-      size: value.byteLength,
-    };
-  }
-  if (value instanceof Blob) {
-    return {
-      body: value,
-      contentType: options?.httpMetadata?.contentType || value.type || "",
-      size: value.size,
-    };
-  }
-  return {
-    body: value,
-    contentType: options?.httpMetadata?.contentType || (value instanceof Blob ? value.type : ""),
-    size: undefined,
-  };
-}
-
 const __nanoflareObjectBindingNames = ` + objectBindingNamesJSON(objectBindings) + `;
 const __nanoflareDBBindingNames = ` + dbBindingNamesJSON(dbBindings) + `;
 
-function __nanoflareWrapObjectsBinding(bindingName, binding) {
-  if (!binding) return binding;
-  return {
-    async put(key, value, options) {
-      const init = await __nanoflareToObjectRequestInit(value, options);
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
-        method: "PUT",
-        headers: init.contentType ? { "content-type": init.contentType } : undefined,
-        body: init.body,
-      }));
-      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "put", response);
-      const raw = await response.text();
-      if (!raw.trim()) {
-        return {
-          key,
-          size: init.size ?? 0,
-          etag: "",
-          httpEtag: "",
-          uploaded: new Date(),
-          httpMetadata: {
-            contentType: init.contentType || "",
-          },
-        };
-      }
-      const object = JSON.parse(raw);
-      object.uploaded = new Date(object.uploaded);
-      return object;
-    },
-    async get(key) {
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key)));
-      if (response.status === 404) return null;
-      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "get", response);
-      return __nanoflareBuildObjectBody(response, {
-        key: response.headers.get("x-nanoflare-object-key") || key,
-        size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-nanoflare-object-etag") || "",
-        httpEtag: response.headers.get("etag") || "",
-        uploaded: response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString(),
-        httpMetadata: {
-          contentType: response.headers.get("content-type") || "",
-        },
-      });
-    },
-    async head(key) {
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
-        method: "HEAD",
-      }));
-      if (response.status === 404) return null;
-      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "head", response);
-      return {
-        key: response.headers.get("x-nanoflare-object-key") || key,
-        size: Number(response.headers.get("content-length") || "0"),
-        etag: response.headers.get("x-nanoflare-object-etag") || "",
-        httpEtag: response.headers.get("etag") || "",
-        uploaded: new Date(response.headers.get("x-nanoflare-object-uploaded") || new Date(0).toISOString()),
-        httpMetadata: {
-          contentType: response.headers.get("content-type") || "",
-        },
-      };
-    },
-    async delete(key) {
-      const response = await binding.fetch(new Request("https://objects.local/internal/runtime/objects/" + encodeURIComponent(key), {
-        method: "DELETE",
-      }));
-      if (!response.ok) throw await __nanoflareObjectBindingError(bindingName, "delete", response);
-    },
-  };
-}
-
-async function __nanoflareDBRequest(bindingName, binding, payload) {
-  const response = await binding.fetch(new Request("https://db.local/internal/runtime/db/query", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  }));
-  if (!response.ok) {
-    const detail = (await response.text()).trim();
-    throw new Error(detail ? bindingName + " query failed: " + response.status + " - " + detail : bindingName + " query failed: " + response.status);
-  }
-  return response.json();
-}
-
-function __nanoflarePreparedStatement(bindingName, binding, sql, params = []) {
-  return {
-    __sql: sql,
-    __params: params,
-    bind(...values) { return __nanoflarePreparedStatement(bindingName, binding, sql, values); },
-    async run() {
-      const response = await __nanoflareDBRequest(bindingName, binding, { method: "run", statements: [{ sql, params }] });
-      return response.results?.[0] ?? { success: true, meta: {}, results: [] };
-    },
-    all() { return this.run(); },
-    async raw(options) {
-      const response = await __nanoflareDBRequest(bindingName, binding, { method: "raw", column_names: !!options?.columnNames, statements: [{ sql, params }] });
-      return response.raw ?? [];
-    },
-    async first(columnName) {
-      const response = await __nanoflareDBRequest(bindingName, binding, { method: "first", first_column: columnName || "", statements: [{ sql, params }] });
-      return response.first ?? null;
-    },
-  };
-}
-
-function __nanoflareWrapDBBinding(bindingName, binding) {
-  if (!binding) return binding;
-  return {
-    prepare(sql) { return __nanoflarePreparedStatement(bindingName, binding, String(sql)); },
-    async batch(statements) {
-      const response = await __nanoflareDBRequest(bindingName, binding, {
-        method: "batch",
-        statements: statements.map((statement) => ({ sql: statement.__sql || statement.sql, params: statement.__params || statement.params || [] })),
-      });
-      return response.results ?? [];
-    },
-    async exec(sql) {
-      const response = await __nanoflareDBRequest(bindingName, binding, { method: "exec", statements: [{ sql: String(sql) }] });
-      return response.exec ?? { count: 0, duration: 0 };
-    },
-    withSession() {
-      return { prepare: this.prepare.bind(this), batch: this.batch.bind(this), getBookmark() { return null; } };
-    },
-  };
-}
-
-for (const __nanoflareName of __nanoflareObjectBindingNames) {
-  globalThis[__nanoflareName] = __nanoflareWrapObjectsBinding(__nanoflareName, globalThis[__nanoflareName]);
-}
-for (const __nanoflareName of __nanoflareDBBindingNames) {
-  globalThis[__nanoflareName] = __nanoflareWrapDBBinding(__nanoflareName, globalThis[__nanoflareName]);
-}
+installGlobalBindings(globalThis, __nanoflareDBBindingNames, __nanoflareObjectBindingNames);
 ` + "\n" + script + `
 
 __nanoflareAddEventListener("fetch", (event) => {

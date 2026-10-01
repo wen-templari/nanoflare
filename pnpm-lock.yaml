@@ -293,6 +293,12 @@ importers:
         specifier: ^5.8.3
         version: 5.8.3
 
+  packages/runtime:
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/ui:
     dependencies:
       '@cloudflare/kumo':

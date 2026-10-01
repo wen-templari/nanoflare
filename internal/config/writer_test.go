@@ -21,6 +21,9 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		},
 	}})
 	for _, expected := range []string{
+		`name = "nanoflare-internal:runtime-bindings"`,
+		`import { installGlobalBindings } from \"nanoflare-internal:runtime-bindings\"`,
+		`export function installGlobalBindings(target, dbBindingNames, objectBindingNames)`,
 		`(name = "internet", network = (allow = ["public", "10.0.0.0/8"], tlsOptions = (trustBrowserCas = true)))`,
 		`(name = "hello-app", worker = .workerHelloApp)`,
 		`(name = "nanoflare-duration-collector", external = (address = "127.0.0.1:8081"))`,
@@ -277,6 +280,40 @@ func TestWorkerdObjectBindingErrorsIncludeRuntimeDetails(t *testing.T) {
 	}
 }
 
+func TestWorkerdIncludesRuntimeBindingsModuleForWorkerFormats(t *testing.T) {
+	tests := []struct {
+		name       string
+		format     string
+		source     string
+		wrapperUse string
+	}{
+		{name: "modules", format: "modules", source: `export default { fetch() {} };`, wrapperUse: `import { wrapEnv as wrapRuntimeEnv } from \"nanoflare-internal:runtime-bindings\"`},
+		{name: "service worker", format: "service-worker", source: `addEventListener("fetch", () => {});`, wrapperUse: `import { installGlobalBindings } from \"nanoflare-internal:runtime-bindings\"`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generated := Workerd([]nanoflare.ActiveDeployment{{
+				App: nanoflare.App{ID: "app"},
+				Deployment: nanoflare.Deployment{
+					Entrypoint: "worker.js", Format: test.format, CompatibilityDate: "2025-12-10",
+					Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: test.source}},
+				},
+			}})
+			for _, expected := range []string{
+				`name = "nanoflare-internal:runtime-bindings"`,
+				`export function wrapDBBinding(bindingName, binding)`,
+				`export function wrapObjectsBinding(bindingName, binding)`,
+				test.wrapperUse,
+			} {
+				if !strings.Contains(generated, expected) {
+					t.Fatalf("generated %s config is missing %q:\n%s", test.name, expected, generated)
+				}
+			}
+		})
+	}
+}
+
 func TestWorkerdGeneratesSingleFileModuleWorker(t *testing.T) {
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
@@ -330,7 +367,7 @@ func TestWorkerdModuleWrapperHandlesScheduledRoute(t *testing.T) {
 	}})
 	for _, expected := range []string{
 		`/cdn-cgi/handler/scheduled`,
-		`userWorker.scheduled(scheduledController(request), wrapEnv(env), ctx)`,
+		`userWorker.scheduled(scheduledController(request), wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames), ctx)`,
 		`withOutputIdentity(env, async () =>`,
 		`new Response(null, { status: 204 })`,
 		`url.searchParams.get(\"cron\")`,
