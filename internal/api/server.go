@@ -165,6 +165,7 @@ func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token st
 
 func newWorkerGatewayClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	runtime.ConfigureTransport(transport)
 	transport.MaxIdleConns = 1024
 	transport.MaxIdleConnsPerHost = 128
 	transport.MaxConnsPerHost = 128

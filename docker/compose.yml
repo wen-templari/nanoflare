@@ -85,7 +85,7 @@ services:
     command:
       - -addr=:8090
       - -config-dir=/var/lib/nanoflare/runner
-      - -runtime-port-host=nanoflare-runner
+      - -runtime-socket-dir=/tmp/nanoflare-sockets
       - -nanoflare-runtime-addr=nanoflared:8081
     environment:
       NANOFLARE_RUNNER_TOKEN: ${NANOFLARE_RUNNER_TOKEN:-nanoflare-development}

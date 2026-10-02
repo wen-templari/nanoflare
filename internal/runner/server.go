@@ -1,13 +1,16 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"strings"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 type RuntimeManager interface {
@@ -17,26 +20,62 @@ type RuntimeManager interface {
 }
 
 type Server struct {
-	manager RuntimeManager
-	token   string
-	mux     *http.ServeMux
+	manager   RuntimeManager
+	token     string
+	mux       *http.ServeMux
+	transport *http.Transport
 }
 
 func NewServer(manager RuntimeManager, token string) *Server {
 	server := &Server{manager: manager, token: token, mux: http.NewServeMux()}
+	server.transport = http.DefaultTransport.(*http.Transport).Clone()
+	runtime.ConfigureTransport(server.transport)
 	server.mux.HandleFunc("GET /healthz", server.health)
 	server.mux.HandleFunc("POST /v1/generations/prepare", server.prepare)
 	server.mux.HandleFunc("POST /v1/generations/{generation}/commit", server.commit)
 	server.mux.HandleFunc("POST /v1/generations/{generation}/abort", server.abort)
+	server.mux.HandleFunc("/v1/workers/{app}/{deployment}/{path...}", server.worker)
 	return server
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/healthz" && (s.token == "" || bearerToken(r) != s.token) {
+	token := bearerToken(r)
+	if strings.HasPrefix(r.URL.Path, "/v1/workers/") {
+		token = r.Header.Get("X-Nanoflare-Runner-Token")
+	}
+	if r.URL.Path != "/healthz" && (s.token == "" || token != s.token) {
 		writeError(w, http.StatusUnauthorized, errors.New("invalid runner token"))
 		return
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+func (s *Server) worker(w http.ResponseWriter, r *http.Request) {
+	manager, ok := s.manager.(interface {
+		Ensure(context.Context, nanoflare.ActiveDeployment) (runtime.EnsuredWorker, error)
+	})
+	if !ok {
+		http.Error(w, "runtime routing unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	active := nanoflare.ActiveDeployment{App: nanoflare.App{ID: r.PathValue("app")}, Deployment: nanoflare.Deployment{ID: r.PathValue("deployment")}}
+	endpoint, err := manager.Ensure(r.Context(), active)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer endpoint.Release()
+	prefix := "/v1/workers/" + active.App.ID + "/" + active.Deployment.ID
+	proxy := &httputil.ReverseProxy{Transport: s.transport, FlushInterval: -1, Director: func(req *http.Request) {
+		req.URL.Scheme = "http"
+		req.URL.Host = runtime.SocketHost(endpoint.SocketPath)
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
+		if req.URL.RawPath != "" {
+			req.URL.RawPath = strings.TrimPrefix(req.URL.RawPath, prefix)
+		}
+		req.Header.Del("X-Nanoflare-Runner-Token")
+	}}
+	proxy.ServeHTTP(w, r)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -53,6 +92,9 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
+	}
+	for i := range deployments {
+		deployments[i].SocketPath = ""
 	}
 	writeJSON(w, http.StatusCreated, PrepareResponse{Generation: generation, Deployments: deployments})
 }

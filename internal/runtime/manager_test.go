@@ -56,7 +56,6 @@ func TestManagerReplacesHealthyPoolBeforePublishingTraffic(t *testing.T) {
 	writer := &fakeWriter{events: events}
 	launcher := &fakeLauncher{events: events, healthy: true}
 	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
-	manager.retireDelay = 0
 	defer manager.Close()
 
 	first := deployments(9001)
@@ -75,6 +74,7 @@ func TestManagerReplacesHealthyPoolBeforePublishingTraffic(t *testing.T) {
 	if secondRuntimePort == firstRuntimePort {
 		t.Fatalf("second runtime port = first runtime port = %d", secondRuntimePort)
 	}
+	manager.retiring.Wait()
 	if !launcher.process(0).isStopped() {
 		t.Fatal("previous pool was not stopped")
 	}
@@ -87,7 +87,6 @@ func TestManagerKeepsPreviousPoolWhenReplacementIsUnhealthy(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
 	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), 75*time.Millisecond, time.Second)
-	manager.retireDelay = 0
 	defer manager.Close()
 
 	if err := manager.Write(deployments(9001)); err != nil {
@@ -112,7 +111,6 @@ func TestManagerKeepsPreviousPoolUntilPreparedGenerationIsCommitted(t *testing.T
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
 	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
-	manager.retireDelay = 0
 	defer manager.Close()
 
 	if err := manager.Write(deployments(9001)); err != nil {
@@ -128,6 +126,7 @@ func TestManagerKeepsPreviousPoolUntilPreparedGenerationIsCommitted(t *testing.T
 	if err := manager.Commit(generation); err != nil {
 		t.Fatal(err)
 	}
+	manager.retiring.Wait()
 	if !launcher.process(0).isStopped() {
 		t.Fatal("previous pool remains active after commit")
 	}
@@ -137,7 +136,6 @@ func TestManagerRestartsUnexpectedlyExitedPool(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
 	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
-	manager.retireDelay = 0
 	manager.restartDelay = time.Millisecond
 	defer manager.Close()
 
@@ -365,7 +363,7 @@ func TestLazyManagerCronSchedulerEnsuresWorker(t *testing.T) {
 	}
 	runner.Stop()
 	client := &recordingCronClient{}
-	runner.client = client
+	runner = newCronRunner("127.0.0.1", active, nil, client, manager.Ensure)
 
 	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
 	runner.work.Wait()
@@ -447,7 +445,11 @@ func (l *fakeLauncher) Launch(_ string, active []nanoflare.ActiveDeployment) (Pr
 	process := &fakeProcess{events: l.events, done: make(chan error, 1)}
 	if l.healthy {
 		for _, item := range active {
-			listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", stringPort(item.Deployment.Port)))
+			network, address := "tcp", net.JoinHostPort("127.0.0.1", stringPort(item.Deployment.Port))
+			if item.SocketPath != "" {
+				network, address = "unix", item.SocketPath
+			}
+			listener, err := net.Listen(network, address)
 			if err != nil {
 				return nil, err
 			}

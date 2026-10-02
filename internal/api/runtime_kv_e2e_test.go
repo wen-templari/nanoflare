@@ -109,7 +109,7 @@ func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
 	t.Fatal("workerd did not become ready")
 }
 
-func TestLazyRuntimeGatewayEndToEnd(t *testing.T) {
+func TestSharedRuntimeSocketGatewayEndToEnd(t *testing.T) {
 	workerd, err := exec.LookPath("workerd")
 	if err != nil {
 		t.Skip("workerd is not installed")
@@ -139,17 +139,30 @@ func TestLazyRuntimeGatewayEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	writer := config.NewRuntimeWriter(filepath.Join(dir, "workerd.capnp"), discardTraefik{})
 	writer.SetNanoflareRuntimeAddr(strings.TrimPrefix(runtimeServer.URL, "http://"))
-	manager := runtime.NewLazyManager(
+	manager := runtime.NewManager(
 		writer,
 		runtime.CommandLauncher{Executable: workerd},
 		dir,
+		filepath.Join(dir, "workerd.capnp"),
 		"127.0.0.1",
 		availablePort(t),
 		5*time.Second,
 		5*time.Second,
-		50*time.Millisecond,
 	)
+	sockets, err := os.MkdirTemp("/tmp", "nf-gateway-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockets)
+	manager.SetSocketDir(sockets)
 	defer manager.Close()
+	active, err := service.ActiveDeployments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Write(active); err != nil {
+		t.Fatal(err)
+	}
 	server := api.NewServerWithRuntime(service, nil, "", nil, nil, manager)
 
 	recorder := httptest.NewRecorder()

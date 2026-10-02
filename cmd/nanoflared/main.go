@@ -58,9 +58,7 @@ func main() {
 		egressAddr          = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
 		dnsConfigValue      = flag.String("dns-config", os.Getenv("NANOFLARE_DNS_CONFIG"), "inline JSON or path to the platform DNS profile configuration")
 		dnsAddr             = flag.String("dns-addr", envOrDefault("NANOFLARE_DNS_ADDR", "127.0.0.1:8083"), "private Worker DNS adapter address")
-		portHost            = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
-		portStart           = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
-		idleTimeout         = flag.Duration("runtime-idle-timeout", 30*time.Second, "idle duration before a lazy worker runtime is stopped")
+		socketDir           = flag.String("runtime-socket-dir", "/tmp/nanoflare-sockets", "private directory for Worker Unix sockets")
 		prometheus          = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
 		lokiURL             = flag.String("loki-url", os.Getenv("NANOFLARE_LOKI_URL"), "Loki base URL for persistent worker output")
 		vectorSocket        = flag.String("log-vector-socket", os.Getenv("NANOFLARE_LOG_VECTOR_SOCKET"), "optional local Vector Unix socket for structured runtime output")
@@ -181,7 +179,9 @@ func main() {
 		}
 	}
 	if *runnerURL != "" {
-		publisher = runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
+		client := runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
+		publisher = client
+		runtimeEnsurer = client
 	} else {
 		writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
 		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
@@ -219,16 +219,17 @@ func main() {
 				_ = adapter.Close(ctx)
 			}()
 		}
-		manager := runtime.NewLazyManager(
+		manager := runtime.NewManager(
 			writer,
 			runtime.CommandLauncher{Executable: *workerd, Output: output},
 			*configDir,
-			*portHost,
-			*portStart,
+			filepath.Join(*configDir, "workerd.capnp"),
+			"127.0.0.1",
+			10000,
 			10*time.Second,
 			5*time.Second,
-			*idleTimeout,
 		)
+		manager.SetSocketDir(*socketDir)
 		publisher = manager
 		runtimeEnsurer = manager
 		closeRuntime = func() {

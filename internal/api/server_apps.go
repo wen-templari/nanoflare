@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptrace"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -374,14 +376,14 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 			assetWriteSpan.End()
 			return
 		}
-		port, release, err := s.ensureWorkerTraced(r, active, runtimePort)
+		endpoint, err := s.ensureWorkerTraced(r, active, runtimePort)
 		if err != nil {
 			gatewaySpan.SetStatus(codes.Error, err.Error())
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
-		defer release()
-		workerResponse, err := s.workerResponse(r, port, requestPath, escapedRequestPath)
+		defer endpoint.Release()
+		workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath)
 		if err != nil {
 			gatewaySpan.SetStatus(codes.Error, err.Error())
 			writeError(w, http.StatusBadGateway, err)
@@ -397,14 +399,14 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		writeWorkerResponse(r.Context(), w, workerResponse)
 		return
 	}
-	port, release, err := s.ensureWorkerTraced(r, active, runtimePort)
+	endpoint, err := s.ensureWorkerTraced(r, active, runtimePort)
 	if err != nil {
 		gatewaySpan.SetStatus(codes.Error, err.Error())
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	defer release()
-	workerResponse, err := s.workerResponse(r, port, requestPath, escapedRequestPath)
+	defer endpoint.Release()
+	workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath)
 	if err != nil {
 		gatewaySpan.SetStatus(codes.Error, err.Error())
 		writeError(w, http.StatusBadGateway, err)
@@ -470,51 +472,61 @@ func writeAssetResponse(w http.ResponseWriter, r *http.Request, response nanofla
 	_, _ = w.Write(response.Body)
 }
 
-func (s *Server) ensureWorker(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (int, func(), bool, error) {
-	if runtimePort != 0 {
-		return runtimePort, func() {}, false, nil
+func (s *Server) ensureWorker(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (runtime.EnsuredWorker, error) {
+	if runtimePort != 0 && s.runtime == nil {
+		return runtime.EnsuredWorker{Port: runtimePort, Release: func() {}}, nil
 	}
 	if s.runtime == nil {
 		if active.Deployment.Port == 0 {
-			return 0, nil, false, nanoflare.ErrAppNotFound
+			return runtime.EnsuredWorker{}, nanoflare.ErrAppNotFound
 		}
-		return active.Deployment.Port, func() {}, false, nil
+		return runtime.EnsuredWorker{Port: active.Deployment.Port, Release: func() {}}, nil
 	}
-	ensured, err := s.runtime.Ensure(r.Context(), active)
-	if err != nil {
-		return 0, nil, false, err
-	}
-	return ensured.Port, ensured.Release, ensured.ColdStart, nil
+	return s.runtime.Ensure(r.Context(), active)
 }
 
-func (s *Server) ensureWorkerTraced(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (int, func(), error) {
+func (s *Server) ensureWorkerTraced(r *http.Request, active nanoflare.ActiveDeployment, runtimePort int) (runtime.EnsuredWorker, error) {
 	ctx, span := gatewayTracer.Start(r.Context(), "worker.runtime_ensure", trace.WithAttributes(
 		attribute.Bool("nanoflare.runtime.explicit_port", runtimePort != 0),
 	))
-	port, release, coldStart, err := s.ensureWorker(r.WithContext(ctx), active, runtimePort)
+	endpoint, err := s.ensureWorker(r.WithContext(ctx), active, runtimePort)
 	if err != nil {
 		recordSpanError(span, err)
 	} else {
 		span.SetAttributes(
-			attribute.Int("nanoflare.runtime.port", port),
-			attribute.Bool("nanoflare.runtime.cold_start", coldStart),
+			attribute.Bool("nanoflare.runtime.unix_socket", endpoint.SocketPath != ""),
+			attribute.Bool("nanoflare.runtime.cold_start", endpoint.ColdStart),
 		)
 	}
 	span.End()
-	return port, release, err
+	return endpoint, err
 }
 
-func (s *Server) workerResponse(r *http.Request, port int, requestPath, escapedRequestPath string) (*http.Response, error) {
+func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker, requestPath, escapedRequestPath string) (*http.Response, error) {
 	ctx, span := gatewayTracer.Start(r.Context(), "worker.upstream_ttfb", trace.WithAttributes(
-		attribute.Int("server.port", port),
+		attribute.Bool("nanoflare.runtime.unix_socket", endpoint.SocketPath != ""),
 	))
 	defer span.End()
 	target := &url.URL{
 		Scheme:   "http",
-		Host:     "127.0.0.1:" + strconv.Itoa(port),
+		Host:     "127.0.0.1:" + strconv.Itoa(endpoint.Port),
 		Path:     requestPath,
 		RawPath:  escapedRequestPath,
 		RawQuery: r.URL.RawQuery,
+	}
+	if endpoint.SocketPath != "" {
+		target.Host = runtime.SocketHost(endpoint.SocketPath)
+	}
+	if endpoint.URL != "" {
+		base, err := url.Parse(endpoint.URL)
+		if err != nil {
+			return nil, err
+		}
+		target.Scheme, target.Host = base.Scheme, base.Host
+		target.Path = base.Path + requestPath
+		if escapedRequestPath != "" {
+			target.RawPath = base.EscapedPath() + escapedRequestPath
+		}
 	}
 	request, err := http.NewRequestWithContext(ctx, r.Method, target.String(), r.Body)
 	if err != nil {
@@ -548,6 +560,9 @@ func (s *Server) workerResponse(r *http.Request, port int, requestPath, escapedR
 	}
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
 	request.Header = r.Header.Clone()
+	if endpoint.Token != "" {
+		request.Header.Set("X-Nanoflare-Runner-Token", endpoint.Token)
+	}
 	request.Host = r.Host
 	otel.GetTextMapPropagator().Inject(request.Context(), propagation.HeaderCarrier(request.Header))
 	response, err := s.workerClient.Do(request)
@@ -563,17 +578,63 @@ func (s *Server) workerResponse(r *http.Request, port int, requestPath, escapedR
 func writeWorkerResponse(ctx context.Context, w http.ResponseWriter, response *http.Response) {
 	_, span := gatewayTracer.Start(ctx, "worker.response_copy")
 	defer span.End()
+	if response.StatusCode == http.StatusSwitchingProtocols {
+		upstream, ok := response.Body.(io.ReadWriteCloser)
+		hijacker, canHijack := w.(http.Hijacker)
+		if !ok || !canHijack {
+			http.Error(w, "WebSocket upgrade unavailable", http.StatusBadGateway)
+			return
+		}
+		conn, buffered, err := hijacker.Hijack()
+		if err != nil {
+			recordSpanError(span, err)
+			return
+		}
+		defer conn.Close()
+		if _, err := fmt.Fprintf(buffered, "HTTP/1.1 101 Switching Protocols\r\n"); err != nil {
+			recordSpanError(span, err)
+			return
+		}
+		if err := response.Header.Write(buffered); err != nil {
+			recordSpanError(span, err)
+			return
+		}
+		if _, err := buffered.WriteString("\r\n"); err != nil {
+			recordSpanError(span, err)
+			return
+		}
+		if err := buffered.Flush(); err != nil {
+			recordSpanError(span, err)
+			return
+		}
+		done := make(chan struct{})
+		go func() { io.Copy(upstream, buffered); upstream.Close(); close(done) }()
+		io.Copy(conn, upstream)
+		conn.Close()
+		<-done
+		return
+	}
 	for key, values := range response.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	written, err := io.Copy(w, response.Body)
+	written, err := io.Copy(flushingResponseWriter{w}, response.Body)
 	span.SetAttributes(attribute.Int64("http.response.body.size", written))
 	if err != nil {
 		recordSpanError(span, err)
 	}
+}
+
+type flushingResponseWriter struct{ http.ResponseWriter }
+
+func (w flushingResponseWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+	return n, err
 }
 
 func recordSpanError(span trace.Span, err error) {

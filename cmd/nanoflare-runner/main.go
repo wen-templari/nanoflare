@@ -31,8 +31,7 @@ func main() {
 		egressAddr           = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
 		dnsConfigValue       = flag.String("dns-config", os.Getenv("NANOFLARE_DNS_CONFIG"), "inline JSON or path to the platform DNS profile configuration")
 		dnsAddr              = flag.String("dns-addr", envOrDefault("NANOFLARE_DNS_ADDR", "127.0.0.1:8083"), "private Worker DNS adapter address")
-		portHost             = flag.String("runtime-port-host", "127.0.0.1", "host used to allocate and health-check workerd sockets")
-		portStart            = flag.Int("runtime-port-start", 10000, "first port considered for workerd pool generations")
+		socketDir            = flag.String("runtime-socket-dir", "/tmp/nanoflare-sockets", "private directory for Worker Unix sockets")
 		nanoflareRuntimeAddr = flag.String("nanoflare-runtime-addr", "127.0.0.1:8081", "nanoflared private runtime KV API address reachable from workerd")
 		token                = flag.String("token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflared authentication token")
 		vectorSocket         = flag.String("log-vector-socket", os.Getenv("NANOFLARE_LOG_VECTOR_SOCKET"), "optional local Vector Unix socket for structured runtime output")
@@ -101,13 +100,12 @@ func main() {
 		runtime.CommandLauncher{Executable: *workerd, Output: output},
 		*configDir,
 		filepath.Join(*configDir, "workerd.capnp"),
-		*portHost,
-		*portStart,
+		"127.0.0.1",
+		10000,
 		10*time.Second,
 		5*time.Second,
 	)
-	manager.SetRetireDelay(2 * time.Second)
-	manager.SetAutoRestart(false)
+	manager.SetSocketDir(*socketDir)
 	defer manager.Close()
 
 	server := &http.Server{Addr: *addr, Handler: runner.NewServer(manager, *token)}

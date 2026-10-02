@@ -27,6 +27,8 @@ type cronJob struct {
 }
 
 type cronRunner struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 	host   string
 	jobs   []cronJob
 	client cronHTTPClient
@@ -43,7 +45,9 @@ func startCronRunner(host string, active []nanoflare.ActiveDeployment, output *O
 }
 
 func startCronRunnerWithEnsure(host string, active []nanoflare.ActiveDeployment, output *OutputBuffer, ensure cronEnsureFunc) *cronRunner {
-	runner := newCronRunner(host, active, output, &http.Client{Timeout: 120 * time.Second}, ensure)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	ConfigureTransport(transport)
+	runner := newCronRunner(host, active, output, &http.Client{Timeout: 120 * time.Second, Transport: transport}, ensure)
 	if len(runner.jobs) == 0 {
 		return nil
 	}
@@ -52,7 +56,9 @@ func startCronRunnerWithEnsure(host string, active []nanoflare.ActiveDeployment,
 }
 
 func newCronRunner(host string, active []nanoflare.ActiveDeployment, output *OutputBuffer, client cronHTTPClient, ensure cronEnsureFunc) *cronRunner {
+	ctx, cancel := context.WithCancel(context.Background())
 	runner := &cronRunner{
+		ctx: ctx, cancel: cancel,
 		host:   host,
 		client: client,
 		output: output,
@@ -96,6 +102,7 @@ func (r *cronRunner) Run() {
 
 func (r *cronRunner) Stop() {
 	r.once.Do(func() {
+		r.cancel()
 		close(r.stop)
 		<-r.done
 		r.work.Wait()
@@ -124,9 +131,10 @@ func (r *cronRunner) invokeAndLog(now time.Time, job cronJob) {
 }
 
 func (r *cronRunner) invoke(now time.Time, job cronJob) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.ctx, 120*time.Second)
 	defer cancel()
 	port := job.port
+	socketPath := job.active.SocketPath
 	if r.ensure != nil {
 		ensured, err := r.ensure(ctx, job.active)
 		if err != nil {
@@ -134,6 +142,7 @@ func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 		}
 		defer ensured.Release()
 		port = ensured.Port
+		socketPath = ensured.SocketPath
 	}
 	values := url.Values{}
 	values.Set("cron", job.cron)
@@ -143,6 +152,9 @@ func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 		Host:     r.host + ":" + strconv.Itoa(port),
 		Path:     "/cdn-cgi/handler/scheduled",
 		RawQuery: values.Encode(),
+	}
+	if socketPath != "" {
+		target.Host = SocketHost(socketPath)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {

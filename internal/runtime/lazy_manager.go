@@ -20,12 +20,6 @@ import (
 
 var lazyRuntimeTracer = otel.Tracer("github.com/clas/nanoflare/internal/runtime/lazy-manager")
 
-type EnsuredWorker struct {
-	Port      int
-	ColdStart bool
-	Release   func()
-}
-
 type LazyManager struct {
 	mu            sync.Mutex
 	writer        ConfigWriter

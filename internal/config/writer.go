@@ -200,8 +200,12 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
+		address := fmt.Sprintf("*:%d", item.Deployment.Port)
+		if item.SocketPath != "" {
+			address = "unix:" + item.SocketPath
+		}
 		fmt.Fprintf(&out, "    (name = %s, address = %s, http = (forwardedProtoHeader = \"X-Forwarded-Proto\"), service = %s),\n",
-			quote(deploymentServiceName(item)), quote(fmt.Sprintf("*:%d", item.Deployment.Port)), quote(deploymentServiceName(item)))
+			quote(deploymentServiceName(item)), quote(address), quote(deploymentServiceName(item)))
 	}
 	out.WriteString("  ]\n);\n")
 	for _, item := range active {

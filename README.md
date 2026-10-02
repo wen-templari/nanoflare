@@ -236,10 +236,21 @@ to `nanoflare-runner -nanoflare-runtime-addr`.
 
 The runner prepares a fresh `workerd` generation and health-checks its sockets.
 `nanoflared` publishes the corresponding routes from its HTTP discovery endpoint
-and then commits the generation. The runner keeps the previous pool alive for a
-short grace period so Traefik can poll the new configuration before old sockets
-are retired. Direct `workerd` execution remains available as a development
-fallback when `-runner-url` is empty.
+and then commits the generation. Both direct and runner execution keep one shared
+`workerd` process alive for all active Workers. Each deployment receives a private
+Unix socket, using HTTP over that socket instead of a TCP port. Configure its
+parent directory with `-runtime-socket-dir` (default `/tmp/nanoflare-sockets`);
+keep the absolute path short enough for Unix socket path limits. Socket paths are
+ephemeral and stay on the runtime host. Traefik reaches the Nanoflare gateway;
+in split mode the gateway forwards through the authenticated runner API.
+
+Deployment updates briefly run a candidate process alongside the active process.
+Once the candidate's sockets are ready, routing switches and the previous process
+drains tracked requests for up to five seconds before shutdown. Failed candidates
+leave the existing process serving. Idle Workers do not stop the shared process;
+unexpected exits trigger a restart. Restarting a generation resets all Worker
+in-memory state. Per-invocation CPU limits and Durable Object ownership handoff
+are not provided by this runtime model.
 
 Build the CLI:
 

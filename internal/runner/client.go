@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,10 +12,18 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 )
 
 type TraefikWriter interface {
 	WriteTraefik([]nanoflare.ActiveDeployment) error
+}
+
+func (c *Client) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (runtime.EnsuredWorker, error) {
+	if err := ctx.Err(); err != nil {
+		return runtime.EnsuredWorker{}, err
+	}
+	return runtime.EnsuredWorker{URL: c.baseURL + "/v1/workers/" + active.App.ID + "/" + active.Deployment.ID, Token: c.token, Release: func() {}}, nil
 }
 
 type Client struct {

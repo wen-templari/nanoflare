@@ -52,6 +52,7 @@ type Deployment struct {
 }
 
 type ActiveDeployment struct {
+	SocketPath     string     `json:"socket_path,omitempty"`
 	App            App        `json:"app"`
 	Deployment     Deployment `json:"deployment"`
 	TrafficPercent int        `json:"traffic_percent"`
