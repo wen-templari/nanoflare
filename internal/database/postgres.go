@@ -1881,10 +1881,16 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 }
 
 func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
+	return scanApp(p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM workers WHERE id = $1`, appID))
+}
+
+func scanApp(row interface{ Scan(...any) error }) (nanoflare.App, error) {
 	var app nanoflare.App
 	var auth []byte
-	err := p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM workers WHERE id = $1`, appID).
-		Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt)
+	err := row.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt)
+	if isUniqueViolation(err) {
+		return nanoflare.App{}, nanoflare.ErrAppExists
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.App{}, nanoflare.ErrAppNotFound
 	}
@@ -1895,6 +1901,18 @@ func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
 		return nanoflare.App{}, err
 	}
 	return app, nil
+}
+
+// PatchApp updates supplied fields atomically so concurrent patches preserve omissions.
+func (p *Postgres) PatchApp(appID string, input nanoflare.UpdateAppInput) (nanoflare.App, error) {
+	var auth any
+	if input.Auth != nil {
+		auth = mustJSON(*input.Auth)
+	}
+	return scanApp(p.db.QueryRow(`UPDATE workers
+SET hostname = COALESCE($2, hostname), auth = COALESCE($3::jsonb, auth)
+WHERE id = $1
+RETURNING id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at`, appID, input.Hostname, auth))
 }
 
 func (p *Postgres) UpdateApp(app nanoflare.App) error {

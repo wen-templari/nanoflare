@@ -13,6 +13,7 @@ import (
 var (
 	ErrAppExists                   = errors.New("app already exists")
 	ErrAppNotFound                 = errors.New("app not found")
+	ErrInvalidAppUpdate            = errors.New("invalid worker update")
 	ErrInvalidCapability           = errors.New("invalid runtime capability")
 	ErrObjectNotFound              = errors.New("object not found")
 	ErrKVNamespaceExists           = errors.New("kv namespace already exists")
@@ -102,6 +103,7 @@ type Repository interface {
 	ListApps() ([]App, error)
 	ListAppsByOrg(string) ([]App, error)
 	UpdateApp(App) error
+	PatchApp(string, UpdateAppInput) (App, error)
 	DeleteApp(string) error
 	CreateKVNamespace(KVNamespace) error
 	CountKVNamespacesByOrg(string) (int, error)
@@ -1037,6 +1039,29 @@ func (s *Store) UpdateApp(app App) error {
 	app.CreatedAt = existing.CreatedAt
 	s.apps[app.ID] = app
 	return nil
+}
+
+// PatchApp changes only supplied fields while holding the uniqueness lock.
+func (s *Store) PatchApp(appID string, input UpdateAppInput) (App, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	app, exists := s.apps[appID]
+	if !exists {
+		return App{}, ErrAppNotFound
+	}
+	if input.Hostname != nil {
+		for _, candidate := range s.apps {
+			if candidate.ID != appID && candidate.Hostname == *input.Hostname {
+				return App{}, ErrAppExists
+			}
+		}
+		app.Hostname = *input.Hostname
+	}
+	if input.Auth != nil {
+		app.Auth = *input.Auth
+	}
+	s.apps[appID] = app
+	return app, nil
 }
 
 func (s *Store) DeleteApp(appID string) error {

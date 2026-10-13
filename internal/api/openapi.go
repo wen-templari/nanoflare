@@ -102,6 +102,11 @@ func addOpenAPIOperation(api huma.API, item openAPIOperation) {
 	op.Responses["400"] = errorResponse(api)
 	op.Responses["404"] = errorResponse(api)
 	op.Responses["500"] = errorResponse(api)
+	if item.id == "updateWorker" {
+		op.Summary = "Update worker hostname and authentication"
+		op.Description = "Updates only supplied fields. Hostnames are globally unique ASCII DNS names (including punycode), normalized to lowercase with surrounding whitespace and a trailing dot removed; empty or null values, IP addresses, schemes, paths, ports and wildcards are rejected. DNS and TLS must be configured externally. Worker identity, deployments, bindings, secrets and traffic allocation are preserved. Routing takes effect after Traefik refreshes its configuration. A 500 response can occur after the update was saved: GET the worker to reconcile its authoritative hostname and retry the same PATCH to complete routing refresh. Requests for the current hostname still refresh routing."
+		op.Responses["409"] = errorResponse(api)
+	}
 	api.OpenAPI().AddOperation(op)
 }
 

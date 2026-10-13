@@ -379,15 +379,15 @@
             },
             "type": ["array", "null"]
           },
-          "dns": {
-            "$ref": "#/components/schemas/DNSSelection"
-          },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "created_by": {
             "type": "string"
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DNSSelection"
           },
           "entrypoint": {
             "type": "string"
@@ -2655,6 +2655,10 @@
           },
           "auth": {
             "$ref": "#/components/schemas/AuthConfig"
+          },
+          "hostname": {
+            "description": "DNS hostname; globally unique. DNS and TLS must be configured externally.",
+            "type": "string"
           }
         },
         "type": "object"
@@ -9581,6 +9585,7 @@
         "tags": ["Workers"]
       },
       "patch": {
+        "description": "Updates only supplied fields. Hostnames are globally unique ASCII DNS names (including punycode), normalized to lowercase with surrounding whitespace and a trailing dot removed; empty or null values, IP addresses, schemes, paths, ports and wildcards are rejected. DNS and TLS must be configured externally. Worker identity, deployments, bindings, secrets and traffic allocation are preserved. Routing takes effect after Traefik refreshes its configuration. A 500 response can occur after the update was saved: GET the worker to reconcile its authoritative hostname and retry the same PATCH to complete routing refresh. Requests for the current hostname still refresh routing.",
         "operationId": "updateWorker",
         "parameters": [
           {
@@ -9661,6 +9666,16 @@
             },
             "description": "Error"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -9677,7 +9692,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "updateWorker",
+        "summary": "Update worker hostname and authentication",
         "tags": ["Workers"]
       }
     },

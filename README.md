@@ -162,6 +162,45 @@ the adapter, so treat the no-proxy list as an explicit egress policy. Keep it
 aligned with the private destinations intended to be allowed by
 `NANOFLARE_WORKERD_NETWORK_ALLOW`.
 
+### Updating a worker hostname
+
+Change a published worker's URL with the organization-scoped update endpoint:
+
+```sh
+curl -X PATCH "http://127.0.0.1:8080/v1/organizations/$NANOFLARE_ORG_ID/workers/$WORKER_ID" \
+  -H "Authorization: Bearer $NANOFLARE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname":"new-site.workers.example.com"}'
+```
+
+The response contains the updated worker and normalized hostname. Omit
+`hostname` to preserve it; `auth` can be updated alone or in the same request.
+Worker identity, organization, external ID, deployments, traffic weights,
+secrets and resource bindings are preserved. No application redeployment is
+required. The new hostname replaces the old route after Traefik applies the
+refreshed configuration; PATCH success confirms publication, not instantaneous
+edge propagation.
+
+Explicit hostnames for creation and updates must be ASCII DNS names (including
+punycode), with labels of 1–63 characters and a total length of at most 253
+characters after normalization. Labels contain letters, digits and internal
+hyphens. Surrounding whitespace and one trailing dot are removed, and letters
+are lowercased. Empty or null update values, IP addresses, schemes, paths,
+ports and wildcards are rejected with `400`. Hostnames are unique across all
+organizations; an assigned hostname returns `409`. Access requires membership
+in the worker's organization and the `workers:write` scope.
+
+DNS must already resolve to the platform's ingress, and TLS coverage must be
+configured externally. A hostname update does not provision DNS records or
+certificates and does not redirect the old URL.
+
+If the response is lost, read
+`GET /v1/organizations/{orgID}/workers/{workerID}` to reconcile the authoritative
+hostname. A routing refresh failure returns `500` and may occur after the
+hostname was saved. Retry the same PATCH to complete refresh: requests for the
+current hostname still republish configuration. GET reads stored metadata
+without retrieving deployment bundles or decrypting secrets.
+
 ### Private DNS and `node:dns` lookup
 
 Nanoflare supplies the `dns.lookup()` and `dns.promises.lookup()` methods that

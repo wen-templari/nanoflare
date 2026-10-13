@@ -1040,7 +1040,10 @@ export interface paths {
     delete: operations["deleteWorker"];
     options?: never;
     head?: never;
-    /** updateWorker */
+    /**
+     * Update worker hostname and authentication
+     * @description Updates only supplied fields. Hostnames are globally unique ASCII DNS names (including punycode), normalized to lowercase with surrounding whitespace and a trailing dot removed; empty or null values, IP addresses, schemes, paths, ports and wildcards are rejected. DNS and TLS must be configured externally. Worker identity, deployments, bindings, secrets and traffic allocation are preserved. Routing takes effect after Traefik refreshes its configuration. A 500 response can occur after the update was saved: GET the worker to reconcile its authoritative hostname and retry the same PATCH to complete routing refresh. Requests for the current hostname still refresh routing.
+     */
     patch: operations["updateWorker"];
     trace?: never;
   };
@@ -1424,10 +1427,10 @@ export interface components {
       commit_message?: string;
       compatibility_date: string;
       compatibility_flags?: string[] | null;
-      dns?: components["schemas"]["DNSSelection"];
       /** Format: date-time */
       created_at: string;
       created_by?: string;
+      dns?: components["schemas"]["DNSSelection"];
       entrypoint: string;
       format: string;
       hostname: string;
@@ -2317,6 +2320,8 @@ export interface components {
        */
       readonly $schema?: string;
       auth?: components["schemas"]["AuthConfig"];
+      /** @description DNS hostname; globally unique. DNS and TLS must be configured externally. */
+      hostname?: string;
     };
     UpdateKVNamespaceInput: {
       /**
@@ -7551,6 +7556,15 @@ export interface operations {
       };
       /** @description Error */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      409: {
         headers: {
           [name: string]: unknown;
         };

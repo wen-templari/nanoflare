@@ -227,7 +227,10 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 	}
 	app, err := s.service.UpdateAppForOrg(controlOrgID(r), r.PathValue("workerID"), input)
 	if err != nil {
-		status := http.StatusBadRequest
+		status := http.StatusInternalServerError
+		if errors.Is(err, nanoflare.ErrInvalidAppUpdate) {
+			status = http.StatusBadRequest
+		}
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			status = http.StatusNotFound
 		}

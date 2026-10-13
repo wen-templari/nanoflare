@@ -108,7 +108,27 @@ type UpdateObjectStorageBucketInput struct {
 }
 
 type UpdateAppInput struct {
-	Auth *AuthConfig `json:"auth,omitempty"`
+	Hostname *string     `json:"hostname,omitempty" doc:"DNS hostname; globally unique. DNS and TLS must be configured externally."`
+	Auth     *AuthConfig `json:"auth,omitempty"`
+}
+
+func (input *UpdateAppInput) UnmarshalJSON(data []byte) error {
+	type updateAppInput UpdateAppInput
+	var decoded updateAppInput
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if hostname, present := fields["hostname"]; present && bytes.Equal(bytes.TrimSpace(hostname), []byte("null")) {
+		return errors.New("hostname cannot be null")
+	}
+	*input = UpdateAppInput(decoded)
+	return nil
 }
 
 type DeployInput struct {

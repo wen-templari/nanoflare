@@ -94,6 +94,8 @@ type kvOrgUsageCacheDisabler interface {
 }
 
 type Service struct {
+	// Serialize configuration snapshots and publication, including rollbacks.
+	configMu             sync.Mutex
 	store                Repository
 	writer               ConfigWriter
 	objects              ObjectStore
@@ -206,7 +208,7 @@ func (s *Service) RepositoryPoolStats() (RepositoryPoolStats, bool) {
 func (s *Service) CreateApp(input CreateAppInput) (App, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.OrgID = strings.TrimSpace(input.OrgID)
-	input.Hostname = strings.TrimSpace(strings.ToLower(input.Hostname))
+	input.Hostname = strings.TrimSpace(input.Hostname)
 	input.ExternalID = strings.TrimSpace(input.ExternalID)
 	input.OAuthClientID = strings.TrimSpace(input.OAuthClientID)
 	input.CreatedBy = strings.TrimSpace(input.CreatedBy)
@@ -597,33 +599,50 @@ func (s *Service) DeleteKVNamespaceForOrg(orgID, namespaceID string) error {
 }
 
 func (s *Service) UpdateApp(appID string, input UpdateAppInput) (App, error) {
-	app, _, err := s.worker(appID)
-	if err != nil {
+	if _, err := s.store.GetApp(appID); err != nil {
 		return App{}, err
+	}
+	return s.updateApp(appID, input)
+}
+
+func (s *Service) updateApp(appID string, input UpdateAppInput) (App, error) {
+	if input.Hostname != nil {
+		hostname, err := normalizeHostname(*input.Hostname)
+		if err != nil {
+			return App{}, fmt.Errorf("%w: %v", ErrInvalidAppUpdate, err)
+		}
+		input.Hostname = &hostname
 	}
 	if input.Auth != nil {
 		auth, err := normalizeAuthConfig(*input.Auth)
 		if err != nil {
-			return App{}, err
+			return App{}, fmt.Errorf("%w: %v", ErrInvalidAppUpdate, err)
 		}
-		app.Auth = auth
+		input.Auth = &auth
 	}
-	if err := s.store.UpdateApp(app); err != nil {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	app, err := s.store.PatchApp(appID, input)
+	if err != nil {
+		if errors.Is(err, ErrAppExists) {
+			return App{}, fmt.Errorf("hostname is already assigned: %w", err)
+		}
 		return App{}, err
 	}
+	// Even an unchanged hostname must refresh routing to recover a prior failure.
 	s.invalidateRuntimeDeployments(appID)
 	active, err := s.activeDeployments()
-	if err != nil {
-		return App{}, err
+	if err == nil {
+		err = s.writer.Write(active)
 	}
-	if err := s.writer.Write(active); err != nil {
-		return App{}, fmt.Errorf("write generated config: %w", err)
+	if err != nil {
+		return App{}, fmt.Errorf("worker update saved but routing refresh failed; GET the worker and retry PATCH: %w", err)
 	}
 	return app, nil
 }
 
 func (s *Service) ListSecrets(appID string) ([]Secret, error) {
-	if _, _, err := s.worker(appID); err != nil {
+	if _, err := s.store.GetApp(appID); err != nil {
 		return nil, err
 	}
 	records, err := s.store.ListSecrets(appID)
@@ -743,29 +762,10 @@ func (s *Service) ListAppsForOrg(orgID string) ([]App, error) {
 }
 
 func (s *Service) UpdateAppForOrg(orgID, appID string, input UpdateAppInput) (App, error) {
-	app, err := s.appForOrg(orgID, appID)
-	if err != nil {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
 		return App{}, err
 	}
-	if input.Auth != nil {
-		auth, err := normalizeAuthConfig(*input.Auth)
-		if err != nil {
-			return App{}, err
-		}
-		app.Auth = auth
-	}
-	if err := s.store.UpdateApp(app); err != nil {
-		return App{}, err
-	}
-	s.invalidateRuntimeDeployments(appID)
-	active, err := s.activeDeployments()
-	if err != nil {
-		return App{}, err
-	}
-	if err := s.writer.Write(active); err != nil {
-		return App{}, fmt.Errorf("write generated config: %w", err)
-	}
-	return app, nil
+	return s.updateApp(appID, input)
 }
 
 func (s *Service) DeleteAppForOrg(orgID, appID string) error {
@@ -799,6 +799,8 @@ func (s *Service) DeleteObjectStorageBucketForOrg(orgID, bucketID string) error 
 }
 
 func (s *Service) DeleteApp(appID string) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	records, err := s.store.ListDeployments()
 	if err != nil {
 		return err
@@ -843,10 +845,22 @@ func (s *Service) ActiveDeployments() ([]ActiveDeployment, error) {
 }
 
 func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
-	app, active, err := s.worker(appID)
+	app, err := s.store.GetApp(appID)
 	if err != nil {
 		return WorkerDetail{}, err
 	}
+	deployments, err := s.store.ActiveDeploymentsForApp(appID)
+	if err != nil {
+		return WorkerDetail{}, err
+	}
+	var active *ActiveDeployment
+	if len(deployments) > 0 {
+		active = &deployments[0]
+		if active.Deployment.BundleSize == 0 {
+			active.Deployment.BundleSize = bundleSize(active.Deployment.Files)
+		}
+	}
+
 	detail := WorkerDetail{App: app}
 	secrets, err := s.ListSecrets(appID)
 	if err != nil {
@@ -938,6 +952,8 @@ func (s *Service) SetDeploymentTrafficForOrg(orgID, appID string, traffic []Depl
 }
 
 func (s *Service) SetDeploymentTraffic(appID string, traffic []DeploymentTraffic) ([]ConsoleDeployment, error) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	if err := validateDeploymentTraffic(traffic); err != nil {
 		return nil, err
 	}
@@ -1228,6 +1244,8 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 			deployment.Assets[i].Data = nil
 		}
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	activeBefore, err := s.activeDeployments()
 	if err != nil {
 		s.cleanupDeploymentObject(deployment)
@@ -1948,6 +1966,8 @@ func (s *Service) resolvedSecretValues(appID string) (map[string]string, error) 
 }
 
 func (s *Service) rolloutSecretsIfActive(appID string) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	active, err := s.activeDeployments()
 	if err != nil {
 		return err
@@ -3275,9 +3295,9 @@ func (s *Service) generatedHostname(name, orgID string, attempt int) (string, er
 	}
 	generated := strings.Join(labels, "-")
 	if strings.Contains(s.baseHostname, "*") {
-		return strings.Replace(s.baseHostname, "*", generated, 1), nil
+		return normalizeHostname(strings.Replace(s.baseHostname, "*", generated, 1))
 	}
-	return generated + "." + s.baseHostname, nil
+	return normalizeHostname(generated + "." + s.baseHostname)
 }
 
 func (s *Service) organizationHostnameLabel(orgID string) (string, error) {
@@ -3293,20 +3313,31 @@ func (s *Service) organizationHostnameLabel(orgID string) (string, error) {
 }
 
 func normalizeHostname(hostname string) (string, error) {
-	hostname = strings.TrimSuffix(strings.TrimSpace(strings.ToLower(hostname)), ".")
-	if hostname == "" || strings.Contains(hostname, ":") || net.ParseIP(hostname) != nil || strings.Contains(hostname, "*") {
-		return "", errors.New("hostname must be a DNS name without a port")
+	hostname = strings.TrimSuffix(strings.TrimSpace(hostname), ".")
+	invalid := errors.New("hostname must be a valid ASCII DNS name without a scheme, path, port, or wildcard")
+	if hostname == "" || len(hostname) > 253 || net.ParseIP(hostname) != nil {
+		return "", invalid
 	}
-	return hostname, nil
+	for _, label := range strings.Split(hostname, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return "", invalid
+		}
+		for _, ch := range label {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+				return "", invalid
+			}
+		}
+	}
+	return strings.ToLower(hostname), nil
 }
 
 func normalizeBaseHostname(hostname string) (string, error) {
-	hostname = strings.TrimSuffix(strings.TrimSpace(strings.ToLower(hostname)), ".")
+	hostname = strings.TrimSpace(hostname)
 	if hostname == "" || strings.Contains(hostname, ":") || net.ParseIP(hostname) != nil {
 		return "", errors.New("hostname must be a DNS name without a port")
 	}
 	if !strings.Contains(hostname, "*") {
-		return hostname, nil
+		return normalizeHostname(hostname)
 	}
 	if strings.Count(hostname, "*") != 1 {
 		return "", errors.New("base hostname may contain at most one wildcard placeholder")
@@ -3320,7 +3351,10 @@ func normalizeBaseHostname(hostname string) (string, error) {
 			return "", errors.New("base hostname wildcard must be in the first DNS label")
 		}
 	}
-	return hostname, nil
+	if _, err := normalizeHostname(strings.Replace(hostname, "*", "worker", 1)); err != nil {
+		return "", err
+	}
+	return strings.ToLower(strings.TrimSuffix(hostname, ".")), nil
 }
 
 func slug(value string) string {
