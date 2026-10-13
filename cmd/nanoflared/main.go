@@ -224,12 +224,10 @@ func main() {
 			runtime.CommandLauncher{Executable: *workerd, Output: output},
 			*configDir,
 			filepath.Join(*configDir, "workerd.capnp"),
-			"127.0.0.1",
-			10000,
+			*socketDir,
 			10*time.Second,
 			5*time.Second,
 		)
-		manager.SetSocketDir(*socketDir)
 		publisher = manager
 		runtimeEnsurer = manager
 		closeRuntime = func() {

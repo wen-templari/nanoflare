@@ -15,7 +15,6 @@ type EnsuredWorker struct {
 	URL        string
 	Token      string
 	Port       int // Legacy TCP endpoints used by compatibility tests.
-	ColdStart  bool
 	Release    func()
 }
 

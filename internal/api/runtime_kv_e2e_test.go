@@ -116,12 +116,12 @@ func TestSharedRuntimeSocketGatewayEndToEnd(t *testing.T) {
 	}
 	store := nanoflare.NewStore()
 	service := nanoflare.NewService(store, discardWriter{})
-	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Lazy", Hostname: "lazy.example.com"})
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "Shared", Hostname: "shared.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Deploy(app.ID, nanoflare.DeployInput{
-		Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("lazy"); } };`}},
+		Files:             []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default { fetch() { return new Response("shared"); } };`}},
 		Entrypoint:        "worker.js",
 		Format:            "modules",
 		CompatibilityDate: "2025-12-10",
@@ -144,17 +144,10 @@ func TestSharedRuntimeSocketGatewayEndToEnd(t *testing.T) {
 		runtime.CommandLauncher{Executable: workerd},
 		dir,
 		filepath.Join(dir, "workerd.capnp"),
-		"127.0.0.1",
-		availablePort(t),
+		testSocketDir(t),
 		5*time.Second,
 		5*time.Second,
 	)
-	sockets, err := os.MkdirTemp("/tmp", "nf-gateway-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(sockets)
-	manager.SetSocketDir(sockets)
 	defer manager.Close()
 	active, err := service.ActiveDeployments()
 	if err != nil {
@@ -168,8 +161,8 @@ func TestSharedRuntimeSocketGatewayEndToEnd(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+"/", nil)
 	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || recorder.Body.String() != "lazy" {
-		t.Fatalf("lazy gateway status = %d body = %q", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "shared" {
+		t.Fatalf("shared gateway status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -204,7 +197,7 @@ func BenchmarkWorkerdGatewayEndToEnd(b *testing.B) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(previousLogOutput)
 
-	b.Run("cold_first_request", func(b *testing.B) {
+	b.Run("first_request_after_startup", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
@@ -239,13 +232,13 @@ func BenchmarkWorkerdGatewayEndToEnd(b *testing.B) {
 		defer fixture.close()
 		ensured := fixture.ensureWorker(b)
 		defer ensured.Release()
-		if body := fixture.directWorkerRequest(b, ensured.Port, "/plain"); body != "plain" {
+		if body := fixture.directWorkerRequest(b, ensured.SocketPath, "/plain"); body != "plain" {
 			b.Fatalf("warmup body = %q, want plain", body)
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if body := fixture.directWorkerRequest(b, ensured.Port, "/plain"); body != "plain" {
+			if body := fixture.directWorkerRequest(b, ensured.SocketPath, "/plain"); body != "plain" {
 				b.Fatalf("body = %q, want plain", body)
 			}
 		}
@@ -279,13 +272,13 @@ func BenchmarkWorkerdGatewayEndToEnd(b *testing.B) {
 		defer fixture.close()
 		ensured := fixture.ensureWorker(b)
 		defer ensured.Release()
-		if body := fixture.directWorkerRequest(b, ensured.Port, "/kv-put"); body != "stored" {
+		if body := fixture.directWorkerRequest(b, ensured.SocketPath, "/kv-put"); body != "stored" {
 			b.Fatalf("warmup body = %q, want stored", body)
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if body := fixture.directWorkerRequest(b, ensured.Port, "/kv-get"); body != "value" {
+			if body := fixture.directWorkerRequest(b, ensured.SocketPath, "/kv-get"); body != "value" {
 				b.Fatalf("body = %q, want value", body)
 			}
 		}
@@ -296,13 +289,13 @@ func BenchmarkWorkerdGatewayEndToEnd(b *testing.B) {
 		defer fixture.close()
 		ensured := fixture.ensureWorker(b)
 		defer ensured.Release()
-		if body := fixture.directWorkerRequest(b, ensured.Port, "/plain"); body != "plain" {
+		if body := fixture.directWorkerRequest(b, ensured.SocketPath, "/plain"); body != "plain" {
 			b.Fatalf("warmup body = %q, want plain", body)
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if body := fixture.directWorkerRequest(b, ensured.Port, "/kv-put"); body != "stored" {
+			if body := fixture.directWorkerRequest(b, ensured.SocketPath, "/kv-put"); body != "stored" {
 				b.Fatalf("body = %q, want stored", body)
 			}
 		}
@@ -345,7 +338,8 @@ type workerdGatewayBenchmarkFixture struct {
 	namespaceID   string
 	runtimeToken  string
 	server        http.Handler
-	manager       *runtime.LazyManager
+	manager       *runtime.Manager
+	workerClient  *http.Client
 	runtimeServer *httptest.Server
 }
 
@@ -389,17 +383,21 @@ func newWorkerdGatewayBenchmarkFixture(b *testing.B, workerd string) *workerdGat
 	dir := b.TempDir()
 	writer := config.NewRuntimeWriter(filepath.Join(dir, "workerd.capnp"), discardTraefik{})
 	writer.SetNanoflareRuntimeAddr(strings.TrimPrefix(runtimeServer.URL, "http://"))
-	manager := runtime.NewLazyManager(
+	manager := runtime.NewManager(
 		writer,
 		runtime.CommandLauncher{Executable: workerd},
 		dir,
-		"127.0.0.1",
-		availablePortForBenchmark(b),
+		filepath.Join(dir, "workerd.capnp"),
+		testSocketDir(b),
 		5*time.Second,
 		5*time.Second,
-		time.Minute,
 	)
+	if err := manager.Write(active); err != nil {
+		b.Fatal(err)
+	}
 	server := api.NewServerWithRuntime(service, nil, "", nil, nil, manager)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	runtime.ConfigureTransport(transport)
 	return &workerdGatewayBenchmarkFixture{
 		appID:         app.ID,
 		active:        active[0],
@@ -407,6 +405,7 @@ func newWorkerdGatewayBenchmarkFixture(b *testing.B, workerd string) *workerdGat
 		runtimeToken:  app.RuntimeToken,
 		server:        server,
 		manager:       manager,
+		workerClient:  &http.Client{Transport: transport},
 		runtimeServer: runtimeServer,
 	}
 }
@@ -431,9 +430,9 @@ func (f *workerdGatewayBenchmarkFixture) ensureWorker(b *testing.B) runtime.Ensu
 	return ensured
 }
 
-func (f *workerdGatewayBenchmarkFixture) directWorkerRequest(b *testing.B, port int, path string) string {
+func (f *workerdGatewayBenchmarkFixture) directWorkerRequest(b *testing.B, socketPath string, path string) string {
 	b.Helper()
-	response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, path))
+	response, err := f.workerClient.Get("http://" + runtime.SocketHost(socketPath) + path)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -472,6 +471,7 @@ func (f *workerdGatewayBenchmarkFixture) runtimeKVRequest(b *testing.B, method, 
 }
 
 func (f *workerdGatewayBenchmarkFixture) close() {
+	f.workerClient.CloseIdleConnections()
 	_ = f.manager.Close()
 	f.runtimeServer.Close()
 }
@@ -775,14 +775,14 @@ func availablePort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
-func availablePortForBenchmark(b *testing.B) int {
-	b.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func testSocketDir(t testing.TB) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "nf-gateway-test-")
 	if err != nil {
-		b.Fatal(err)
+		t.Fatal(err)
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
 }
 
 type discardWriter struct{}

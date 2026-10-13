@@ -499,7 +499,6 @@ func (s *Server) ensureWorkerTraced(r *http.Request, active nanoflare.ActiveDepl
 	} else {
 		span.SetAttributes(
 			attribute.Bool("nanoflare.runtime.unix_socket", endpoint.SocketPath != ""),
-			attribute.Bool("nanoflare.runtime.cold_start", endpoint.ColdStart),
 		)
 	}
 	span.End()

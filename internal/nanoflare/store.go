@@ -135,7 +135,6 @@ type Repository interface {
 	ListSecrets(string) ([]SecretRecord, error)
 	PutSecret(string, SecretRecord) error
 	DeleteSecret(string, string) error
-	NextPort() (int, error)
 	LockDeploymentUpdates() (func(), error)
 	VarsUpdate(appID, key string) (VarsUpdateOperation, bool, error)
 	BeginVarsUpdate(VarsUpdateOperation, Deployment, string) error
@@ -1519,20 +1518,6 @@ func (s *Store) DeleteSecret(appID, name string) error {
 	}
 	delete(s.secrets[appID], name)
 	return nil
-}
-
-func (s *Store) NextPort() (int, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	port := 9001
-	for _, deployments := range s.deployments {
-		for _, deployment := range deployments {
-			if deployment.Port >= port {
-				port = deployment.Port + 1
-			}
-		}
-	}
-	return port, nil
 }
 
 func (s *Store) Activate(deployment Deployment) error {

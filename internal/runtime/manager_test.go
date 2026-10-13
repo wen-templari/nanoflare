@@ -3,8 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -33,7 +33,7 @@ func TestCommandLauncherScopesSingleDeploymentStartupOutput(t *testing.T) {
 		t.Skip("true command is not available")
 	}
 	output := NewOutputBuffer()
-	process, err := CommandLauncher{Executable: executable, Output: output}.Launch("workerd-lazy.capnp", []nanoflare.ActiveDeployment{{
+	process, err := CommandLauncher{Executable: executable, Output: output}.Launch("workerd-test.capnp", []nanoflare.ActiveDeployment{{
 		App:        nanoflare.App{ID: "app-1"},
 		Deployment: nanoflare.Deployment{ID: "dep-1"},
 	}})
@@ -46,7 +46,7 @@ func TestCommandLauncherScopesSingleDeploymentStartupOutput(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines, want 1: %#v", len(lines), lines)
 	}
-	if lines[0].DeploymentID != "dep-1" || lines[0].Message != "starting workerd generation from workerd-lazy.capnp" {
+	if lines[0].DeploymentID != "dep-1" || lines[0].Message != "starting workerd generation from workerd-test.capnp" {
 		t.Fatalf("unexpected output line: %#v", lines[0])
 	}
 }
@@ -55,25 +55,26 @@ func TestManagerReplacesHealthyPoolBeforePublishingTraffic(t *testing.T) {
 	events := &eventLog{}
 	writer := &fakeWriter{events: events}
 	launcher := &fakeLauncher{events: events, healthy: true}
-	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), testSocketDir(t), time.Second, time.Second)
 	defer manager.Close()
 
 	first := deployments(9001)
 	if err := manager.Write(first); err != nil {
 		t.Fatal(err)
 	}
-	firstRuntimePort := writer.runtimePort(0)
-	if firstRuntimePort == first[0].Deployment.Port {
-		t.Fatalf("runtime port = deployment port = %d, want generation-specific port", firstRuntimePort)
+	firstSocket := writer.runtimeSocket(0)
+	if firstSocket == "" {
+		t.Fatal("runtime endpoint has no socket")
 	}
 
 	if err := manager.Write(deployments(9002)); err != nil {
 		t.Fatal(err)
 	}
-	secondRuntimePort := writer.runtimePort(1)
-	if secondRuntimePort == firstRuntimePort {
-		t.Fatalf("second runtime port = first runtime port = %d", secondRuntimePort)
+	secondSocket := writer.runtimeSocket(1)
+	if secondSocket == firstSocket {
+		t.Fatal("replacement reused the active generation socket")
 	}
+
 	manager.retiring.Wait()
 	if !launcher.process(0).isStopped() {
 		t.Fatal("previous pool was not stopped")
@@ -86,7 +87,7 @@ func TestManagerReplacesHealthyPoolBeforePublishingTraffic(t *testing.T) {
 func TestManagerKeepsPreviousPoolWhenReplacementIsUnhealthy(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
-	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), 75*time.Millisecond, time.Second)
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), testSocketDir(t), 75*time.Millisecond, time.Second)
 	defer manager.Close()
 
 	if err := manager.Write(deployments(9001)); err != nil {
@@ -110,7 +111,7 @@ func TestManagerKeepsPreviousPoolWhenReplacementIsUnhealthy(t *testing.T) {
 func TestManagerKeepsPreviousPoolUntilPreparedGenerationIsCommitted(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
-	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), testSocketDir(t), time.Second, time.Second)
 	defer manager.Close()
 
 	if err := manager.Write(deployments(9001)); err != nil {
@@ -135,7 +136,7 @@ func TestManagerKeepsPreviousPoolUntilPreparedGenerationIsCommitted(t *testing.T
 func TestManagerRestartsUnexpectedlyExitedPool(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
-	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), testSocketDir(t), time.Second, time.Second)
 	manager.restartDelay = time.Millisecond
 	defer manager.Close()
 
@@ -158,7 +159,7 @@ func TestManagerRestartsUnexpectedlyExitedPool(t *testing.T) {
 func TestManagerCanDisableAutomaticRestart(t *testing.T) {
 	writer := &fakeWriter{}
 	launcher := &fakeLauncher{healthy: true}
-	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), testSocketDir(t), time.Second, time.Second)
 	manager.SetAutoRestart(false)
 	defer manager.Close()
 
@@ -169,266 +170,6 @@ func TestManagerCanDisableAutomaticRestart(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	if launcher.count() != 1 {
 		t.Fatalf("launches = %d, want no automatic replacement", launcher.count())
-	}
-}
-
-func TestManagerSkipsPortBusyOnWildcardBind(t *testing.T) {
-	writer := &fakeWriter{}
-	launcher := &fakeLauncher{healthy: true}
-	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", availablePort(t), time.Second, time.Second)
-	defer manager.Close()
-
-	busyPort := manager.nextPort
-	busy, err := net.Listen("tcp", "0.0.0.0:"+stringPort(busyPort))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer busy.Close()
-
-	port, err := manager.availablePort()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if port == busyPort {
-		t.Fatalf("allocator reused busy wildcard port %d", port)
-	}
-}
-
-func TestManagerReusesFreePortAfterAllocatorWraps(t *testing.T) {
-	portStart := availablePort(t)
-	manager := NewManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", portStart, time.Second, time.Second)
-	manager.nextPort = 65536
-	defer manager.Close()
-
-	port, err := manager.availablePort()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if port != portStart {
-		t.Fatalf("availablePort() = %d, want wrapped port %d", port, portStart)
-	}
-}
-
-func TestLazyManagerReusesFreePortAfterAllocatorWraps(t *testing.T) {
-	portStart := availablePort(t)
-	manager := NewLazyManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), "127.0.0.1", portStart, time.Second, time.Second, time.Second)
-	manager.nextPort = 65536
-	defer manager.Close()
-
-	port, err := manager.availablePort()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if port != portStart {
-		t.Fatalf("availablePort() = %d, want wrapped port %d", port, portStart)
-	}
-}
-
-func TestManagerDoesNotAllocateReservedPortAfterWrap(t *testing.T) {
-	manager := NewManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", 65535, time.Second, time.Second)
-	defer manager.Close()
-
-	if _, err := manager.availablePort(); err != nil {
-		t.Skipf("port 65535 is unavailable: %v", err)
-	}
-	if port, err := manager.availablePort(); err == nil {
-		t.Fatalf("availablePort() = %d, want no ports available", port)
-	}
-}
-
-func TestLazyManagerDoesNotAllocateReservedPortAfterWrap(t *testing.T) {
-	manager := NewLazyManager(&fakeWriter{}, &fakeLauncher{healthy: true}, t.TempDir(), "127.0.0.1", 65535, time.Second, time.Second, time.Second)
-	defer manager.Close()
-
-	if _, err := manager.availablePort(); err != nil {
-		t.Skipf("port 65535 is unavailable: %v", err)
-	}
-	if port, err := manager.availablePort(); err == nil {
-		t.Fatalf("availablePort() = %d, want no ports available", port)
-	}
-}
-
-func TestLazyManagerEnsuresWorkerOnDemand(t *testing.T) {
-	writer := &fakeWriter{}
-	launcher := &fakeLauncher{healthy: true}
-	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 25*time.Millisecond)
-	defer manager.Close()
-
-	ensured, err := manager.Ensure(context.Background(), deployments(0)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ensured.Port == 0 {
-		t.Fatal("Ensure() port = 0, want allocated runtime port")
-	}
-	if !ensured.ColdStart {
-		t.Fatal("first Ensure() ColdStart = false, want true")
-	}
-	if launcher.count() != 1 {
-		t.Fatalf("launches = %d, want 1", launcher.count())
-	}
-	ensured.Release()
-
-	reused, err := manager.Ensure(context.Background(), deployments(0)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reused.ColdStart {
-		t.Fatal("reused Ensure() ColdStart = true, want false")
-	}
-	reused.Release()
-}
-
-func TestLazyRuntimeClosureIncludesTransitiveSameOrganizationServiceBindings(t *testing.T) {
-	caller := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "caller", OrgID: "org", Name: "caller"}, Deployment: nanoflare.Deployment{ID: "caller-v1", Services: []nanoflare.ServiceBinding{{Binding: "AUTH", Service: "auth"}}}}
-	auth := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "auth", OrgID: "org", Name: "auth"}, Deployment: nanoflare.Deployment{ID: "auth-v1", Services: []nanoflare.ServiceBinding{{Binding: "PROFILE", Service: "profile"}}}}
-	profile := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "profile", OrgID: "org", Name: "profile"}, Deployment: nanoflare.Deployment{ID: "profile-v1"}}
-	otherOrg := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "other", OrgID: "other", Name: "auth"}, Deployment: nanoflare.Deployment{ID: "other-v1"}}
-
-	closure := lazyRuntimeClosure(caller, []nanoflare.ActiveDeployment{caller, auth, profile, otherOrg})
-	if len(closure) != 3 || closure[0].App.ID != "caller" || closure[1].App.ID != "auth" || closure[2].App.ID != "profile" {
-		t.Fatalf("lazy runtime closure = %#v", closure)
-	}
-}
-
-func TestLazyManagerCoalescesConcurrentEnsures(t *testing.T) {
-	writer := &fakeWriter{}
-	launcher := &fakeLauncher{healthy: true}
-	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 25*time.Millisecond)
-	defer manager.Close()
-
-	var wg sync.WaitGroup
-	results := make(chan EnsuredWorker, 8)
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ensured, err := manager.Ensure(context.Background(), deployments(0)[0])
-			if err != nil {
-				t.Errorf("Ensure() error = %v", err)
-				return
-			}
-			results <- ensured
-		}()
-	}
-	wg.Wait()
-	close(results)
-	var port int
-	for ensured := range results {
-		if port == 0 {
-			port = ensured.Port
-		} else if ensured.Port != port {
-			t.Fatalf("Ensure() returned mixed ports %d and %d", port, ensured.Port)
-		}
-		ensured.Release()
-	}
-	if launcher.count() != 1 {
-		t.Fatalf("launches = %d, want 1", launcher.count())
-	}
-}
-
-func TestLazyManagerStopsAfterIdleOnlyAfterAllReleases(t *testing.T) {
-	writer := &fakeWriter{}
-	launcher := &fakeLauncher{healthy: true}
-	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 20*time.Millisecond)
-	defer manager.Close()
-
-	first, err := manager.Ensure(context.Background(), deployments(0)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := manager.Ensure(context.Background(), deployments(0)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	first.Release()
-	time.Sleep(40 * time.Millisecond)
-	if launcher.process(0).isStopped() {
-		t.Fatal("worker stopped while second request was still in flight")
-	}
-	second.Release()
-	waitFor(t, time.Second, launcher.process(0).isStopped, "idle worker stop")
-}
-
-func TestLazyManagerCancelsIdleStopOnNewEnsure(t *testing.T) {
-	writer := &fakeWriter{}
-	launcher := &fakeLauncher{healthy: true}
-	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, 80*time.Millisecond)
-	defer manager.Close()
-
-	first, err := manager.Ensure(context.Background(), deployments(0)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	first.Release()
-	time.Sleep(20 * time.Millisecond)
-	second, err := manager.Ensure(context.Background(), deployments(0)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(100 * time.Millisecond)
-	if launcher.process(0).isStopped() {
-		t.Fatal("worker stopped after idle timer was canceled by new request")
-	}
-	second.Release()
-	waitFor(t, time.Second, launcher.process(0).isStopped, "idle worker stop")
-}
-
-func TestLazyManagerReplacesChangedDeployment(t *testing.T) {
-	writer := &fakeWriter{}
-	launcher := &fakeLauncher{healthy: true}
-	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, time.Minute)
-	defer manager.Close()
-
-	first, err := manager.Ensure(context.Background(), deployments(0)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	first.Release()
-	next := deployments(0)[0]
-	next.Deployment.ID = "replacement"
-	second, err := manager.Ensure(context.Background(), next)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Release()
-	waitFor(t, time.Second, launcher.process(0).isStopped, "old deployment stop")
-	if launcher.count() != 2 {
-		t.Fatalf("launches = %d, want replacement launch", launcher.count())
-	}
-}
-
-func TestLazyManagerCronSchedulerEnsuresWorker(t *testing.T) {
-	writer := &fakeWriter{}
-	launcher := &fakeLauncher{healthy: true}
-	manager := NewLazyManager(writer, launcher, t.TempDir(), "127.0.0.1", availablePort(t), time.Second, time.Second, time.Minute)
-	defer manager.Close()
-
-	active := deployments(0)
-	active[0].Deployment.Triggers = nanoflare.TriggerConfig{Crons: []string{"*/5 * * * *"}}
-	if err := manager.Write(active); err != nil {
-		t.Fatal(err)
-	}
-	manager.mu.Lock()
-	runner := manager.scheduler
-	manager.mu.Unlock()
-	if runner == nil {
-		t.Fatal("scheduler = nil, want cron scheduler")
-	}
-	runner.Stop()
-	client := &recordingCronClient{}
-	runner = newCronRunner("127.0.0.1", active, nil, client, manager.Ensure)
-
-	runner.runDue(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC))
-	runner.work.Wait()
-	if launcher.count() != 1 {
-		t.Fatalf("launches = %d, want lazy worker launch", launcher.count())
-	}
-	if len(client.urls) != 1 {
-		t.Fatalf("urls = %#v, want one invocation", client.urls)
-	}
-	if client.urls[0] == "http://127.0.0.1:0/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1783771800" {
-		t.Fatalf("url = %q, want allocated runtime port", client.urls[0])
 	}
 }
 
@@ -446,14 +187,14 @@ func deployments(port int) []nanoflare.ActiveDeployment {
 	}}
 }
 
-func availablePort(t *testing.T) int {
+func testSocketDir(t testing.TB) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	dir, err := os.MkdirTemp("/tmp", "nf-runtime-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
 }
 
 type fakeWriter struct {
@@ -481,10 +222,10 @@ func (w *fakeWriter) traefikCount() int {
 	return len(w.traefik)
 }
 
-func (w *fakeWriter) runtimePort(index int) int {
+func (w *fakeWriter) runtimeSocket(index int) string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.traefik[index][0].Deployment.Port
+	return w.traefik[index][0].SocketPath
 }
 
 type fakeLauncher struct {
@@ -499,11 +240,7 @@ func (l *fakeLauncher) Launch(_ string, active []nanoflare.ActiveDeployment) (Pr
 	process := &fakeProcess{events: l.events, done: make(chan error, 1)}
 	if l.healthy {
 		for _, item := range active {
-			network, address := "tcp", net.JoinHostPort("127.0.0.1", stringPort(item.Deployment.Port))
-			if item.SocketPath != "" {
-				network, address = "unix", item.SocketPath
-			}
-			listener, err := net.Listen(network, address)
+			listener, err := net.Listen("unix", item.SocketPath)
 			if err != nil {
 				return nil, err
 			}
@@ -597,10 +334,6 @@ func index(values []string, target string) int {
 		}
 	}
 	return -1
-}
-
-func stringPort(port int) string {
-	return fmt.Sprint(port)
 }
 
 func waitFor(t *testing.T, timeout time.Duration, condition func() bool, description string) {

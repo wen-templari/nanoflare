@@ -2080,12 +2080,6 @@ SELECT EXISTS (
 	return nil
 }
 
-func (p *Postgres) NextPort() (int, error) {
-	var port int
-	err := p.db.QueryRow(`SELECT COALESCE(MAX(port) + 1, 9001) FROM deployments`).Scan(&port)
-	return port, err
-}
-
 func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 	tx, err := p.db.Begin()
 	if err != nil {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,11 +42,6 @@ type Manager struct {
 	output          *OutputBuffer
 	configDir       string
 	canonicalConfig string
-	portHost        string
-	portBind        string
-	portStart       int
-	nextPort        int
-	reservedPorts   map[int]bool
 	healthTimeout   time.Duration
 	stopTimeout     time.Duration
 	restartDelay    time.Duration
@@ -71,8 +65,6 @@ type pool struct {
 	scheduler  *cronRunner
 }
 
-func (m *Manager) SetSocketDir(path string) { m.socketDir = path }
-
 func (m *Manager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (EnsuredWorker, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -92,7 +84,7 @@ func (m *Manager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment)
 		}
 		p.refs++
 		var once sync.Once
-		return EnsuredWorker{Port: item.Deployment.Port, SocketPath: item.SocketPath, Release: func() {
+		return EnsuredWorker{SocketPath: item.SocketPath, Release: func() {
 			once.Do(func() {
 				m.mu.Lock()
 				defer m.mu.Unlock()
@@ -106,7 +98,7 @@ func (m *Manager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment)
 	return EnsuredWorker{}, errors.New("deployment is not loaded")
 }
 
-func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConfig, portHost string, portStart int, healthTimeout, stopTimeout time.Duration) *Manager {
+func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConfig, socketDir string, healthTimeout, stopTimeout time.Duration) *Manager {
 	var output *OutputBuffer
 	switch value := launcher.(type) {
 	case CommandLauncher:
@@ -120,11 +112,7 @@ func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConf
 		output:          output,
 		configDir:       configDir,
 		canonicalConfig: canonicalConfig,
-		portHost:        portHost,
-		portBind:        "0.0.0.0",
-		portStart:       portStart,
-		nextPort:        portStart,
-		reservedPorts:   make(map[int]bool),
+		socketDir:       socketDir,
 		healthTimeout:   healthTimeout,
 		stopTimeout:     stopTimeout,
 		restartDelay:    time.Second,
@@ -189,7 +177,6 @@ func (m *Manager) prepare(active []nanoflare.ActiveDeployment) (string, []nanofl
 	if err != nil {
 		return "", nil, err
 	}
-	defer m.releaseRuntimePorts(generation)
 	m.generation++
 	configPath := filepath.Join(m.configDir, fmt.Sprintf("workerd-%06d.capnp", m.generation))
 	if err := m.writer.WriteWorkerd(configPath, generation); err != nil {
@@ -286,7 +273,7 @@ func (m *Manager) publish(next *pool, desired []nanoflare.ActiveDeployment) {
 	previous := m.active
 	m.active = next
 	if next != nil {
-		next.scheduler = startCronRunnerWithEnsure(m.portHost, next.active, m.output, m.Ensure)
+		next.scheduler = startCronRunner(next.active, m.output, m.Ensure)
 		go m.watch(next, append([]nanoflare.ActiveDeployment(nil), desired...))
 	}
 	if previous == nil {
@@ -333,8 +320,7 @@ func (m *Manager) stop(pool *pool) error {
 
 func (m *Manager) runtimeEndpoints(active []nanoflare.ActiveDeployment) ([]nanoflare.ActiveDeployment, string, error) {
 	if m.socketDir == "" {
-		items, err := m.withRuntimePorts(active)
-		return items, "", err
+		return nil, "", errors.New("runtime socket directory is required")
 	}
 	root, err := filepath.Abs(m.socketDir)
 	if err != nil {
@@ -359,55 +345,6 @@ func (m *Manager) runtimeEndpoints(active []nanoflare.ActiveDeployment) ([]nanof
 	return items, dir, nil
 }
 
-func (m *Manager) withRuntimePorts(active []nanoflare.ActiveDeployment) ([]nanoflare.ActiveDeployment, error) {
-	result := make([]nanoflare.ActiveDeployment, len(active))
-	copy(result, active)
-	for i := range result {
-		port, err := m.availablePort()
-		if err != nil {
-			m.releaseRuntimePorts(result[:i])
-			return nil, err
-		}
-		result[i].Deployment.Port = port
-	}
-	return result, nil
-}
-
-func (m *Manager) availablePort() (int, error) {
-	port, err := findAvailableRuntimePort(m.portBind, m.portStart, m.nextPort, m.reservedPorts)
-	if err != nil {
-		return 0, err
-	}
-	m.nextPort = port + 1
-	if m.nextPort > 65535 {
-		m.nextPort = m.portStart
-	}
-	m.reservedPorts[port] = true
-	return port, nil
-}
-
-func (m *Manager) releaseRuntimePorts(active []nanoflare.ActiveDeployment) {
-	for _, item := range active {
-		delete(m.reservedPorts, item.Deployment.Port)
-	}
-}
-
-func findAvailableRuntimePort(bind string, start, next int, reserved map[int]bool) (int, error) {
-	for offset := 0; offset <= 65535-start; offset++ {
-		port := start + (next-start+offset)%(65536-start)
-		if reserved[port] {
-			continue
-		}
-		listener, err := net.Listen("tcp", net.JoinHostPort(bind, fmt.Sprint(port)))
-		if err != nil {
-			continue
-		}
-		listener.Close()
-		return port, nil
-	}
-	return 0, errors.New("no runtime ports available")
-}
-
 func (m *Manager) waitHealthy(process Process, active []nanoflare.ActiveDeployment) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.healthTimeout)
 	defer cancel()
@@ -420,7 +357,7 @@ func (m *Manager) waitHealthy(process Process, active []nanoflare.ActiveDeployme
 			return fmt.Errorf("workerd exited before readiness: %v", err)
 		default:
 		}
-		if socketsReady(m.portHost, active) {
+		if socketsReady(active) {
 			return nil
 		}
 		select {
@@ -477,24 +414,17 @@ func (m *Manager) watch(pool *pool, desired []nanoflare.ActiveDeployment) {
 	}
 }
 
-func socketsReady(host string, active []nanoflare.ActiveDeployment) bool {
+func socketsReady(active []nanoflare.ActiveDeployment) bool {
 	for _, item := range active {
-		network, address := "tcp", net.JoinHostPort(host, fmt.Sprint(item.Deployment.Port))
-		if item.SocketPath != "" {
-			// A connect-and-close probe can race workerd's peer credential lookup
-			// on macOS and abort the process. A generation owns a fresh private
-			// directory, so socket creation is its listener readiness signal.
-			info, err := os.Stat(item.SocketPath)
-			if err != nil || info.Mode()&os.ModeSocket == 0 {
-				return false
-			}
-			continue
-		}
-		connection, err := net.DialTimeout(network, address, 50*time.Millisecond)
-		if err != nil {
+		if item.SocketPath == "" {
 			return false
 		}
-		connection.Close()
+		// Connecting and closing immediately can race peer credential lookup on
+		// macOS. Fresh, private generation directories exclude stale socket files.
+		info, err := os.Stat(item.SocketPath)
+		if err != nil || info.Mode()&os.ModeSocket == 0 {
+			return false
+		}
 	}
 	return true
 }

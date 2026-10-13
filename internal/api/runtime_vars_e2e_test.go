@@ -37,7 +37,7 @@ func TestWorkerdVarsUpdateEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	writer := config.NewRuntimeWriter(filepath.Join(dir, "workerd.capnp"), discardTraefik{})
 	writer.SetNanoflareRuntimeAddr(strings.TrimPrefix(runtimeServer.URL, "http://"))
-	manager := runtime.NewLazyManager(writer, runtime.CommandLauncher{Executable: workerd}, dir, "127.0.0.1", availablePort(t), 5*time.Second, 5*time.Second, time.Minute)
+	manager := runtime.NewManager(writer, runtime.CommandLauncher{Executable: workerd}, dir, filepath.Join(dir, "workerd.capnp"), testSocketDir(t), 5*time.Second, 5*time.Second)
 	defer manager.Close()
 	service = nanoflare.NewService(store, manager)
 	codec, err := nanoflare.NewSecretCodec("0123456789abcdef0123456789abcdef")

@@ -20,7 +20,6 @@ type cronEnsureFunc func(context.Context, nanoflare.ActiveDeployment) (EnsuredWo
 
 type cronJob struct {
 	appID    string
-	port     int
 	cron     string
 	schedule nanoflare.CronSchedule
 	active   nanoflare.ActiveDeployment
@@ -29,7 +28,6 @@ type cronJob struct {
 type cronRunner struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	host   string
 	jobs   []cronJob
 	client cronHTTPClient
 	output *OutputBuffer
@@ -40,14 +38,10 @@ type cronRunner struct {
 	work   sync.WaitGroup
 }
 
-func startCronRunner(host string, active []nanoflare.ActiveDeployment, output *OutputBuffer) *cronRunner {
-	return startCronRunnerWithEnsure(host, active, output, nil)
-}
-
-func startCronRunnerWithEnsure(host string, active []nanoflare.ActiveDeployment, output *OutputBuffer, ensure cronEnsureFunc) *cronRunner {
+func startCronRunner(active []nanoflare.ActiveDeployment, output *OutputBuffer, ensure cronEnsureFunc) *cronRunner {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	ConfigureTransport(transport)
-	runner := newCronRunner(host, active, output, &http.Client{Timeout: 120 * time.Second, Transport: transport}, ensure)
+	runner := newCronRunner(active, output, &http.Client{Timeout: 120 * time.Second, Transport: transport}, ensure)
 	if len(runner.jobs) == 0 {
 		return nil
 	}
@@ -55,11 +49,10 @@ func startCronRunnerWithEnsure(host string, active []nanoflare.ActiveDeployment,
 	return runner
 }
 
-func newCronRunner(host string, active []nanoflare.ActiveDeployment, output *OutputBuffer, client cronHTTPClient, ensure cronEnsureFunc) *cronRunner {
+func newCronRunner(active []nanoflare.ActiveDeployment, output *OutputBuffer, client cronHTTPClient, ensure cronEnsureFunc) *cronRunner {
 	ctx, cancel := context.WithCancel(context.Background())
 	runner := &cronRunner{
 		ctx: ctx, cancel: cancel,
-		host:   host,
 		client: client,
 		output: output,
 		ensure: ensure,
@@ -75,7 +68,6 @@ func newCronRunner(host string, active []nanoflare.ActiveDeployment, output *Out
 			}
 			runner.jobs = append(runner.jobs, cronJob{
 				appID:    item.App.ID,
-				port:     item.Deployment.Port,
 				cron:     expression,
 				schedule: schedule,
 				active:   item,
@@ -133,7 +125,6 @@ func (r *cronRunner) invokeAndLog(now time.Time, job cronJob) {
 func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 	ctx, cancel := context.WithTimeout(r.ctx, 120*time.Second)
 	defer cancel()
-	port := job.port
 	socketPath := job.active.SocketPath
 	if r.ensure != nil {
 		ensured, err := r.ensure(ctx, job.active)
@@ -141,20 +132,19 @@ func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 			return err
 		}
 		defer ensured.Release()
-		port = ensured.Port
 		socketPath = ensured.SocketPath
+	}
+	if socketPath == "" {
+		return fmt.Errorf("Worker %s has no runtime socket", job.appID)
 	}
 	values := url.Values{}
 	values.Set("cron", job.cron)
 	values.Set("time", strconv.FormatInt(now.Unix(), 10))
 	target := url.URL{
 		Scheme:   "http",
-		Host:     r.host + ":" + strconv.Itoa(port),
+		Host:     SocketHost(socketPath),
 		Path:     "/cdn-cgi/handler/scheduled",
 		RawQuery: values.Encode(),
-	}
-	if socketPath != "" {
-		target.Host = SocketHost(socketPath)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {

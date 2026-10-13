@@ -210,8 +210,8 @@ failed rollout restores previous traffic and runtime configuration; that key
 continues to return failure, and another attempt requires a new key. PostgreSQL
 stores outcomes across restarts. Without PostgreSQL, deployment history and
 retry outcomes exist only for the process lifetime. Success confirms configuration
-publication; runtime health checks occur according to eager/lazy runtime mode,
-and Traefik routing propagation may follow later.
+publication after the shared runtime passes readiness checks; Traefik routing
+propagation may follow later.
 
 ### Updating a worker hostname
 
@@ -333,6 +333,11 @@ parent directory with `-runtime-socket-dir` (default `/tmp/nanoflare-sockets`);
 keep the absolute path short enough for Unix socket path limits. Socket paths are
 ephemeral and stay on the runtime host. Traefik reaches the Nanoflare gateway;
 in split mode the gateway forwards through the authenticated runner API.
+
+The runtime requires Unix sockets; the lazy manager and TCP port allocator have
+been removed. New deployments, variable updates, and secret rollouts do not
+reserve TCP ports. The legacy deployment `port` field remains for stored-data
+compatibility and is zero for new deployments.
 
 Deployment updates briefly run a candidate process alongside the active process.
 Once the candidate's sockets are ready, routing switches and the previous process

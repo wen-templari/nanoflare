@@ -140,10 +140,7 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 	if err != nil {
 		return VarsUpdateResult{}, err
 	}
-	next.Port, err = s.store.NextPort()
-	if err != nil {
-		return VarsUpdateResult{}, err
-	}
+	next.Port = 0
 	next.CreatedAt = time.Now().UTC()
 	next.CreatedBy = strings.TrimSpace(input.CreatedBy)
 	next.CommitMessage = input.CommitMessage

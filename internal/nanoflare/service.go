@@ -1270,15 +1270,11 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		return Deployment{}, err
 	}
 	defer release()
-	// Allocate ports and check secrets under the publication guard so a concurrent
-	// configuration rollout cannot reuse the port or introduce a binding collision.
-	deployment.Port, err = s.store.NextPort()
+	// Check secrets under the publication guard so a concurrent configuration
+	// rollout cannot introduce a binding collision.
+	secrets, err := s.resolvedSecretValues(appID)
 	if err == nil {
-		var secrets map[string]string
-		secrets, err = s.resolvedSecretValues(appID)
-		if err == nil {
-			err = validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig)
-		}
+		err = validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig)
 	}
 	if err != nil {
 		s.cleanupDeploymentObject(deployment)
@@ -2018,17 +2014,13 @@ func (s *Service) rolloutSecretsIfActive(appID string) error {
 	if current == nil {
 		return nil
 	}
-	port, err := s.store.NextPort()
-	if err != nil {
-		return err
-	}
 	deploymentID, err := randomToken()
 	if err != nil {
 		return err
 	}
 	next := current.Deployment
 	next.ID = deploymentID
-	next.Port = port
+	next.Port = 0
 	next.CreatedAt = time.Now().UTC()
 	next.Vars = cloneVars(current.Deployment.Vars)
 	next.KVNamespaces = append([]KVBinding(nil), current.Deployment.KVNamespaces...)

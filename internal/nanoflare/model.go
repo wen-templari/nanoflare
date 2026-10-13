@@ -47,7 +47,7 @@ type Deployment struct {
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	BundleSize           int64                        `json:"-"`
 	ObjectKey            string                       `json:"-"`
-	Port                 int                          `json:"port"`
+	Port                 int                          `json:"port"` // Deprecated; retained for stored deployment compatibility.
 	CreatedAt            time.Time                    `json:"created_at"`
 }
 

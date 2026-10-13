@@ -83,7 +83,7 @@ func TestVarsUpdatePreservesArtifactAndRetries(t *testing.T) {
 		t.Fatalf("runtime = %v, %v", ok, err)
 	}
 	next := live.Deployment
-	if next.ID != result.ID || next.Port == base.Port || live.App.SecretValues["SECRET"] != "secret-value" {
+	if next.ID != result.ID || next.Port != 0 || live.App.SecretValues["SECRET"] != "secret-value" {
 		t.Fatalf("live = %#v", live)
 	}
 	if !reflect.DeepEqual(next.Vars, input.Vars) {

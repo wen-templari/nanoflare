@@ -22,8 +22,7 @@ func TestSharedSocketPoolDrainsRequests(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	launcher := &fakeLauncher{healthy: true}
-	m := NewManager(&fakeWriter{}, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), "127.0.0.1", 10000, time.Second, time.Second)
-	m.SetSocketDir(dir)
+	m := NewManager(&fakeWriter{}, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), testSocketDir(t), time.Second, time.Second)
 	defer m.Close()
 	items := deployments(9001)
 	second := items[0]
@@ -42,7 +41,7 @@ func TestSharedSocketPoolDrainsRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	other.Release()
-	if launcher.count() != 1 || first.SocketPath == other.SocketPath || first.Port != 0 {
+	if launcher.count() != 1 || first.SocketPath == other.SocketPath {
 		t.Fatal("Workers must share a process with distinct Unix endpoints")
 	}
 	if err := m.Write(items); err != nil {
@@ -67,6 +66,19 @@ func TestSharedSocketPoolDrainsRequests(t *testing.T) {
 	}
 	if _, err := os.Stat(first.SocketPath); !os.IsNotExist(err) {
 		t.Fatalf("old socket remains: %v", err)
+	}
+}
+
+func TestManagerRequiresSocketDirectory(t *testing.T) {
+	launcher := &fakeLauncher{healthy: true}
+	dir := t.TempDir()
+	manager := NewManager(&fakeWriter{}, launcher, dir, filepath.Join(dir, "workerd.capnp"), "", time.Second, time.Second)
+	defer manager.Close()
+	if err := manager.Write(deployments(9001)); err == nil {
+		t.Fatal("missing socket directory silently accepted a legacy deployment port")
+	}
+	if launcher.count() != 0 {
+		t.Fatal("process launched without a socket directory")
 	}
 }
 
@@ -112,8 +124,7 @@ func TestRealWorkerdSharedUnixSockets(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	writer := config.NewRuntimeWriter(filepath.Join(dir, "canonical.capnp"), &fakeWriter{})
-	m := NewManager(writer, CommandLauncher{Executable: executable}, dir, filepath.Join(dir, "canonical.capnp"), "127.0.0.1", 10000, 10*time.Second, time.Second)
-	m.SetSocketDir(dir)
+	m := NewManager(writer, CommandLauncher{Executable: executable}, dir, filepath.Join(dir, "canonical.capnp"), testSocketDir(t), 10*time.Second, time.Second)
 	defer m.Close()
 	items := deployments(0)
 	items[0].Deployment.CompatibilityDate = "2025-01-01"
