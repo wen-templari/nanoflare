@@ -2743,6 +2743,42 @@
         "required": ["name"],
         "type": "object"
       },
+      "UpdateVarsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/UpdateVarsInput.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "commit_message": {
+            "description": "Optional caller publication marker, saved in deployment history.",
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "expected_deployment_id": {
+            "description": "Must be the sole active deployment receiving 100% of traffic.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Worker-scoped retry key. Identical retries return the original revision without reactivating it.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "vars": {
+            "additionalProperties": {},
+            "description": "Complete replacement map. An empty object clears all plain variables; missing or null is invalid.",
+            "type": "object"
+          }
+        },
+        "required": ["vars", "expected_deployment_id", "idempotency_key"],
+        "type": "object"
+      },
       "User": {
         "additionalProperties": false,
         "properties": {
@@ -2758,6 +2794,36 @@
           }
         },
         "required": ["id", "email", "created_at"],
+        "type": "object"
+      },
+      "VarsUpdateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/VarsUpdateResult.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "base_deployment_id": {
+            "type": "string"
+          },
+          "commit_message": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "base_deployment_id", "created_at"],
         "type": "object"
       },
       "WorkerDeployment": {
@@ -11465,6 +11531,119 @@
           }
         ],
         "summary": "putWorkerSecret",
+        "tags": ["Workers"]
+      }
+    },
+    "/v1/organizations/{orgID}/workers/{workerID}/vars": {
+      "put": {
+        "description": "Requires deployments:write in the worker organization. vars is a complete replacement object; omitted keys are removed, {} clears all plain variables, and missing/null is invalid. Preserves code, assets, secrets, compatibility settings, bindings and triggers. expected_deployment_id must identify the sole active revision receiving 100% of traffic; stale, inactive and split-traffic bases return 409. Every accepted new request creates a deployment with its caller marker. Identical requests with the same worker-scoped idempotency key return the original result, including after a later deployment, without reactivation. Reusing a key for a different normalized request returns 409. A 500 may follow activation: retry the identical request/key to recover the outcome. A confirmed failed rollout restores prior traffic/configuration; its key stays failed and a new key is required for another attempt. PostgreSQL persists outcomes across restarts; in-memory mode retains them only for the process lifetime. Success confirms configuration publication; runtime startup/health checks follow the configured eager or lazy runtime mode and edge routing propagation may follow later.",
+        "operationId": "updateWorkerVars",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workerID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateVarsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VarsUpdateResult"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Replace plain worker variables without uploading source or assets",
         "tags": ["Workers"]
       }
     },

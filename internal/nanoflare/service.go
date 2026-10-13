@@ -622,6 +622,11 @@ func (s *Service) updateApp(appID string, input UpdateAppInput) (App, error) {
 	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	release, err := s.store.LockDeploymentUpdates()
+	if err != nil {
+		return App{}, err
+	}
+	defer release()
 	app, err := s.store.PatchApp(appID, input)
 	if err != nil {
 		if errors.Is(err, ErrAppExists) {
@@ -664,6 +669,13 @@ func (s *Service) ListSecretsForOrg(orgID, appID string) ([]Secret, error) {
 }
 
 func (s *Service) PutSecret(appID, name, value string) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	release, err := s.store.LockDeploymentUpdates()
+	if err != nil {
+		return err
+	}
+	defer release()
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("secret name is required")
@@ -721,6 +733,13 @@ func (s *Service) PutSecretForOrg(orgID, appID, name, value string) error {
 }
 
 func (s *Service) DeleteSecret(appID, name string) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	release, err := s.store.LockDeploymentUpdates()
+	if err != nil {
+		return err
+	}
+	defer release()
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("secret name is required")
@@ -801,6 +820,11 @@ func (s *Service) DeleteObjectStorageBucketForOrg(orgID, bucketID string) error 
 func (s *Service) DeleteApp(appID string) error {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	release, err := s.store.LockDeploymentUpdates()
+	if err != nil {
+		return err
+	}
+	defer release()
 	records, err := s.store.ListDeployments()
 	if err != nil {
 		return err
@@ -819,15 +843,15 @@ func (s *Service) DeleteApp(appID string) error {
 	if !exists {
 		return ErrAppNotFound
 	}
+	if err := s.store.DeleteApp(appID); err != nil {
+		return err
+	}
 	for _, record := range records {
 		if record.App.ID != appID {
 			continue
 		}
 		s.cleanupDeploymentObject(record.Deployment)
 		s.cleanupDeploymentAssets(record.Deployment)
-	}
-	if err := s.store.DeleteApp(appID); err != nil {
-		return err
 	}
 	s.invalidateRuntimeDeployments(appID)
 	active, err := s.activeDeployments()
@@ -954,6 +978,11 @@ func (s *Service) SetDeploymentTrafficForOrg(orgID, appID string, traffic []Depl
 func (s *Service) SetDeploymentTraffic(appID string, traffic []DeploymentTraffic) ([]ConsoleDeployment, error) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	release, err := s.store.LockDeploymentUpdates()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := validateDeploymentTraffic(traffic); err != nil {
 		return nil, err
 	}
@@ -1165,13 +1194,6 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, err
 	}
-	secrets, err := s.resolvedSecretValues(appID)
-	if err != nil && !errors.Is(err, ErrAppNotFound) {
-		return Deployment{}, err
-	}
-	if err := validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig); err != nil {
-		return Deployment{}, err
-	}
 	format, err := workerFormat(input.Format, len(files))
 	if err != nil {
 		return Deployment{}, err
@@ -1190,10 +1212,6 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	}
 	compatibilityFlags := normalizeCompatibilityFlags(input.CompatibilityFlags)
 	dns := DNSSelection{Profile: strings.TrimSpace(input.DNS.Profile)}
-	port, err := s.store.NextPort()
-	if err != nil {
-		return Deployment{}, err
-	}
 	deploymentID, err := randomToken()
 	if err != nil {
 		return Deployment{}, err
@@ -1219,7 +1237,6 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Services:             services,
 		AssetConfig:          assetConfig,
 		BundleSize:           bundleSize(files),
-		Port:                 port,
 		CreatedAt:            time.Now().UTC(),
 	}
 	if len(deployment.Assets) > 0 && s.objects == nil {
@@ -1246,14 +1263,38 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	release, err := s.store.LockDeploymentUpdates()
+	if err != nil {
+		s.cleanupDeploymentObject(deployment)
+		s.cleanupDeploymentAssets(deployment)
+		return Deployment{}, err
+	}
+	defer release()
+	// Allocate ports and check secrets under the publication guard so a concurrent
+	// configuration rollout cannot reuse the port or introduce a binding collision.
+	deployment.Port, err = s.store.NextPort()
+	if err == nil {
+		var secrets map[string]string
+		secrets, err = s.resolvedSecretValues(appID)
+		if err == nil {
+			err = validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig)
+		}
+	}
+	if err != nil {
+		s.cleanupDeploymentObject(deployment)
+		s.cleanupDeploymentAssets(deployment)
+		return Deployment{}, err
+	}
 	activeBefore, err := s.activeDeployments()
 	if err != nil {
 		s.cleanupDeploymentObject(deployment)
+		s.cleanupDeploymentAssets(deployment)
 		return Deployment{}, err
 	}
 	previousTraffic := activeTrafficForApp(activeBefore, appID)
 	if err := s.store.Activate(deployment); err != nil {
 		s.cleanupDeploymentObject(deployment)
+		s.cleanupDeploymentAssets(deployment)
 		return Deployment{}, err
 	}
 	s.invalidateRuntimeDeployments(appID)
@@ -1571,6 +1612,9 @@ func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage,
 		}
 		if !json.Valid(trimmed) {
 			return nil, fmt.Errorf("vars.%s must be valid JSON", name)
+		}
+		if _, exists := normalized[name]; exists {
+			return nil, fmt.Errorf("duplicate vars binding name %q after normalization", name)
 		}
 		normalized[name] = append(json.RawMessage(nil), trimmed...)
 	}
@@ -1966,8 +2010,6 @@ func (s *Service) resolvedSecretValues(appID string) (map[string]string, error) 
 }
 
 func (s *Service) rolloutSecretsIfActive(appID string) error {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
 	active, err := s.activeDeployments()
 	if err != nil {
 		return err
@@ -2015,11 +2057,34 @@ func (s *Service) rolloutSecretsIfActive(appID string) error {
 	return nil
 }
 
+func (s *Service) deploymentObjectReferenced(appID, key string) bool {
+	records, err := s.store.ListDeployments()
+	if err != nil {
+		return true
+	}
+	for _, record := range records {
+		if record.Deployment.AppID != appID {
+			continue
+		}
+		if record.Deployment.ObjectKey == key {
+			return true
+		}
+		for _, asset := range record.Deployment.Assets {
+			if asset.ObjectKey == key {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Service) cleanupDeploymentObject(deployment Deployment) {
 	if s.objects == nil || deployment.ObjectKey == "" {
 		return
 	}
-	_ = s.objects.Delete(deployment.AppID, deployment.ObjectKey)
+	if !s.deploymentObjectReferenced(deployment.AppID, deployment.ObjectKey) {
+		_ = s.objects.Delete(deployment.AppID, deployment.ObjectKey)
+	}
 }
 
 func (s *Service) cleanupDeploymentAssets(deployment Deployment) {
@@ -2030,7 +2095,9 @@ func (s *Service) cleanupDeploymentAssets(deployment Deployment) {
 		if asset.ObjectKey == "" {
 			continue
 		}
-		_ = s.objects.Delete(deployment.AppID, asset.ObjectKey)
+		if !s.deploymentObjectReferenced(deployment.AppID, asset.ObjectKey) {
+			_ = s.objects.Delete(deployment.AppID, asset.ObjectKey)
+		}
 	}
 }
 
@@ -2044,6 +2111,13 @@ func (s *Service) rollbackDeployment(appID string, previousTraffic []DeploymentT
 	}
 	s.cleanupDeploymentObject(deployment)
 	s.cleanupDeploymentAssets(deployment)
+	active, err := s.activeDeployments()
+	if err != nil {
+		return err
+	}
+	if err := s.writer.Write(active); err != nil {
+		return fmt.Errorf("restore generated config: %w", err)
+	}
 	return nil
 }
 

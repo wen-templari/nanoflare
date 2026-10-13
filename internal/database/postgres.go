@@ -123,6 +123,14 @@ CREATE TABLE IF NOT EXISTS workers (
 	runtime_token text,
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS worker_vars_updates (
+ worker_id text NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+ idempotency_key text NOT NULL,
+ fingerprint text NOT NULL,
+ status text NOT NULL CHECK (status IN ('pending', 'rolling_back', 'succeeded', 'failed')),
+ result jsonb NOT NULL,
+ PRIMARY KEY (worker_id, idempotency_key)
+);
 CREATE TABLE IF NOT EXISTS users (
 	id text PRIMARY KEY,
 	email text NOT NULL UNIQUE,
@@ -2079,6 +2087,18 @@ func (p *Postgres) NextPort() (int, error) {
 }
 
 func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := activateDeploymentTx(tx, deployment); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func activateDeploymentTx(tx *sql.Tx, deployment nanoflare.Deployment) error {
 	files := []byte(`[]`)
 	assets, err := json.Marshal(deployment.Assets)
 	if err != nil {
@@ -2090,11 +2110,6 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 			return err
 		}
 	}
-	tx, err := p.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	result, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE worker_id = $1 AND active`, deployment.AppID)
 	if err != nil {
 		return err
@@ -2112,7 +2127,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (p *Postgres) SetActive(appID, deploymentID string) error {

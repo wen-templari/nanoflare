@@ -162,6 +162,57 @@ the adapter, so treat the no-proxy list as an explicit egress policy. Keep it
 aligned with the private destinations intended to be allowed by
 `NANOFLARE_WORKERD_NETWORK_ALLOW`.
 
+### Updating worker variables without uploading files
+
+Replace a published worker's plain variables with a configuration-only deployment:
+
+```sh
+curl -X PUT "http://127.0.0.1:8080/v1/organizations/$NANOFLARE_ORG_ID/workers/$WORKER_ID/vars" \
+  -H "Authorization: Bearer $NANOFLARE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vars": {"API_BASE_URL":"https://api.example.com","FEATURE_FLAGS":{"beta":true}},
+    "expected_deployment_id":"currently-live-deployment-id",
+    "idempotency_key":"environment-update-request-id",
+    "commit_message":"publication marker"
+  }'
+```
+
+`vars` replaces the entire map: omitted names are removed and `{}` clears all
+plain variables. Missing or `null` maps, invalid names/JSON, and collisions with
+secrets or other bindings return `400`. Names are trimmed; names that become
+duplicates after trimming are rejected. Values can be strings or other JSON
+values. Code, asset references, secrets, compatibility settings, DNS selection,
+resource/service bindings, asset configuration, and cron triggers are preserved.
+No source files or assets are submitted or uploaded again.
+
+Access requires organization ownership/membership authorization and
+`deployments:write`. The required `expected_deployment_id` must be the sole
+active revision receiving 100% of traffic. A stale base, no active revision, or
+split traffic returns `409`; select a single revision through the existing
+`deployment-traffic` endpoint before updating a worker with split traffic.
+
+The `200` response contains `id`, `base_deployment_id`, `created_at`, and optional
+`commit_message`/`created_by`. Each accepted new request creates and activates a
+revision, even if its variables are unchanged. The caller marker appears in
+existing deployment history. Roll back by assigning 100% traffic to a previous
+revision through `PUT .../workers/{workerID}/deployment-traffic`.
+
+Keep the required `idempotency_key` for retries. An identical normalized request
+returns the original result, even after that revision is superseded, without
+creating or reactivating a deployment. Changing the request while reusing its
+key returns `409`. Keys are scoped to a worker and retained until worker deletion.
+Expected IDs and keys are limited to 256 bytes and commit messages to 4096 bytes.
+
+A `500` may occur after activation or during rollback. Retry the same request
+and key to reconcile a pending operation and recover its outcome. A confirmed
+failed rollout restores previous traffic and runtime configuration; that key
+continues to return failure, and another attempt requires a new key. PostgreSQL
+stores outcomes across restarts. Without PostgreSQL, deployment history and
+retry outcomes exist only for the process lifetime. Success confirms configuration
+publication; runtime health checks occur according to eager/lazy runtime mode,
+and Traefik routing propagation may follow later.
+
 ### Updating a worker hostname
 
 Change a published worker's URL with the organization-scoped update endpoint:

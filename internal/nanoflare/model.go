@@ -131,6 +131,48 @@ func (input *UpdateAppInput) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// UpdateVarsInput replaces all plain variables while preserving the live artifact.
+type UpdateVarsInput struct {
+	Vars                 map[string]json.RawMessage `json:"vars" doc:"Complete replacement map. An empty object clears all plain variables; missing or null is invalid."`
+	ExpectedDeploymentID string                     `json:"expected_deployment_id" minLength:"1" maxLength:"256" doc:"Must be the sole active deployment receiving 100% of traffic."`
+	IdempotencyKey       string                     `json:"idempotency_key" minLength:"1" maxLength:"256" doc:"Worker-scoped retry key. Identical retries return the original revision without reactivating it."`
+	CommitMessage        string                     `json:"commit_message,omitempty" maxLength:"4096" doc:"Optional caller publication marker, saved in deployment history."`
+	CreatedBy            string                     `json:"-"`
+}
+
+func (input *UpdateVarsInput) UnmarshalJSON(data []byte) error {
+	type alias UpdateVarsInput
+	var value alias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if value.Vars == nil {
+		return errors.New("vars must be an object (use {} to clear variables)")
+	}
+	*input = UpdateVarsInput(value)
+	return nil
+}
+
+type VarsUpdateResult struct {
+	ID               string    `json:"id"`
+	BaseDeploymentID string    `json:"base_deployment_id"`
+	CommitMessage    string    `json:"commit_message,omitempty"`
+	CreatedBy        string    `json:"created_by,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// VarsUpdateOperation persists the request outcome separately from deployment
+// history so retries never reactivate a revision that has since been superseded.
+type VarsUpdateOperation struct {
+	AppID       string
+	Key         string
+	Fingerprint string
+	Status      string // pending, rolling_back, succeeded, failed
+	Result      VarsUpdateResult
+}
+
 type DeployInput struct {
 	CommitHash           string                       `json:"commit_hash,omitempty"`
 	CommitMessage        string                       `json:"commit_message,omitempty"`

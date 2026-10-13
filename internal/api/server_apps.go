@@ -37,6 +37,7 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("GET "+base+"/{workerID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("PUT "+base+"/{workerID}/deployment-traffic", s.setWorkerDeploymentTraffic)
 	s.mux.HandleFunc("POST "+base+"/{workerID}/deployments", s.deploy)
+	s.mux.HandleFunc("PUT "+base+"/{workerID}/vars", s.updateVars)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/secrets", s.listSecrets)
 	s.mux.HandleFunc("PUT "+base+"/{workerID}/secrets/{name}", s.putSecret)
 	s.mux.HandleFunc("DELETE "+base+"/{workerID}/secrets/{name}", s.deleteSecret)

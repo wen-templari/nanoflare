@@ -13,6 +13,10 @@ import (
 var (
 	ErrAppExists                   = errors.New("app already exists")
 	ErrAppNotFound                 = errors.New("app not found")
+	ErrInvalidVarsUpdate           = errors.New("invalid vars update")
+	ErrDeploymentConflict          = errors.New("expected deployment is not the sole active deployment at 100% traffic")
+	ErrIdempotencyConflict         = errors.New("idempotency key was already used for another request")
+	ErrVarsRolloutFailed           = errors.New("vars rollout failed; use a new idempotency key to retry")
 	ErrInvalidAppUpdate            = errors.New("invalid worker update")
 	ErrInvalidCapability           = errors.New("invalid runtime capability")
 	ErrObjectNotFound              = errors.New("object not found")
@@ -132,6 +136,10 @@ type Repository interface {
 	PutSecret(string, SecretRecord) error
 	DeleteSecret(string, string) error
 	NextPort() (int, error)
+	LockDeploymentUpdates() (func(), error)
+	VarsUpdate(appID, key string) (VarsUpdateOperation, bool, error)
+	BeginVarsUpdate(VarsUpdateOperation, Deployment, string) error
+	FinishVarsUpdate(appID, key, status string) error
 	Activate(Deployment) error
 	DeleteDeployment(id string) error
 	SetActive(appID, deploymentID string) error
@@ -160,6 +168,8 @@ type Repository interface {
 }
 
 type Store struct {
+	deploymentMu        sync.Mutex
+	varsUpdates         map[string]map[string]VarsUpdateOperation
 	mu                  sync.RWMutex
 	users               map[string]User
 	usersByEmail        map[string]string
@@ -198,6 +208,7 @@ type runtimeKVValue struct {
 
 func NewStore() *Store {
 	return &Store{
+		varsUpdates:         make(map[string]map[string]VarsUpdateOperation),
 		users:               make(map[string]User),
 		usersByEmail:        make(map[string]string),
 		oidcIdentities:      make(map[string]UserOIDCIdentity),
@@ -1074,6 +1085,7 @@ func (s *Store) DeleteApp(appID string) error {
 	delete(s.apps, appID)
 	delete(s.secrets, appID)
 	delete(s.deployments, appID)
+	delete(s.varsUpdates, appID)
 	delete(s.active, appID)
 	delete(s.capabilityToApp, app.RuntimeToken)
 	return nil

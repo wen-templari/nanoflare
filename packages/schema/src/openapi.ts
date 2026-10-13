@@ -1240,6 +1240,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/workers/{workerID}/vars": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Replace plain worker variables without uploading source or assets
+     * @description Requires deployments:write in the worker organization. vars is a complete replacement object; omitted keys are removed, {} clears all plain variables, and missing/null is invalid. Preserves code, assets, secrets, compatibility settings, bindings and triggers. expected_deployment_id must identify the sole active revision receiving 100% of traffic; stale, inactive and split-traffic bases return 409. Every accepted new request creates a deployment with its caller marker. Identical requests with the same worker-scoped idempotency key return the original result, including after a later deployment, without reactivation. Reusing a key for a different normalized request returns 409. A 500 may follow activation: retry the identical request/key to recover the outcome. A confirmed failed rollout restores prior traffic/configuration; its key stays failed and a new key is required for another attempt. PostgreSQL persists outcomes across restarts; in-memory mode retains them only for the process lifetime. Success confirms configuration publication; runtime startup/health checks follow the configured eager or lazy runtime mode and edge routing propagation may follow later.
+     */
+    put: operations["updateWorkerVars"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/setup/signup": {
     parameters: {
       query?: never;
@@ -2361,10 +2381,42 @@ export interface components {
       readonly $schema?: string;
       name: string;
     };
+    UpdateVarsInput: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/UpdateVarsInput.json
+       */
+      readonly $schema?: string;
+      /** @description Optional caller publication marker, saved in deployment history. */
+      commit_message?: string;
+      /** @description Must be the sole active deployment receiving 100% of traffic. */
+      expected_deployment_id: string;
+      /** @description Worker-scoped retry key. Identical retries return the original revision without reactivating it. */
+      idempotency_key: string;
+      /** @description Complete replacement map. An empty object clears all plain variables; missing or null is invalid. */
+      vars: {
+        [key: string]: unknown;
+      };
+    };
     User: {
       /** Format: date-time */
       created_at: string;
       email: string;
+      id: string;
+    };
+    VarsUpdateResult: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/VarsUpdateResult.json
+       */
+      readonly $schema?: string;
+      base_deployment_id: string;
+      commit_message?: string;
+      /** Format: date-time */
+      created_at: string;
+      created_by?: string;
       id: string;
     };
     WorkerDeployment: {
@@ -8756,6 +8808,87 @@ export interface operations {
       };
       /** @description Error */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  updateWorkerVars: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateVarsInput"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VarsUpdateResult"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      409: {
         headers: {
           [name: string]: unknown;
         };
