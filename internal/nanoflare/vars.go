@@ -147,6 +147,9 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 	next.Vars = cloneVars(input.Vars)
 	result := VarsUpdateResult{ID: next.ID, BaseDeploymentID: current.Deployment.ID, CommitMessage: next.CommitMessage, CreatedBy: next.CreatedBy, CreatedAt: next.CreatedAt}
 	op = VarsUpdateOperation{AppID: appID, Key: input.IdempotencyKey, Fingerprint: fingerprint, Status: "pending", Result: result}
+	if err := s.validatePublication(appID, active, []ActiveDeployment{{App: current.App, Deployment: next, TrafficPercent: 100}}); err != nil {
+		return VarsUpdateResult{}, fmt.Errorf("validate publication: %w", err)
+	}
 	if err := s.store.BeginVarsUpdate(op, next, input.ExpectedDeploymentID); err != nil {
 		return VarsUpdateResult{}, err
 	}
@@ -176,7 +179,7 @@ func (s *Service) publishActiveDeployments(appID string) error {
 	if err != nil {
 		return err
 	}
-	return s.writer.Write(active)
+	return s.writePublication(active)
 }
 
 // recoverVarsRollback completes an interrupted rollback without overwriting a

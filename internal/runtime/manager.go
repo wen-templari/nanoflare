@@ -430,12 +430,17 @@ func socketsReady(active []nanoflare.ActiveDeployment) bool {
 }
 
 type CommandLauncher struct {
-	Executable string
-	Output     *OutputBuffer
+	Executable   string
+	Experimental bool
+	Output       *OutputBuffer
 }
 
 func (l CommandLauncher) Launch(configPath string, active []nanoflare.ActiveDeployment) (Process, error) {
-	command := exec.Command(l.Executable, "serve", configPath)
+	args := []string{"serve", configPath}
+	if l.Experimental {
+		args = append(args, "--experimental")
+	}
+	command := exec.Command(l.Executable, args...)
 	command.Env = minimalEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Stdout = os.Stdout

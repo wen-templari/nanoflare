@@ -1,0 +1,316 @@
+package config
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/clas/nanoflare/internal/nanoflare"
+)
+
+// This tests the generated production dispatcher rather than the exploratory
+// host fixture: private socket authentication, validation, resource forwarding,
+// nested service admission, and both sides' completion acknowledgments.
+func TestWorkerdDynamicDispatcherContracts(t *testing.T) {
+	binary := os.Getenv("NANOFLARE_TEST_WORKERD")
+	if binary == "" {
+		t.Skip("set NANOFLARE_TEST_WORKERD to the production-pinned binary")
+	}
+	version, err := exec.Command(binary, "--version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(version)) != "workerd 2026-09-11" {
+		t.Fatalf("requires pinned runtime: %s (%v)", version, err)
+	}
+	programs := map[string]map[string]any{}
+	for key, source := range map[string]string{
+		"a": `export default { async fetch(request, env, ctx) {
+ if (new URL(request.url).pathname === "/missing") return new Response(await env.SERVICE.missing());
+ const value = await env.KV.get("key");
+ using session = await env.SERVICE.session();
+ await new Promise(resolve => setTimeout(resolve, 30));
+ const rpc = await session.read("ada");
+ ctx.waitUntil(env.KV.put("background", "done"));
+ return Response.json({ value, rpc, headers: [...request.headers.keys()].filter(name => name.startsWith("x-nanoflare-")) });
+} };`,
+		"b": `import { WorkerEntrypoint, RpcTarget } from "cloudflare:workers";
+class Session extends RpcTarget {
+ #kv; #version; #hidden; #ctx;
+ constructor(kv,version,hidden,ctx) { super(); this.#kv=kv; this.#version=version; this.#hidden=hidden; this.#ctx=ctx; }
+ async read(id) {
+  this.#ctx.waitUntil((async () => { await new Promise(resolve => setTimeout(resolve, 80)); await this.#kv.put("cap-background", "done"); })());
+  return {id, version:this.#version, hidden:this.#hidden, value:await this.#kv.get("session-key")};
+ }
+}
+export default class extends WorkerEntrypoint { session() { return new Session(this.env.KV,this.env.VERSION,!this.ctx.props.__nanoflare_invocation,this.ctx); } }`,
+	} {
+		active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{Format: "modules", Entrypoint: "worker.js", CompatibilityDate: "2026-09-08", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: source}}}}
+		if key == "a" {
+			active.Deployment.KVNamespaces = []nanoflare.KVBinding{{Binding: "KV", ID: "kv"}}
+			active.Deployment.Services = []nanoflare.ServiceBinding{{Binding: "SERVICE", Service: "b"}}
+		}
+		if key == "b" {
+			active.Deployment.KVNamespaces = []nanoflare.KVBinding{{Binding: "KV", ID: "kv-b"}}
+		}
+		code := InstrumentLoaderInvocation(SnapshotWorkerCodeForLoader(active, WorkerdOptions{}), active)
+		wire, err := json.Marshal(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var program map[string]any
+		if err := json.Unmarshal(wire, &program); err != nil {
+			t.Fatal(err)
+		}
+		program["env"] = map[string]any{"VERSION": key, "__NANOFLARE_APP_ID": key}
+		programs[key] = program
+	}
+	var mu sync.Mutex
+	completions := map[string]int{}
+	starts := map[string]int{}
+	abandoned := map[string]int{}
+	resourceCalls := 0
+	background := false
+	capBackground := false
+	completeRetried := false
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanoflare-Broker-Token") != "broker-secret" {
+			http.Error(w, "unauthorized broker", 401)
+			return
+		}
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/start/"):
+			if r.Header.Get("X-Nanoflare-Invocation") == "invocation-denied" {
+				http.Error(w, "revoked", 403)
+				return
+			}
+			mu.Lock()
+			if r.Header.Get("X-Nanoflare-Invocation") == "invocation-b" && r.Header.Get("X-Nanoflare-Invocation-Epoch") == "2" && completions["invocation-b"] != 1 {
+				mu.Unlock()
+				http.Error(w, "epoch reopened before prior acknowledgement", 409)
+				return
+			}
+			starts[r.Header.Get("X-Nanoflare-Invocation")]++
+			mu.Unlock()
+			w.WriteHeader(204)
+		case strings.HasPrefix(r.URL.Path, "/abandon/"):
+			mu.Lock()
+			abandoned[r.Header.Get("X-Nanoflare-Invocation")]++
+			mu.Unlock()
+			w.WriteHeader(204)
+		case strings.HasPrefix(r.URL.Path, "/source/"):
+			program := programs[strings.TrimPrefix(r.URL.Path, "/source/")]
+			if program == nil {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(program)
+		case strings.HasPrefix(r.URL.Path, "/complete/"):
+			mu.Lock()
+			if r.Header.Get("X-Nanoflare-Invocation") == "invocation-b" && r.Header.Get("X-Nanoflare-Invocation-Epoch") == "2" && !completeRetried {
+				completeRetried = true
+				mu.Unlock()
+				http.Error(w, "transient completion failure", 503)
+				return
+			}
+			completions[r.Header.Get("X-Nanoflare-Invocation")]++
+			mu.Unlock()
+			w.WriteHeader(204)
+		case r.URL.Path == "/service/a/SERVICE":
+			if !strings.HasPrefix(r.Header.Get("X-Nanoflare-Invocation"), "invocation-") {
+				http.Error(w, "bad service token", 403)
+				return
+			}
+			childToken := "invocation-b"
+			if r.Header.Get("X-Nanoflare-Invocation") == "invocation-missing-a" {
+				childToken = "invocation-missing-b"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"key": "b", "token": childToken})
+		case strings.HasPrefix(r.URL.Path, "/resource/"):
+			if r.Header.Get("X-Nanoflare-Binding-Name") == "__NANOFLARE_DURATION_COLLECTOR" {
+				w.WriteHeader(204)
+				return
+			}
+			if r.URL.Path == "/resource/b/cap-background" {
+				mu.Lock()
+				valid := completions["invocation-a"] == 1 && completions["invocation-b"] == 1 && starts["invocation-b"] == 2
+				mu.Unlock()
+				if !valid || r.Header.Get("X-Nanoflare-Invocation") != "invocation-b" {
+					http.Error(w, "late capability background authority expired or not reopened", 403)
+					return
+				}
+				body, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				capBackground = string(body) == "done"
+				mu.Unlock()
+				w.WriteHeader(204)
+				return
+			}
+			if r.URL.Path == "/resource/b/session-key" {
+				mu.Lock()
+				childCompleted := completions["invocation-b"] == 1
+				parentCompleted := completions["invocation-a"] > 0
+				mu.Unlock()
+				if !childCompleted || parentCompleted || r.Header.Get("X-Nanoflare-Invocation") != "invocation-b" || r.Header.Get("X-Nanoflare-Binding-Name") != "KV" {
+					http.Error(w, "capability used outside live root or before child completed", 403)
+					return
+				}
+				_, _ = io.WriteString(w, "capability-value")
+				return
+			}
+			if r.Header.Get("X-Nanoflare-Invocation") != "invocation-a" || r.Header.Get("X-Nanoflare-Binding-Name") != "KV" {
+				http.Error(w, "bad resource authority", 403)
+				return
+			}
+			mu.Lock()
+			resourceCalls++
+			mu.Unlock()
+			if r.URL.Path == "/resource/a/key" {
+				_, _ = io.WriteString(w, "private-value")
+				return
+			}
+			if r.URL.Path == "/resource/a/background" {
+				body, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				background = string(body) == "done"
+				mu.Unlock()
+				w.WriteHeader(204)
+				return
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer broker.Close()
+	dir := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "nf-dispatch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "runtime.sock")
+	configPath := filepath.Join(dir, "workerd.capnp")
+	if err := os.WriteFile(configPath, []byte(DynamicDispatcher(WorkerdOptions{}, socket, strings.TrimPrefix(broker.URL, "http://"), "broker-secret", "dispatcher-secret")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary, "serve", "--experimental", configPath)
+	var logs bytes.Buffer
+	command.Stdout = &logs
+	command.Stderr = &logs
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = command.Process.Kill(); _ = command.Wait() }()
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(socket); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			t.Fatalf("dispatcher socket unavailable: %s", logs.String())
+		}
+	}
+	call := func(path, auth, token string) *http.Response {
+		t.Helper()
+		request, _ := http.NewRequest("GET", "http://worker.test"+path, nil)
+		request.Header.Set("X-Nanoflare-Dispatcher-Token", auth)
+		request.Header.Set("X-Nanoflare-Execution", "a")
+		request.Header.Set("X-Nanoflare-Invocation", token)
+		request.Header.Set("X-Nanoflare-Forged", "must-strip")
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	unauthorized := call("/", "bad", "invocation-a")
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != 401 {
+		t.Fatalf("unauthorized status=%d", unauthorized.StatusCode)
+	}
+	validation := call("/__nanoflare_validate", "dispatcher-secret", "")
+	body, _ := io.ReadAll(validation.Body)
+	validation.Body.Close()
+	if validation.StatusCode != 204 {
+		t.Fatalf("validation=%d %s", validation.StatusCode, body)
+	}
+	mu.Lock()
+	callsDuringValidation := resourceCalls
+	mu.Unlock()
+	if callsDuringValidation != 0 {
+		t.Fatal("validation executed user fetch")
+	}
+	response := call("/", "dispatcher-secret", "invocation-a")
+	body, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != 200 {
+		t.Fatalf("dispatcher=%d %s", response.StatusCode, body)
+	}
+	var result struct {
+		Value string
+		RPC   struct {
+			ID, Version, Value string
+			Hidden             bool
+		}
+		Headers []string
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Value != "private-value" || result.RPC.ID != "ada" || result.RPC.Version != "b" || result.RPC.Value != "capability-value" || !result.RPC.Hidden || len(result.Headers) != 0 {
+		t.Fatalf("unexpected child result %s", body)
+	}
+	for deadline := time.Now().Add(4 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		mu.Lock()
+		done := completions["invocation-a"] == 1 && completions["invocation-b"] == 2 && starts["invocation-a"] == 1 && starts["invocation-b"] == 2 && background && capBackground && completeRetried
+		mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("missing invocation completions/background")
+		}
+	}
+	denied := call("/", "dispatcher-secret", "invocation-denied")
+	denied.Body.Close()
+	if denied.StatusCode != 500 {
+		t.Fatalf("denied start status = %d", denied.StatusCode)
+	}
+	mu.Lock()
+	callsAfterDenied := resourceCalls
+	mu.Unlock()
+	if callsAfterDenied != 2 {
+		t.Fatalf("denied start executed resource calls: %d", callsAfterDenied)
+	}
+	missing := call("/missing", "dispatcher-secret", "invocation-missing-a")
+	missing.Body.Close()
+	if missing.StatusCode != 500 {
+		t.Fatalf("missing RPC status = %d", missing.StatusCode)
+	}
+	for deadline := time.Now().Add(4 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		mu.Lock()
+		acknowledged := abandoned["invocation-missing-b"] == 1 && starts["invocation-missing-b"] == 0
+		mu.Unlock()
+		if acknowledged {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("missing RPC admission was not abandoned without starting")
+		}
+	}
+}

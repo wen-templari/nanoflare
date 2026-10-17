@@ -95,7 +95,7 @@ func main() {
 			_ = adapter.Close(ctx)
 		}()
 	}
-	manager := runtime.NewManager(
+	manager := runtime.NewDynamicManager(
 		writer,
 		runtime.CommandLauncher{Executable: *workerd, Output: output},
 		*configDir,
@@ -104,6 +104,7 @@ func main() {
 		10*time.Second,
 		5*time.Second,
 	)
+	manager.SetRuntimeControlToken(*token)
 	defer manager.Close()
 
 	server := &http.Server{Addr: *addr, Handler: runner.NewServer(manager, *token)}

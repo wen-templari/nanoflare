@@ -59,9 +59,21 @@ func TestClientTransportsPrivateRuntimeTokenToRunner(t *testing.T) {
 	defer server.Close()
 	active := deployments(9001)
 	active[0].App.RuntimeToken = "runtime-secret"
+	active[0].Deployment.ObjectKey = "deployments/bundle.json"
+	active[0].App.SecretValues = map[string]string{"SECRET": "frozen-value"}
+	active[0].TrafficPercent = 35
 
 	if err := NewClient(server.URL, "secret", &fakeTraefikWriter{}).Write(active); err != nil {
 		t.Fatal(err)
+	}
+	if got := manager.prepared[0].App.SecretValues["SECRET"]; got != "frozen-value" {
+		t.Fatalf("secret = %q", got)
+	}
+	if manager.prepared[0].Deployment.ObjectKey != "deployments/bundle.json" {
+		t.Fatal("bundle object key lost")
+	}
+	if got := manager.prepared[0].TrafficPercent; got != 35 {
+		t.Fatalf("traffic percent = %d", got)
 	}
 	if got := manager.prepared[0].App.RuntimeToken; got != "runtime-secret" {
 		t.Fatalf("runtime token = %q, want private token transported to runner", got)
@@ -69,10 +81,18 @@ func TestClientTransportsPrivateRuntimeTokenToRunner(t *testing.T) {
 }
 
 type fakeManager struct {
-	generation string
-	routed     []nanoflare.ActiveDeployment
-	prepared   []nanoflare.ActiveDeployment
-	events     []string
+	validated     []nanoflare.ActiveDeployment
+	validationErr error
+	generation    string
+	routed        []nanoflare.ActiveDeployment
+	prepared      []nanoflare.ActiveDeployment
+	events        []string
+}
+
+func (m *fakeManager) ValidatePublication(active []nanoflare.ActiveDeployment) error {
+	m.events = append(m.events, "validate")
+	m.validated = active
+	return m.validationErr
 }
 
 func (m *fakeManager) Prepare(deployments []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
@@ -106,4 +126,38 @@ func deployments(port int) []nanoflare.ActiveDeployment {
 		App:        nanoflare.App{ID: "hello", Hostname: "hello.example.com"},
 		Deployment: nanoflare.Deployment{ID: "deployment", Port: port},
 	}}
+}
+
+func TestClientValidatesCandidateWithoutPublication(t *testing.T) {
+	manager := &fakeManager{}
+	server := httptest.NewServer(NewServer(manager, "secret"))
+	defer server.Close()
+	client := NewClient(server.URL, "secret", &fakeTraefikWriter{err: errors.New("must not write routing")})
+	active := deployments(0)
+	active[0].App.SecretValues = map[string]string{"SECRET": "candidate-secret"}
+	if err := client.ValidatePublication(active); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(manager.events, []string{"validate"}) {
+		t.Fatalf("validation published candidate: %#v", manager.events)
+	}
+	if manager.validated[0].App.SecretValues["SECRET"] != "candidate-secret" {
+		t.Fatal("validation lost secrets")
+	}
+	manager.validationErr = errors.New("invalid candidate")
+	if err := client.ValidatePublication(active); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestClientValidationRequiresAuthentication(t *testing.T) {
+	manager := &fakeManager{}
+	server := httptest.NewServer(NewServer(manager, "secret"))
+	defer server.Close()
+	if err := NewClient(server.URL, "wrong", &fakeTraefikWriter{}).ValidatePublication(deployments(0)); err == nil {
+		t.Fatal("expected authentication error")
+	}
+	if len(manager.events) != 0 {
+		t.Fatal("unauthenticated validation reached runtime")
+	}
 }

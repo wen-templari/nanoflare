@@ -42,6 +42,14 @@ func NewClient(baseURL, token string, traefik TraefikWriter) *Client {
 	}
 }
 
+// ValidatePublication performs candidate validation without changing routing.
+func (c *Client) ValidatePublication(active []nanoflare.ActiveDeployment) error {
+	if err := c.request(http.MethodPost, "/v1/publications/validate", prepareRequest(active), nil); err != nil {
+		return fmt.Errorf("validate runner publication: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) Write(active []nanoflare.ActiveDeployment) error {
 	var prepared PrepareResponse
 	if err := c.request(http.MethodPost, "/v1/generations/prepare", prepareRequest(active), &prepared); err != nil {

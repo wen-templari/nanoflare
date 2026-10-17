@@ -123,6 +123,12 @@ CREATE TABLE IF NOT EXISTS workers (
 	runtime_token text,
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS worker_publications (
+ worker_id text PRIMARY KEY REFERENCES workers(id) ON DELETE CASCADE,
+ generation bigint NOT NULL,
+ published_generation bigint NOT NULL DEFAULT 0,
+ traffic jsonb NOT NULL DEFAULT '[]'::jsonb
+);
 CREATE TABLE IF NOT EXISTS worker_vars_updates (
  worker_id text NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
  idempotency_key text NOT NULL,
@@ -2121,7 +2127,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 	if err != nil {
 		return err
 	}
-	return nil
+	return advancePublicationTx(tx, deployment.AppID)
 }
 
 func (p *Postgres) SetActive(appID, deploymentID string) error {
@@ -2140,9 +2146,7 @@ func (p *Postgres) SetActiveTraffic(appID string, traffic []nanoflare.Deployment
 	if _, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE worker_id = $1 AND active`, appID); err != nil {
 		return err
 	}
-	if len(traffic) == 0 {
-		return tx.Commit()
-	}
+
 	for _, item := range traffic {
 		result, err := tx.Exec(`UPDATE deployments SET active = true, traffic_percent = $3 WHERE worker_id = $1 AND id = $2`, appID, item.ID, item.TrafficPercent)
 		if err != nil {
@@ -2155,6 +2159,9 @@ func (p *Postgres) SetActiveTraffic(appID string, traffic []nanoflare.Deployment
 		if updated == 0 {
 			return errors.New("deployment not found")
 		}
+	}
+	if err := advancePublicationTx(tx, appID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

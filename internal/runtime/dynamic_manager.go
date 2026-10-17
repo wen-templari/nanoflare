@@ -1,0 +1,1094 @@
+package runtime
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/nanoflare"
+)
+
+// DynamicManager publishes immutable Worker revisions into a stable dispatcher.
+// A publication changes admission and routing, never the workerd process.
+type DynamicManager struct {
+	nextAdmission                                       uint64
+	pendingReleases                                     map[string]string
+	releaseMu                                           sync.Mutex
+	active                                              []nanoflare.ActiveDeployment
+	publication                                         sync.Mutex
+	mu                                                  sync.Mutex
+	writer                                              ConfigWriter
+	launcher                                            Launcher
+	configDir, canonicalConfig, socketDir               string
+	healthTimeout, stopTimeout                          time.Duration
+	options                                             config.WorkerdOptions
+	compileOptions                                      string
+	controlToken, brokerToken, dispatcherToken, session string
+	broker                                              *http.Server
+	brokerAddr, socketPath, processDir, configPath      string
+	process                                             Process
+	snapshots                                           map[string]*dynamicSnapshot
+	committed                                           map[string]string
+	pending                                             *dynamicPublication
+	invocations                                         map[string]*dynamicInvocation
+	scheduler                                           *cronRunner
+	output                                              *OutputBuffer
+	client, controlClient                               *http.Client
+	staging                                             int
+	closed                                              bool
+	autoRestart                                         bool
+	stop                                                chan struct{}
+	background                                          sync.WaitGroup
+}
+type dynamicSnapshot struct {
+	registeredSession string
+	frozen            *nanoflare.ExecutionSnapshot
+	code              config.WorkerCodeSnapshot
+	validated         bool
+}
+type dynamicPublication struct {
+	id     string
+	keys   map[string]string
+	active []nanoflare.ActiveDeployment
+}
+type dynamicInvocation struct {
+	key, token, pin string
+	root            *dynamicLifetime
+	complete        bool
+	started         bool
+	epoch           uint64
+}
+type dynamicLifetime struct {
+	responseDone bool
+	pending      int
+	tokens       []string
+}
+
+func NewDynamicManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConfig, socketDir string, healthTimeout, stopTimeout time.Duration) *DynamicManager {
+	m := &DynamicManager{writer: writer, launcher: launcher, configDir: configDir, canonicalConfig: canonicalConfig, socketDir: socketDir, healthTimeout: healthTimeout, stopTimeout: stopTimeout, snapshots: map[string]*dynamicSnapshot{}, committed: map[string]string{}, invocations: map[string]*dynamicInvocation{}, pendingReleases: map[string]string{}, autoRestart: true, stop: make(chan struct{})}
+	if w, ok := writer.(interface{ RuntimeOptions() config.WorkerdOptions }); ok {
+		m.options = w.RuntimeOptions()
+	}
+	encoded, _ := json.Marshal(m.options)
+	m.compileOptions = string(encoded)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	ConfigureTransport(transport)
+	m.client = &http.Client{Transport: transport}
+	controlTransport := http.DefaultTransport.(*http.Transport).Clone()
+	controlTransport.Proxy = nil
+	m.controlClient = &http.Client{Transport: controlTransport, Timeout: 15 * time.Second}
+	switch l := launcher.(type) {
+	case CommandLauncher:
+		m.output = l.Output
+	case *CommandLauncher:
+		m.output = l.Output
+	}
+	return m
+}
+func (m *DynamicManager) SetRuntimeControlToken(token string) { m.controlToken = token }
+func (m *DynamicManager) SetAutoRestart(enabled bool) {
+	m.mu.Lock()
+	m.autoRestart = enabled
+	m.mu.Unlock()
+}
+func dynamicIdentity(a nanoflare.ActiveDeployment) string { return a.App.ID + "/" + a.Deployment.ID }
+func (m *DynamicManager) control(ctx context.Context, operation string, body any, result any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	address := m.options.RuntimeAddr
+	if !strings.Contains(address, "://") {
+		address = "http://" + address
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(address, "/")+"/internal/runtime/executions/"+operation, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Nanoflare-Runner-Token", m.controlToken)
+	response, err := m.controlClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("execution %s: HTTP %d: %s", operation, response.StatusCode, message)
+	}
+	if result != nil {
+		return json.NewDecoder(response.Body).Decode(result)
+	}
+	io.Copy(io.Discard, response.Body)
+	return nil
+}
+func (m *DynamicManager) openSession() error {
+	var response struct {
+		Session string `json:"session_id"`
+	}
+	if err := m.control(context.Background(), "open-session", struct{}{}, &response); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.session = response.Session
+	m.mu.Unlock()
+	return nil
+}
+func (m *DynamicManager) boot() error {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return errors.New("runtime manager is closed")
+	}
+	if m.process != nil {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+	if m.controlToken == "" {
+		return errors.New("runtime control credential is required")
+	}
+	if m.broker == nil {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+		m.brokerToken = rand.Text()
+		m.brokerAddr = listener.Addr().String()
+		m.broker = &http.Server{Handler: http.HandlerFunc(m.serveBroker), ReadHeaderTimeout: 10 * time.Second}
+		go m.broker.Serve(listener)
+		if err := m.openSession(); err != nil {
+			m.broker.Close()
+			m.broker = nil
+			return err
+		}
+		m.background.Add(1)
+		go m.heartbeat()
+	}
+	if err := os.MkdirAll(m.socketDir, 0700); err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp(m.socketDir, "d-")
+	if err != nil {
+		return err
+	}
+	m.processDir = dir
+	m.socketPath = filepath.Join(dir, "dispatcher.sock")
+	if len(m.socketPath) > 100 {
+		os.RemoveAll(dir)
+		return errors.New("runtime socket path exceeds 100 bytes; use a shorter socket directory")
+	}
+	m.dispatcherToken = rand.Text()
+	if err := os.MkdirAll(m.configDir, 0700); err != nil {
+		return err
+	}
+	m.configPath = filepath.Join(m.configDir, "dynamic-dispatcher.capnp")
+	if err := os.WriteFile(m.configPath, []byte(config.DynamicDispatcher(m.options, m.socketPath, m.brokerAddr, m.brokerToken, m.dispatcherToken)), 0600); err != nil {
+		return err
+	}
+	launcher := m.launcher
+	switch l := launcher.(type) {
+	case CommandLauncher:
+		l.Experimental = true
+		launcher = l
+	case *CommandLauncher:
+		copy := *l
+		copy.Experimental = true
+		launcher = copy
+	}
+	process, err := launcher.Launch(m.configPath, nil)
+	if err != nil {
+		os.RemoveAll(dir)
+		return err
+	}
+	helper := Manager{healthTimeout: m.healthTimeout}
+	if err := helper.waitHealthy(process, []nanoflare.ActiveDeployment{{SocketPath: m.socketPath}}); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), m.stopTimeout)
+		defer cancel()
+		process.Stop(ctx)
+		os.RemoveAll(dir)
+		return err
+	}
+	m.mu.Lock()
+	m.process = process
+	for _, s := range m.snapshots {
+		s.validated = false
+	}
+	m.mu.Unlock()
+	m.background.Add(1)
+	go m.watchDynamic(process, dir)
+	return nil
+}
+func (m *DynamicManager) heartbeat() {
+	defer m.background.Done()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.stop:
+			return
+		case <-ticker.C:
+			m.mu.Lock()
+			session := m.session
+			m.mu.Unlock()
+			if err := m.control(context.Background(), "heartbeat", map[string]string{"session_id": session}, nil); err != nil {
+				log.Printf("runtime session heartbeat: %v", err)
+				m.recoverSession()
+			} else {
+				m.flushReleases()
+				m.collectSnapshots()
+			}
+		}
+	}
+}
+
+// A lost control session invalidates live capability tokens. Stop its runtime
+// before reopening admission; never continue an old invocation under new grants.
+func (m *DynamicManager) recoverSession() {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	previousSession := m.session
+	previousDir := m.processDir
+	process := m.process
+	m.process = nil
+	m.session = ""
+	m.invocations = map[string]*dynamicInvocation{}
+	m.mu.Unlock()
+	if process != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), m.stopTimeout)
+		process.Stop(ctx)
+		cancel()
+	}
+	if previousDir != "" {
+		os.RemoveAll(previousDir)
+	}
+	if previousSession != "" {
+		m.control(context.Background(), "close-session", map[string]string{"session_id": previousSession}, nil)
+	}
+	m.collectSnapshots()
+	if err := m.openSession(); err != nil {
+		log.Printf("reopen runtime session: %v", err)
+		return
+	}
+	m.mu.Lock()
+	session := m.session
+	items := make([]*dynamicSnapshot, 0, len(m.snapshots))
+	for _, snapshot := range m.snapshots {
+		items = append(items, snapshot)
+	}
+	m.mu.Unlock()
+	for _, snapshot := range items {
+		if err := m.register(snapshot.frozen); err != nil {
+			m.mu.Lock()
+			m.session = ""
+			m.mu.Unlock()
+			log.Printf("restore execution: %v", err)
+			return
+		}
+		m.mu.Lock()
+		snapshot.registeredSession = session
+		m.mu.Unlock()
+	}
+	if err := m.boot(); err != nil {
+		log.Printf("restart dispatcher after session recovery: %v", err)
+	}
+}
+
+func (m *DynamicManager) register(snapshot *nanoflare.ExecutionSnapshot) error {
+	active := snapshot.ActiveDeployment()
+	var response struct {
+		ID string `json:"execution_id"`
+	}
+	if err := m.control(context.Background(), "register", map[string]any{"active": active, "secret_values": active.App.SecretValues, "object_key": active.Deployment.ObjectKey, "compile_options": m.compileOptions}, &response); err != nil {
+		return err
+	}
+	if response.ID != snapshot.ID() {
+		return errors.New("execution snapshot identity mismatch")
+	}
+	return nil
+}
+func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]string, error) {
+	m.mu.Lock()
+	m.staging++
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.staging--; m.mu.Unlock() }()
+	if validator, ok := m.writer.(interface {
+		ValidateRuntime([]nanoflare.ActiveDeployment) error
+	}); ok {
+		if err := validator.ValidateRuntime(active); err != nil {
+			return nil, err
+		}
+	}
+	keys := map[string]string{}
+	for _, item := range active {
+		snapshot, err := nanoflare.FreezeExecution(item, m.compileOptions)
+		if err != nil {
+			return nil, err
+		}
+		key := snapshot.ID()
+		m.mu.Lock()
+		existing := m.snapshots[key]
+		m.mu.Unlock()
+		if existing == nil {
+			code := config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(snapshot.ActiveDeployment(), m.options), snapshot.ActiveDeployment())
+			// Reject duplicate module declarations before native code loading.
+			if _, err := json.Marshal(code); err != nil {
+				return nil, err
+			}
+			existing = &dynamicSnapshot{frozen: snapshot, code: code}
+			m.mu.Lock()
+			m.snapshots[key] = existing
+			m.mu.Unlock()
+		}
+		m.mu.Lock()
+		session := m.session
+		isCommitted := false
+		for _, committedKey := range m.committed {
+			if committedKey == key {
+				isCommitted = true
+				break
+			}
+		}
+		needsRegister := existing.registeredSession != session || !isCommitted
+		m.mu.Unlock()
+		if needsRegister {
+			if err := m.register(snapshot); err != nil {
+				return nil, err
+			}
+			m.mu.Lock()
+			existing.registeredSession = session
+			m.mu.Unlock()
+		}
+		m.mu.Lock()
+		validated := existing.validated
+		m.mu.Unlock()
+		if !validated {
+			request, _ := http.NewRequest(http.MethodPost, "http://"+SocketHost(m.socketPath)+"/__nanoflare_validate", nil)
+			request.Header.Set("X-Nanoflare-Dispatcher-Token", m.dispatcherToken)
+			request.Header.Set("X-Nanoflare-Execution", key)
+			ctx, cancel := context.WithTimeout(context.Background(), m.healthTimeout)
+			request = request.WithContext(ctx)
+			response, err := m.client.Do(request)
+			if err != nil {
+				cancel()
+				return nil, fmt.Errorf("validate Worker: %w", err)
+			}
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
+			response.Body.Close()
+			cancel()
+			if response.StatusCode != 204 {
+				return nil, fmt.Errorf("validate Worker %s: HTTP %d: %s", item.App.Name, response.StatusCode, body)
+			}
+			m.mu.Lock()
+			existing.validated = true
+			m.mu.Unlock()
+		}
+		keys[dynamicIdentity(item)] = key
+	}
+	return keys, nil
+}
+func (m *DynamicManager) ValidatePublication(active []nanoflare.ActiveDeployment) error {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	if err := m.boot(); err != nil {
+		return err
+	}
+	_, err := m.build(active)
+	return err
+}
+func (m *DynamicManager) Prepare(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	return m.prepareDynamic(active)
+}
+func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+	m.mu.Lock()
+	pending := m.pending != nil
+	m.mu.Unlock()
+	if pending {
+		return "", nil, errors.New("runtime publication already pending")
+	}
+	if err := m.boot(); err != nil {
+		return "", nil, err
+	}
+	keys, err := m.build(active)
+	if err != nil {
+		return "", nil, err
+	}
+	routed := make([]nanoflare.ActiveDeployment, len(active))
+	for i, item := range active {
+		detached, err := nanoflare.FreezeExecution(item, m.compileOptions)
+		if err != nil {
+			return "", nil, err
+		}
+		routed[i] = detached.ActiveDeployment()
+		routed[i].SocketPath = m.socketPath
+		routed[i].Deployment.Port = 0
+	}
+	id := rand.Text()
+	m.mu.Lock()
+	m.pending = &dynamicPublication{id: id, keys: keys, active: routed}
+	m.mu.Unlock()
+	return id, routed, nil
+}
+func (m *DynamicManager) Commit(id string) error {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	return m.commitDynamic(id)
+}
+func (m *DynamicManager) commitDynamic(id string) error {
+	m.mu.Lock()
+	if m.closed || m.pending == nil || m.pending.id != id {
+		m.mu.Unlock()
+		return errors.New("runtime publication is not pending")
+	}
+	publication := m.pending
+	m.pending = nil
+	previous := m.committed
+	m.committed = publication.keys
+	m.active = publication.active
+	oldScheduler := m.scheduler
+	m.scheduler = nil
+	m.mu.Unlock()
+	if oldScheduler != nil {
+		oldScheduler.Stop()
+	}
+	scheduler := startCronRunner(publication.active, m.output, m.Ensure)
+	m.mu.Lock()
+	m.scheduler = scheduler
+	m.mu.Unlock()
+	retained := map[string]bool{}
+	for _, key := range publication.keys {
+		retained[key] = true
+	}
+	for _, key := range previous {
+		if !retained[key] {
+			if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key}, nil); err != nil {
+				return err
+			}
+		}
+	}
+	m.collectSnapshots()
+	return nil
+}
+func (m *DynamicManager) Abort(id string) error {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	m.mu.Lock()
+	if m.pending == nil || m.pending.id != id {
+		m.mu.Unlock()
+		return errors.New("runtime publication is not pending")
+	}
+	m.pending = nil
+	m.mu.Unlock()
+	m.collectSnapshots()
+	return nil
+}
+func (m *DynamicManager) Write(active []nanoflare.ActiveDeployment) error {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	id, routed, err := m.prepareDynamic(active)
+	if err != nil {
+		return err
+	}
+	if err := m.writer.WriteTraefik(routed); err != nil {
+		m.mu.Lock()
+		m.pending = nil
+		m.mu.Unlock()
+		return err
+	}
+	return m.commitDynamic(id)
+}
+func (m *DynamicManager) admitLocked(ctx context.Context, key string, root *dynamicLifetime) (*dynamicInvocation, error) {
+	if m.closed || m.process == nil || m.session == "" {
+		return nil, errors.New("runtime unavailable")
+	}
+	var admission struct {
+		Token string `json:"token"`
+		Pin   string `json:"pin_id"`
+	}
+	// m.mu serializes admission with retirement and attaching child lifetimes.
+	m.nextAdmission++
+	sequence := strconv.FormatUint(m.nextAdmission, 10)
+	knownPin := m.session + ":" + sequence
+	if err := m.control(ctx, "admit", map[string]string{"execution_id": key, "session_id": m.session, "admission_id": sequence}, &admission); err != nil {
+		if m.pendingReleases == nil {
+			m.pendingReleases = map[string]string{}
+		}
+		m.pendingReleases[knownPin] = m.session
+		return nil, err
+	}
+	if admission.Pin != knownPin {
+		m.pendingReleases[knownPin] = m.session
+		return nil, errors.New("execution admission identity mismatch")
+	}
+	if root == nil {
+		root = &dynamicLifetime{}
+	}
+	invocation := &dynamicInvocation{key: key, token: admission.Token, pin: admission.Pin, root: root}
+	root.pending++
+	root.tokens = append(root.tokens, admission.Token)
+	m.invocations[admission.Token] = invocation
+	return invocation, nil
+}
+func (m *DynamicManager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (EnsuredWorker, error) {
+	m.mu.Lock()
+	key := m.committed[dynamicIdentity(active)]
+	if key == "" {
+		m.mu.Unlock()
+		return EnsuredWorker{}, errors.New("deployment is not published")
+	}
+	invocation, err := m.admitLocked(ctx, key, nil)
+	if err != nil {
+		m.mu.Unlock()
+		m.scheduleReleaseFlush()
+		return EnsuredWorker{}, err
+	}
+	headers := http.Header{}
+	headers.Set("X-Nanoflare-Dispatcher-Token", m.dispatcherToken)
+	headers.Set("X-Nanoflare-Execution", key)
+	headers.Set("X-Nanoflare-Invocation", invocation.token)
+	socket := m.socketPath
+	m.mu.Unlock()
+	var once sync.Once
+	return EnsuredWorker{SocketPath: socket, Headers: headers, Release: func() {
+		once.Do(func() {
+			m.mu.Lock()
+			invocation.root.responseDone = true
+			pins := m.cancelUnstartedLocked(invocation.root)
+			pins = append(pins, m.finishLocked(invocation.root)...)
+			m.mu.Unlock()
+			m.releasePins(pins)
+		})
+	}}, nil
+}
+
+// An admission that never reached user code has no background work. Removing
+// it under the same lock as /start prevents a late dispatch from acquiring it.
+func (m *DynamicManager) cancelUnstartedLocked(root *dynamicLifetime) []string {
+	pins := []string{}
+	for _, token := range root.tokens[:1] {
+		invocation := m.invocations[token]
+		if invocation != nil && !invocation.started {
+			if !invocation.complete {
+				root.pending--
+			}
+			pins = append(pins, invocation.pin)
+			delete(m.invocations, token)
+		}
+	}
+	return pins
+}
+func (m *DynamicManager) finishLocked(root *dynamicLifetime) []string {
+	if !root.responseDone || root.pending != 0 {
+		return nil
+	}
+	pins := []string{}
+	for _, token := range root.tokens {
+		if invocation := m.invocations[token]; invocation != nil {
+			pins = append(pins, invocation.pin)
+			delete(m.invocations, token)
+		}
+	}
+	return pins
+}
+func (m *DynamicManager) releasePins(pins []string) {
+	m.mu.Lock()
+	if m.pendingReleases == nil {
+		m.pendingReleases = map[string]string{}
+	}
+	for _, pin := range pins {
+		session, _, ok := strings.Cut(pin, ":")
+		if !ok {
+			session = m.session
+		}
+		m.pendingReleases[pin] = session
+	}
+	m.mu.Unlock()
+	m.flushReleases()
+	if len(pins) > 0 {
+		m.collectSnapshots()
+	}
+}
+func (m *DynamicManager) scheduleReleaseFlush() {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.background.Add(1)
+	m.mu.Unlock()
+	go func() { defer m.background.Done(); m.flushReleases() }()
+}
+func (m *DynamicManager) flushReleases() {
+	m.releaseMu.Lock()
+	defer m.releaseMu.Unlock()
+	m.mu.Lock()
+	pending := make(map[string]string, len(m.pendingReleases))
+	for pin, session := range m.pendingReleases {
+		pending[pin] = session
+	}
+	m.mu.Unlock()
+	for pin, session := range pending {
+		if err := m.control(context.Background(), "release", map[string]string{"pin_id": pin, "session_id": session}, nil); err != nil {
+			log.Printf("release execution pin: %v", err)
+			continue
+		}
+		m.mu.Lock()
+		delete(m.pendingReleases, pin)
+		m.mu.Unlock()
+	}
+}
+func (m *DynamicManager) collectSnapshots() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.staging > 0 {
+		return
+	}
+	retained := map[string]bool{}
+	for _, key := range m.committed {
+		retained[key] = true
+	}
+	if m.pending != nil {
+		for _, key := range m.pending.keys {
+			retained[key] = true
+		}
+	}
+	for _, invocation := range m.invocations {
+		retained[invocation.key] = true
+	}
+	for key := range m.snapshots {
+		if !retained[key] {
+			// Retirement and removal must precede any registration of the same key.
+			// Keep failed retirements for the next sweep, including idle heartbeat sweeps.
+			if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key}, nil); err != nil {
+				log.Printf("retire execution: %v", err)
+				continue
+			}
+			delete(m.snapshots, key)
+		}
+	}
+}
+
+func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Nanoflare-Broker-Token")), []byte(m.brokerToken)) != 1 {
+		http.Error(w, "invalid broker credential", 403)
+		return
+	}
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
+	if len(parts) < 2 {
+		http.NotFound(w, r)
+		return
+	}
+	operation, key := parts[0], parts[1]
+	m.mu.Lock()
+	snapshot := m.snapshots[key]
+	m.mu.Unlock()
+	if snapshot == nil {
+		http.Error(w, "unknown execution", 404)
+		return
+	}
+	active := snapshot.frozen.ActiveDeployment()
+	switch operation {
+	case "source":
+		env := map[string]any{"__NANOFLARE_APP_ID": active.App.ID, "__NANOFLARE_DEPLOYMENT_ID": active.Deployment.ID}
+		for name, value := range active.Deployment.Vars {
+			var decoded any
+			if err := json.Unmarshal(value, &decoded); err != nil {
+				http.Error(w, "invalid variable", 500)
+				return
+			}
+			env[name] = decoded
+		}
+		for name, value := range active.App.SecretValues {
+			env[name] = value
+		}
+		encoded, err := json.Marshal(snapshot.code)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		var result map[string]any
+		json.Unmarshal(encoded, &result)
+		result["env"] = env
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	case "start":
+		requestedEpoch := uint64(1)
+		if value := r.Header.Get("X-Nanoflare-Invocation-Epoch"); value != "" {
+			var err error
+			requestedEpoch, err = strconv.ParseUint(value, 10, 64)
+			if err != nil || requestedEpoch == 0 {
+				http.Error(w, "invalid epoch", 400)
+				return
+			}
+		}
+		m.mu.Lock()
+		invocation := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
+		if invocation == nil || invocation.key != key {
+			m.mu.Unlock()
+			http.Error(w, "invalid invocation", 403)
+			return
+		}
+		if invocation.started && requestedEpoch == invocation.epoch && !invocation.complete {
+			m.mu.Unlock()
+			w.WriteHeader(204)
+			return
+		}
+		if invocation.started {
+			if !invocation.complete || requestedEpoch != invocation.epoch+1 {
+				m.mu.Unlock()
+				http.Error(w, "invalid invocation epoch", 409)
+				return
+			}
+			invocation.complete = false
+			invocation.root.pending++
+		} else if requestedEpoch != 1 {
+			m.mu.Unlock()
+			http.Error(w, "invalid invocation epoch", 409)
+			return
+		}
+		invocation.started = true
+		invocation.epoch = requestedEpoch
+		m.mu.Unlock()
+		w.WriteHeader(204)
+	case "abandon":
+		m.mu.Lock()
+		invocation := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
+		if invocation == nil {
+			m.mu.Unlock()
+			w.WriteHeader(204)
+			return
+		}
+		if invocation.key != key {
+			m.mu.Unlock()
+			http.Error(w, "invalid invocation", 403)
+			return
+		}
+		if !invocation.started && !invocation.complete {
+			invocation.complete = true
+			invocation.root.pending--
+		}
+		pins := m.finishLocked(invocation.root)
+		m.mu.Unlock()
+		m.releasePins(pins)
+		w.WriteHeader(204)
+	case "complete":
+		m.mu.Lock()
+		invocation := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
+		if invocation == nil || invocation.key != key {
+			m.mu.Unlock()
+			http.Error(w, "invalid invocation", 403)
+			return
+		}
+		if epoch := r.Header.Get("X-Nanoflare-Invocation-Epoch"); epoch != "" {
+			completedEpoch, err := strconv.ParseUint(epoch, 10, 64)
+			if err != nil || completedEpoch == 0 || completedEpoch > invocation.epoch {
+				m.mu.Unlock()
+				http.Error(w, "invalid invocation epoch", 409)
+				return
+			}
+			if completedEpoch < invocation.epoch {
+				m.mu.Unlock()
+				w.WriteHeader(204)
+				return
+			}
+		}
+		if !invocation.complete {
+			invocation.complete = true
+			invocation.root.pending--
+		}
+		pins := m.finishLocked(invocation.root)
+		m.mu.Unlock()
+		m.releasePins(pins)
+		w.WriteHeader(204)
+	case "service":
+		if len(parts) != 3 {
+			http.Error(w, "missing service binding", 400)
+			return
+		}
+		m.mu.Lock()
+		caller := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
+		if caller == nil || caller.key != key || !caller.started {
+			m.mu.Unlock()
+			http.Error(w, "invalid invocation", 403)
+			return
+		}
+		name := ""
+		for _, binding := range active.Deployment.Services {
+			if binding.Binding == parts[2] {
+				name = binding.Service
+			}
+		}
+		candidates := []nanoflare.ActiveDeployment{}
+		total := 0
+		for _, a := range m.active {
+			if a.App.OrgID == active.App.OrgID && a.App.Name == name && a.TrafficPercent > 0 {
+				candidates = append(candidates, a)
+				total += a.TrafficPercent
+			}
+		}
+		targetKey := ""
+		if total > 0 {
+			choice, err := rand.Int(rand.Reader, big.NewInt(int64(total)))
+			if err != nil {
+				m.mu.Unlock()
+				http.Error(w, "service selection unavailable", 503)
+				return
+			}
+			remaining := int(choice.Int64())
+			for _, a := range candidates {
+				remaining -= a.TrafficPercent
+				if remaining < 0 {
+					targetKey = m.committed[dynamicIdentity(a)]
+					break
+				}
+			}
+		}
+		if name == "" || targetKey == "" {
+			m.mu.Unlock()
+			http.Error(w, "service is not published", 503)
+			return
+		}
+		invocation, err := m.admitLocked(r.Context(), targetKey, caller.root)
+		m.mu.Unlock()
+		if err != nil {
+			m.scheduleReleaseFlush()
+			http.Error(w, err.Error(), 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"key": targetKey, "token": invocation.token})
+	case "resource":
+		m.forwardResource(w, r, key, active, parts)
+	default:
+		http.NotFound(w, r)
+	}
+}
+func stripRuntimeHeaders(headers http.Header) {
+	for name := range headers {
+		if strings.HasPrefix(strings.ToLower(name), "x-nanoflare-") {
+			headers.Del(name)
+		}
+	}
+	headers.Del("Authorization")
+}
+func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request, key string, active nanoflare.ActiveDeployment, parts []string) {
+	binding := r.Header.Get("X-Nanoflare-Binding-Name")
+	token := r.Header.Get("X-Nanoflare-Invocation")
+	synthetic := binding == "__NANOFLARE_DNS" || binding == "__NANOFLARE_DURATION_COLLECTOR"
+	if !synthetic {
+		m.mu.Lock()
+		invocation := m.invocations[token]
+		allowed := invocation != nil && invocation.key == key && invocation.started
+		m.mu.Unlock()
+		if !allowed {
+			http.Error(w, "invalid invocation", 403)
+			return
+		}
+	}
+	headers := r.Header.Clone()
+	stripRuntimeHeaders(headers)
+	headers.Set("Authorization", "Bearer "+token)
+	destination := m.options.RuntimeAddr
+	path := "/"
+	if len(parts) == 3 {
+		path += parts[2]
+	}
+	query := r.URL.RawQuery
+	allowed := false
+	for _, b := range active.Deployment.KVNamespaces {
+		if b.Binding == binding {
+			headers.Set("X-Nanoflare-KV-Namespace-ID", b.ID)
+			allowed = true
+		}
+	}
+	for _, b := range active.Deployment.Databases {
+		if b.Binding == binding {
+			headers.Set("X-Nanoflare-Binding", "db")
+			headers.Set("X-Nanoflare-Database-ID", b.DatabaseID)
+			allowed = true
+		}
+	}
+	for _, b := range active.Deployment.ObjectStorageBuckets {
+		if b.Binding == binding {
+			headers.Set("X-Nanoflare-Object-Bucket-ID", b.BucketID)
+			allowed = true
+		}
+	}
+	assetBinding := active.Deployment.AssetConfig.Binding
+	if assetBinding == "" {
+		assetBinding = "ASSETS"
+	}
+	if binding == assetBinding && (len(active.Deployment.Assets) > 0 || active.Deployment.AssetConfig.Binding != "") {
+		headers.Set("X-Nanoflare-Binding", "assets")
+		headers.Set("X-Nanoflare-Deployment-ID", active.Deployment.ID)
+		allowed = true
+	}
+	if binding == "__NANOFLARE_DNS" && m.options.DNSAddr != "" {
+		destination = m.options.DNSAddr
+		path = "/lookup"
+		query = ""
+		headers.Set("X-Nanoflare-DNS-Profile", active.Deployment.DNS.Profile)
+		allowed = true
+	}
+	if binding == "__NANOFLARE_DURATION_COLLECTOR" {
+		path = "/internal/runtime/durations"
+		query = ""
+		allowed = true
+	}
+	if !synthetic {
+		path = "/internal/runtime/resources" + path
+	}
+	if !allowed {
+		http.Error(w, "undeclared resource binding", 403)
+		return
+	}
+	if !strings.Contains(destination, "://") {
+		destination = "http://" + destination
+	}
+	target, err := url.Parse(destination)
+	if err != nil {
+		http.Error(w, "invalid runtime address", 500)
+		return
+	}
+	target.Path = path
+	target.RawQuery = query
+	var body io.Reader = r.Body
+	if binding == "__NANOFLARE_DURATION_COLLECTOR" {
+		var events []DurationTraceEvent
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&events); err != nil {
+			http.Error(w, "invalid telemetry", 400)
+			return
+		}
+		for i := range events {
+			events[i].ScriptName = active.App.ID
+		}
+		data, _ := json.Marshal(events)
+		body = bytes.NewReader(data)
+	}
+	request, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), body)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	request.Header = headers
+	response, err := m.client.Do(request)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	defer response.Body.Close()
+	for name, values := range response.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+	w.WriteHeader(response.StatusCode)
+	io.Copy(w, response.Body)
+}
+func (m *DynamicManager) watchDynamic(process Process, dir string) {
+	defer m.background.Done()
+	err := <-process.Done()
+	m.mu.Lock()
+	if m.process != process {
+		m.mu.Unlock()
+		return
+	}
+	m.process = nil
+	pins := []string{}
+	for _, invocation := range m.invocations {
+		pins = append(pins, invocation.pin)
+	}
+	m.invocations = map[string]*dynamicInvocation{}
+	restart := m.autoRestart && !m.closed
+	m.mu.Unlock()
+	m.releasePins(pins)
+	os.RemoveAll(dir)
+	if !restart {
+		return
+	}
+	log.Printf("dynamic dispatcher exited: %v", err)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.stop:
+			return
+		case <-ticker.C:
+			m.publication.Lock()
+			err := m.boot()
+			m.publication.Unlock()
+			if err == nil {
+				return
+			}
+			log.Printf("restart dispatcher: %v", err)
+		}
+	}
+}
+func (m *DynamicManager) Close() error {
+	m.publication.Lock()
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		m.publication.Unlock()
+		return nil
+	}
+	m.closed = true
+	close(m.stop)
+	process := m.process
+	m.process = nil
+	scheduler := m.scheduler
+	session := m.session
+	m.mu.Unlock()
+	m.publication.Unlock()
+	if scheduler != nil {
+		scheduler.Stop()
+	}
+	var first error
+	if process != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), m.stopTimeout)
+		first = process.Stop(ctx)
+		cancel()
+	}
+	if m.broker != nil {
+		m.broker.Close()
+	}
+	if session != "" {
+		if err := m.control(context.Background(), "close-session", map[string]string{"session_id": session}, nil); first == nil {
+			first = err
+		}
+	}
+	m.background.Wait()
+	m.mu.Lock()
+	m.invocations = map[string]*dynamicInvocation{}
+	m.mu.Unlock()
+	if m.processDir != "" {
+		os.RemoveAll(m.processDir)
+	}
+	m.client.CloseIdleConnections()
+	m.controlClient.CloseIdleConnections()
+	return first
+}

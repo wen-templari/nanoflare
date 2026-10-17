@@ -563,6 +563,14 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 	}
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
 	request.Header = r.Header.Clone()
+	for name := range request.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-nanoflare-") {
+			delete(request.Header, name)
+		}
+	}
+	for name, values := range endpoint.Headers {
+		request.Header[name] = append([]string(nil), values...)
+	}
 	if endpoint.Token != "" {
 		request.Header.Set("X-Nanoflare-Runner-Token", endpoint.Token)
 	}

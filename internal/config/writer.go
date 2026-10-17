@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
-	"github.com/clas/nanoflare/internal/runtimeassets"
 )
 
 type Writer struct {
@@ -69,6 +68,21 @@ func (w *Writer) SetWorkerdDNSAddr(addr string)           { w.dnsAddr = strings.
 func (w *RuntimeWriter) SetWorkerdDNSAddr(addr string)    { w.dnsAddr = strings.TrimSpace(addr) }
 func (w *Writer) SetDNSProfiles(profiles []string)        { w.dnsProfiles = profileSet(profiles) }
 func (w *RuntimeWriter) SetDNSProfiles(profiles []string) { w.dnsProfiles = profileSet(profiles) }
+
+// RuntimeOptions returns a detached snapshot of the runtime compiler options.
+func (w *Writer) ValidateRuntime(active []nanoflare.ActiveDeployment) error {
+	return validateDNSProfiles(active, w.dnsProfiles)
+}
+func (w *RuntimeWriter) ValidateRuntime(active []nanoflare.ActiveDeployment) error {
+	return validateDNSProfiles(active, w.dnsProfiles)
+}
+
+func (w *Writer) RuntimeOptions() WorkerdOptions {
+	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr}
+}
+func (w *RuntimeWriter) RuntimeOptions() WorkerdOptions {
+	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr}
+}
 
 func DefaultNetworkAllow() []string {
 	return []string{"public", "10.0.0.0/8"}
@@ -213,14 +227,15 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		nodeCompatibility := effectiveNodeCompatibility(item.Deployment)
 		dnsEnabled := strings.TrimSpace(options.DNSAddr) != "" && nodeCompatibility.runtime
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(deploymentServiceName(item)))
-		writeWorkerSource(&out, item, dnsEnabled, nodeCompatibility.v2)
+		code := SnapshotWorkerCode(item, options)
+		writeWorkerSource(&out, code)
 		if strings.TrimSpace(options.EgressAddr) != "" {
 			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
 		}
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(workerBindings(item, active, dnsEnabled), ", "))
-		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
-		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(outputIdentityCompatibilityFlags(item.Deployment.CompatibilityFlags)))
+		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(code.CompatibilityDate))
+		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(code.CompatibilityFlags))
 		out.WriteString(");\n")
 	}
 	return out.String()
@@ -324,35 +339,10 @@ func activeServiceByName(active []nanoflare.ActiveDeployment, orgID, name string
 	return nanoflare.ActiveDeployment{}, false
 }
 
-func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment, dnsEnabled, nodeCompatibilityV2 bool) {
-	deployment := item.Deployment
-	if deploymentFormat(deployment) == "service-worker" {
-		source := deployment.Files[0].Content
-		if dnsEnabled {
-			source = rewriteDNSImports(source, nodeCompatibilityV2)
-			fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s), (name = \"nanoflare-internal:runtime-bindings\", esModule = %s), (name = \"nanoflare-internal:dns\", esModule = %s), (name = \"nanoflare-internal:dns/promises\", esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)), quote(runtimeassets.BindingsModule), quote(dnsShimSource()), quote(dnsPromisesShimSource()))
-			return
-		}
-		fmt.Fprintf(out, "  modules = [(name = %s, esModule = %s), (name = \"nanoflare-internal:runtime-bindings\", esModule = %s)],\n", quote("__nanoflare_internal_entrypoint__.js"), quote(serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets)), quote(runtimeassets.BindingsModule))
-		return
-	}
+func writeWorkerSource(out *strings.Builder, code WorkerCodeSnapshot) {
 	out.WriteString("  modules = [\n")
-	if workerEntrypointModule(deployment) {
-		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(workerEntrypointInstrumentationWrapper(deployment.Entrypoint)))
-	} else {
-		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote("__nanoflare_internal_entrypoint__.js"), quote(entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)))
-	}
-	fmt.Fprintf(out, "    (name = \"nanoflare-internal:runtime-bindings\", esModule = %s),\n", quote(runtimeassets.BindingsModule))
-	for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
-		source := file.Content
-		if dnsEnabled {
-			source = rewriteDNSImportsForModule(source, nodeCompatibilityV2, file.Path)
-		}
-		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(workerdSafeSource(source)))
-	}
-	if dnsEnabled {
-		fmt.Fprintf(out, "    (name = \"nanoflare-internal:dns\", esModule = %s),\n", quote(dnsShimSource()))
-		fmt.Fprintf(out, "    (name = \"nanoflare-internal:dns/promises\", esModule = %s),\n", quote(dnsPromisesShimSource()))
+	for _, name := range code.moduleOrder {
+		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(name), quote(code.Modules[name].JS))
 	}
 	out.WriteString("  ],\n")
 }

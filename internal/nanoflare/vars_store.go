@@ -29,6 +29,7 @@ func (s *Store) BeginVarsUpdate(op VarsUpdateOperation, next Deployment, expecte
 	}
 	s.deployments[op.AppID] = append(s.deployments[op.AppID], next)
 	s.active[op.AppID] = map[string]int{next.ID: 100}
+	s.advancePublication(op.AppID)
 	if s.varsUpdates[op.AppID] == nil {
 		s.varsUpdates[op.AppID] = make(map[string]VarsUpdateOperation)
 	}
@@ -46,4 +47,20 @@ func (s *Store) FinishVarsUpdate(appID, key, status string) error {
 	op.Status = status
 	s.varsUpdates[appID][key] = op
 	return nil
+}
+
+// PendingVarsUpdates includes rollback intent, so startup recovery can complete
+// it before publishing the current routing configuration.
+func (s *Store) PendingVarsUpdates() ([]VarsUpdateOperation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var pending []VarsUpdateOperation
+	for _, updates := range s.varsUpdates {
+		for _, op := range updates {
+			if op.Status == "pending" || op.Status == "rolling_back" {
+				pending = append(pending, op)
+			}
+		}
+	}
+	return pending, nil
 }

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -178,6 +180,12 @@ func main() {
 			traefikWriter.(*config.Writer).SetAuthHost(parsed.Hostname())
 		}
 	}
+	if *runnerURL != "" && *runnerToken == "" {
+		log.Fatal("runner token is required in remote runner mode")
+	}
+	if *runnerToken == "" {
+		*runnerToken = rand.Text()
+	}
 	if *runnerURL != "" {
 		client := runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
 		publisher = client
@@ -219,7 +227,7 @@ func main() {
 				_ = adapter.Close(ctx)
 			}()
 		}
-		manager := runtime.NewManager(
+		manager := runtime.NewDynamicManager(
 			writer,
 			runtime.CommandLauncher{Executable: *workerd, Output: output},
 			*configDir,
@@ -228,6 +236,7 @@ func main() {
 			10*time.Second,
 			5*time.Second,
 		)
+		manager.SetRuntimeControlToken(*runnerToken)
 		publisher = manager
 		runtimeEnsurer = manager
 		closeRuntime = func() {
@@ -287,13 +296,6 @@ func main() {
 		}
 		service.SetSecretCodec(codec)
 	}
-	active, err := service.ActiveDeployments()
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := publisher.Write(active); err != nil {
-		log.Fatal(err)
-	}
 	var authenticator api.Authenticator
 	if *oidcIssuer != "" && *oidcAudience != "" {
 		clientID := *oidcClientID
@@ -323,14 +325,24 @@ func main() {
 		server.SetControlOIDC(controlVerifier)
 		server.SetControlOIDCDirectLogin(*controlOIDCDirect)
 	}
-	runtimeMux := newRuntimeMux(service, server, durationTelemetry)
+	runtimeMux := newRuntimeMux(service, server, durationTelemetry, *runnerToken)
+	defer runtimeMux.Close()
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
+	privateListener, err := net.Listen("tcp", *runtimeAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer privateListener.Close()
 	go func() {
 		log.Printf("nanoflared runtime API listening on %s", *runtimeAddr)
-		if err := runtimeServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := runtimeServer.Serve(privateListener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("runtime API: %v", err)
 		}
 	}()
+
+	if err := service.ReconcilePublications(); err != nil {
+		log.Fatal(err)
+	}
 
 	log.Printf("nanoflared listening on %s", *addr)
 	log.Printf("runtime configs will be written to %s", *configDir)
@@ -380,15 +392,25 @@ func envFloatOrDefault(name string, fallback float64) float64 {
 	return parsed
 }
 
-func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry) *http.ServeMux {
+func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry, controlToken ...string) *privateRuntimeMux {
 	runtimeMux := http.NewServeMux()
+	token := ""
+	if len(controlToken) > 0 {
+		token = controlToken[0]
+	}
+	executions := api.NewRuntimeExecutionServer(service, token)
+	runtimeMux.Handle("/internal/runtime/executions/", executions)
 	runtimeKV := api.NewRuntimeKVServer(service)
 	runtimeDB := api.NewRuntimeDBServer(service)
 	runtimeAssets := api.NewRuntimeAssetServer(service)
 	runtimeDurations := api.NewRuntimeDurationServer(durationTelemetry)
 	runtimeMux.Handle("/internal/runtime/objects/", server)
 	runtimeMux.Handle("/internal/runtime/durations", runtimeDurations)
-	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	resourceHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanoflare-Object-Bucket-ID") != "" {
+			server.ServeHTTP(w, r)
+			return
+		}
 		if r.Header.Get("X-Nanoflare-Binding") == "assets" {
 			runtimeAssets.ServeHTTP(w, r)
 			return
@@ -398,7 +420,17 @@ func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelem
 			return
 		}
 		runtimeKV.ServeHTTP(w, r)
-	}))
+	})
+	runtimeMux.Handle("/", resourceHandler)
+	runtimeMux.Handle("/internal/runtime/resources/", http.StripPrefix("/internal/runtime/resources", resourceHandler))
 	runtimeMux.Handle("/internal/runtime/assets/", runtimeAssets)
-	return runtimeMux
+	return &privateRuntimeMux{ServeMux: runtimeMux, executions: executions}
 }
+
+// privateRuntimeMux owns control sessions for the lifetime of the private server.
+type privateRuntimeMux struct {
+	*http.ServeMux
+	executions *api.RuntimeExecutionServer
+}
+
+func (m *privateRuntimeMux) Close() error { return m.executions.Close() }

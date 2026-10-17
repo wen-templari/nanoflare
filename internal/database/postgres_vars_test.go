@@ -105,6 +105,13 @@ func TestPostgresVarsActivationAndDurableRetries(t *testing.T) {
 	if err != nil || !found || saved.Status != "succeeded" || saved.Result != op.Result {
 		t.Fatalf("durable op=%#v, %v, %v", saved, found, err)
 	}
+	states, err := reopened.PublicationStates()
+	if err != nil || len(states) != 1 || states[0].Generation != 2 || states[0].PublishedGeneration != 0 || len(states[0].Traffic) != 1 || states[0].Traffic[0].ID != next.ID {
+		t.Fatalf("durable publication=%#v, %v", states, err)
+	}
+	if err := reopened.AcknowledgePublication(app.ID, 2); err != nil {
+		t.Fatal(err)
+	}
 	// A failed INSERT must roll back the traffic change and request reservation.
 	bad := next
 	bad.ID = base.ID
@@ -120,6 +127,17 @@ func TestPostgresVarsActivationAndDurableRetries(t *testing.T) {
 	active, err = repo.ActiveDeploymentsForApp(app.ID)
 	if err != nil || len(active) != 1 || active[0].Deployment.ID != next.ID {
 		t.Fatalf("failed insertion changed traffic: %#v, %v", active, err)
+	}
+	states, err = repo.PublicationStates()
+	if err != nil || len(states) != 1 || states[0].Generation != 2 || states[0].PublishedGeneration != 2 {
+		t.Fatalf("failed transaction altered publication: %#v, %v", states, err)
+	}
+	if err := repo.SetActiveTraffic(app.ID, []nanoflare.DeploymentTraffic{{ID: base.ID, TrafficPercent: 30}, {ID: next.ID, TrafficPercent: 70}}); err != nil {
+		t.Fatal(err)
+	}
+	states, err = reopened.PublicationStates()
+	if err != nil || len(states) != 1 || states[0].Generation != 3 || states[0].PublishedGeneration != 2 || len(states[0].Traffic) != 2 {
+		t.Fatalf("traffic publication not durable: %#v, %v", states, err)
 	}
 	// The publication guard is shared between connections/processes.
 	release, err := repo.LockDeploymentUpdates()

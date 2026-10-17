@@ -126,6 +126,7 @@ func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 	ctx, cancel := context.WithTimeout(r.ctx, 120*time.Second)
 	defer cancel()
 	socketPath := job.active.SocketPath
+	var headers http.Header
 	if r.ensure != nil {
 		ensured, err := r.ensure(ctx, job.active)
 		if err != nil {
@@ -133,6 +134,7 @@ func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 		}
 		defer ensured.Release()
 		socketPath = ensured.SocketPath
+		headers = ensured.Headers
 	}
 	if socketPath == "" {
 		return fmt.Errorf("Worker %s has no runtime socket", job.appID)
@@ -149,6 +151,9 @@ func (r *cronRunner) invoke(now time.Time, job cronJob) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return err
+	}
+	for name, values := range headers {
+		request.Header[name] = append([]string(nil), values...)
 	}
 	response, err := r.client.Do(request)
 	if err != nil {

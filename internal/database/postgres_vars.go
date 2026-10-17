@@ -116,3 +116,24 @@ func (p *Postgres) FinishVarsUpdate(appID, key, status string) error {
 	}
 	return err
 }
+
+func (p *Postgres) PendingVarsUpdates() ([]nanoflare.VarsUpdateOperation, error) {
+	rows, err := p.db.Query(`SELECT worker_id,idempotency_key,fingerprint,status,result FROM worker_vars_updates WHERE status IN ('pending','rolling_back') ORDER BY worker_id,idempotency_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pending []nanoflare.VarsUpdateOperation
+	for rows.Next() {
+		var op nanoflare.VarsUpdateOperation
+		var result []byte
+		if err := rows.Scan(&op.AppID, &op.Key, &op.Fingerprint, &op.Status, &result); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(result, &op.Result); err != nil {
+			return nil, err
+		}
+		pending = append(pending, op)
+	}
+	return pending, rows.Err()
+}

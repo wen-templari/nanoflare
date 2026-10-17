@@ -14,6 +14,7 @@ type EnsuredWorker struct {
 	SocketPath string
 	URL        string
 	Token      string
+	Headers    http.Header
 	Port       int // Legacy TCP endpoints used by compatibility tests.
 	Release    func()
 }

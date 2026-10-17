@@ -135,7 +135,10 @@ type Repository interface {
 	ListSecrets(string) ([]SecretRecord, error)
 	PutSecret(string, SecretRecord) error
 	DeleteSecret(string, string) error
+	PublicationStates() ([]WorkerPublication, error)
+	AcknowledgePublication(string, uint64) error
 	LockDeploymentUpdates() (func(), error)
+	PendingVarsUpdates() ([]VarsUpdateOperation, error)
 	VarsUpdate(appID, key string) (VarsUpdateOperation, bool, error)
 	BeginVarsUpdate(VarsUpdateOperation, Deployment, string) error
 	FinishVarsUpdate(appID, key, status string) error
@@ -168,6 +171,7 @@ type Repository interface {
 
 type Store struct {
 	deploymentMu        sync.Mutex
+	publications        map[string]WorkerPublication
 	varsUpdates         map[string]map[string]VarsUpdateOperation
 	mu                  sync.RWMutex
 	users               map[string]User
@@ -207,6 +211,7 @@ type runtimeKVValue struct {
 
 func NewStore() *Store {
 	return &Store{
+		publications:        make(map[string]WorkerPublication),
 		varsUpdates:         make(map[string]map[string]VarsUpdateOperation),
 		users:               make(map[string]User),
 		usersByEmail:        make(map[string]string),
@@ -1085,6 +1090,7 @@ func (s *Store) DeleteApp(appID string) error {
 	delete(s.secrets, appID)
 	delete(s.deployments, appID)
 	delete(s.varsUpdates, appID)
+	delete(s.publications, appID)
 	delete(s.active, appID)
 	delete(s.capabilityToApp, app.RuntimeToken)
 	return nil
@@ -1528,6 +1534,7 @@ func (s *Store) Activate(deployment Deployment) error {
 	}
 	s.deployments[deployment.AppID] = append(s.deployments[deployment.AppID], deployment)
 	s.active[deployment.AppID] = map[string]int{deployment.ID: 100}
+	s.advancePublication(deployment.AppID)
 	return nil
 }
 
@@ -1546,6 +1553,7 @@ func (s *Store) SetActiveTraffic(appID string, traffic []DeploymentTraffic) erro
 	}
 	if len(traffic) == 0 {
 		delete(s.active, appID)
+		s.advancePublication(appID)
 		return nil
 	}
 	next := make(map[string]int, len(traffic))
@@ -1563,6 +1571,7 @@ func (s *Store) SetActiveTraffic(appID string, traffic []DeploymentTraffic) erro
 		next[item.ID] = item.TrafficPercent
 	}
 	s.active[appID] = next
+	s.advancePublication(appID)
 	return nil
 }
 

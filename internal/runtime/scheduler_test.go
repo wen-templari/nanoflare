@@ -10,7 +10,8 @@ import (
 )
 
 type recordingCronClient struct {
-	urls []string
+	urls    []string
+	headers []http.Header
 }
 
 func TestCronRunnerUsesLeasedGenerationSocket(t *testing.T) {
@@ -22,11 +23,14 @@ func TestCronRunnerUsesLeasedGenerationSocket(t *testing.T) {
 	client := &recordingCronClient{}
 	released := false
 	runner := newCronRunner([]nanoflare.ActiveDeployment{active}, nil, client, func(context.Context, nanoflare.ActiveDeployment) (EnsuredWorker, error) {
-		return EnsuredWorker{SocketPath: "/tmp/current.sock", Release: func() { released = true }}, nil
+		return EnsuredWorker{SocketPath: "/tmp/current.sock", Headers: http.Header{"X-Nanoflare-Execution": []string{"cron-execution"}}, Release: func() { released = true }}, nil
 	})
 	defer runner.cancel()
 	if err := runner.invoke(time.Date(2026, 7, 11, 12, 10, 0, 0, time.UTC), runner.jobs[0]); err != nil {
 		t.Fatal(err)
+	}
+	if len(client.headers) != 1 || client.headers[0].Get("X-Nanoflare-Execution") != "cron-execution" {
+		t.Fatal("cron did not forward execution identity")
 	}
 	if !released || len(client.urls) != 1 || client.urls[0] != "http://"+SocketHost("/tmp/current.sock")+"/cdn-cgi/handler/scheduled?cron=%2A+%2A+%2A+%2A+%2A&time=1783771800" {
 		t.Fatalf("cron did not use and release the current generation socket: %#v, released=%v", client.urls, released)
@@ -35,6 +39,7 @@ func TestCronRunnerUsesLeasedGenerationSocket(t *testing.T) {
 
 func (c *recordingCronClient) Do(request *http.Request) (*http.Response, error) {
 	c.urls = append(c.urls, request.URL.String())
+	c.headers = append(c.headers, request.Header.Clone())
 	return &http.Response{
 		StatusCode: http.StatusNoContent,
 		Status:     "204 No Content",
