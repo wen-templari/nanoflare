@@ -1,6 +1,11 @@
 name: Release Please
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/release-please.yml
+      - scripts/release-please.mjs
+      - scripts/release-please.test.mjs
   push:
     branches:
       - main
@@ -11,19 +16,41 @@ permissions:
   issues: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/release-please.test.mjs
+
   release-please:
+    if: github.event_name == 'push'
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: googleapis/release-please-action@v4
-        id: release
+      - uses: actions/setup-node@v4
         with:
+          node-version: 22
+
+      - name: Install Release Please runtime
+        env:
+          RELEASE_PLEASE_RUNTIME: ${{ runner.temp }}/release-please
+        run: npm install --prefix "$RELEASE_PLEASE_RUNTIME" --ignore-scripts --no-audit --no-fund --package-lock=false release-please@17.3.0
+
+      - name: Run Release Please with GitHub query retries
+        id: release
+        env:
           # A GitHub App token (preferred) or bot PAT is required so that the
           # created tags, releases, and PRs trigger the downstream workflows.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          RELEASE_PLEASE_RUNTIME: ${{ runner.temp }}/release-please
+        run: node scripts/release-please.mjs
 
       - name: Update CLI version in created templates
         if: steps.release.outputs.prs_created == 'true'
