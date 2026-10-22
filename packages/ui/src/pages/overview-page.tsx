@@ -137,10 +137,10 @@ export function OverviewPage() {
             values={metrics.errorSeries}
           />
           <MetricPanel
-            label="Worker CPU time p90"
-            value={metrics.available ? formatMilliseconds(metrics.cpuTimeP90) : "—"}
-            note="p90 execution time across reporting workers"
-            values={metrics.cpuTimeP90Series}
+            label="Highest worker elapsed p90"
+            value={metrics.available ? formatMilliseconds(metrics.durationP90) : "—"}
+            note="Highest per-worker p90 elapsed duration"
+            values={metrics.durationP90Series}
           />
         </div>
       </section>
@@ -154,12 +154,12 @@ function toTraffic(data: {
   invocations?: { timestamp: string; value: number }[] | null;
   requests?: { timestamp: string; value: number }[] | null;
   errors?: { timestamp: string; value: number }[] | null;
-  cpu_time_p90_ms?: { timestamp: string; value: number }[] | null;
+  duration_p90_ms?: { timestamp: string; value: number }[] | null;
 }): WorkerTraffic {
   const requests = data.invocations ?? data.requests ?? [];
   const errors = data.errors ?? [];
   const totalRequests = data.total_requests ?? [];
-  const cpuTimeP90 = data.cpu_time_p90_ms ?? [];
+  const durationP90 = data.duration_p90_ms ?? [];
   return {
     available: Boolean(data.available),
     requests_per_second: (requests[requests.length - 1]?.value ?? 0) / 300,
@@ -172,7 +172,7 @@ function toTraffic(data: {
     traffic: requests.map((point) => point.value),
     request_series: requests,
     error_series: errors.map((point) => point.value),
-    cpu_time_p90_ms: cpuTimeP90.map((point) => point.value),
+    duration_p90_ms: durationP90.map((point) => point.value),
     duration_ms_avg: 0,
     duration_ms_p95: 0,
     duration_ms_per_second: 0,
@@ -262,14 +262,14 @@ function aggregateTraffic(items: WorkerTraffic[]) {
     traffic: sumSeries(reporting.map((item) => item.traffic ?? [])),
     totalRequestSeries: sumSeries(reporting.map((item) => item.total_requests ?? [])),
     errorSeries: sumSeries(reporting.map((item) => item.error_series ?? [])),
-    cpuTimeP90: Math.max(
+    durationP90: Math.max(
       0,
       ...reporting.map((item) => {
-        const values = item.cpu_time_p90_ms ?? [];
+        const values = item.duration_p90_ms ?? [];
         return values[values.length - 1] ?? 0;
       }),
     ),
-    cpuTimeP90Series: sumSeries(reporting.map((item) => item.cpu_time_p90_ms ?? [])),
+    durationP90Series: maxSeries(reporting.map((item) => item.duration_p90_ms ?? [])),
   };
 }
 
@@ -289,4 +289,11 @@ function formatCount(value: number) {
 function formatMilliseconds(value: number) {
   if (value >= 1_000) return `${(value / 1_000).toFixed(2)} s`;
   return `${value.toFixed(value < 10 ? 1 : 0)} ms`;
+}
+
+function maxSeries(series: number[][]) {
+  const length = Math.max(0, ...series.map((values) => values.length));
+  return Array.from({ length }, (_, index) =>
+    Math.max(0, ...series.map((values) => values[index - (length - values.length)] ?? 0)),
+  );
 }

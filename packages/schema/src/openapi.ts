@@ -534,6 +534,130 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/dispatch-namespaces": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listDispatchNamespaces */
+    get: operations["listDispatchNamespaces"];
+    put?: never;
+    /** createDispatchNamespace */
+    post: operations["createDispatchNamespace"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/dispatch-namespaces/{namespaceID}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getDispatchNamespace */
+    get: operations["getDispatchNamespace"];
+    put?: never;
+    post?: never;
+    /** deleteDispatchNamespace */
+    delete: operations["deleteDispatchNamespace"];
+    options?: never;
+    head?: never;
+    /** renameDispatchNamespace */
+    patch: operations["renameDispatchNamespace"];
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/dispatch-namespaces/{namespaceID}/grants": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** setNamespaceGrants */
+    put: operations["setNamespaceGrants"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/dispatch-namespaces/{namespaceID}/policies": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listNamespacePolicies */
+    get: operations["listNamespacePolicies"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/dispatch-namespaces/{namespaceID}/scripts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listNamespaceScripts */
+    get: operations["listNamespaceScripts"];
+    put?: never;
+    /** createNamespaceScript */
+    post: operations["createNamespaceScript"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/dispatch-namespaces/{namespaceID}/scripts/{scriptName}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getNamespaceScript */
+    get: operations["getNamespaceScript"];
+    put?: never;
+    post?: never;
+    /** deleteNamespaceScript */
+    delete: operations["deleteNamespaceScript"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/dispatch-namespaces/{namespaceID}/scripts/{scriptName}/artifact": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** resolveNamespaceArtifact */
+    get: operations["resolveNamespaceArtifact"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/invites": {
     parameters: {
       query?: never;
@@ -1064,6 +1188,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/workers/{workerID}/capabilities": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getWorkerCapabilities */
+    get: operations["getWorkerCapabilities"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/workers/{workerID}/deployment-traffic": {
     parameters: {
       query?: never;
@@ -1091,8 +1232,28 @@ export interface paths {
     /** listWorkerDeployments */
     get: operations["listWorkerDeployments"];
     put?: never;
-    /** createWorkerDeployment */
+    /**
+     * createWorkerDeployment
+     * @description An optional worker-scoped idempotency_key (or Idempotency-Key header) returns the original revision on identical retries without reactivation. A reused key with different content or a confirmed failed publication returns 409. Inspect the publication endpoint after an uncertain response. Immutable artifacts pin source, configuration, asset digests and sealed secret versions. Runtime readiness is verified only when the configured publisher supports prepare/commit; route_published confirms configuration publication, not edge propagation.
+     */
     post: operations["createWorkerDeployment"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/workers/{workerID}/deployments/{deploymentID}/artifact": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getWorkerArtifact */
+    get: operations["getWorkerArtifact"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1197,6 +1358,40 @@ export interface paths {
     };
     /** getWorkerOutput */
     get: operations["getWorkerOutput"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/workers/{workerID}/publications": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listWorkerPublications */
+    get: operations["listWorkerPublications"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/workers/{workerID}/publications/{key}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getWorkerPublication */
+    get: operations["getWorkerPublication"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1318,6 +1513,25 @@ export interface components {
       name: string;
       oauth_client_id?: string;
       org_id?: string;
+      platform?: components["schemas"]["WorkerPlatform"];
+    };
+    ArtifactManifest: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/ArtifactManifest.json
+       */
+      readonly $schema?: string;
+      asset_digests: {
+        [key: string]: string;
+      };
+      /** Format: date-time */
+      created_at: string;
+      deployment_id: string;
+      digest: string;
+      namespace_policy?: components["schemas"]["NamespacePolicyRef"];
+      secret_refs: components["schemas"]["SecretRef"][] | null;
+      worker_id: string;
     };
     AssetConfig: {
       binding?: string;
@@ -1482,6 +1696,17 @@ export interface components {
       readonly $schema?: string;
       name: string;
     };
+    CreateDispatchNamespaceInput: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/CreateDispatchNamespaceInput.json
+       */
+      readonly $schema?: string;
+      customer_mode?: string;
+      name: string;
+      trust?: string;
+    };
     CreateInviteInput: {
       /**
        * Format: uri
@@ -1501,6 +1726,19 @@ export interface components {
       readonly $schema?: string;
       external_id?: string;
       name: string;
+    };
+    CreateNamespaceScriptInput: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/CreateNamespaceScriptInput.json
+       */
+      readonly $schema?: string;
+      customer_id?: string;
+      execution?: string;
+      kind?: string;
+      name?: string;
+      script_name: string;
     };
     CreateOAuthClientInput: {
       /**
@@ -1762,10 +2000,12 @@ export interface components {
       compatibility_date: string;
       compatibility_flags?: string[] | null;
       db?: components["schemas"]["DatabaseBinding"][] | null;
+      dispatch_namespaces?: components["schemas"]["DispatchBinding"][] | null;
       dns?: components["schemas"]["DNSSelection"];
       entrypoint?: string;
       files: components["schemas"]["WorkerFile"][] | null;
       format?: string;
+      idempotency_key?: string;
       kv_namespaces?: components["schemas"]["KVBinding"][] | null;
       object_storage_buckets?: components["schemas"]["ObjectStorageBucketBinding"][] | null;
       services?: components["schemas"]["ServiceBinding"][] | null;
@@ -1787,6 +2027,38 @@ export interface components {
        */
       readonly $schema?: string;
       deployments: components["schemas"]["DeploymentTraffic"][] | null;
+    };
+    DispatchBinding: {
+      binding: string;
+      namespace_id: string;
+    };
+    DispatchCounters: {
+      /** Format: int64 */
+      canceled: number;
+      /** Format: int64 */
+      completed: number;
+      /** Format: double */
+      elapsed_total_ms: number;
+      /** Format: int64 */
+      invocations: number;
+    };
+    DispatchNamespace: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/DispatchNamespace.json
+       */
+      readonly $schema?: string;
+      /** Format: date-time */
+      created_at: string;
+      customer_mode: string;
+      grants: components["schemas"]["NamespaceResourceGrant"][] | null;
+      id: string;
+      name: string;
+      org_id: string;
+      /** Format: int64 */
+      policy_revision: number;
+      trust: string;
     };
     InviteCreated: {
       /**
@@ -1871,6 +2143,35 @@ export interface components {
       timestamp: string;
       /** Format: double */
       value: number;
+    };
+    NamespaceGrantsInput: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/NamespaceGrantsInput.json
+       */
+      readonly $schema?: string;
+      /** Format: int64 */
+      expected_revision: number;
+      grants: components["schemas"]["NamespaceResourceGrant"][] | null;
+    };
+    NamespacePolicy: {
+      /** Format: date-time */
+      created_at: string;
+      grants: components["schemas"]["NamespaceResourceGrant"][] | null;
+      namespace_id: string;
+      /** Format: int64 */
+      revision: number;
+    };
+    NamespacePolicyRef: {
+      namespace_id: string;
+      /** Format: int64 */
+      revision: number;
+    };
+    NamespaceResourceGrant: {
+      customer_id?: string;
+      kind: string;
+      resource_id: string;
     };
     OAuthAuthorizeInput: {
       /**
@@ -2271,6 +2572,24 @@ export interface components {
       organization_name: string;
       requested_scopes: string[] | null;
     };
+    PublicationResult: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/PublicationResult.json
+       */
+      readonly $schema?: string;
+      /** Format: date-time */
+      created_at: string;
+      deployment_id: string;
+      digest: string;
+      idempotency_key: string;
+      runtime_ready_verified: boolean;
+      stage: string;
+      /** Format: date-time */
+      updated_at: string;
+      worker_id: string;
+    };
     PutSecretInput: {
       /**
        * Format: uri
@@ -2279,6 +2598,15 @@ export interface components {
        */
       readonly $schema?: string;
       value: string;
+    };
+    RenameDispatchNamespaceInput: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/RenameDispatchNamespaceInput.json
+       */
+      readonly $schema?: string;
+      name: string;
     };
     RestoreDatabaseInput: {
       /**
@@ -2301,6 +2629,52 @@ export interface components {
       /** Format: date-time */
       timestamp?: string;
     };
+    RuntimeCapabilities: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/RuntimeCapabilities.json
+       */
+      readonly $schema?: string;
+      cache_api: string;
+      compatibility_ceiling: string;
+      cpu_accounting: boolean;
+      cpu_limit: boolean;
+      dispatch_counters?: components["schemas"]["DispatchCounters"];
+      duration_measurement: string;
+      dynamic_dispatch_enabled: boolean;
+      enabled: boolean;
+      engine_version: string;
+      execution: string;
+      experimental: string[] | null;
+      isolation: string;
+      limits: components["schemas"]["RuntimeLimits"];
+      outbound: string;
+      public_ingress: boolean;
+      raw_tcp: string;
+      unavailable_features: string[] | null;
+      worker_id: string;
+    };
+    RuntimeLimits: {
+      /** Format: int64 */
+      background_ms?: number;
+      /** Format: int64 */
+      code_descriptor_bytes?: number;
+      /** Format: int64 */
+      code_descriptors?: number;
+      /** Format: int64 */
+      customer_invocations?: number;
+      /** Format: int64 */
+      depth?: number;
+      /** Format: int64 */
+      global_invocations?: number;
+      /** Format: int64 */
+      namespace_invocations?: number;
+      /** Format: int64 */
+      subrequests?: number;
+      /** Format: int64 */
+      wall_ms?: number;
+    };
     Secret: {
       /**
        * Format: uri
@@ -2314,9 +2688,15 @@ export interface components {
       /** Format: date-time */
       updated_at: string;
     };
+    SecretRef: {
+      name: string;
+      version: string;
+    };
     ServiceBinding: {
       binding: string;
-      service: string;
+      execution?: string;
+      service?: string;
+      worker_id?: string;
     };
     SignupInput: {
       /**
@@ -2440,6 +2820,7 @@ export interface components {
       created_at: string;
       created_by?: string;
       db?: components["schemas"]["DatabaseBinding"][] | null;
+      dispatch_namespaces?: components["schemas"]["DispatchBinding"][] | null;
       dns?: components["schemas"]["DNSSelection"];
       entrypoint: string;
       format: string;
@@ -2487,9 +2868,10 @@ export interface components {
        */
       readonly $schema?: string;
       available: boolean;
-      cpu_time_p90_ms: components["schemas"]["MetricPoint"][] | null;
+      cpu_accounting_available: boolean;
       duration_avg_ms: components["schemas"]["MetricPoint"][] | null;
       duration_ms_per_second: components["schemas"]["MetricPoint"][] | null;
+      duration_p90_ms: components["schemas"]["MetricPoint"][] | null;
       duration_p95_ms: components["schemas"]["MetricPoint"][] | null;
       error_rate: components["schemas"]["MetricPoint"][] | null;
       errors: components["schemas"]["MetricPoint"][] | null;
@@ -2501,11 +2883,25 @@ export interface components {
     };
     WorkerOutputLine: {
       app_id?: string;
+      customer_id?: string;
       deployment_id?: string;
+      invocation_id?: string;
       level: string;
       message: string;
+      namespace_id?: string;
+      org_id?: string;
+      parent_invocation_id?: string;
+      request_chain_id?: string;
       /** Format: date-time */
       timestamp: string;
+    };
+    WorkerPlatform: {
+      customer_id?: string;
+      execution?: string;
+      exposure: string;
+      kind: string;
+      namespace_id: string;
+      script_name: string;
     };
     WorkerStatusCodeTimeseries: {
       code: string;
@@ -4445,6 +4841,835 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RestoreDatabaseResult"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  listDispatchNamespaces: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DispatchNamespace"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  createDispatchNamespace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateDispatchNamespaceInput"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DispatchNamespace"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  getDispatchNamespace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DispatchNamespace"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  deleteDispatchNamespace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description No content */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  renameDispatchNamespace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RenameDispatchNamespaceInput"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DispatchNamespace"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  setNamespaceGrants: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NamespaceGrantsInput"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DispatchNamespace"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  listNamespacePolicies: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NamespacePolicy"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  listNamespaceScripts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["App"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  createNamespaceScript: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateNamespaceScriptInput"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["App"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  getNamespaceScript: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+        scriptName: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["App"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  deleteNamespaceScript: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+        scriptName: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description No content */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  resolveNamespaceArtifact: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        namespaceID: string;
+        scriptName: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactManifest"];
         };
       };
       /** @description Error */
@@ -7703,6 +8928,74 @@ export interface operations {
       };
     };
   };
+  getWorkerCapabilities: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RuntimeCapabilities"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
   setWorkerDeploymentTraffic: {
     parameters: {
       query?: never;
@@ -7846,7 +9139,9 @@ export interface operations {
   createWorkerDeployment: {
     parameters: {
       query?: never;
-      header?: never;
+      header?: {
+        "Idempotency-Key"?: string;
+      };
       path: {
         orgID: string;
         workerID: string;
@@ -7866,6 +9161,84 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["WorkerDeployment"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  getWorkerArtifact: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+        deploymentID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactManifest"];
         };
       };
       /** @description Error */
@@ -8569,6 +9942,143 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["WorkerOutputLine"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  listWorkerPublications: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PublicationResult"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  getWorkerPublication: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PublicationResult"];
         };
       };
       /** @description Error */

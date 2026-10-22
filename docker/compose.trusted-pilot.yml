@@ -1,0 +1,19 @@
+# Explicit trusted-only opt-in. Build current images before using this override:
+# docker compose -f docker/compose.yml -f docker/compose.trusted-pilot.yml up -d
+# These are physical failure bounds, not a safe maximum customer/Worker count.
+services:
+  nanoflared:
+    environment:
+      NANOFLARE_PLATFORM_DISPATCH_ENABLED: "true"
+      NANOFLARE_WORKERD_EXECUTABLE: /usr/local/bin/workerd-native
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 128
+    restart: unless-stopped
+  nanoflare-runner:
+    environment:
+      NANOFLARE_WORKERD_EXECUTABLE: /usr/local/bin/workerd-native
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 128
+    restart: unless-stopped

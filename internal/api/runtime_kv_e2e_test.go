@@ -58,6 +58,9 @@ func TestWorkerdNativeKVBindingEndToEnd(t *testing.T) {
 			CreatedAt:         time.Now().UTC(),
 		},
 	}}
+	if err := store.Activate(active[0].Deployment); err != nil {
+		t.Fatal(err)
+	}
 	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
 	if err := os.WriteFile(configPath, []byte(config.WorkerdWithRuntimeAddr(active, strings.TrimPrefix(runtimeServer.URL, "http://"))), 0o600); err != nil {
 		t.Fatal(err)
@@ -402,7 +405,7 @@ func newWorkerdGatewayBenchmarkFixture(b *testing.B, workerd string) *workerdGat
 		appID:         app.ID,
 		active:        active[0],
 		namespaceID:   namespace.ID,
-		runtimeToken:  app.RuntimeToken,
+		runtimeToken:  nanoflare.RuntimeCapability(active[0], nanoflare.RuntimeKV, namespace.ID),
 		server:        server,
 		manager:       manager,
 		workerClient:  &http.Client{Transport: transport},
@@ -517,6 +520,9 @@ func TestWorkerdAssetsBindingEndToEnd(t *testing.T) {
 	}}
 	active[0].Deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: nativeAssetsWorker}}
 	active[0].Deployment.Port = port
+	if err := store.Activate(active[0].Deployment); err != nil {
+		t.Fatal(err)
+	}
 	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
 	if err := os.WriteFile(configPath, []byte(config.WorkerdWithRuntimeAddr(active, strings.TrimPrefix(runtimeServer.URL, "http://"))), 0o600); err != nil {
 		t.Fatal(err)
@@ -600,6 +606,9 @@ func TestWorkerdObjectsBindingEndToEnd(t *testing.T) {
 	}
 	active := []nanoflare.ActiveDeployment{{App: app, Deployment: deployment}}
 	active[0].Deployment.Port = port
+	if err := store.Activate(active[0].Deployment); err != nil {
+		t.Fatal(err)
+	}
 	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
 	if err := os.WriteFile(configPath, []byte(config.WorkerdWithRuntimeAddr(active, strings.TrimPrefix(runtimeServer.URL, "http://"))), 0o600); err != nil {
 		t.Fatal(err)
@@ -661,6 +670,10 @@ func TestWorkerdDurationTelemetryEndToEnd(t *testing.T) {
 	var payloads []string
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		if r.URL.Path != "/internal/runtime/durations" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		mu.Lock()
 		payloads = append(payloads, string(body))
 		mu.Unlock()

@@ -1,5 +1,7 @@
 # nanoflare
 
+[Documentation](docs/README.md) · [Workers for Platforms integration](docs/guides/workers-for-platforms.md)
+
 `nanoflare` is a lightweight self-hosted runtime for trusted business apps generated
 with AI. The design keeps the custom control plane small and uses existing
 infrastructure directly:
@@ -157,10 +159,32 @@ NANOFLARE_WORKERD_EGRESS_CA_FILES=/run/secrets/corp-root.pem
 NANOFLARE_WORKERD_EGRESS_NO_PROXY=10.0.0.0/8,.corp.example
 ```
 
+Compose forwards these settings to both the runner and daemon. Mount each CA
+file read-only at its configured path in **both** services through a Compose
+override: the runner handles static outbound and the daemon handles dynamic
+outbound. A configured CA path that is absent prevents service startup.
+
+For the single CA path above, an override can contain:
+
+```yaml
+services:
+  nanoflared:
+    volumes:
+      - ./corp-root.pem:/run/secrets/corp-root.pem:ro
+  nanoflare-runner:
+    volumes:
+      - ./corp-root.pem:/run/secrets/corp-root.pem:ro
+```
+
 When a proxy is configured, `globalOutbound` directs Worker `fetch()` through
-the adapter, so treat the no-proxy list as an explicit egress policy. Keep it
-aligned with the private destinations intended to be allowed by
-`NANOFLARE_WORKERD_NETWORK_ALLOW`.
+the adapter. `NANOFLARE_WORKERD_NETWORK_ALLOW` authorizes resolved destinations
+before routing; the no-proxy list only chooses whether authorized traffic uses
+the corporate proxy. The adapter pins an authorized IP while preserving the
+original HTTP Host and TLS identity, including when tunneling through the proxy.
+Private dynamic dispatch uses the same policy through an invocation-scoped HTTP
+adapter; its native raw TCP and Cache API remain unavailable. See the
+[runtime contract](docs/reference/workers-for-platforms-runtime.md)
+for supported operations and initial bounds.
 
 ### Updating worker variables without uploading files
 
@@ -885,6 +909,13 @@ set `NANOFLARE_LOG_VECTOR_SOCKET` to Vector's Unix socket path (or
 `NANOFLARE_LOKI_URL` to the Loki endpoint. If the collector is unavailable,
 Nanoflare continues running and drops newly queued log events rather than
 blocking Workers.
+
+Production Compose mounts a restricted Unix collector socket into the daemon
+and runner automatically. Only trusted UID 0/GID 65532 producers should receive
+that mount. Prometheus uses a separate operator token and the container daemon
+target; host-run development uses its own scrape configuration. See the
+[operator notes](docs/guides/workers-for-platforms-operator.md) for credential
+file ownership, collector permissions and collection-loss monitoring.
 
 Worker drill-down data is served by `nanoflared`:
 

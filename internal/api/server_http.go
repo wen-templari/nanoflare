@@ -15,6 +15,31 @@ import (
 const maxJSONBodySize = 10 << 20
 
 func writeRuntimeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nanoflare.ErrSQLPolicy) {
+		writeError(w, 422, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrInvocationExpired) {
+		writeError(w, 410, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrDispatchUnavailable) {
+		writeError(w, 503, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrDispatchOverloaded) || errors.Is(err, nanoflare.ErrSubrequestLimit) || errors.Is(err, nanoflare.ErrDispatchDepth) {
+		writeError(w, 429, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrArtifactNotFound) || errors.Is(err, nanoflare.ErrAppNotFound) {
+		writeError(w, 404, err)
+		return
+	}
+
+	if errors.Is(err, nanoflare.ErrRuntimeGrantDenied) || errors.Is(err, nanoflare.ErrNamespaceGrantDenied) {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
 		writeError(w, http.StatusPaymentRequired, err)
 		return
@@ -39,6 +64,22 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 }
 
 func writeWorkerError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nanoflare.ErrTelemetryQuery) {
+		writeError(w, 400, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrTelemetryQuota) {
+		writeError(w, 429, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrArtifactNotFound) {
+		writeError(w, 404, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrSQLPolicy) {
+		writeError(w, 422, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
 		writeError(w, http.StatusPaymentRequired, err)
 		return

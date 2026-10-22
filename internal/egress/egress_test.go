@@ -795,3 +795,44 @@ func closeAdapter(t *testing.T, adapter *Server) {
 		t.Errorf("Close failed: %v", err)
 	}
 }
+
+func TestLocalGatewayAcceptsWorkerdWireAndNeverTunnels(t *testing.T) {
+	gateway, err := NewLocalGateway("127.0.0.1:0", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.String() != "https://api.cloudflare.com/client/v4/test" {
+			t.Error(r.URL.String())
+		}
+		w.WriteHeader(201)
+		fmt.Fprint(w, "local response")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = gateway.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gateway.Close(context.Background())
+	for _, tc := range []struct {
+		request string
+		status  int
+	}{
+		{"GET https://api.cloudflare.com/client/v4/test HTTP/1.1\r\nConnection: close\r\n\r\n", 201},
+		{"CONNECT api.cloudflare.com:443 HTTP/1.1\r\nHost: api.cloudflare.com:443\r\n\r\n", 403},
+	} {
+		conn, err := net.Dial("tcp", gateway.Addr())
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.SetDeadline(time.Now().Add(time.Second))
+		fmt.Fprint(conn, tc.request)
+		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		if response.StatusCode != tc.status {
+			t.Error(response.StatusCode)
+		}
+		response.Body.Close()
+		conn.Close()
+	}
+}

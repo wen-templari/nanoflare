@@ -1,0 +1,43 @@
+groups:
+  - name: nanoflare-physical-runner
+    rules:
+      - alert: NanoflareRunnerResourcesUnavailable
+        expr: nanoflare_runner_resources_available == 0 or nanoflare_runner_resource_sample_age_seconds > 20
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Runner resource measurements are unavailable or stale
+      - alert: NanoflareRunnerMissingBounds
+        expr: (nanoflare_runner_resources_available == 1 unless nanoflare_runner_memory_limit_bytes > 0) or (nanoflare_runner_resources_available == 1 unless nanoflare_runner_pids_limit > 0)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Runner has no measured finite memory or PID bound
+      - alert: NanoflareRunnerMemoryPressure
+        expr: nanoflare_runner_memory_current_bytes / nanoflare_runner_memory_limit_bytes > 0.8
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Runner cgroup memory is above eighty percent of its limit
+      - alert: NanoflareRunnerPIDPressure
+        expr: nanoflare_runner_pids_current / nanoflare_runner_pids_limit > 0.8
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Runner cgroup task count is above eighty percent of its limit
+      - alert: NanoflareRunnerOOMKill
+        expr: increase(nanoflare_runner_oom_kills_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Runner cgroup reported an OOM kill
+      - alert: NanoflareLogCollectionLoss
+        expr: increase(nanoflare_log_forwarder_dropped_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Attributed log events were dropped by the daemon forwarder

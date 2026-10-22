@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -240,10 +239,8 @@ func (s *Server) objectStorageBucketMetrics(w http.ResponseWriter, r *http.Reque
 }
 
 func runtimeObjectKey(r *http.Request) (string, error) {
-	key, err := url.PathUnescape(r.PathValue("key"))
-	if err != nil {
-		return "", errors.New("invalid object key encoding")
-	}
+	// ServeMux decodes path values once. A second unescape changes literal keys.
+	key := r.PathValue("key")
 	if key == "" {
 		return "", errors.New("object key cannot be empty")
 	}
@@ -287,6 +284,10 @@ func runtimeObjectBucketID(r *http.Request) (string, error) {
 }
 
 func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if r == nil {
+		return
+	}
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -297,7 +298,7 @@ func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.ObjectGet(bearerToken(r), bucketID, key)
+	object, ok, err := s.service.ObjectGetContext(r.Context(), bearerToken(r), bucketID, key)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -313,6 +314,10 @@ func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if r == nil {
+		return
+	}
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -323,7 +328,7 @@ func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.ObjectHead(bearerToken(r), bucketID, key)
+	object, ok, err := s.service.ObjectHeadContext(r.Context(), bearerToken(r), bucketID, key)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -338,6 +343,10 @@ func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if r == nil {
+		return
+	}
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -354,7 +363,7 @@ func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, err := s.service.ObjectPut(bearerToken(r), bucketID, key, r.Header.Get("Content-Type"), body)
+	object, err := s.service.ObjectPutContext(r.Context(), bearerToken(r), bucketID, key, r.Header.Get("Content-Type"), body)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -364,6 +373,10 @@ func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runtimeObjectDelete(w http.ResponseWriter, r *http.Request) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if r == nil {
+		return
+	}
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -374,7 +387,7 @@ func (s *Server) runtimeObjectDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.DeleteObject(bearerToken(r), bucketID, key); err != nil {
+	if err := s.service.DeleteObjectContext(r.Context(), bearerToken(r), bucketID, key); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
@@ -391,6 +404,10 @@ func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) presignObject(w http.ResponseWriter, r *http.Request, presign func(string, string, string) (string, error)) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if r == nil {
+		return
+	}
 	var input objectRequest
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -413,6 +430,10 @@ func (s *Server) presignObject(w http.ResponseWriter, r *http.Request, presign f
 }
 
 func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if r == nil {
+		return
+	}
 	var input objectRequest
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -426,7 +447,7 @@ func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("bucket_id is required"))
 		return
 	}
-	if err := s.service.DeleteObject(bearerToken(r), input.BucketID, input.Path); err != nil {
+	if err := s.service.DeleteObjectContext(r.Context(), bearerToken(r), input.BucketID, input.Path); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}

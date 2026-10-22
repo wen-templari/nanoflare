@@ -1,0 +1,11 @@
+{
+  "created_at": "2026-10-21T11:53:03.474337+00:00",
+  "source_scope": "cmd/**/*.go, internal/**/*.go, internal/**/*.js, go.mod, go.sum, scripts/wfp-qualification/process_recovery.py; sorted relative paths and SHA-256 digests separated by NUL and newline",
+  "source_file_count": 216,
+  "source_tree_sha256": "e63ac4e2753056bfd1fd00ef3caf490ac0efd291879a8e1fd335378def2575c5",
+  "probe_source_sha256": "33d56f40f4a82b7e81facc46bddec4d1286612aca4434574bfc3b6b382f2a41e",
+  "report_sha256": "f18240cb9474bf80942316f025713c9df232ece6d49e0ce62615bc1fcd104043",
+  "control_build": "go build -trimpath ./cmd/nanoflared",
+  "runner_build": "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath ./cmd/nanoflare-runner",
+  "race_detector": false
+}

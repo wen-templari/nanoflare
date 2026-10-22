@@ -1,0 +1,288 @@
+{
+  "rule_files": ["/etc/prometheus/nanoflare-alerts.yml"],
+  "evaluation_interval": "1m",
+  "tests":
+    [
+      {
+        "name": "healthy boundary does not fire",
+        "interval": "1m",
+        "input_series":
+          [
+            {
+              "series": 'nanoflare_runner_resources_available{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_resource_sample_age_seconds{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_memory_current_bytes{job="nanoflared",instance="runner"}',
+              "values": "80+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_memory_limit_bytes{job="nanoflared",instance="runner"}',
+              "values": "100+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_pids_current{job="nanoflared",instance="runner"}',
+              "values": "80+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_pids_limit{job="nanoflared",instance="runner"}',
+              "values": "100+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_oom_kills_total{job="nanoflared",instance="runner"}',
+              "values": "0+0x4",
+            },
+            {
+              "series": 'nanoflare_log_forwarder_dropped_total{job="nanoflared",instance="runner"}',
+              "values": "0+0x4",
+            },
+          ],
+        "alert_rule_test":
+          [
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerResourcesUnavailable",
+              "exp_alerts": [],
+            },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMissingBounds", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMemoryPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerPIDPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerOOMKill", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareLogCollectionLoss", "exp_alerts": [] },
+          ],
+      },
+      {
+        "name": "pressure and observed losses fire",
+        "interval": "1m",
+        "input_series":
+          [
+            {
+              "series": 'nanoflare_runner_resources_available{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_resource_sample_age_seconds{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_memory_current_bytes{job="nanoflared",instance="runner"}',
+              "values": "90+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_memory_limit_bytes{job="nanoflared",instance="runner"}',
+              "values": "100+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_pids_current{job="nanoflared",instance="runner"}',
+              "values": "90+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_pids_limit{job="nanoflared",instance="runner"}',
+              "values": "100+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_oom_kills_total{job="nanoflared",instance="runner"}',
+              "values": "0 0 1 1 1",
+            },
+            {
+              "series": 'nanoflare_log_forwarder_dropped_total{job="nanoflared",instance="runner"}',
+              "values": "0 0 3 3 3",
+            },
+          ],
+        "alert_rule_test":
+          [
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerResourcesUnavailable",
+              "exp_alerts": [],
+            },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMissingBounds", "exp_alerts": [] },
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerMemoryPressure",
+              "exp_alerts":
+                [
+                  {
+                    "exp_labels":
+                      { "job": "nanoflared", "instance": "runner", "severity": "warning" },
+                    "exp_annotations":
+                      { "summary": "Runner cgroup memory is above eighty percent of its limit" },
+                  },
+                ],
+            },
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerPIDPressure",
+              "exp_alerts":
+                [
+                  {
+                    "exp_labels":
+                      { "job": "nanoflared", "instance": "runner", "severity": "warning" },
+                    "exp_annotations":
+                      {
+                        "summary": "Runner cgroup task count is above eighty percent of its limit",
+                      },
+                  },
+                ],
+            },
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerOOMKill",
+              "exp_alerts":
+                [
+                  {
+                    "exp_labels":
+                      { "job": "nanoflared", "instance": "runner", "severity": "critical" },
+                    "exp_annotations": { "summary": "Runner cgroup reported an OOM kill" },
+                  },
+                ],
+            },
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareLogCollectionLoss",
+              "exp_alerts":
+                [
+                  {
+                    "exp_labels":
+                      { "job": "nanoflared", "instance": "runner", "severity": "warning" },
+                    "exp_annotations":
+                      { "summary": "Attributed log events were dropped by the daemon forwarder" },
+                  },
+                ],
+            },
+          ],
+      },
+      {
+        "name": "unavailable usage is distinct from unlimited",
+        "interval": "1m",
+        "input_series":
+          [
+            {
+              "series": 'nanoflare_runner_resources_available{job="nanoflared",instance="runner"}',
+              "values": "0+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_resource_sample_age_seconds{job="nanoflared",instance="runner"}',
+              "values": "30+0x4",
+            },
+          ],
+        "alert_rule_test":
+          [
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerResourcesUnavailable",
+              "exp_alerts":
+                [
+                  {
+                    "exp_labels":
+                      { "job": "nanoflared", "instance": "runner", "severity": "warning" },
+                    "exp_annotations":
+                      { "summary": "Runner resource measurements are unavailable or stale" },
+                  },
+                ],
+            },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMissingBounds", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMemoryPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerPIDPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerOOMKill", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareLogCollectionLoss", "exp_alerts": [] },
+          ],
+      },
+      {
+        "name": "measured pool without bounds alerts",
+        "interval": "1m",
+        "input_series":
+          [
+            {
+              "series": 'nanoflare_runner_resources_available{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_resource_sample_age_seconds{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+          ],
+        "alert_rule_test":
+          [
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerResourcesUnavailable",
+              "exp_alerts": [],
+            },
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerMissingBounds",
+              "exp_alerts":
+                [
+                  {
+                    "exp_labels":
+                      { "job": "nanoflared", "instance": "runner", "severity": "warning" },
+                    "exp_annotations":
+                      { "summary": "Runner has no measured finite memory or PID bound" },
+                  },
+                ],
+            },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMemoryPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerPIDPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerOOMKill", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareLogCollectionLoss", "exp_alerts": [] },
+          ],
+      },
+      {
+        "name": "cgroup and daemon counter reset is not a new loss",
+        "interval": "1m",
+        "input_series":
+          [
+            {
+              "series": 'nanoflare_runner_resources_available{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_resource_sample_age_seconds{job="nanoflared",instance="runner"}',
+              "values": "1+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_memory_current_bytes{job="nanoflared",instance="runner"}',
+              "values": "80+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_memory_limit_bytes{job="nanoflared",instance="runner"}',
+              "values": "100+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_pids_current{job="nanoflared",instance="runner"}',
+              "values": "80+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_pids_limit{job="nanoflared",instance="runner"}',
+              "values": "100+0x4",
+            },
+            {
+              "series": 'nanoflare_runner_oom_kills_total{job="nanoflared",instance="runner"}',
+              "values": "5 5 0 0 0",
+            },
+            {
+              "series": 'nanoflare_log_forwarder_dropped_total{job="nanoflared",instance="runner"}',
+              "values": "5 5 0 0 0",
+            },
+          ],
+        "alert_rule_test":
+          [
+            {
+              "eval_time": "3m",
+              "alertname": "NanoflareRunnerResourcesUnavailable",
+              "exp_alerts": [],
+            },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMissingBounds", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerMemoryPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerPIDPressure", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareRunnerOOMKill", "exp_alerts": [] },
+            { "eval_time": "3m", "alertname": "NanoflareLogCollectionLoss", "exp_alerts": [] },
+          ],
+      },
+    ],
+}

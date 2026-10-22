@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-22T01:00:40.496705+00:00",
+  "scope": "Additional bounded combined adapter/real-storage asset qualification; previous reviewed production Go/JS sources unchanged. Earlier evidence retains historical source identities.",
+  "report": {
+    "path": "scripts/wfp-qualification/results-asset-storage.json",
+    "sha256": "f4f7ae668178fe12fe8bd8d2a641bde0bba29a30dc8b9ea30ef93f2484504478",
+    "passed": true,
+    "cleanup_verified": true
+  },
+  "sources": {
+    "scripts/wfp-qualification/asset_storage.py": "caeb97c4201e54f1c5e785563238e64dd1bdf80b3977bdfc24edb8c7e00ff83f",
+    "scripts/wfp-qualification/process_recovery.py": "99c48e9594b2b4330a5ba4be8a7b97e6fcd9600fc70baa3b6815afd6ec431470",
+    "scripts/wfp-qualification/README.md": "96155e60eecb9dd56056b8edb5e60a79e97c2a47fec946452049e78c5f12c439",
+    "docs/plans/workers-for-platforms-implementation.md": "c57fca0104e105ae6de754efe7cff3010a6238b68f9e0d6b9fbf693b8a3e9815",
+    "docs/plans/workers-for-platforms-step-9-status.md": "5ab1d6202242ed09415f8033e83a3461f5d22c11baa368eb943ebf9669f47c22",
+    "docs/plans/workers-for-platforms-step-9-audit.md": "4d3cf5e808edcb6dbc7350459d78a3e2f4480b68a0baf28d5d570f85cdeb939e",
+    "docs/plans/workers-for-platforms-independent-review.md": "4f3777804865d57b7ab6db97e5385b62415c94d0a949d4393825e3ba44e76006"
+  },
+  "previous_reviewed_manifest": {
+    "path": "scripts/wfp-qualification/evidence-step10-reviewed.json",
+    "sha256": "fdca4735d78c3b4f0893df1f860e62daf3cbad4050ce3f335842a3f5e1429353",
+    "unchanged_production_go_js_and_modules_verified": true,
+    "files_verified": 221
+  },
+  "independent_review": "Same authorized reviewer rechecked only the new qualification Python and shared setup refactor; no actionable correctness/cleanup/assertion findings.",
+  "open_gate": "Live Cloudflare comparison still requires an entitled account; none available. CPU/untrusted and production expansion retain separate gates.",
+  "log": {
+    "path": "/tmp/nf-assets-storage.log",
+    "sha256": "786a5bd3dda01cabd12440a7855dc2e0527282f10c6e5cc5a0b7916077fb922a"
+  }
+}

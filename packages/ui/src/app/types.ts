@@ -22,7 +22,8 @@ export type WorkerDetailTab =
   | "deployments"
   | "files"
   | "output"
-  | "settings";
+  | "settings"
+  | "runtime";
 
 export type WorkerDeployment = components["schemas"]["WorkerDeployment"];
 
@@ -51,8 +52,8 @@ export type WorkerTraffic = {
   request_series: MetricPoint[];
   error_timeseries?: MetricPoint[];
   error_series?: number[];
-  cpu_time_p90_ms?: number[];
-  cpu_time_p90_series?: MetricPoint[];
+  duration_p90_ms?: number[];
+  duration_p90_series?: MetricPoint[];
   duration_ms_avg: number;
   duration_ms_p95: number;
   duration_ms_per_second: number;

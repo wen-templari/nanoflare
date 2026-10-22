@@ -8,3 +8,9 @@ import _ "embed"
 //
 //go:embed assets/bindings.js
 var BindingsModule string
+
+//go:embed assets/dispatch.js
+var DispatchModule string
+
+//go:embed assets/dynamic-env.js
+var DynamicEnvModule string

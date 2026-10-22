@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -82,7 +83,7 @@ func (r *LokiReader) Query(ctx context.Context, appID string, query nanoflare.Wo
 	}
 
 	var payload lokiResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode Loki response: %w", err)
 	}
 	if payload.Status != "success" {
@@ -91,6 +92,9 @@ func (r *LokiReader) Query(ctx context.Context, appID string, query nanoflare.Wo
 
 	lines := make([]nanoflare.WorkerOutputLine, 0)
 	for _, stream := range payload.Data.Result {
+		if stream.Stream["worker_id"] != appID || query.DeploymentID != "" && stream.Stream["deployment_id"] != query.DeploymentID {
+			continue
+		}
 		for _, value := range stream.Values {
 			if len(value) != 2 {
 				continue
@@ -99,13 +103,22 @@ func (r *LokiReader) Query(ctx context.Context, appID string, query nanoflare.Wo
 			if err != nil {
 				continue
 			}
-			lines = append(lines, nanoflare.WorkerOutputLine{
+			line := nanoflare.WorkerOutputLine{
 				Timestamp:    time.Unix(0, nanoseconds).UTC(),
 				Level:        stream.Stream["level"],
 				Message:      value[1],
 				AppID:        appID,
 				DeploymentID: stream.Stream["deployment_id"],
-			})
+			}
+			var structured nanoflare.WorkerOutputLine
+			if json.Unmarshal([]byte(value[1]), &structured) == nil && structured.AppID != "" {
+				if structured.AppID != appID || structured.DeploymentID != line.DeploymentID {
+					continue
+				}
+				structured.Timestamp = line.Timestamp
+				line = structured
+			}
+			lines = append(lines, line)
 		}
 	}
 	sort.SliceStable(lines, func(i, j int) bool { return lines[i].Timestamp.Before(lines[j].Timestamp) })

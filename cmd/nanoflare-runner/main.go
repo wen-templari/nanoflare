@@ -23,7 +23,7 @@ func main() {
 	var (
 		addr                 = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
 		configDir            = flag.String("config-dir", "./var/runner", "directory for generated runtime configuration")
-		workerd              = flag.String("workerd", "workerd", "path to the workerd executable")
+		workerd              = flag.String("workerd", envOrDefault("NANOFLARE_WORKERD_EXECUTABLE", "workerd"), "path to the workerd executable")
 		workerdNetworkAllow  = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
 		egressProxyURL       = flag.String("workerd-egress-proxy-url", os.Getenv("NANOFLARE_WORKERD_EGRESS_PROXY_URL"), "explicit HTTP proxy URL for Worker outbound traffic")
 		egressCAFiles        = flag.String("workerd-egress-ca-files", os.Getenv("NANOFLARE_WORKERD_EGRESS_CA_FILES"), "comma-separated corporate CA PEM files")
@@ -81,7 +81,7 @@ func main() {
 		_ = dnsServer.Close(ctx)
 	}()
 	if strings.TrimSpace(*egressProxyURL) != "" {
-		adapter, err := egress.New(egress.Config{ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy), Addr: *egressAddr})
+		adapter, err := egress.New(egress.Config{NetworkAllow: config.ParseNetworkAllow(*workerdNetworkAllow), ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy), Addr: *egressAddr})
 		if err != nil {
 			log.Fatal(err)
 		}

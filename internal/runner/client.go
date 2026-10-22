@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -19,6 +20,35 @@ type TraefikWriter interface {
 	WriteTraefik([]nanoflare.ActiveDeployment) error
 }
 
+func (c *Client) RuntimeDeploymentLive(ctx context.Context, appID, deploymentID string) (bool, error) {
+	return c.RuntimeInstanceLive(ctx, appID, deploymentID, "")
+}
+func (c *Client) RuntimeInstanceLive(ctx context.Context, appID, deploymentID, instanceID string) (bool, error) {
+	body, err := json.Marshal(map[string]string{"app_id": appID, "deployment_id": deploymentID, "instance_id": instanceID})
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/runtime-grants/check", bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return false, errors.New("runner authorization unavailable")
+	}
+	var result struct {
+		Live bool `json:"live"`
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result.Live, err
+}
+
 func (c *Client) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (runtime.EnsuredWorker, error) {
 	if err := ctx.Err(); err != nil {
 		return runtime.EnsuredWorker{}, err
@@ -27,10 +57,11 @@ func (c *Client) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) 
 }
 
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
-	traefik TraefikWriter
+	resources atomic.Pointer[resourceObservation]
+	baseURL   string
+	token     string
+	http      *http.Client
+	traefik   TraefikWriter
 }
 
 func NewClient(baseURL, token string, traefik TraefikWriter) *Client {

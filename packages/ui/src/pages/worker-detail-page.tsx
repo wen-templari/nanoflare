@@ -49,6 +49,7 @@ import { useQueryTab } from "../app/use-query-tab";
 import { useWorkspaceResources } from "../app/use-workspace-resources";
 import { formatBytes } from "../app/utils";
 import { useWorkspace } from "../app/workspace-context";
+import { PlatformRuntime } from "../components/platform-runtime";
 import { EmptyMetrics, StatusCodeMix, WorkerDetailEmpty } from "../components/shared/primitives";
 import { Input } from "../components/ui/input";
 import { echarts } from "../lib/kumo-echarts";
@@ -89,7 +90,7 @@ function normalizeTraffic(input?: Partial<WorkerMetricsTimeseries> | null): Work
     traffic: (input?.requests ?? []).map((point) => point.value),
     request_series: input?.requests ?? [],
     error_timeseries: input?.errors ?? [],
-    cpu_time_p90_series: input?.cpu_time_p90_ms ?? [],
+    duration_p90_series: input?.duration_p90_ms ?? [],
     duration_ms_avg: latest(input?.duration_avg_ms),
     duration_ms_p95: latest(input?.duration_p95_ms),
     duration_ms_per_second: latest(input?.duration_ms_per_second),
@@ -111,6 +112,7 @@ const workerDetailTabs = [
   "files",
   "output",
   "settings",
+  "runtime",
 ] as const;
 
 export function WorkerDetailPage() {
@@ -152,6 +154,7 @@ function WorkerDetailContent({
   const [output, setOutput] = useState<WorkerOutputLine[]>([]);
   const [traffic, setTraffic] = useState<WorkerTraffic>(emptyTraffic);
   const [loading, setLoading] = useState(true);
+  const [detailRevision, refreshDetail] = useState(0);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -215,7 +218,7 @@ function WorkerDetailContent({
     return () => {
       cancelled = true;
     };
-  }, [activeOrgID, apiConnected, worker]);
+  }, [activeOrgID, apiConnected, worker, detailRevision]);
 
   const recentDeployments = [...deployments]
     .sort(
@@ -244,6 +247,7 @@ function WorkerDetailContent({
                 { id: "files", label: "Files", icon: FileCode2 },
                 { id: "output", label: "Output", icon: Terminal },
                 { id: "settings", label: "Settings", icon: SlidersHorizontal },
+                { id: "runtime", label: "Runtime", icon: Activity },
               ] as const
             ).map(({ id, label }) => ({ label, value: id }))}
             onValueChange={(value) => setTab(value as WorkerDetailTab)}
@@ -266,11 +270,20 @@ function WorkerDetailContent({
           />
         )}
         {tab === "metrics" && <WorkerMetrics traffic={traffic} />}
+        {tab === "runtime" && (
+          <PlatformRuntime
+            workerID={worker.id}
+            onPublished={() => refreshDetail((value) => value + 1)}
+          />
+        )}
         {tab === "deployments" && (
           <WorkerDeployments
             deployments={deployments}
             notify={notify}
-            onSaved={setDeployments}
+            onSaved={(next) => {
+              setDeployments(next);
+              refreshDetail((value) => value + 1);
+            }}
             traffic={traffic}
             workerID={worker.id}
           />
@@ -412,14 +425,18 @@ function WorkerOverview({
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-2">
             <Globe2 className="size-4 shrink-0 text-kumo-subtle" />
-            <Link
-              className="truncate text-sm"
-              href={hostnameHref(worker.hostname)}
-              target="_blank"
-              title={worker.hostname}
-            >
-              {worker.hostname}
-            </Link>
+            {worker.platform?.exposure === "private" ? (
+              <Text>Private dispatch only · {worker.platform.script_name}</Text>
+            ) : (
+              <Link
+                className="truncate text-sm"
+                href={hostnameHref(worker.hostname)}
+                target="_blank"
+                title={worker.hostname}
+              >
+                {worker.hostname}
+              </Link>
+            )}
           </div>
           <div className="flex min-w-0 items-center gap-2">
             <Text size="sm" variant="secondary">
@@ -474,10 +491,10 @@ function WorkerOverview({
             value={compactNumber(traffic.errors)}
           />
           <WorkerOverviewMetricChart
-            label="CPU time"
-            points={traffic.cpu_time_p90_series ?? []}
+            label="Elapsed p90"
+            points={traffic.duration_p90_series ?? []}
             value={formatMilliseconds(
-              traffic.cpu_time_p90_series?.[traffic.cpu_time_p90_series.length - 1]?.value ?? 0,
+              traffic.duration_p90_series?.[traffic.duration_p90_series.length - 1]?.value ?? 0,
             )}
             valueFormat={formatMilliseconds}
           />
@@ -963,7 +980,7 @@ function WorkerDeployments({
                 <Table.Head>Traffic %</Table.Head>
                 <Table.Head>Requests/sec</Table.Head>
                 <Table.Head>Error Rate</Table.Head>
-                <Table.Head>Median CPU Time</Table.Head>
+                <Table.Head>Average handler duration</Table.Head>
                 <Table.Head aria-label="Traffic history" />
               </Table.Row>
             </Table.Header>
@@ -1189,21 +1206,23 @@ function WorkerOutput({
 
   return (
     <div className="min-h-[510px] bg-[#202b29] p-4 rounded-lg">
-      <div className="mb-3 flex items-center gap-2 font-mono text-[9px] text-[#82928c]">
+      <div className="mb-3 flex items-center gap-2 text-sm text-[#82928c]">
         <span className="size-1.5 rounded-full bg-[#78b88b]" />
         Deployment output {loading && <span className="text-[#9fb0aa]">syncing</span>}
       </div>
       <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px_auto]">
         <Input
+          aria-label="Filter output"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Filter output"
           className="bg-[#18211f]! border-[#40504b]! text-[#d7e1dc]!"
         />
         <select
+          aria-label="Deployment filter"
           value={deploymentID}
           onChange={(event) => setDeploymentID(event.target.value)}
-          className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]"
+          className="rounded border border-[#40504b] bg-[#18211f] px-2 text-sm text-[#d7e1dc]"
         >
           <option value="">All deployments</option>
           {deployments.map((deployment) => (
@@ -1213,9 +1232,10 @@ function WorkerOutput({
           ))}
         </select>
         <select
+          aria-label="Level filter"
           value={level}
           onChange={(event) => setLevel(event.target.value)}
-          className="rounded border border-[#40504b] bg-[#18211f] px-2 font-mono text-[11px] text-[#d7e1dc]"
+          className="rounded border border-[#40504b] bg-[#18211f] px-2 text-sm text-[#d7e1dc]"
         >
           <option value="">All levels</option>
           <option value="error">Error</option>
@@ -1233,10 +1253,10 @@ function WorkerOutput({
       </div>
       {lines.length ? (
         <div className="space-y-1.5">
-          {lines.map(({ timestamp, level, message, deployment_id }, index) => (
+          {lines.map(({ timestamp, level, message, deployment_id, request_chain_id }, index) => (
             <p
               key={`${timestamp}-${index}`}
-              className="whitespace-pre-wrap wrap-break-word font-mono text-[11px] leading-5 text-[#c6d0cb]"
+              className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-5 text-[#c6d0cb]"
             >
               <span className="mr-3 text-[#71817b]">
                 {new Date(timestamp).toLocaleTimeString()}
@@ -1254,8 +1274,13 @@ function WorkerOutput({
                 {level.toUpperCase()}
               </span>
               {deployment_id && (
-                <span className="mr-3 rounded border border-[#40504b] px-1.5 py-0.5 text-[9px] text-[#9fb0aa]">
+                <span className="mr-3 rounded border border-[#40504b] px-1.5 py-0.5 text-[0.9em] text-[#9fb0aa]">
                   {shortDeploymentID(deployment_id)}
+                </span>
+              )}
+              {request_chain_id && (
+                <span className="mr-3 text-[0.9em] text-[#9fb0aa]" title={request_chain_id}>
+                  Chain {request_chain_id.slice(0, 8)}
                 </span>
               )}
               {message}

@@ -1,0 +1,44 @@
+{
+  "at": "2026-10-22T00:59:11.035180+00:00",
+  "host_os": "Darwin",
+  "host_arch": "arm64",
+  "python": "3.14.3",
+  "passed": true,
+  "observations": [
+    {
+      "name": "four_concurrent_adapter_sessions_group_duplicate_hashes_and_publish_verified_assets",
+      "elapsed_ms": 650
+    },
+    {
+      "name": "native_dispatch_reads_exact_bytes_and_content_types_from_both_manifest_paths",
+      "reads": 8,
+      "distinct_bytes": 4194304,
+      "manifest_bytes": 8388608
+    },
+    {
+      "name": "control_process_and_minio_restart_preserve_adapter_published_artifacts"
+    },
+    {
+      "name": "deleting_staging_sessions_does_not_delete_published_assets"
+    }
+  ],
+  "limitations": [
+    "four concurrent customer sessions, 1 MiB distinct content each and two paths per manifest; bounded correctness/load fixture, not production soak",
+    "512 MiB native runner with 128 task limit; host control process has no cgroup memory bound",
+    "real PostgreSQL, MinIO and native workerd; no Cloudflare account, hosted portability or untrusted/CPU claims",
+    "same-session duplicate hash grouping only; cross-session deduplication remains unsupported"
+  ],
+  "fixture_sources": {
+    "asset_storage.py": "caeb97c4201e54f1c5e785563238e64dd1bdf80b3977bdfc24edb8c7e00ff83f",
+    "process_recovery.py": "99c48e9594b2b4330a5ba4be8a7b97e6fcd9600fc70baa3b6815afd6ec431470"
+  },
+  "runner_image_id": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "object_store_image_id": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d",
+  "control_sha256": "1bf83cc07485c6dac4d3676279577f448d4be7d18a30eee1672643156ff62a8d",
+  "runner_sha256": "8232f997bf5ab5bc04795453d5c1437d6d2752470a70263a15b4745a03a828d5",
+  "verified_runner_cgroup_limits": "536870912\n0\n128",
+  "workerd": "workerd 2026-09-11",
+  "workerd_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "cleanup_verified": true
+}

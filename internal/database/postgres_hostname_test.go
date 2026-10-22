@@ -30,7 +30,7 @@ func TestPostgresPatchAppPreservesOmissionsAndUniqueness(t *testing.T) {
  id text PRIMARY KEY, org_id text NOT NULL, name text NOT NULL,
  hostname text NOT NULL UNIQUE, auth jsonb NOT NULL,
  external_id text NOT NULL, oauth_client_id text NOT NULL, created_by text NOT NULL,
- runtime_token text NOT NULL, created_at timestamptz NOT NULL)`)
+ runtime_token text NOT NULL, created_at timestamptz NOT NULL, platform jsonb NOT NULL DEFAULT 'null')`)
 	if err != nil {
 		t.Fatal(err)
 	}

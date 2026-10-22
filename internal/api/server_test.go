@@ -185,7 +185,7 @@ func TestCreateDeployAndScopedKV(t *testing.T) {
 	namespaceTwo := createKVNamespace(t, server, "app-two")
 	deployWithKV(t, server, appOne.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceOne.ID}})
 	deployWithKV(t, server, appTwo.ID, []nanoflare.KVBinding{{Binding: "KV", ID: namespaceTwo.ID}})
-	tokens := runtimeTokens(t, store)
+	tokens := map[string]string{appOne.ID: runtimeGrantToken(t, store, appOne.ID, nanoflare.RuntimeKV, namespaceOne.ID), appTwo.ID: runtimeGrantToken(t, store, appTwo.ID, nanoflare.RuntimeKV, namespaceTwo.ID)}
 	kv := NewRuntimeKVServer(service)
 
 	runtimeKVRequest(t, kv, http.MethodPut, "/color?urlencoded=true", tokens[appOne.ID], namespaceOne.ID, []byte("blue"), http.StatusNoContent)
@@ -385,8 +385,11 @@ func TestRuntimeKVWriteOverOrgStorageLimitReturns402(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := store.Activate(nanoflare.Deployment{ID: "runtime-limit", AppID: app.ID, KVNamespaces: []nanoflare.KVBinding{{Binding: "KV", ID: namespace.ID}}}); err != nil {
+		t.Fatal(err)
+	}
 	kv := NewRuntimeKVServer(service)
-	runtimeKVRequest(t, kv, http.MethodPut, "/over?urlencoded=true", app.RuntimeToken, namespace.ID, []byte("x"), http.StatusPaymentRequired)
+	runtimeKVRequest(t, kv, http.MethodPut, "/over?urlencoded=true", runtimeGrantToken(t, store, app.ID, nanoflare.RuntimeKV, namespace.ID), namespace.ID, []byte("x"), http.StatusPaymentRequired)
 }
 
 func TestKVNamespaceAPIs(t *testing.T) {
@@ -920,7 +923,7 @@ func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
 	runtimeAssets := NewRuntimeAssetServer(service)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/internal/runtime/assets/logo.svg", nil)
-	request.Header.Set("Authorization", "Bearer "+runtimeTokens(t, store)[app.ID])
+	request.Header.Set("Authorization", "Bearer "+runtimeGrantToken(t, store, app.ID, nanoflare.RuntimeAssets, deployment.ID))
 	runtimeAssets.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<svg />" {
 		t.Fatalf("runtime asset status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -928,7 +931,7 @@ func TestRuntimeAssetServerServesAttachedAsset(t *testing.T) {
 
 	recorder = httptest.NewRecorder()
 	request = httptest.NewRequest(http.MethodGet, "/logo.svg?v=1", nil)
-	request.Header.Set("Authorization", "Bearer "+runtimeTokens(t, store)[app.ID])
+	request.Header.Set("Authorization", "Bearer "+runtimeGrantToken(t, store, app.ID, nanoflare.RuntimeAssets, deployment.ID))
 	runtimeAssets.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "<svg />" {
 		t.Fatalf("runtime direct asset status = %d body = %q", recorder.Code, recorder.Body.String())
@@ -947,7 +950,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	), objects)
 	server := newTestServer(service)
 	app := createApp(t, server, "Objects", "objects.example.com")
-	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "objects"})
+	bucket, err := service.CreateObjectStorageBucket(nanoflare.CreateObjectStorageBucketInput{Name: "objects", OrgID: app.OrgID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -960,7 +963,7 @@ func TestRuntimeObjectServerSupportsCoreOperations(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	token := runtimeTokens(t, store)[app.ID]
+	token := runtimeGrantToken(t, store, app.ID, nanoflare.RuntimeObjects, bucket.ID)
 
 	request := httptest.NewRequest(http.MethodPut, "/internal/runtime/objects/folder%2Fhello.txt", bytes.NewReader([]byte("hello")))
 	request.Header.Set("Authorization", "Bearer "+token)
@@ -1069,7 +1072,7 @@ func TestRuntimeObjectWriteOverOrgStorageLimitReturns402(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodPut, "/internal/runtime/objects/over.txt", bytes.NewReader([]byte("x")))
-	request.Header.Set("Authorization", "Bearer "+app.RuntimeToken)
+	request.Header.Set("Authorization", "Bearer "+runtimeGrantToken(t, store, app.ID, nanoflare.RuntimeObjects, bucket.ID))
 	request.Header.Set("X-Nanoflare-Object-Bucket-ID", bucket.ID)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -1901,4 +1904,16 @@ func workerKVRequest(t *testing.T, server http.Handler, method, path string, bod
 		t.Fatalf("%s %s status = %d, body = %s", method, path, recorder.Code, recorder.Body.String())
 	}
 	return recorder.Body.Bytes()
+}
+
+func runtimeGrantToken(t testing.TB, repo nanoflare.Repository, appID, kind, resource string) string {
+	t.Helper()
+	active, err := repo.ActiveDeploymentsForApp(appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) == 0 {
+		t.Fatal("no active deployment")
+	}
+	return nanoflare.RuntimeCapability(active[0], kind, resource)
 }

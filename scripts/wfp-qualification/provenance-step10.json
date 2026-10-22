@@ -1,0 +1,11 @@
+{
+  "created_at": "2026-10-21T11:11:25.832899+00:00",
+  "source_scope": "internal/**/*.go, internal/**/*.js, go.mod, go.sum; sorted relative paths and SHA-256 digests",
+  "source_file_count": 200,
+  "source_tree_sha256": "e202b796555784e2e8d8bd1b8a9ff54f614c5a69af619cd269147eb4584515b4",
+  "probe_source_sha256": "b5a8569d85209e820a2a327f23320f292ff8b1d9d10df0ac8e4c2454dfabb1c6",
+  "reports_sha256": {
+    "results-step10-baseline.json": "94abbfdc10e0390431ebcf5261228e5a878ca0b9c964251a104bf0367b81727f",
+    "results-step10-current.json": "111272035c8dfc5b44bbdd0cc477c8c837b3c04c96dc84214fd18ea57a0da151"
+  }
+}

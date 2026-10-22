@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -39,50 +40,63 @@ func main() {
 	}
 
 	var (
-		addr                = flag.String("addr", ":8080", "HTTP listen address")
-		runtimeAddr         = flag.String("runtime-addr", "127.0.0.1:8081", "private runtime KV API listen address")
-		configDir           = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
-		dbDir               = flag.String("db-dir", "", "directory for nanoflare SQLite databases; defaults to <config-dir>/db")
-		litestreamEnabled   = flag.Bool("litestream-enabled", false, "enable Litestream restore and replication for SQLite databases")
-		litestreamBin       = flag.String("litestream-bin", "litestream", "path to the litestream executable")
-		litestreamConfig    = flag.String("litestream-config", "", "optional Litestream config file")
-		traefikFile         = flag.String("traefik-file", "", "optional Traefik dynamic configuration file fallback")
-		authURL             = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
-		workerHost          = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
-		baseHostname        = flag.String("base-hostname", os.Getenv("NANOFLARE_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
-		workerd             = flag.String("workerd", "workerd", "path to the workerd executable")
-		workerdNetworkAllow = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
-		egressProxyURL      = flag.String("workerd-egress-proxy-url", os.Getenv("NANOFLARE_WORKERD_EGRESS_PROXY_URL"), "explicit HTTP proxy URL for Worker outbound traffic")
-		egressCAFiles       = flag.String("workerd-egress-ca-files", os.Getenv("NANOFLARE_WORKERD_EGRESS_CA_FILES"), "comma-separated corporate CA PEM files")
-		egressNoProxy       = flag.String("workerd-egress-no-proxy", os.Getenv("NANOFLARE_WORKERD_EGRESS_NO_PROXY"), "comma-separated Worker destinations that bypass the egress proxy")
-		egressAddr          = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
-		dnsConfigValue      = flag.String("dns-config", os.Getenv("NANOFLARE_DNS_CONFIG"), "inline JSON or path to the platform DNS profile configuration")
-		dnsAddr             = flag.String("dns-addr", envOrDefault("NANOFLARE_DNS_ADDR", "127.0.0.1:8083"), "private Worker DNS adapter address")
-		socketDir           = flag.String("runtime-socket-dir", "/tmp/nanoflare-sockets", "private directory for Worker Unix sockets")
-		prometheus          = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
-		lokiURL             = flag.String("loki-url", os.Getenv("NANOFLARE_LOKI_URL"), "Loki base URL for persistent worker output")
-		vectorSocket        = flag.String("log-vector-socket", os.Getenv("NANOFLARE_LOG_VECTOR_SOCKET"), "optional local Vector Unix socket for structured runtime output")
-		runnerURL           = flag.String("runner-url", "", "nanoflare-runner control API URL; empty starts workerd directly")
-		runnerToken         = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
-		traefikToken        = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
-		authSecret          = flag.String("control-auth-secret", envOrDefault("NANOFLARE_AUTH_SECRET", "nanoflare-development-control-secret"), "JWT signing secret for control-plane email/password auth")
-		oidcIssuer          = flag.String("oidc-issuer", os.Getenv("NANOFLARE_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
-		oidcAudience        = flag.String("oidc-audience", os.Getenv("NANOFLARE_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
-		oidcEmail           = flag.String("oidc-email-claim", envOrDefault("NANOFLARE_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
-		oidcClientID        = flag.String("oidc-client-id", os.Getenv("NANOFLARE_OIDC_CLIENT_ID"), "OIDC client ID for browser login flow; defaults to oidc-audience when omitted")
-		oidcSecret          = flag.String("oidc-client-secret", os.Getenv("NANOFLARE_OIDC_CLIENT_SECRET"), "OIDC client secret for browser login flow")
-		oidcPublic          = flag.String("oidc-public-url", os.Getenv("NANOFLARE_OIDC_PUBLIC_URL"), "Public control-plane base URL for browser login callback routing, for example https://nanoflare.example.com:8443")
-		oidcCookie          = flag.String("oidc-cookie-domain", os.Getenv("NANOFLARE_OIDC_COOKIE_DOMAIN"), "Optional parent cookie domain shared by the callback host and worker hosts, for example .local.nbtca.space")
-		controlOIDCIssuer   = flag.String("control-oidc-issuer", os.Getenv("NANOFLARE_CONTROL_OIDC_ISSUER"), "OIDC issuer URL for console login")
-		controlOIDCEmail    = flag.String("control-oidc-email-claim", envOrDefault("NANOFLARE_CONTROL_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim used when userinfo omits email during console login")
-		controlOIDCClientID = flag.String("control-oidc-client-id", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_ID"), "OIDC client ID for console login")
-		controlOIDCSecret   = flag.String("control-oidc-client-secret", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_SECRET"), "OIDC client secret for console login")
-		controlOIDCPublic   = flag.String("control-oidc-public-url", os.Getenv("NANOFLARE_CONTROL_OIDC_PUBLIC_URL"), "Public console base URL for OIDC login callbacks, for example https://console.example.com")
-		controlOIDCDirect   = flag.Bool("control-oidc-direct-login", envBoolOrDefault("NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN", false), "start console OIDC login directly instead of showing the login form first")
-		otelEndpoint        = flag.String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "optional OTLP/gRPC endpoint URL for distributed traces")
-		otelSampleRatio     = flag.Float64("otel-sample-ratio", envFloatOrDefault("NANOFLARE_OTEL_SAMPLE_RATIO", 0.1), "fraction of root traces to sample, from 0 to 1")
+		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", envBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "administrator opt-in to trusted_shared_workerd dispatch; namespaces share a runtime without CPU interruption or hardened untrusted isolation")
+		cloudflareCompatibilityEnabled = flag.Bool("enable-cloudflare-compatibility", envBoolOrDefault("NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED", false), "enable the experimental trusted Cloudflare management adapter; requires platform dispatch")
+		addr                           = flag.String("addr", ":8080", "HTTP listen address")
+		runtimeAddr                    = flag.String("runtime-addr", "127.0.0.1:8081", "private runtime KV API listen address")
+		configDir                      = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
+		dbDir                          = flag.String("db-dir", "", "directory for nanoflare SQLite databases; defaults to <config-dir>/db")
+		litestreamEnabled              = flag.Bool("litestream-enabled", false, "enable Litestream restore and replication for SQLite databases")
+		litestreamBin                  = flag.String("litestream-bin", "litestream", "path to the litestream executable")
+		litestreamConfig               = flag.String("litestream-config", "", "optional Litestream config file")
+		traefikFile                    = flag.String("traefik-file", "", "optional Traefik dynamic configuration file fallback")
+		authURL                        = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
+		workerHost                     = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
+		baseHostname                   = flag.String("base-hostname", os.Getenv("NANOFLARE_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
+		workerd                        = flag.String("workerd", envOrDefault("NANOFLARE_WORKERD_EXECUTABLE", "workerd"), "path to the workerd executable")
+		workerdNetworkAllow            = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
+		egressProxyURL                 = flag.String("workerd-egress-proxy-url", os.Getenv("NANOFLARE_WORKERD_EGRESS_PROXY_URL"), "explicit HTTP proxy URL for Worker outbound traffic")
+		egressCAFiles                  = flag.String("workerd-egress-ca-files", os.Getenv("NANOFLARE_WORKERD_EGRESS_CA_FILES"), "comma-separated corporate CA PEM files")
+		egressNoProxy                  = flag.String("workerd-egress-no-proxy", os.Getenv("NANOFLARE_WORKERD_EGRESS_NO_PROXY"), "comma-separated Worker destinations that bypass the egress proxy")
+		egressAddr                     = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
+		dnsConfigValue                 = flag.String("dns-config", os.Getenv("NANOFLARE_DNS_CONFIG"), "inline JSON or path to the platform DNS profile configuration")
+		dnsAddr                        = flag.String("dns-addr", envOrDefault("NANOFLARE_DNS_ADDR", "127.0.0.1:8083"), "private Worker DNS adapter address")
+		socketDir                      = flag.String("runtime-socket-dir", "/tmp/nanoflare-sockets", "private directory for Worker Unix sockets")
+		prometheus                     = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
+		lokiURL                        = flag.String("loki-url", os.Getenv("NANOFLARE_LOKI_URL"), "Loki base URL for persistent worker output")
+		metricsToken                   = flag.String("metrics-token", os.Getenv("NANOFLARE_METRICS_TOKEN"), "operator bearer credential for the global Prometheus exporter; empty disables it")
+		workerLogsEnabled              = flag.Bool("worker-logs-enabled", true, "Collect attributed Worker logs")
+		workerLogSample                = flag.Int("worker-log-sample-percent", 100, "Attributed Worker log sample percentage (0-100)")
+		workerLogPatterns              = flag.String("worker-log-redact-patterns", "[]", "JSON array of extra log redaction regular expressions; known secret values are always redacted")
+		vectorSocket                   = flag.String("log-vector-socket", os.Getenv("NANOFLARE_LOG_VECTOR_SOCKET"), "optional local Vector Unix socket for structured runtime output")
+		runnerURL                      = flag.String("runner-url", "", "nanoflare-runner control API URL; empty starts workerd directly")
+		runnerToken                    = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
+		traefikToken                   = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
+		authSecret                     = flag.String("control-auth-secret", envOrDefault("NANOFLARE_AUTH_SECRET", "nanoflare-development-control-secret"), "JWT signing secret for control-plane email/password auth")
+		oidcIssuer                     = flag.String("oidc-issuer", os.Getenv("NANOFLARE_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
+		oidcAudience                   = flag.String("oidc-audience", os.Getenv("NANOFLARE_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
+		oidcEmail                      = flag.String("oidc-email-claim", envOrDefault("NANOFLARE_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
+		oidcClientID                   = flag.String("oidc-client-id", os.Getenv("NANOFLARE_OIDC_CLIENT_ID"), "OIDC client ID for browser login flow; defaults to oidc-audience when omitted")
+		oidcSecret                     = flag.String("oidc-client-secret", os.Getenv("NANOFLARE_OIDC_CLIENT_SECRET"), "OIDC client secret for browser login flow")
+		oidcPublic                     = flag.String("oidc-public-url", os.Getenv("NANOFLARE_OIDC_PUBLIC_URL"), "Public control-plane base URL for browser login callback routing, for example https://nanoflare.example.com:8443")
+		oidcCookie                     = flag.String("oidc-cookie-domain", os.Getenv("NANOFLARE_OIDC_COOKIE_DOMAIN"), "Optional parent cookie domain shared by the callback host and worker hosts, for example .local.nbtca.space")
+		controlOIDCIssuer              = flag.String("control-oidc-issuer", os.Getenv("NANOFLARE_CONTROL_OIDC_ISSUER"), "OIDC issuer URL for console login")
+		controlOIDCEmail               = flag.String("control-oidc-email-claim", envOrDefault("NANOFLARE_CONTROL_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim used when userinfo omits email during console login")
+		controlOIDCClientID            = flag.String("control-oidc-client-id", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_ID"), "OIDC client ID for console login")
+		controlOIDCSecret              = flag.String("control-oidc-client-secret", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_SECRET"), "OIDC client secret for console login")
+		controlOIDCPublic              = flag.String("control-oidc-public-url", os.Getenv("NANOFLARE_CONTROL_OIDC_PUBLIC_URL"), "Public console base URL for OIDC login callbacks, for example https://console.example.com")
+		controlOIDCDirect              = flag.Bool("control-oidc-direct-login", envBoolOrDefault("NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN", false), "start console OIDC login directly instead of showing the login form first")
+		otelEndpoint                   = flag.String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "optional OTLP/gRPC endpoint URL for distributed traces")
+		otelSampleRatio                = flag.Float64("otel-sample-ratio", envFloatOrDefault("NANOFLARE_OTEL_SAMPLE_RATIO", 0.1), "fraction of root traces to sample, from 0 to 1")
 	)
 	flag.Parse()
+	if *cloudflareCompatibilityEnabled && !*platformDispatchEnabled {
+		log.Fatal("Cloudflare compatibility requires --enable-platform-dispatch (or NANOFLARE_PLATFORM_DISPATCH_ENABLED=true)")
+	}
+
+	if *platformDispatchEnabled {
+		log.Print("Workers for Platforms enabled: trusted_shared_workerd; namespaces share a runtime failure boundary, with no CPU interruption or hardened untrusted isolation")
+	}
 
 	if *traefikFile == "" && *traefikToken == "" {
 		log.Fatal("Traefik token is required when HTTP discovery is enabled")
@@ -159,6 +173,7 @@ func main() {
 	}
 	var publisher runtimePublisher
 	var runtimeEnsurer api.RuntimeEnsurer
+	var remoteRunner *runner.Client
 	var closeRuntime func()
 	traefikStore := config.NewTraefikStore(*authURL, *workerHost)
 	if *oidcPublic != "" {
@@ -180,6 +195,7 @@ func main() {
 	}
 	if *runnerURL != "" {
 		client := runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
+		remoteRunner = client
 		publisher = client
 		runtimeEnsurer = client
 	} else {
@@ -205,7 +221,7 @@ func main() {
 			_ = dnsServer.Close(ctx)
 		}()
 		if strings.TrimSpace(*egressProxyURL) != "" {
-			adapter, err := egress.New(egress.Config{ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy), Addr: *egressAddr})
+			adapter, err := egress.New(egress.Config{NetworkAllow: config.ParseNetworkAllow(*workerdNetworkAllow), ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy), Addr: *egressAddr})
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -275,6 +291,14 @@ func main() {
 		}
 		log.Print("using Litestream for SQLite backup replication")
 	}
+	service.SetPlatformDispatchEnabled(*platformDispatchEnabled)
+	var redactions []string
+	if err := json.Unmarshal([]byte(*workerLogPatterns), &redactions); err != nil {
+		log.Fatal(err)
+	}
+	if err := service.SetTelemetryPolicy(nanoflare.TelemetryPolicy{Enabled: *workerLogsEnabled, SamplePercent: *workerLogSample, RedactPatterns: redactions}); err != nil {
+		log.Fatal(err)
+	}
 	if *baseHostname != "" {
 		if err := service.SetBaseHostname(*baseHostname); err != nil {
 			log.Fatal(err)
@@ -287,11 +311,17 @@ func main() {
 		}
 		service.SetSecretCodec(codec)
 	}
-	active, err := service.ActiveDeployments()
-	if err != nil {
-		log.Fatal(err)
+	if checker, ok := publisher.(interface {
+		RuntimeDeploymentLive(context.Context, string, string) (bool, error)
+	}); ok {
+		service.SetRuntimeDeploymentChecker(checker.RuntimeDeploymentLive)
 	}
-	if err := publisher.Write(active); err != nil {
+	if checker, ok := publisher.(interface {
+		RuntimeInstanceLive(context.Context, string, string, string) (bool, error)
+	}); ok {
+		service.SetRuntimeInstanceChecker(checker.RuntimeInstanceLive)
+	}
+	if err := service.ReconcileRuntime(); err != nil {
 		log.Fatal(err)
 	}
 	var authenticator api.Authenticator
@@ -313,6 +343,12 @@ func main() {
 	oauth := nanoflare.NewOAuthService(store)
 	server := api.NewServerWithRuntimeAndOAuth(service, traefikStore, *traefikToken, authenticator, controlAuth, oauth, runtimeEnsurer)
 	server.SetDurationTelemetry(durationTelemetry)
+	server.SetMetricsToken(*metricsToken)
+	server.SetCloudflareCompatibilityEnabled(*cloudflareCompatibilityEnabled)
+	server.SetLogForwarderStats(forwarder)
+	if remoteRunner != nil {
+		server.SetRunnerResourceReader(remoteRunner.Resources)
+	}
 	server.SetPartnerService(nanoflare.NewPartnerService(store))
 	if *controlOIDCIssuer != "" && *controlOIDCClientID != "" && *controlOIDCPublic != "" {
 		controlVerifier := oidc.NewConsoleVerifier(*controlOIDCIssuer, *controlOIDCEmail, *controlOIDCClientID, *controlOIDCSecret, *controlOIDCPublic, nil)
@@ -323,7 +359,11 @@ func main() {
 		server.SetControlOIDC(controlVerifier)
 		server.SetControlOIDCDirectLogin(*controlOIDCDirect)
 	}
-	runtimeMux := newRuntimeMux(service, server, durationTelemetry)
+	dispatchTransport, err := egress.NewHTTPTransport(egress.Config{NetworkAllow: config.ParseNetworkAllow(*workerdNetworkAllow), ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy)})
+	if err != nil {
+		log.Fatal(err)
+	}
+	runtimeMux := newRuntimeMuxWithOutbound(service, server, durationTelemetry, dispatchTransport, output)
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
 	go func() {
 		log.Printf("nanoflared runtime API listening on %s", *runtimeAddr)
@@ -337,6 +377,14 @@ func main() {
 	httpServer := &http.Server{Addr: *addr, Handler: server}
 	shutdown, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	stopAssetCleanup := service.StartAssetUploadCleanup(shutdown, time.Minute, func(err error) { log.Printf("asset staging cleanup: %v", err) })
+	defer stopAssetCleanup()
+	if remoteRunner != nil {
+		stopReconciliation := remoteRunner.StartReconciliation(shutdown, 5*time.Second, service.ReconcileRuntime, func(err error) {
+			log.Printf("remote runner reconciliation: %v", err)
+		})
+		defer stopReconciliation()
+	}
 	go func() {
 		<-shutdown.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -380,12 +428,27 @@ func envFloatOrDefault(name string, fallback float64) float64 {
 	return parsed
 }
 
-func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry) *http.ServeMux {
+func newRuntimeMux(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry, outputs ...api.RuntimeLogAppender) *http.ServeMux {
+	return newRuntimeMuxWithOutbound(service, server, durationTelemetry, nil, outputs...)
+}
+func newRuntimeMuxWithOutbound(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry, outbound http.RoundTripper, outputs ...api.RuntimeLogAppender) *http.ServeMux {
 	runtimeMux := http.NewServeMux()
+	if durationTelemetry != nil {
+		service.SetDispatchObservationSink(func(event nanoflare.DispatchObservation) {
+			durationTelemetry.RecordBatch([]runtime.DurationTraceEvent{{ScriptName: event.WorkerID, EventTimestamp: float64(event.At.UnixMilli()), DurationMs: event.ElapsedMS, Outcome: event.Outcome}})
+		})
+	}
 	runtimeKV := api.NewRuntimeKVServer(service)
 	runtimeDB := api.NewRuntimeDBServer(service)
 	runtimeAssets := api.NewRuntimeAssetServer(service)
-	runtimeDurations := api.NewRuntimeDurationServer(durationTelemetry)
+	runtimeDurations := api.NewRuntimeDurationServer(service, durationTelemetry)
+	var output api.RuntimeLogAppender
+	if len(outputs) > 0 {
+		output = outputs[0]
+	}
+	runtimeMux.Handle("/internal/runtime/dispatch/", api.NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(output))
+	runtimeMux.Handle("/internal/runtime/access", server.RuntimeAccessHandler())
+	runtimeMux.Handle("/internal/runtime/logs", api.NewRuntimeLogServer(service, output))
 	runtimeMux.Handle("/internal/runtime/objects/", server)
 	runtimeMux.Handle("/internal/runtime/durations", runtimeDurations)
 	runtimeMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

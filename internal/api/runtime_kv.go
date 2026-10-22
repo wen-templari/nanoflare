@@ -30,6 +30,10 @@ func NewRuntimeKVServer(service *nanoflare.Service) *RuntimeKVServer {
 }
 
 func (s *RuntimeKVServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeKV, r.Header.Get("X-Nanoflare-KV-Namespace-ID"))
+	if r == nil {
+		return
+	}
 	if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, "/"), "bulk/") {
 		writeError(w, http.StatusNotImplemented, errUnsupportedRuntimeKVOptions)
 		return
@@ -93,7 +97,7 @@ func (s *RuntimeKVServer) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	result, err := s.service.KVListPage(bearerToken(r), namespaceID, options)
+	result, err := s.service.KVListPage(runtimePrincipal(r).App.RuntimeToken, namespaceID, options)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -108,7 +112,7 @@ func (s *RuntimeKVServer) get(w http.ResponseWriter, r *http.Request, key string
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	value, ok, err := s.service.KVGet(bearerToken(r), namespaceID, key)
+	value, ok, err := s.service.KVGet(runtimePrincipal(r).App.RuntimeToken, namespaceID, key)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -139,7 +143,7 @@ func (s *RuntimeKVServer) put(w http.ResponseWriter, r *http.Request, key string
 		writeError(w, http.StatusRequestEntityTooLarge, errors.New("KV value exceeds 25 MiB limit"))
 		return
 	}
-	if err := s.service.KVPutWithOptions(bearerToken(r), namespaceID, key, value, options); err != nil {
+	if err := s.service.KVPutWithOptions(runtimePrincipal(r).App.RuntimeToken, namespaceID, key, value, options); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
@@ -153,7 +157,7 @@ func (s *RuntimeKVServer) delete(w http.ResponseWriter, r *http.Request, key str
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.service.KVDelete(bearerToken(r), namespaceID, key); err != nil {
+	if err := s.service.KVDelete(runtimePrincipal(r).App.RuntimeToken, namespaceID, key); err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
