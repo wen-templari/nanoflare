@@ -45,8 +45,8 @@
       "evidence": {
         "denied_status": 403,
         "distinct_contexts": [
-          "94657b32-5659-4fb3-a35d-0a5ce8898dfd",
-          "dc28f216-9e6b-46b8-aac7-2fafe8d0617a"
+          "3bdf4b7e-415f-4376-b730-902d7215e2b8",
+          "027fa3f8-e931-4a88-b419-bd87a123109f"
         ],
         "tradeoff": "unique loader key per outbound invocation; no isolate-reuse claim"
       }
@@ -65,10 +65,7 @@
       "name": "subrequest limit enforcement",
       "status": "blocker",
       "evidence": {
-        "limits_supplied_at": [
-          "WorkerCode",
-          "EntrypointOptions"
-        ],
+        "limits_supplied_at": ["WorkerCode", "EntrypointOptions"],
         "requested_limit": 2,
         "response": {
           "completed": 5
@@ -89,9 +86,9 @@
     },
     {
       "name": "stream cancellation reaches customer stream",
-      "status": "verified",
+      "status": "not_verified",
       "evidence": {
-        "customer_cancel_callback_observed": true
+        "customer_cancel_callback_observed": false
       }
     },
     {
@@ -100,10 +97,7 @@
       "evidence": {
         "bounded_by": "parent kills disposable process after observation",
         "client_timeout_ms": 150,
-        "limits_supplied_at": [
-          "WorkerCode",
-          "EntrypointOptions"
-        ],
+        "limits_supplied_at": ["WorkerCode", "EntrypointOptions"],
         "loader_cpu_ms_requested": false,
         "peer_responsive": false,
         "peer_timeout_ms": 250,
@@ -116,10 +110,7 @@
       "evidence": {
         "bounded_by": "parent kills disposable process after observation",
         "client_timeout_ms": 150,
-        "limits_supplied_at": [
-          "WorkerCode",
-          "EntrypointOptions"
-        ],
+        "limits_supplied_at": ["WorkerCode", "EntrypointOptions"],
         "loader_cpu_ms_requested": true,
         "peer_responsive": false,
         "peer_timeout_ms": 250,
@@ -160,24 +151,24 @@
       "status": "measured",
       "evidence": [
         {
-          "elapsed_ms": 2,
+          "elapsed_ms": 1,
           "new_revisions": 1,
-          "process_tree_rss_kib": 32240
+          "process_tree_rss_kib": 78112
         },
         {
-          "elapsed_ms": 18,
+          "elapsed_ms": 12,
           "new_revisions": 10,
-          "process_tree_rss_kib": 47888
+          "process_tree_rss_kib": 89584
         },
         {
-          "elapsed_ms": 88,
+          "elapsed_ms": 60,
           "new_revisions": 50,
-          "process_tree_rss_kib": 125136
+          "process_tree_rss_kib": 145104
         }
       ]
     }
   ],
-  "runtime": "workerd 2026-10-18",
+  "runtime": "workerd 2025-12-10",
   "suite_exit_code": 0,
-  "tested_at_utc": "2026-10-18T05:12:11Z"
+  "tested_at_utc": "2026-10-18T05:12:07Z"
 }

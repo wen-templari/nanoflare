@@ -226,10 +226,28 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(workerBindings(item, active, dnsEnabled), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(item.Deployment.CompatibilityDate))
-		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(outputIdentityCompatibilityFlags(item.Deployment.CompatibilityFlags)))
+		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(runtimeCompatibilityFlags(item.Deployment)))
 		out.WriteString(");\n")
 	}
 	return out.String()
+}
+
+// DispatchBroker is an internal RPC export even when the application pins a
+// compatibility date before ctx.exports became enabled by default.
+func runtimeCompatibilityFlags(deployment nanoflare.Deployment) []string {
+	flags := outputIdentityCompatibilityFlags(deployment.CompatibilityFlags)
+	if len(deployment.DispatchNamespaces) > 0 && deployment.CompatibilityDate < "2025-11-17" {
+		found := false
+		for _, flag := range flags {
+			if flag == "enable_ctx_exports" {
+				found = true
+			}
+		}
+		if !found {
+			flags = append(flags, "enable_ctx_exports")
+		}
+	}
+	return flags
 }
 
 func outputIdentityCompatibilityFlags(flags []string) []string {
@@ -271,7 +289,7 @@ func telemetryServiceName(item nanoflare.ActiveDeployment, kind string) string {
 func durationTelemetryServices(runtimeAddr string, active []nanoflare.ActiveDeployment) string {
 	var out strings.Builder
 	for _, item := range active {
-		for _, kind := range []string{nanoflare.RuntimeDurations, nanoflare.RuntimeLogs} {
+		for _, kind := range []string{nanoflare.RuntimeDurations, nanoflare.RuntimeLogs, nanoflare.RuntimeAccess} {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n", quote(telemetryServiceName(item, kind)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, kind, "")))
 		}
 		source := `export default { async tail(events, env) {
@@ -294,6 +312,7 @@ func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDe
 	if dnsEnabled {
 		bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DNS\", service = %s)", quote(dnsServiceName(item))))
 	}
+	bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_ACCESS\", service = %s)", quote(telemetryServiceName(item, nanoflare.RuntimeAccess))))
 	bindings = append(bindings, dispatchWorkerBindings(item)...)
 	varNames := make([]string, 0, len(item.Deployment.Vars))
 	for name := range item.Deployment.Vars {
@@ -677,6 +696,23 @@ export default {
   async fetch(request, env, ctx) {
     if (new URL(request.url).pathname === "/cdn-cgi/handler/scheduled") {
       return runScheduled(request, env, ctx);
+    }
+    const assertion = request.headers.get("X-Nanoflare-User-JWT");
+    if (assertion && env.__NANOFLARE_ACCESS) {
+      let identity;
+      Object.defineProperty(ctx, "access", { value: Object.freeze({
+        getIdentity() {
+          return identity ??= env.__NANOFLARE_ACCESS.fetch("https://nanoflare.internal/internal/runtime/access", {
+            headers: {"X-Nanoflare-User-JWT": assertion}
+          }).then(async response => {
+            if (!response.ok) throw new Error("Access identity is unavailable");
+            return response.json();
+          });
+        }
+      }) });
+      const headers = new Headers(request.headers);
+      headers.delete("X-Nanoflare-User-JWT");
+      request = new Request(request, { headers });
     }
     return withOutputIdentity(env, async () => {
       const startedAt = Date.now();

@@ -20,9 +20,11 @@ function requireSupportedOptions(options, dispatchOptions) {
   )
     throw argumentError("Custom CPU/outbound/limit options are not supported by this profile");
 }
-async function requireOK(response) {
+async function requireOK(response, missingWorker = false) {
   if (response.ok) return response;
   const detail = await response.text();
+  if (missingWorker && response.status === 404)
+    throw Object.assign(new Error("Worker not found"), { status: 404 });
   throw Object.assign(new Error(`Dispatch failed (${response.status}): ${detail}`), {
     status: response.status,
   });
@@ -228,6 +230,7 @@ export function wrapDispatchEnv(env, ctx, root) {
                     body: JSON.stringify({ script, root }),
                   },
                 ),
+                true,
               );
               const artifact = await response.json();
               return invokeArtifact(env, ctx, control, artifact, request, props);

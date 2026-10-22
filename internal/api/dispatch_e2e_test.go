@@ -310,6 +310,8 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool) {
  const object=await (await env.BUCKET.get("object-"+ctx.props.marker)).text();
  return Response.json({answer,object,cachePolicy,version,marker:ctx.props.marker,rpc:await ctx.props.CONNECTOR.identify(),state:await env.STATE.get("seen-"+ctx.props.marker),secret:env.TOKEN});
 } };`}}}
+	// This handler explicitly serves its own asset paths alongside API routes.
+	customerInput.AssetConfig.RunWorkerFirst = nanoflare.RunWorkerFirst{"/*"}
 	var first nanoflare.Deployment
 	json.Unmarshal(control("POST", "/workers/"+customer.ID+"/deployments", customerInput, 201), &first)
 	if launcher.count.Load() != 0 {
@@ -835,7 +837,7 @@ export default {async fetch(request,env,ctx){return Response.json({version:"clas
 	assetSession := assetCall(assetBase+"/dispatch/namespaces/"+ns.Name+"/scripts/alpha/assets-upload-session", session.Token, "application/json", assetManifest, 200)
 	assetKind, assetBody := cfAssetMultipart(t, map[string][]byte{assetHash: assetBytes})
 	assetCompleted := assetCall(assetBase+"/assets/upload?base64=true", assetSession.JWT, assetKind, assetBody, 201)
-	assetKind, assetBody = cfMultipart(t, `{"main_module":"worker.js","compatibility_date":"2025-12-10","assets":{"jwt":"`+assetCompleted.JWT+`"},"bindings":[{"name":"ASSETS","type":"assets"}]}`, `export default {async fetch(request,env){return Response.json({version:"assets",asset:await (await env.ASSETS.fetch("https://assets.internal/hello.txt")).text()});}}`)
+	assetKind, assetBody = cfMultipart(t, `{"main_module":"worker.js","compatibility_date":"2025-12-10","assets":{"jwt":"`+assetCompleted.JWT+`","config":{"run_worker_first":true}},"bindings":[{"name":"ASSETS","type":"assets"}]}`, `export default {async fetch(request,env){return Response.json({version:"assets",asset:await (await env.ASSETS.fetch("https://assets.internal/hello.txt")).text()});}}`)
 	wireMutation("PUT", "", assetKind, assetBody, "wire-assets")
 	if result = invoke("wire-assets"); result["version"] != "assets" || result["asset"] != string(assetBytes) {
 		t.Fatalf("completed asset native execution: %#v", result)

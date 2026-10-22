@@ -210,7 +210,7 @@ version tags, CPU intent, classic scripts, non-JavaScript module formats and
 arbitrary RPC entrypoints are unsupported by this profile.
 
 Asset manifests map canonical absolute paths to hash/size entries. A session
-permits 128 files and 10 MiB total declared bytes; an organization can hold at
+permits 1,000 files, 25 MiB per file and 50 MiB total declared bytes; an organization can hold at
 most 16 live sessions. The delegated endpoint is:
 
 ```text
@@ -226,13 +226,15 @@ have separate purposes and one-hour lifetimes. Completed assets attach only to
 their owning account/namespace/script/customer, and first attachment binds a
 new-script session to the actual immutable Worker ID.
 
-Full script metadata supplies `assets.jwt` and an explicit assets binding.
+Full script metadata supplies `assets.jwt`; a named assets binding is optional.
+Without a named binding, dynamic Workers serve assets automatically according to
+the asset routing configuration. Explicit worker-first routes invoke the handler.
 Routing configuration can set native HTML/not-found/worker-first behavior.
 Tokens never enter deployed artifacts. Retained assets use `keep_assets` with
 integrity checks, and remain usable after staging expiry/cleanup. Cleanup runs
 at startup and each minute in batches of at most 256 expired records, with a
-five-second database deadline. Cross-session deduplication, empty native asset
-files and `application/null` served-header omission are unsupported.
+five-second database deadline. Empty asset files are supported. Cross-session deduplication and
+`application/null` served-header omission remain unsupported.
 
 ## Errors and qualification boundaries
 
@@ -254,3 +256,21 @@ SDK and Wrangler subsets with explicit adaptations, not drop-in compatibility.
 The [step 9 record](../plans/workers-for-platforms-step-9-status.md) holds the
 current test evidence and unresolved live comparison gate. Step 10 qualification
 and independent review still precede any pilot deployment decision.
+
+## Unchanged upstream examples
+
+The [upstream example runner](../../scripts/wfp-examples/README.md) deploys the
+pinned Worker Publisher and Internal Sites bundles through native publication.
+SDK 5.2.0 filename-keyed `files` multipart parts are accepted; named module
+parts retain their own identity. SDK 7 bracketed metadata serialization is still
+outside the qualified wire contract. The private account-scoped gateway adds
+explicit trusted execution consent and routes API requests locally without
+external forwarding. It does not enable broad Wrangler provisioning support.
+
+Internal Sites' script/path-salted truncated SHA-256 wire hashes are accepted
+in addition to the existing conventions. Full internal content digests still
+protect staged and deployed bytes. Static platform Workers can resolve verified
+Nanoflare user assertions through a private revision-capability-protected Access
+identity handler. The local example ingress verifies sessions and organization
+membership and strips untrusted assertion headers. This is a runtime identity
+contract, not Cloudflare Access policy/account API compatibility.

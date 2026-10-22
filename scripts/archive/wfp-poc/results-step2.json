@@ -65,10 +65,7 @@
       "name": "subrequest limit enforcement",
       "status": "blocker",
       "evidence": {
-        "limits_supplied_at": [
-          "WorkerCode",
-          "EntrypointOptions"
-        ],
+        "limits_supplied_at": ["WorkerCode", "EntrypointOptions"],
         "requested_limit": 2,
         "response": {
           "completed": 5
@@ -100,10 +97,7 @@
       "evidence": {
         "bounded_by": "parent kills disposable process after observation",
         "client_timeout_ms": 150,
-        "limits_supplied_at": [
-          "WorkerCode",
-          "EntrypointOptions"
-        ],
+        "limits_supplied_at": ["WorkerCode", "EntrypointOptions"],
         "loader_cpu_ms_requested": false,
         "peer_responsive": false,
         "peer_timeout_ms": 250,
@@ -116,10 +110,7 @@
       "evidence": {
         "bounded_by": "parent kills disposable process after observation",
         "client_timeout_ms": 150,
-        "limits_supplied_at": [
-          "WorkerCode",
-          "EntrypointOptions"
-        ],
+        "limits_supplied_at": ["WorkerCode", "EntrypointOptions"],
         "loader_cpu_ms_requested": true,
         "peer_responsive": false,
         "peer_timeout_ms": 250,

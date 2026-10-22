@@ -33,7 +33,7 @@ Passed locally on macOS arm64:
 - Native workerd KV, assets, objects and duration integration tests.
 - Updated opt-in PoC on workerd 2025-12-10 and 2026-10-18: real native tail delivery attributes the forged victim marker to the attacker; victim telemetry remains empty; telemetry-to-unbound-KV access returns 403.
 
-Evidence: [installed runtime results](../../scripts/wfp-poc/results-step2.json), [candidate runtime results](../../scripts/wfp-poc/results-step2-current.json). The original `results.json` and `results-current.json` remain historical baseline evidence. A passing full PoC still reports CPU/subrequest and egress defects as blockers.
+Evidence: [installed runtime results](../../scripts/archive/wfp-poc/results-step2.json), [candidate runtime results](../../scripts/archive/wfp-poc/results-step2-current.json). The original `results.json` and `results-current.json` remain historical baseline evidence. A passing full PoC still reports CPU/subrequest and egress defects as blockers.
 
 To repeat repository security checks, set `NANOFLARE_TEST_POSTGRES_URL` to a disposable PostgreSQL database; the tests create and remove a dedicated schema. Without that environment variable the PostgreSQL portion skips. Use the native workerd executable on PATH for native integration tests.
 

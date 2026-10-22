@@ -84,7 +84,7 @@ func TestCompletedAssetTranslationUsesOnlyResolvedBytes(t *testing.T) {
 	upload.Metadata.Bindings = nil
 	if _, err = CompleteUpload(upload, nil, nil, Options{LoadCompletedAssets: func() ([]nanoflare.AssetFile, error) {
 		return []nanoflare.AssetFile{{Path: "/hello.txt", Data: []byte("hello")}}, nil
-	}}); err == nil {
-		t.Fatal("implicit native asset binding was not rejected")
+	}}); err != nil {
+		t.Fatal("implicit asset serving rejected:", err)
 	}
 }

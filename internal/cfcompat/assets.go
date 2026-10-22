@@ -48,7 +48,7 @@ func DecodeAssetManifest(data []byte) (map[string]nanoflare.AssetUploadEntry, er
 }
 
 func DecodeAssetFiles(contentType string, body io.Reader) (map[string]nanoflare.AssetUploadBlob, error) {
-	const maxEncodedBytes = ((nanoflare.MaxAssetUploadBytes+2)/3)*4 + (256 << 10)
+	const maxEncodedBytes = ((nanoflare.MaxAssetUploadBytes+2)/3)*4 + (1 << 20)
 	data, err := io.ReadAll(io.LimitReader(body, maxEncodedBytes+1))
 	if err != nil {
 		return nil, errors.New("could not read asset upload")
@@ -94,7 +94,7 @@ func DecodeAssetFiles(contentType string, body io.Reader) (map[string]nanoflare.
 		}
 		total += len(decoded)
 		if total > nanoflare.MaxAssetUploadBytes {
-			return nil, errors.New("decoded assets exceed 10 MiB")
+			return nil, errors.New("decoded assets exceed 50 MiB")
 		}
 		content := part.Header.Get("Content-Type")
 		if content == "application/null" {

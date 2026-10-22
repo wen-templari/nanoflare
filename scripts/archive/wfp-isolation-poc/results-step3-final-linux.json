@@ -25,11 +25,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            200,
-            200,
-            429
-          ],
+          "statuses": [200, 200, 429],
           "leaseVisible": false
         },
         "accepted_effects": 2,
@@ -59,14 +55,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            200,
-            200,
-            429,
-            429,
-            429,
-            429
-          ],
+          "statuses": [200, 200, 429, 429, 429, 429],
           "leaseVisible": false
         },
         "accepted_effects": 2,
@@ -111,9 +100,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            429
-          ],
+          "statuses": [429],
           "leaseVisible": false
         },
         "accepted_effects": 2,
@@ -143,11 +130,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            503,
-            503,
-            429
-          ],
+          "statuses": [503, 503, 429],
           "leaseVisible": false
         },
         "accepted_effects": 2,
@@ -177,11 +160,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            200,
-            200,
-            429
-          ],
+          "statuses": [200, 200, 429],
           "leaseVisible": false
         },
         "accepted_effects": 2,
@@ -211,11 +190,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            200,
-            200,
-            429
-          ],
+          "statuses": [200, 200, 429],
           "leaseVisible": false
         },
         "accepted_effects": 2,
@@ -245,11 +220,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            200,
-            200,
-            429
-          ],
+          "statuses": [200, 200, 429],
           "leaseVisible": false
         },
         "accepted_effects": 2,
@@ -279,9 +250,7 @@
       "status": "verified",
       "evidence": {
         "response": {
-          "statuses": [
-            200
-          ],
+          "statuses": [200],
           "leaseVisible": false
         },
         "accepted_effects": 2,

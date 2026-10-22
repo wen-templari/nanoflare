@@ -74,3 +74,12 @@ No fake account/token state is returned. Secrets/assets, preservation of existin
 configuration, forced script deletion, namespace rename, other Wrangler versions
 and unmodified direct CLI deployment remain unqualified. The test uses the native
 API for script cleanup before exercising Wrangler's empty-namespace deletion.
+
+## Upstream example acceptance
+
+The [separate example runner](../wfp-examples/README.md) builds the pinned
+Cloudflare Worker Publisher and Internal Sites sources unchanged. The Publisher
+locks Cloudflare SDK 5.2.0, whose filename-keyed multipart `files` encoding is
+now supported. This does not change the SDK 7 bracketed-metadata limitation
+described above. The example runner exercises actual deployment, dispatch,
+identity and static assets against persistent local storage.

@@ -308,6 +308,19 @@ func decodeUpload(contentType string, body io.Reader, decodeMetadata func([]byte
 			return DecodedUpload{}, errors.New("too many upload parts")
 		}
 		name := part.FormName()
+		// cloudflare@5.x uses repeated `files` parts with the module identity
+		// in filename. Other clients use the module name as the form key.
+		// Never let a filename override a named module (or metadata).
+		if name == "files" {
+			_, disposition, parseErr := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+			if parseErr != nil || !moduleName(disposition["filename"]) {
+				return DecodedUpload{}, errors.New("files parts require a valid module filename")
+			}
+			name = disposition["filename"]
+			if name == "metadata" {
+				return DecodedUpload{}, errors.New("module filename cannot replace metadata")
+			}
+		}
 		if len(part.Header.Values("Content-Type")) > 1 || (name != "metadata" && len(part.Header.Values("Content-Type")) != 1) || len(part.Header.Values("Content-Disposition")) != 1 || part.Header.Get("Content-Transfer-Encoding") != "" || part.Header.Get("Content-Encoding") != "" {
 			return DecodedUpload{}, errors.New("ambiguous or encoded upload parts are unsupported")
 		}
@@ -596,9 +609,8 @@ func translate(metadata Metadata, previous *Previous, resolve Resolver, allowDis
 	if result.Deployment.AssetConfig.Binding != "" && len(result.Deployment.Assets) == 0 {
 		return Candidate{}, errors.New("assets binding requires retained assets or a completed upload")
 	}
-	if len(result.Deployment.Assets) > 0 && result.Deployment.AssetConfig.Binding == "" {
-		return Candidate{}, errors.New("this native profile requires an explicit assets binding")
-	}
+	// Assets may be served automatically without exposing a named binding to
+	// customer code, as used by the upstream Internal Sites template.
 	return result, nil
 }
 

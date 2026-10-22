@@ -14,7 +14,7 @@
     "native_invocation_limit": "not_enforced",
     "trusted_process_accounting": "measured",
     "per_invocation_accounting": "not_implemented",
-    "workstream": "../../docs/plans/workers-for-platforms-cpu-enforcement.md"
+    "workstream": "../../../docs/plans/workers-for-platforms-cpu-enforcement.md"
   },
   "subrequests": {
     "native_limit": "not_enforced",
@@ -50,7 +50,7 @@
   },
   "step3": {
     "status": "design_and_bounded_feasibility_complete",
-    "decision": "../../docs/architecture/workers-for-platforms-execution.md",
+    "decision": "../../../docs/architecture/workers-for-platforms-execution.md",
     "bridge_evidence": "results-step3-bridge.json",
     "failure_domain_evidence": "results-step3-final-linux.json"
   }

@@ -19,8 +19,9 @@ import (
 
 var ErrAssetUploadUnavailable = errors.New("asset upload session is unavailable or expired")
 
-const MaxAssetUploadBytes = 10 << 20
-const MaxAssetUploadFiles = 128
+const MaxAssetUploadBytes = 50 << 20
+const MaxAssetUploadFileBytes = 25 << 20
+const MaxAssetUploadFiles = 1000
 const MaxAssetUploadSessions = 16
 
 type AssetUploadEntry struct {
@@ -58,7 +59,7 @@ type assetUploadClaims struct {
 
 func ValidateAssetManifest(manifest map[string]AssetUploadEntry) error {
 	if manifest == nil || len(manifest) > MaxAssetUploadFiles {
-		return errors.New("asset manifest requires at most 128 files")
+		return errors.New("asset manifest requires at most 1000 files")
 	}
 	var total int64
 	sizes := map[string]int64{}
@@ -67,7 +68,7 @@ func ValidateAssetManifest(manifest map[string]AssetUploadEntry) error {
 			return errors.New("invalid asset manifest path")
 		}
 		decoded, err := hex.DecodeString(entry.Hash)
-		if err != nil || len(decoded) != 16 || strings.ToLower(entry.Hash) != entry.Hash || entry.Size < 0 || entry.Size > MaxAssetUploadBytes {
+		if err != nil || len(decoded) != 16 || strings.ToLower(entry.Hash) != entry.Hash || entry.Size < 0 || entry.Size > MaxAssetUploadFileBytes {
 			return errors.New("invalid asset hash or size")
 		}
 		if prior, exists := sizes[entry.Hash]; exists && prior != entry.Size {
@@ -76,7 +77,7 @@ func ValidateAssetManifest(manifest map[string]AssetUploadEntry) error {
 		sizes[entry.Hash] = entry.Size
 		total += entry.Size
 		if total > MaxAssetUploadBytes {
-			return errors.New("asset manifest exceeds 10 MiB")
+			return errors.New("asset manifest exceeds 50 MiB")
 		}
 	}
 	return nil
@@ -230,6 +231,14 @@ func assetWireHash(data []byte, name string) (string, string) {
 	return hex.EncodeToString(raw[:16]), hex.EncodeToString(extended[:16])
 }
 
+// The upstream Internal Sites template salts hashes with the script and path.
+// Keep this wire convention separate from our full internal content digest.
+func assetWireHashMatches(data []byte, name, script, hash string) bool {
+	raw, extended := assetWireHash(data, name)
+	salted := sha256.Sum256(append([]byte(script+"\x00"+name+"\x00"), data...))
+	return hash == raw || hash == extended || hash == hex.EncodeToString(salted[:16])
+}
+
 func validateAssetUploadTarget(ns DispatchNamespace, script, customer string) error {
 	if !platformName.MatchString(script) || (customer != "" && !platformName.MatchString(customer)) {
 		return errors.New("invalid script or customer identity")
@@ -259,7 +268,7 @@ func (s *Service) UploadAssetFiles(org, token string, files map[string]AssetUplo
 	for hash, blob := range files {
 		total += len(blob.Data)
 		if total > MaxAssetUploadBytes {
-			return AssetUploadResult{}, errors.New("asset upload exceeds 10 MiB")
+			return AssetUploadResult{}, errors.New("asset upload exceeds 50 MiB")
 		}
 		if blob.ContentType == "" {
 			blob.ContentType = "application/octet-stream"
@@ -276,8 +285,7 @@ func (s *Service) UploadAssetFiles(org, token string, files map[string]AssetUplo
 				continue
 			}
 			matched = true
-			raw, extended := assetWireHash(blob.Data, name)
-			if int64(len(blob.Data)) != entry.Size || (hash != raw && hash != extended) {
+			if int64(len(blob.Data)) != entry.Size || !assetWireHashMatches(blob.Data, name, session.ScriptName, hash) {
 				return AssetUploadResult{}, errors.New("asset hash or size mismatch")
 			}
 		}
@@ -323,8 +331,7 @@ func (s *Service) CompletedAssetsForOrg(org, namespace, script, customer, token 
 	files := []AssetFile{}
 	for name, entry := range session.Manifest {
 		blob, exists := session.Blobs[entry.Hash]
-		raw, extended := assetWireHash(blob.Data, name)
-		if !exists || blob.Digest != hashBytes(blob.Data) || int64(len(blob.Data)) != entry.Size || (entry.Hash != raw && entry.Hash != extended) {
+		if !exists || blob.Digest != hashBytes(blob.Data) || int64(len(blob.Data)) != entry.Size || !assetWireHashMatches(blob.Data, name, session.ScriptName, entry.Hash) {
 			return nil, ErrAssetUploadUnavailable
 		}
 		files = append(files, AssetFile{Path: name, Size: entry.Size, ContentType: blob.ContentType, Data: append([]byte{}, blob.Data...)})

@@ -110,6 +110,11 @@ func (s *Service) validateDispatchBindings(app App, in DeployInput) error {
 		return ErrDispatchUnavailable
 	}
 	if len(in.DispatchNamespaces) > 0 {
+		for _, flag := range in.CompatibilityFlags {
+			if flag == "disable_ctx_exports" {
+				return errors.New("platform dispatch requires ctx.exports for its internal broker")
+			}
+		}
 		for _, file := range in.Files {
 			if (file.Path == in.Entrypoint || (in.Entrypoint == "" && len(in.Files) == 1)) && regexp.MustCompile(`(?m)export\s+default\s+class\b`).MatchString(file.Content) {
 				return errors.New("platform namespace bindings currently require a module fetch-handler object")

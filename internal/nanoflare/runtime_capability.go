@@ -19,6 +19,7 @@ const (
 	RuntimeAssets           = "assets"
 	RuntimeDurations        = "durations"
 	RuntimeLogs             = "logs"
+	RuntimeAccess           = "access"
 	runtimeCapabilityPrefix = "nfc1."
 )
 
@@ -215,6 +216,8 @@ func (s *Service) authorizeBoundRuntime(p RuntimePrincipal, kind string) (Runtim
 		}
 	case RuntimeAssets:
 		bound = grant.ResourceID == deployment.ID
+	case RuntimeAccess:
+		bound = grant.ResourceID == "" && !app.IsDynamic()
 	case RuntimeDurations, RuntimeLogs:
 		bound = grant.ResourceID == ""
 	}

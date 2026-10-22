@@ -3,6 +3,7 @@ package egress
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -31,6 +32,7 @@ type Config struct {
 }
 
 type Server struct {
+	localHandler http.Handler
 	policy       *NetworkPolicy
 	httpPolicy   *policyTransport
 	listener     net.Listener
@@ -260,6 +262,13 @@ func (s *Server) serveConn(conn net.Conn) {
 			return
 		}
 		_ = conn.SetReadDeadline(time.Time{})
+		if request.Method == http.MethodConnect && s.localHandler != nil {
+			response := errorResponse(http.StatusForbidden, "local gateway does not allow tunnels")
+			_ = writeResponse(writer, response)
+			response.Body.Close()
+			request.Body.Close()
+			return
+		}
 		if request.Method == http.MethodConnect {
 			s.handleConnect(conn, reader, request)
 			return
@@ -507,7 +516,47 @@ type bufferedConn struct {
 
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
 
+// NewLocalGateway uses workerd's hostless absolute-URL wire format but never
+// opens an outbound connection. The handler must enforce its origin/account scope.
+func NewLocalGateway(addr string, handler http.Handler) (*Server, error) {
+	if handler == nil {
+		return nil, errors.New("local gateway requires a handler")
+	}
+	server, err := New(Config{Addr: addr, ProxyURL: "http://127.0.0.1:1"})
+	if err != nil {
+		return nil, err
+	}
+	server.localHandler = handler
+	return server, nil
+}
+
+type localResponse struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func (w *localResponse) Header() http.Header { return w.header }
+func (w *localResponse) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+func (w *localResponse) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = 200
+	}
+	return w.body.Write(data)
+}
 func (s *Server) forward(request *http.Request) *http.Response {
+	if s.localHandler != nil {
+		w := &localResponse{header: make(http.Header)}
+		s.localHandler.ServeHTTP(w, request)
+		if w.status == 0 {
+			w.status = 200
+		}
+		return &http.Response{StatusCode: w.status, Status: http.StatusText(w.status), Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1, Header: w.header, Body: io.NopCloser(bytes.NewReader(w.body.Bytes())), ContentLength: int64(w.body.Len())}
+	}
 	if request.Method == http.MethodConnect || !request.URL.IsAbs() || (request.URL.Scheme != "http" && request.URL.Scheme != "https") {
 		return errorResponse(http.StatusBadRequest, "absolute HTTP or HTTPS URL required")
 	}

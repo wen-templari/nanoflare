@@ -1,11 +1,14 @@
 # Bounded execution/isolation experiment
 
-Opt-in step 3 investigation. Read the [status and decisions](../../docs/plans/workers-for-platforms-step-3-status.md) and [separate CPU workstream](../../docs/plans/workers-for-platforms-cpu-enforcement.md). No production runner behavior is changed here.
+> Archived experiment. Retained with its recorded evidence for reproducibility.
+> For current application acceptance, use the [official upstream examples](../../wfp-examples/README.md).
+
+Opt-in step 3 investigation. Read the [status and decisions](../../../docs/plans/workers-for-platforms-step-3-status.md) and [separate CPU workstream](../../../docs/plans/workers-for-platforms-cpu-enforcement.md). No production runner behavior is changed here.
 
 From the repository root, with Docker running and local `nanoflare-e2e/nanoflare-runner:local` and `node:24-slim` images already available:
 
 ```sh
-python3 scripts/wfp-isolation-poc/run.py
+python3 scripts/archive/wfp-isolation-poc/run.py
 ```
 
 The harness never pulls or builds images. It resolves local image tags to immutable IDs and records executable and fixture SHA-256 values in [results](results-step3-linux.json). Default native executable is the Linux arm64 npm-installed workerd binary. Use `--image`, `--binary` and `--report` to qualify a different local image/build. The tested image reports workerd 2026-09-11, matching the repository Dockerfile's pinned npm version. No global runtime installation or package versions change.
@@ -21,11 +24,11 @@ A successful harness run means its observations and assertions held. It intentio
 ## Final bridge and lifecycle qualification
 
 ```sh
-python3 scripts/wfp-isolation-poc/bridge.py
-python3 scripts/wfp-isolation-poc/run.py --report scripts/wfp-isolation-poc/results-step3-final-linux.json
+python3 scripts/archive/wfp-isolation-poc/bridge.py
+python3 scripts/archive/wfp-isolation-poc/run.py --report scripts/archive/wfp-isolation-poc/results-step3-final-linux.json
 ```
 
-The [execution decision](../../docs/architecture/workers-for-platforms-execution.md) selects the restricted typed-facade subset. The [bridge results](results-step3-bridge.json) cover warm revision reuse, per-request native props/facades, stream revision pinning, cancellation, background/wall deadlines, revocation/replay denial, admission and bounded terminal history. It uses the same disposable container controls and inherits cleanup from the isolation harness. Only the synthetic relay uses Node; the workerd process is the pinned native binary.
+The [execution decision](../../../docs/architecture/workers-for-platforms-execution.md) selects the restricted typed-facade subset. The [bridge results](results-step3-bridge.json) cover warm revision reuse, per-request native props/facades, stream revision pinning, cancellation, background/wall deadlines, revocation/replay denial, admission and bounded terminal history. It uses the same disposable container controls and inherits cleanup from the isolation harness. Only the synthetic relay uses Node; the workerd process is the pinned native binary.
 
 `bridge/dispatcher.js` caches by revision and passes a new facade via entrypoint props. `bridge/relay.js` owns authoritative invocation state and synthetic effects in the separate relay process. Caller headers cannot select its lease/revision. The single cell has a narrow fixture transport credential; the relay's management credential is never given to the cell. There are no real user credentials or resource effects. The positive load sample retries 503 admission rejections within a bounded client deadline; it is not a throughput benchmark. A separate saturation test requires a 503 for the seventeenth live lease.
 

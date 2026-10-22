@@ -1,23 +1,26 @@
 # Workers for Platforms feasibility PoC
 
+> Archived experiment. Retained with its recorded evidence for reproducibility.
+> For current application acceptance, use the [official upstream examples](../../wfp-examples/README.md).
+
 This is an opt-in local experiment, not a production feature. It implements a namespace facade on workerd's experimental Worker Loader and exercises Nanoflare handlers. The initial reports reproduce the baseline blockers; the updated telemetry probe requires the step 2 authorization fix. Production source is now changed for that fix; nothing is deployed, and package versions and lockfiles are unchanged.
 
-See the [overall implementation plan](../../docs/plans/workers-for-platforms-implementation.md) for the ordered work after this PoC.
+See the [overall implementation plan](../../../docs/plans/workers-for-platforms-implementation.md) for the ordered work after this PoC.
 
-**Current status, 2026-10-18:** [step 2](../../docs/plans/workers-for-platforms-step-2-status.md) is implemented and verified locally. Native telemetry forgery and unbound KV access are denied on both tested runtime versions. The original reports/table below are historical baseline observations. New evidence is in [results-step2.json](results-step2.json) and [results-step2-current.json](results-step2-current.json); these do not overwrite the original reports. CPU/subrequest enforcement, peer isolation and corporate egress remain blockers.
+**Current status, 2026-10-18:** [step 2](../../../docs/plans/workers-for-platforms-step-2-status.md) is implemented and verified locally. Native telemetry forgery and unbound KV access are denied on both tested runtime versions. The original reports/table below are historical baseline observations. New evidence is in [results-step2.json](results-step2.json) and [results-step2-current.json](results-step2-current.json); these do not overwrite the original reports. CPU/subrequest enforcement, peer isolation and corporate egress remain blockers.
 
 ## Run
 
 From the repository root, with Go and workerd available:
 
 ```sh
-go test -tags=wfppoc -count=1 -timeout=90s -v ./scripts/wfp-poc -args -report=results-step2.json
+go test -tags=wfppoc -count=1 -timeout=90s -v ./scripts/archive/wfp-poc -args -report=results-step2.json
 ```
 
 To test a separately installed binary:
 
 ```sh
-go test -tags=wfppoc -race -count=1 -timeout=90s -v ./scripts/wfp-poc \
+go test -tags=wfppoc -race -count=1 -timeout=90s -v ./scripts/archive/wfp-poc \
   -args -workerd=/absolute/path/to/workerd -report=results-step2-current.json
 ```
 
@@ -113,7 +116,7 @@ The fixture loads batches of 1, 10 and 50 new customer revisions sequentially. I
 ## Remaining gates and recommended next work
 
 1. **Runtime authorization and capability confinement — completed locally in step 2.** Reproduce the KV case against PostgreSQL, then add enforcement tests that require it to fail. Move telemetry identity out of customer-written payloads/text.
-2. **Execution-budget investigation — step 3 evidence available.** See the [Linux experiment](../wfp-isolation-poc/README.md); [real CPU enforcement](../../docs/plans/workers-for-platforms-cpu-enforcement.md) is now a separate dependency. Prove CPU interruption and peer isolation using a runner/runtime change or separate failure domains. Do not claim WFP CPU/subrequest parity from the loader facade.
+2. **Execution-budget investigation — step 3 evidence available.** See the [Linux experiment](../wfp-isolation-poc/README.md); [real CPU enforcement](../../../docs/plans/workers-for-platforms-cpu-enforcement.md) is now a separate dependency. Prove CPU interruption and peer isolation using a runner/runtime change or separate failure domains. Do not claim WFP CPU/subrequest parity from the loader facade.
 3. **Choose and validate the sandbox boundary.** This PoC does not implement a VM/container boundary or test memory-exhaustion isolation. [workerd's security guidance](https://github.com/cloudflare/workerd/blob/main/README.md) still requires an additional secure sandbox for potentially malicious code.
 4. **Integrate the proven loader path as a trusted-only experiment.** Add real namespace ownership, immutable artifact lookup, grants and publication semantics after the security fixes. Validate background tasks, RPC entrypoints, cache behavior and weighted revisions.
 5. **Resolve outbound reuse and capacity.** Measure cold/warm behavior, eviction, backpressure, concurrent deployments and fault recovery. Repeat cancellation checks on the selected runtime version.

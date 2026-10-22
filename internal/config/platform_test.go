@@ -19,3 +19,17 @@ func TestPrivateScriptsHaveNoPublicSocketsOrRoutes(t *testing.T) {
 		t.Fatal("private Worker exposed through Traefik")
 	}
 }
+
+func TestDispatchEnablesInternalExportsForOlderApplicationDate(t *testing.T) {
+	d := nanoflare.Deployment{CompatibilityDate: "2025-10-08", DispatchNamespaces: []nanoflare.DispatchBinding{{Binding: "DISPATCHER", NamespaceID: "ns"}}}
+	flags := runtimeCompatibilityFlags(d)
+	found := false
+	for _, flag := range flags {
+		if flag == "enable_ctx_exports" {
+			found = true
+		}
+	}
+	if !found || d.CompatibilityDate != "2025-10-08" {
+		t.Fatal("internal broker missing exports or date changed", flags)
+	}
+}

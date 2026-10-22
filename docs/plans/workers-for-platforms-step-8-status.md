@@ -35,7 +35,7 @@ An editing mistake overwrote the dispatch source during this work. It was restor
 
 ## Operational notes and remaining release qualification
 
-The [local development example](../../scripts/wfp-local-demo/README.md) describes dispatch, full-bundle updates, rollback and inspection. [Operator migration notes](workers-for-platforms-operations.md) cover the metric rename, authenticated scraper configuration, sampling/redaction, collector trust and honest capability limits.
+The disposable local demo used for these historical checks has been removed. Use the [official upstream examples](../../scripts/wfp-examples/README.md) for current application acceptance; focused integration tests retain coverage of updates, rollback and inspection. [Operator migration notes](workers-for-platforms-operations.md) cover the metric rename, authenticated scraper configuration, sampling/redaction, collector trust and honest capability limits.
 
 Step 10 still needs the live collector/Loki path, production filesystem permissions, production-like resources, sustained capacity and crash/recovery qualification. Shared runtime safety and real CPU interruption remain separate gates. Module-initialization logs outside invocation context are unavailable. Dynamic publication readiness remains unverified until a separate readiness mechanism can attest it. No commit, release or deployment was made.
 

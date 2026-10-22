@@ -443,6 +443,7 @@ func newRuntimeMuxWithOutbound(service *nanoflare.Service, server *api.Server, d
 		output = outputs[0]
 	}
 	runtimeMux.Handle("/internal/runtime/dispatch/", api.NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(output))
+	runtimeMux.Handle("/internal/runtime/access", server.RuntimeAccessHandler())
 	runtimeMux.Handle("/internal/runtime/logs", api.NewRuntimeLogServer(service, output))
 	runtimeMux.Handle("/internal/runtime/objects/", server)
 	runtimeMux.Handle("/internal/runtime/durations", runtimeDurations)

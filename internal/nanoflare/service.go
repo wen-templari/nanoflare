@@ -1474,9 +1474,6 @@ func deploymentAssets(files []AssetFile, config AssetConfig) ([]AssetFile, error
 		}
 		seen[file.Path] = true
 		file.Size = int64(len(file.Data))
-		if file.Size == 0 {
-			return nil, fmt.Errorf("asset %q is empty", file.Path)
-		}
 		if file.ContentType == "" {
 			file.ContentType = detectAssetContentType(file.Path)
 		}

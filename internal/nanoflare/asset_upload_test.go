@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -81,5 +82,50 @@ func TestAssetUploadPartialCompletionAndImmutableRetry(t *testing.T) {
 	}
 	if _, err = service.CreateAssetUploadForOrg("org", ns.ID, "alpha", "customer", map[string]AssetUploadEntry{}); err == nil {
 		t.Fatal("organization namespace accepted customer identity")
+	}
+}
+
+func TestInternalSitesSaltedAssetHash(t *testing.T) {
+	data := []byte("<h1>hello</h1>")
+	digest := sha256.Sum256(append([]byte("site\x00/index.html\x00"), data...))
+	hash := hex.EncodeToString(digest[:16])
+	if !assetWireHashMatches(data, "/index.html", "site", hash) {
+		t.Fatal("upstream hash rejected")
+	}
+	for _, tc := range []struct {
+		data         []byte
+		name, script string
+	}{
+		{[]byte("changed"), "/index.html", "site"}, {data, "/other.html", "site"}, {data, "/index.html", "other"},
+	} {
+		if assetWireHashMatches(tc.data, tc.name, tc.script, hash) {
+			t.Fatal("accepted altered content/scope")
+		}
+	}
+}
+
+func TestInternalSitesManifestBounds(t *testing.T) {
+	manifest := map[string]AssetUploadEntry{}
+	for i := 0; i < MaxAssetUploadFiles; i++ {
+		manifest[fmt.Sprintf("/file-%d.txt", i)] = AssetUploadEntry{Hash: strings.Repeat("a", 32), Size: 0}
+	}
+	if err := ValidateAssetManifest(manifest); err != nil {
+		t.Fatal("1000 empty files rejected", err)
+	}
+	manifest["/extra.txt"] = AssetUploadEntry{Hash: strings.Repeat("a", 32), Size: 0}
+	if ValidateAssetManifest(manifest) == nil {
+		t.Fatal("accepted 1001 files")
+	}
+	manifest = map[string]AssetUploadEntry{"/a.bin": {Hash: strings.Repeat("a", 32), Size: 25 << 20}, "/b.bin": {Hash: strings.Repeat("b", 32), Size: 25 << 20}}
+	if err := ValidateAssetManifest(manifest); err != nil {
+		t.Fatal("50 MiB manifest rejected", err)
+	}
+	manifest["/c.txt"] = AssetUploadEntry{Hash: strings.Repeat("c", 32), Size: 1}
+	if ValidateAssetManifest(manifest) == nil {
+		t.Fatal("accepted more than 50 MiB")
+	}
+	manifest = map[string]AssetUploadEntry{"/a.bin": {Hash: strings.Repeat("a", 32), Size: (25 << 20) + 1}}
+	if ValidateAssetManifest(manifest) == nil {
+		t.Fatal("accepted more than 25 MiB in one file")
 	}
 }

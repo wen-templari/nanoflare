@@ -26,10 +26,7 @@
       "evidence": {
         "requests": 36,
         "unique_instances": 1,
-        "subjects": [
-          "alpha",
-          "beta"
-        ],
+        "subjects": ["alpha", "beta"],
         "forged_headers_ignored": true,
         "authority": "external fixture broker, reached through typed local RPC facade",
         "global_outbound": "null"
@@ -52,12 +49,7 @@
           "undeclaredResourceDenied": true
         },
         "limit": {
-          "statuses": [
-            200,
-            200,
-            200,
-            429
-          ]
+          "statuses": [200, 200, 200, 429]
         },
         "arbitrary_cross_process_native_rpc": false
       }

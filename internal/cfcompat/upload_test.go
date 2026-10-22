@@ -308,3 +308,36 @@ func TestOrdinaryDispatchNamespaceBinding(t *testing.T) {
 		}
 	}
 }
+
+// SDK 5.2.0 (the upstream publisher's locked version) uses filename-keyed files.
+func TestSDK5FilenameModules(t *testing.T) {
+	for _, tc := range []struct {
+		name, filename string
+		wantError      bool
+	}{
+		{"valid", "worker.js", false}, {"traversal", "../worker.js", true},
+		{"metadata", "metadata", true}, {"duplicate", "worker.js", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			field, _ := writer.CreateFormField("metadata")
+			field.Write([]byte(`{"main_module":"worker.js"}`))
+			for i := 0; i < 1+map[bool]int{true: 1}[tc.name == "duplicate"]; i++ {
+				h := textproto.MIMEHeader{}
+				h.Set("Content-Disposition", `form-data; name="files"; filename="`+tc.filename+`"`)
+				h.Set("Content-Type", "application/javascript+module")
+				part, _ := writer.CreatePart(h)
+				part.Write([]byte("export default {}"))
+			}
+			writer.Close()
+			upload, err := DecodeUpload(writer.FormDataContentType(), &body)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error = %v", err)
+			}
+			if err == nil && (len(upload.Files) != 1 || upload.Files[0].Path != "worker.js") {
+				t.Fatal(upload)
+			}
+		})
+	}
+}
