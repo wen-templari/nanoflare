@@ -84,26 +84,36 @@ const (
 var ErrExecutionRetired = errors.New("execution is not accepting admissions")
 
 type executionRevision struct {
-	snapshot  *ExecutionSnapshot
-	accepting bool
-	leases    int
+	snapshot   *ExecutionSnapshot
+	key        string
+	state      ResourceGrantState
+	session    string
+	operations int
+	accepting  bool
+	leases     int
 }
 type executionAdmission struct {
-	revision *executionRevision
-	pins     int
+	revision     *executionRevision
+	pins         int
+	operation    bool
+	resourceKind ExecutionResourceKind
+	resourceID   string
 }
 
 // ExecutionRegistry is process-local authority. A publication allows fresh
 // admissions; retirement only revokes fresh admission, never existing work.
 // A restart discards all capability tokens and requires fresh publication.
 type ExecutionRegistry struct {
-	mu        sync.Mutex
-	revisions map[string]*executionRevision
-	tokens    map[string]*executionAdmission
+	mu            sync.Mutex
+	revisions     map[string]*executionRevision
+	tokens        map[string]*executionAdmission
+	sessions      map[string]time.Time
+	registrations map[string]map[string]string
+	revokedGrants map[string]map[string]bool
 }
 
 func NewExecutionRegistry() *ExecutionRegistry {
-	return &ExecutionRegistry{revisions: make(map[string]*executionRevision), tokens: make(map[string]*executionAdmission)}
+	return &ExecutionRegistry{revisions: make(map[string]*executionRevision), tokens: make(map[string]*executionAdmission), sessions: make(map[string]time.Time), registrations: make(map[string]map[string]string), revokedGrants: make(map[string]map[string]bool)}
 }
 
 func (r *ExecutionRegistry) Publish(snapshot *ExecutionSnapshot) {
@@ -113,7 +123,7 @@ func (r *ExecutionRegistry) Publish(snapshot *ExecutionSnapshot) {
 		existing.accepting = true
 		return
 	}
-	r.revisions[snapshot.id] = &executionRevision{snapshot: snapshot, accepting: true}
+	r.revisions[snapshot.id] = &executionRevision{snapshot: snapshot, key: snapshot.id, accepting: true}
 }
 
 func (r *ExecutionRegistry) Retire(id string) {
@@ -121,9 +131,10 @@ func (r *ExecutionRegistry) Retire(id string) {
 	defer r.mu.Unlock()
 	if revision := r.revisions[id]; revision != nil {
 		revision.accepting = false
-		if revision.leases == 0 {
-			delete(r.revisions, id)
+		if revision.state != "" {
+			revision.state = ResourceGrantDraining
 		}
+		r.collectRevisionLocked(revision)
 	}
 }
 
@@ -180,7 +191,7 @@ func (r *ExecutionRegistry) Admit(id string) (*ExecutionLease, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	revision := r.revisions[id]
-	if revision == nil || !revision.accepting {
+	if revision == nil || !revision.accepting || (revision.session != "" && !r.sessionLiveLocked(revision.session)) {
 		return nil, ErrExecutionRetired
 	}
 	revision.leases++
@@ -198,7 +209,7 @@ func (r *ExecutionRegistry) Pin(token string) (*ExecutionLease, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	a := r.tokens[token]
-	if a == nil {
+	if a == nil || (!a.operation && a.revision.session != "" && !r.sessionLiveLocked(a.revision.session)) {
 		return nil, ErrInvalidCapability
 	}
 	a.pins++
@@ -218,10 +229,12 @@ func (l *ExecutionLease) Release() {
 			return
 		}
 		delete(r.tokens, l.token)
-		a.revision.leases--
-		if !a.revision.accepting && a.revision.leases == 0 {
-			delete(r.revisions, a.revision.snapshot.id)
+		if a.operation {
+			a.revision.operations--
+		} else {
+			a.revision.leases--
 		}
+		r.collectRevisionLocked(a.revision)
 	})
 }
 
@@ -230,8 +243,12 @@ func (l *ExecutionLease) Release() {
 func (r *ExecutionRegistry) Authorize(token string, kind ExecutionResourceKind, resourceID string) (ActiveDeployment, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.authorizeLocked(token, kind, resourceID)
+}
+
+func (r *ExecutionRegistry) authorizeLocked(token string, kind ExecutionResourceKind, resourceID string) (ActiveDeployment, error) {
 	a := r.tokens[token]
-	if a == nil {
+	if a == nil || (a.operation && (a.resourceKind != kind || a.resourceID != resourceID)) || (!a.operation && a.revision.session != "" && !r.sessionLiveLocked(a.revision.session)) {
 		return ActiveDeployment{}, ErrInvalidCapability
 	}
 	d := a.revision.snapshot.active.Deployment
@@ -260,44 +277,10 @@ func (r *ExecutionRegistry) Authorize(token string, kind ExecutionResourceKind, 
 
 func (s *Service) Executions() *ExecutionRegistry { return s.executions }
 
-// RegisterExecution accepts a snapshot from the trusted runner control plane.
-// It still validates tenant ownership before minting any resource authority.
+// RegisterExecution supports legacy execution callers. The dynamic runner uses
+// PrepareExecutionGrant so resource authority belongs to a live runner session.
 func (s *Service) RegisterExecution(active ActiveDeployment, compileOptions string) (string, error) {
-	app, err := s.store.GetApp(active.App.ID)
-	if err != nil {
-		return "", err
-	}
-	if app.OrgID != active.App.OrgID {
-		return "", ErrInvalidCapability
-	}
-	for _, binding := range active.Deployment.KVNamespaces {
-		resource, err := s.store.GetKVNamespace(binding.ID)
-		if err != nil {
-			return "", err
-		}
-		if resource.OrgID != app.OrgID {
-			return "", ErrInvalidCapability
-		}
-	}
-	for _, binding := range active.Deployment.Databases {
-		resource, err := s.store.GetDatabase(binding.DatabaseID)
-		if err != nil {
-			return "", err
-		}
-		if resource.OrgID != app.OrgID {
-			return "", ErrInvalidCapability
-		}
-	}
-	for _, binding := range active.Deployment.ObjectStorageBuckets {
-		resource, err := s.store.GetObjectStorageBucket(binding.BucketID)
-		if err != nil {
-			return "", err
-		}
-		if resource.OrgID != app.OrgID {
-			return "", ErrInvalidCapability
-		}
-	}
-	snapshot, err := FreezeExecution(active, compileOptions)
+	snapshot, err := s.executionSnapshot(active, compileOptions)
 	if err != nil {
 		return "", err
 	}
@@ -305,8 +288,62 @@ func (s *Service) RegisterExecution(active ActiveDeployment, compileOptions stri
 	return snapshot.ID(), nil
 }
 
+func (s *Service) PrepareExecutionGrant(active ActiveDeployment, compileOptions, session, registration string) (string, string, error) {
+	snapshot, err := s.executionSnapshot(active, compileOptions)
+	if err != nil {
+		return "", "", err
+	}
+	grant, err := s.executions.PrepareResourceGrant(snapshot, session, registration)
+	return grant, snapshot.ID(), err
+}
+
+func (s *Service) executionSnapshot(active ActiveDeployment, compileOptions string) (*ExecutionSnapshot, error) {
+	app, err := s.store.GetApp(active.App.ID)
+	if err != nil {
+		return nil, err
+	}
+	if app.OrgID != active.App.OrgID {
+		return nil, ErrInvalidCapability
+	}
+	for _, binding := range active.Deployment.KVNamespaces {
+		resource, err := s.store.GetKVNamespace(binding.ID)
+		if err != nil {
+			return nil, err
+		}
+		if resource.OrgID != app.OrgID {
+			return nil, ErrInvalidCapability
+		}
+	}
+	for _, binding := range active.Deployment.Databases {
+		resource, err := s.store.GetDatabase(binding.DatabaseID)
+		if err != nil {
+			return nil, err
+		}
+		if resource.OrgID != app.OrgID {
+			return nil, ErrInvalidCapability
+		}
+	}
+	for _, binding := range active.Deployment.ObjectStorageBuckets {
+		resource, err := s.store.GetObjectStorageBucket(binding.BucketID)
+		if err != nil {
+			return nil, err
+		}
+		if resource.OrgID != app.OrgID {
+			return nil, ErrInvalidCapability
+		}
+	}
+	snapshot, err := FreezeExecution(active, compileOptions)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
 // Reserved execution tokens never fall back to app-wide authorization.
 func (s *Service) executionAuthorization(token string, kind ExecutionResourceKind, resourceID string) (ActiveDeployment, bool, error) {
+	if strings.HasPrefix(token, "nfgrant_") {
+		return ActiveDeployment{}, true, ErrInvalidCapability
+	}
 	if !strings.HasPrefix(token, "nfexec_") {
 		return ActiveDeployment{}, false, nil
 	}

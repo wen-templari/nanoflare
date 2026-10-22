@@ -17,6 +17,12 @@ func NewRuntimeAssetServer(service *nanoflare.Service) *RuntimeAssetServer {
 }
 
 func (s *RuntimeAssetServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionAssets, r.Header.Get("X-Nanoflare-Deployment-ID"))
+	if !ok {
+		return
+	}
+	defer release()
+
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		writeError(w, http.StatusMethodNotAllowed, errors.New("unsupported asset operation"))

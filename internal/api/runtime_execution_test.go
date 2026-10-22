@@ -57,12 +57,16 @@ func TestRuntimeExecutionControlAndResourceAuthority(t *testing.T) {
 		call("register", token, register, http.StatusUnauthorized)
 	}
 	session := call("open-session", "runner-secret", map[string]string{}, http.StatusOK)["session_id"]
-	id := call("register", "runner-secret", register, http.StatusOK)["execution_id"]
+	register["session_id"], register["registration_id"] = session, "old-registration"
+	registered := call("register", "runner-secret", register, http.StatusOK)
+	id := registered["execution_id"]
+	call("admit", "runner-secret", map[string]string{"execution_id": id, "session_id": session}, http.StatusConflict)
+	call("publish", "runner-secret", map[string]string{"execution_id": id, "session_id": session}, http.StatusOK)
 	expected := active
 	expected.App.SecretValues = map[string]string{"SECRET": "old"}
 	expected.Deployment.ObjectKey = "deployments/old/bundle.json"
 	expectedSnapshot, err := nanoflare.FreezeExecution(expected, "options")
-	if err != nil || expectedSnapshot.ID() != id {
+	if err != nil || expectedSnapshot.ID() != registered["snapshot_id"] {
 		t.Fatal("registration lost JSON-hidden snapshot state", err)
 	}
 	admission := call("admit", "runner-secret", map[string]string{"execution_id": id, "session_id": session}, http.StatusOK)
@@ -105,7 +109,7 @@ func TestRuntimeExecutionControlAndResourceAuthority(t *testing.T) {
 	}
 	// Registration cannot turn a forged app organization into resource authority.
 	active.App.OrgID = "forged"
-	call("register", "runner-secret", map[string]any{"active": active}, http.StatusForbidden)
+	call("register", "runner-secret", map[string]any{"active": active, "session_id": session, "registration_id": "forged"}, http.StatusForbidden)
 }
 
 func TestRuntimeExecutionDisabledWithoutControlCredential(t *testing.T) {
@@ -127,7 +131,15 @@ func TestRuntimeExecutionRegistrationSupportsLargeSnapshots(t *testing.T) {
 	handler := NewRuntimeExecutionServer(service, "runner")
 	t.Cleanup(func() { _ = handler.Close() })
 	active := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "large"}, Deployment: nanoflare.Deployment{ID: "large-deployment", AppID: "large", Files: []nanoflare.WorkerFile{{Name: "index.js", Content: strings.Repeat("x", 11<<20)}}}}
-	body, err := json.Marshal(map[string]any{"active": active})
+	open := httptest.NewRequest(http.MethodPost, "/internal/runtime/executions/open-session", strings.NewReader("{}"))
+	open.Header.Set("X-Nanoflare-Runner-Token", "runner")
+	opened := httptest.NewRecorder()
+	handler.ServeHTTP(opened, open)
+	var session map[string]string
+	if err := json.Unmarshal(opened.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"active": active, "session_id": session["session_id"], "registration_id": "large"})
 	if err != nil {
 		t.Fatal(err)
 	}

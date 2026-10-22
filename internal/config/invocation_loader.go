@@ -10,8 +10,8 @@ import (
 
 const loaderInvocationContextModule = "nanoflare-internal:invocation-context"
 
-// InstrumentLoaderInvocation adds request-scoped resource capabilities and
-// completion accounting. The input snapshot is not mutated. The parent must
+// InstrumentLoaderInvocation adds revision-bound resource capabilities and
+// invocation completion accounting. The input snapshot is not mutated. The parent must
 // admit an invocation before supplying its private props to getEntrypoint().
 func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.ActiveDeployment) WorkerCodeSnapshot {
 	code.Modules = maps.Clone(code.Modules)
@@ -37,23 +37,34 @@ func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.Active
 		declarations.Services = append(declarations.Services, binding.Binding)
 	}
 	declarationJSON, _ := json.Marshal(declarations)
+	const importedEnvModule = "__nanoflare_imported_env__.js"
+	code.Modules[importedEnvModule] = WorkerCodeModule{JS: `import { installImportedBindings } from "` + loaderInvocationContextModule + `";
+import { wrapEnv } from "nanoflare-internal:runtime-bindings";
+installImportedBindings(` + string(declarationJSON) + `, env => wrapEnv(env, ` + quote(assetBindingName(active.Deployment.AssetConfig)) + `, ` + dbBindingNamesJSON(active.Deployment.Databases) + `, ` + objectBindingNamesJSON(active.Deployment.ObjectStorageBuckets) + `));
+`}
+	code.moduleOrder = append(code.moduleOrder, importedEnvModule)
 	const main = "__nanoflare_invocation_entrypoint__.js"
 	if existing, exists := code.Modules[loaderInvocationContextModule]; !exists || existing.JS != loaderInvocationContextSource {
 		code.Modules[loaderInvocationContextModule] = WorkerCodeModule{JS: loaderInvocationContextSource}
 		code.moduleOrder = append(code.moduleOrder, loaderInvocationContextModule)
 	}
-	code.Modules[main] = WorkerCodeModule{JS: `import UserWorker from "./` + code.MainModule + `";
+	code.Modules[main] = WorkerCodeModule{JS: `import "./` + importedEnvModule + `";
+import UserWorker from "./` + code.MainModule + `";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { makeInvocation, runInvocation } from "` + loaderInvocationContextModule + `";
-import { wrapEnv as wrapRuntimeEnv } from "nanoflare-internal:runtime-bindings";
 const declarations = ` + string(declarationJSON) + `;
+function invocationState(env, ctx) {
+  const state = makeInvocation(env, ctx, declarations);
+  return state;
+}
 const states = new WeakMap();
+const workers = new WeakMap();
 let WrappedWorker;
 if (typeof UserWorker === "function") {
-  WrappedWorker = class extends UserWorker {
+  WrappedWorker = class extends WorkerEntrypoint {
     constructor(ctx, env) {
-      const state = makeInvocation(env, ctx, declarations);
-      state.env = wrapRuntimeEnv(state.env, ` + quote(assetBindingName(active.Deployment.AssetConfig)) + `, ` + dbBindingNamesJSON(active.Deployment.Databases) + `, ` + objectBindingNamesJSON(active.Deployment.ObjectStorageBuckets) + `);
-      super(state.ctx, state.env);
+      super(ctx, env);
+      const state = invocationState(env, ctx);
       states.set(this, state);
     }
   };
@@ -67,7 +78,17 @@ if (typeof UserWorker === "function") {
       Object.defineProperty(WrappedWorker.prototype, name, {
         configurable: true,
         value: function(...args) {
-          return runInvocation(states.get(this), () => descriptor.value.apply(this, args));
+          const state = states.get(this);
+          return runInvocation(state, () => {
+            // Construct user code after admission and inside the same context
+            // as its methods, including synchronous constructor binding calls.
+            let worker = workers.get(this);
+            if (!worker) {
+              worker = new UserWorker(state.ctx, state.env);
+              workers.set(this, worker);
+            }
+            return descriptor.value.apply(worker, args);
+          });
         },
       });
     }
@@ -77,7 +98,7 @@ if (typeof UserWorker === "function") {
   for (const [name, method] of Object.entries(UserWorker)) {
     if (typeof method !== "function") { WrappedWorker[name] = method; continue; }
     WrappedWorker[name] = function(first, env, ctx, ...rest) {
-      const state = makeInvocation(env, ctx, declarations);
+      const state = invocationState(env, ctx);
       return runInvocation(state, () => method.call(UserWorker, first, state.env, state.ctx, ...rest));
     };
   }
@@ -93,6 +114,83 @@ const loaderInvocationContextSource = `import { AsyncLocalStorage } from "node:a
 import { env as nativeEnv, RpcTarget } from "cloudflare:workers";
 const storage = new AsyncLocalStorage();
 export function currentInvocationEnv() { return storage.getStore()?.env ?? nativeEnv; }
+
+// workerd dispatches WebSocket events outside the registering async context.
+// Capture it at registration, without changing synchronous EventTarget behavior.
+const socketListeners = new WeakMap();
+const addSocketListener = WebSocket.prototype.addEventListener;
+const removeSocketListener = WebSocket.prototype.removeEventListener;
+function socketListener(state, listener) {
+  return function(...args) {
+    return storage.run(state, () => typeof listener === "function"
+      ? Reflect.apply(listener, this, args)
+      : Reflect.apply(listener.handleEvent, listener, args));
+  };
+}
+WebSocket.prototype.addEventListener = function(type, listener, options) {
+  const state = storage.getStore();
+  if (!state || !listener || (typeof listener !== "function" && typeof listener !== "object")) {
+    return addSocketListener.call(this, type, listener, options);
+  }
+  type = String(type);
+  const capture = typeof options === "boolean" ? options : Boolean(options?.capture);
+  const once = typeof options === "object" && Boolean(options?.once);
+  const signal = typeof options === "object" ? options?.signal : undefined;
+  let listeners = socketListeners.get(this);
+  if (!listeners) { listeners = new WeakMap(); socketListeners.set(this, listeners); }
+  let entries = listeners.get(listener);
+  if (!entries) { entries = new Map(); listeners.set(listener, entries); }
+  const key = JSON.stringify([type, capture]);
+  let entry = entries.get(key);
+  if (!entry || entry.signal?.aborted) {
+    const bound = socketListener(state, listener);
+    entry = { signal, wrapped: function(...args) {
+      if (once && entries.get(key) === entry) entries.delete(key);
+      return Reflect.apply(bound, this, args);
+    } };
+    entries.set(key, entry);
+  }
+  return addSocketListener.call(this, type, entry.wrapped, options);
+};
+WebSocket.prototype.removeEventListener = function(type, listener, options) {
+  type = String(type);
+  const capture = typeof options === "boolean" ? options : Boolean(options?.capture);
+  const entries = listener && socketListeners.get(this)?.get(listener);
+  const key = JSON.stringify([type, capture]);
+  const entry = entries?.get(key);
+  if (entry) entries.delete(key);
+  return removeSocketListener.call(this, type, entry?.wrapped ?? listener, options);
+};
+
+// Resource facades carry revision authority in their parent capability. They
+// live in the base environment so module captures and native callbacks need no
+// ambient invocation context. Service calls retain their caller-frame semantics.
+export function installImportedBindings(declarations, wrapEnv) {
+  const resources = {};
+  for (const name of declarations.fetch) resources[name] = resourceBinding(nativeEnv.__NANOFLARE_RESOURCE_BROKER, name);
+  for (const name of declarations.kv) resources[name] = namespaceBinding(resourceBinding(nativeEnv.__NANOFLARE_RESOURCE_BROKER, name));
+  const wrapped = wrapEnv(resources);
+  for (const name of [...declarations.kv, ...declarations.fetch]) {
+    Object.defineProperty(nativeEnv, name, { enumerable: true, configurable: true, value: wrapped[name] });
+  }
+  for (const name of declarations.services) {
+    // TODO(#52): raw onmessage can lose this caller context. Service callback
+    // ownership remains unresolved; revision-bound resource support does not
+    // establish service support. Never substitute another live invocation.
+    // https://github.com/wen-templari/nanoflare/issues/52
+    const binding = new Proxy({}, { get(_, method) {
+      if (method === "then") return undefined;
+      if (typeof method !== "string") return undefined;
+      return (...args) => {
+        const state = storage.getStore();
+        if (!state) throw new Error("Service binding used outside an admitted invocation");
+        const target = state.env[name];
+        return Reflect.apply(target[method], target, args);
+      };
+    } });
+    Object.defineProperty(nativeEnv, name, { enumerable: true, configurable: true, value: binding });
+  }
+}
 
 function returnedValue(state, value, seen = new WeakMap()) {
   if (!value || typeof value !== "object") return value;
@@ -132,10 +230,10 @@ function returnedValue(state, value, seen = new WeakMap()) {
   return value;
 }
 
-function resourceBinding(broker, token, name) {
+function resourceBinding(broker, name) {
   return { fetch(input, init) {
     const request = new Request(typeof input === "string" && input.startsWith("/") ? "https://assets.local" + input : input, init);
-    request.headers.set("X-Nanoflare-Invocation", token);
+    request.headers.delete("X-Nanoflare-Invocation");
     request.headers.set("X-Nanoflare-Binding-Name", name);
     return broker.fetch(request);
   } };
@@ -186,8 +284,6 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
   for (const [name, value] of Object.entries(rawEnv)) {
     if (!["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_LIFECYCLE", "__NANOFLARE_SERVICE_BROKER"].includes(name)) state.env[name] = value;
   }
-  for (const name of declarations.fetch) state.env[name] = resourceBinding(rawEnv.__NANOFLARE_RESOURCE_BROKER, token, name);
-  for (const name of declarations.kv) state.env[name] = namespaceBinding(resourceBinding(rawEnv.__NANOFLARE_RESOURCE_BROKER, token, name));
   for (const name of declarations.services) {
     state.env[name] = new Proxy({}, { get(_, method) {
       if (method === "then") return undefined;

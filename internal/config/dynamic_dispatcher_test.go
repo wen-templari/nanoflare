@@ -33,16 +33,21 @@ func TestWorkerdDynamicDispatcherContracts(t *testing.T) {
 	}
 	programs := map[string]map[string]any{}
 	for key, source := range map[string]string{
-		"a": `export default { async fetch(request, env, ctx) {
+		"a": `import { env as importedEnv } from "cloudflare:workers";
+const { KV, SERVICE } = importedEnv;
+const get = KV.get;
+export default { async fetch(request, env, ctx) {
+ if (new URL(request.url).pathname === "/__nanoflare_validate") return new Response("application response");
  if (new URL(request.url).pathname === "/missing") return new Response(await env.SERVICE.missing());
- const value = await env.KV.get("key");
- using session = await env.SERVICE.session();
+ const value = await get("key");
+ using session = await SERVICE.session();
  await new Promise(resolve => setTimeout(resolve, 30));
  const rpc = await session.read("ada");
- ctx.waitUntil(env.KV.put("background", "done"));
+ ctx.waitUntil(KV.put("background", "done"));
  return Response.json({ value, rpc, headers: [...request.headers.keys()].filter(name => name.startsWith("x-nanoflare-")) });
 } };`,
-		"b": `import { WorkerEntrypoint, RpcTarget } from "cloudflare:workers";
+		"b": `import { WorkerEntrypoint, RpcTarget, env as importedEnv } from "cloudflare:workers";
+const { KV } = importedEnv;
 class Session extends RpcTarget {
  #kv; #version; #hidden; #ctx;
  constructor(kv,version,hidden,ctx) { super(); this.#kv=kv; this.#version=version; this.#hidden=hidden; this.#ctx=ctx; }
@@ -51,7 +56,7 @@ class Session extends RpcTarget {
   return {id, version:this.#version, hidden:this.#hidden, value:await this.#kv.get("session-key")};
  }
 }
-export default class extends WorkerEntrypoint { session() { return new Session(this.env.KV,this.env.VERSION,!this.ctx.props.__nanoflare_invocation,this.ctx); } }`,
+export default class extends WorkerEntrypoint { session() { return new Session(KV,this.env.VERSION,!this.ctx.props.__nanoflare_invocation,this.ctx); } }`,
 	} {
 		active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{Format: "modules", Entrypoint: "worker.js", CompatibilityDate: "2026-09-08", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: source}}}}
 		if key == "a" {
@@ -143,7 +148,7 @@ export default class extends WorkerEntrypoint { session() { return new Session(t
 				mu.Lock()
 				valid := completions["invocation-a"] == 1 && completions["invocation-b"] == 1 && starts["invocation-b"] == 2
 				mu.Unlock()
-				if !valid || r.Header.Get("X-Nanoflare-Invocation") != "invocation-b" {
+				if !valid || r.Header.Get("X-Nanoflare-Invocation") != "" {
 					http.Error(w, "late capability background authority expired or not reopened", 403)
 					return
 				}
@@ -159,14 +164,14 @@ export default class extends WorkerEntrypoint { session() { return new Session(t
 				childCompleted := completions["invocation-b"] == 1
 				parentCompleted := completions["invocation-a"] > 0
 				mu.Unlock()
-				if !childCompleted || parentCompleted || r.Header.Get("X-Nanoflare-Invocation") != "invocation-b" || r.Header.Get("X-Nanoflare-Binding-Name") != "KV" {
+				if !childCompleted || parentCompleted || r.Header.Get("X-Nanoflare-Invocation") != "" || r.Header.Get("X-Nanoflare-Binding-Name") != "KV" {
 					http.Error(w, "capability used outside live root or before child completed", 403)
 					return
 				}
 				_, _ = io.WriteString(w, "capability-value")
 				return
 			}
-			if r.Header.Get("X-Nanoflare-Invocation") != "invocation-a" || r.Header.Get("X-Nanoflare-Binding-Name") != "KV" {
+			if r.Header.Get("X-Nanoflare-Invocation") != "" || r.Header.Get("X-Nanoflare-Binding-Name") != "KV" {
 				http.Error(w, "bad resource authority", 403)
 				return
 			}
@@ -232,6 +237,9 @@ export default class extends WorkerEntrypoint { session() { return new Session(t
 		request.Header.Set("X-Nanoflare-Execution", "a")
 		request.Header.Set("X-Nanoflare-Invocation", token)
 		request.Header.Set("X-Nanoflare-Forged", "must-strip")
+		if token == "" {
+			request.Header.Set("X-Nanoflare-Validate", "true")
+		}
 		response, err := client.Do(request)
 		if err != nil {
 			t.Fatal(err)
@@ -254,6 +262,12 @@ export default class extends WorkerEntrypoint { session() { return new Session(t
 	mu.Unlock()
 	if callsDuringValidation != 0 {
 		t.Fatal("validation executed user fetch")
+	}
+	application := call("/__nanoflare_validate", "dispatcher-secret", "invocation-path")
+	body, _ = io.ReadAll(application.Body)
+	application.Body.Close()
+	if application.StatusCode != 200 || string(body) != "application response" {
+		t.Fatalf("validation path intercepted application request: %d %s", application.StatusCode, body)
 	}
 	response := call("/", "dispatcher-secret", "invocation-a")
 	body, _ = io.ReadAll(response.Body)

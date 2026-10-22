@@ -17,6 +17,12 @@ func NewRuntimeDBServer(service *nanoflare.Service) *RuntimeDBServer {
 }
 
 func (s *RuntimeDBServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionDatabase, r.Header.Get("X-Nanoflare-Database-ID"))
+	if !ok {
+		return
+	}
+	defer release()
+
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, errors.New("unsupported database operation"))

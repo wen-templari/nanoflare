@@ -207,30 +207,44 @@ export default { async fetch() {
 	invocation := nanoflare.ActiveDeployment{App: app, Deployment: deployment}
 	invocation.Deployment.Services = []nanoflare.ServiceBinding{{Binding: "IDENTITY", Service: "identity"}}
 	invocation.Deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: `
+import { env as importedEnv } from "cloudflare:workers";
+const { KV, IDENTITY } = importedEnv;
+const get = KV.get;
 export default { async fetch(request, env, ctx) {
   const label = new URL(request.url).pathname.slice(1);
   if (label === "fail") throw new Error("intentional invocation failure");
-  if (label === "rpc") { using session = await env.IDENTITY.session(); return Response.json({ user: await env.IDENTITY.getUser("invocation"), nested: await session.greet(), http: await (await env.IDENTITY.fetch("https://identity.invalid/")).json() }); }
+  if (label === "rpc") { using session = await IDENTITY.session(); return Response.json({ user: await IDENTITY.getUser("invocation"), nested: await session.greet(), http: await (await IDENTITY.fetch("https://identity.invalid/")).json() }); }
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const pending = sleep(10);
   ctx.waitUntil(pending);
   pending.finally(() => ctx.waitUntil(sleep(30).then(() => env.EVENTS.fetch("http://events.invalid/invocation-finally", {method: "POST", body: label}))));
   ctx.waitUntil((async () => { await sleep(20); ctx.waitUntil(sleep(30).then(() => env.EVENTS.fetch("http://events.invalid/invocation-nested", {method: "POST", body: label}))); })());
-  await env.KV.put("invocation:" + label, label);
-  return Response.json({ value: await env.KV.get("invocation:" + label), props: ctx.props, hidden: env.__NANOFLARE_RESOURCE_BROKER === undefined });
+  await KV.put("invocation:" + label, label);
+  await sleep(10);
+  return Response.json({ value: await get("invocation:" + label), props: ctx.props, hidden: env.__NANOFLARE_RESOURCE_BROKER === undefined });
 } };`}}
 	invocationPrograms["isolation"] = config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(invocation, config.WorkerdOptions{}), invocation)
-	invocation.Deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: `import { WorkerEntrypoint, RpcTarget } from "cloudflare:workers";
+	invocation.Deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: `import { WorkerEntrypoint, RpcTarget, env as importedEnv } from "cloudflare:workers";
+const { DB, ASSETS, KV, OBJECTS } = importedEnv;
 class Session extends RpcTarget { greet() { return "scoped-session"; } }
 export default class extends WorkerEntrypoint {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.constructorRead = KV.get("constructor");
+    this.statement = DB.prepare("SELECT 1 AS value");
+  }
   session() { return new Session(); }
   async inspect(label) {
-    await this.env.DB.exec("CREATE TABLE IF NOT EXISTS scoped_class (value TEXT)");
-    if ((await (await this.env.ASSETS.fetch("/logo.svg")).text()) !== "<svg/>") throw new Error("class asset wrapper failed");
-    await this.env.KV.put("class:" + label, label);
-    return { value: await this.env.KV.get("class:" + label), props: this.ctx.props, hidden: this.env.__NANOFLARE_RESOURCE_BROKER === undefined };
+    await this.constructorRead;
+    if (await this.statement.first("value") !== 1) throw new Error("constructor statement failed");
+    await DB.exec("CREATE TABLE IF NOT EXISTS scoped_class (value TEXT)");
+    if ((await (await ASSETS.fetch("/logo.svg")).text()) !== "<svg/>") throw new Error("class asset wrapper failed");
+    await OBJECTS.put("imported-env", "imported-object");
+    if (await (await OBJECTS.get("imported-env")).text() !== "imported-object") throw new Error("imported object wrapper failed");
+    await KV.put("class:" + label, label);
+    return { value: await KV.get("class:" + label), props: this.ctx.props, hidden: this.env.__NANOFLARE_RESOURCE_BROKER === undefined };
   }
-  fetch() { return Response.json({ ready: true }); }
+  async fetch() { await this.constructorRead; return Response.json({ ready: true }); }
 }`}}
 	invocationPrograms["class"] = config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(invocation, config.WorkerdOptions{}), invocation)
 	fixture, err := json.Marshal(map[string]any{

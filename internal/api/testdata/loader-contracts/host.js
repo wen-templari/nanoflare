@@ -45,11 +45,11 @@ export class KVBridge extends WorkerEntrypoint {
 
 export class ResourceBroker extends WorkerEntrypoint {
   async fetch(request) {
-    const token = request.headers.get("X-Nanoflare-Invocation");
+    const grant = this.ctx.props.grant;
     const name = request.headers.get("X-Nanoflare-Binding-Name");
-    if (!token?.startsWith("invocation-")) return new Response("unauthorized", { status: 403 });
+    if (!grant?.startsWith("invocation-")) return new Response("unauthorized", { status: 403 });
     await this.env.EVENTS.fetch("http://events.invalid/invocation-resource", {
-      method: "POST", body: JSON.stringify({ token, binding: name, path: new URL(request.url).pathname }),
+      method: "POST", body: JSON.stringify({ grant, binding: name, path: new URL(request.url).pathname }),
     });
     const binding = { KV: this.env.KV_BACKEND, DB: this.env.DB, OBJECTS: this.env.OBJECTS, ASSETS: this.env.ASSETS }[name];
     if (!binding) return new Response("unknown binding", { status: 403 });
@@ -125,7 +125,7 @@ export default {
         __NANOFLARE_DNS: env.DNS,
       });
     if (name.startsWith("invocation-")) Object.assign(bindings, {
-      __NANOFLARE_RESOURCE_BROKER: ctx.exports.ResourceBroker({ props: {} }),
+      __NANOFLARE_RESOURCE_BROKER: ctx.exports.ResourceBroker({ props: { grant: `${name}:${record.revision}` } }),
       __NANOFLARE_LIFECYCLE: ctx.exports.LifecycleBroker({ props: {} }),
       __NANOFLARE_SERVICE_BROKER: ctx.exports.ServiceBroker({ props: {} }),
       __NANOFLARE_APP_ID: env.APP_ID,

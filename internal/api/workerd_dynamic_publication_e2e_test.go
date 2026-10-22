@@ -94,9 +94,14 @@ func runDynamicPublicationEndToEnd(t *testing.T, workerd string, remote bool) {
 	}
 	service.SetSecretCodec(codec)
 	control := api.NewRuntimeExecutionServer(service, "dynamic-control")
-	defer control.Close()
+	var controlMu sync.RWMutex
+	defer func() { control.Close() }()
 	privateMux := http.NewServeMux()
-	privateMux.Handle("/internal/runtime/executions/", control)
+	privateMux.HandleFunc("/internal/runtime/executions/", func(w http.ResponseWriter, r *http.Request) {
+		controlMu.RLock()
+		defer controlMu.RUnlock()
+		control.ServeHTTP(w, r)
+	})
 	privateMux.HandleFunc("/internal/runtime/durations", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	resources := api.NewRuntimeKVServer(service)
 	privateMux.Handle("/", resources)
@@ -138,17 +143,42 @@ func runDynamicPublicationEndToEnd(t *testing.T, workerd string, remote bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const code = `let counter = 0;
+	const code = `import { env as importedEnv } from "cloudflare:workers";
+const { KV } = importedEnv;
+let counter = 0;
 export default {async fetch(request,env,ctx) {
  if (new URL(request.url).pathname === "/ws") {
   const pair = new WebSocketPair(); pair[1].accept();
-  pair[1].addEventListener("message",event=>pair[1].send(env.LABEL+":"+event.data));
+  const listener = async event => {
+   try {
+    if (KV) {
+     await KV.put("socket:" + event.data, env.LABEL + ":" + event.data);
+     pair[1].send(await KV.get("socket:" + event.data));
+    } else pair[1].send(env.LABEL + ":" + event.data);
+   } catch (error) { pair[1].send("ERROR:" + error.message); }
+  };
+  // Exercise native property handlers, listener removal, and listener objects.
+  const unused = () => pair[1].send("removed listener ran");
+  pair[1].addEventListener("message", unused);
+  pair[1].removeEventListener("message", unused);
+  pair[1].onmessage = event => { if (event.data !== "again") return listener(event); };
+  pair[1].addEventListener("message", {handleEvent(event) {
+   if (event.data === "again") return listener(event);
+  }});
   return new Response(null,{status:101,webSocket:pair[0]});
+ }
+ if (new URL(request.url).pathname === "/stream") {
+  let sent = false;
+  return new Response(new ReadableStream({async pull(controller) {
+   if (sent) { controller.close(); return; } sent = true;
+   await KV.put("stream", env.LABEL);
+   controller.enqueue(new TextEncoder().encode(await KV.get("stream")));
+  }}));
  }
  if (new URL(request.url).pathname === "/defer") {
   ctx.waitUntil((async () => {
-   while (await env.KV.get("release") !== "yes") await new Promise(resolve => setTimeout(resolve,10));
-   await env.KV.put("completed",env.LABEL+":"+env.SECRET);
+   while (await KV.get("release") !== "yes") await new Promise(resolve => setTimeout(resolve,10));
+   await KV.put("completed",env.LABEL+":"+env.SECRET);
   })());
  }
  return Response.json({counter:++counter,label:env.LABEL,secret:env.SECRET??null});
@@ -175,6 +205,7 @@ export default {async fetch(request,env,ctx) {
 		req := httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+app.ID+path, nil)
 		req.Header.Set("X-Nanoflare-Execution", "attacker")
 		req.Header.Set("X-Nanoflare-Runner-Token", "attacker")
+		req.Header.Set("X-Nanoflare-Validate", "true")
 		server.ServeHTTP(recorder, req)
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("%s: HTTP %d %s", app.Name, recorder.Code, recorder.Body.String())
@@ -185,13 +216,37 @@ export default {async fetch(request,env,ctx) {
 		}
 		return result
 	}
+	grantFor := func(app nanoflare.App) string {
+		t.Helper()
+		active, err := store.ActiveDeploymentsForApp(app.ID)
+		if err != nil || len(active) != 1 {
+			t.Fatalf("active revision: %v %v", active, err)
+		}
+		worker, err := publication.manager.Ensure(context.Background(), active[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer worker.Release()
+		return worker.Headers.Get("X-Nanoflare-Execution")
+	}
+	oldGrant := grantFor(alpha)
 	gateway := httptest.NewServer(server)
 	defer gateway.Close()
+	stream := httptest.NewRecorder()
+	server.ServeHTTP(stream, httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+alpha.ID+"/stream", nil))
+	if stream.Code != http.StatusOK || stream.Body.String() != "alpha-old" {
+		t.Fatalf("imported KV in stream pull: HTTP %d %s", stream.Code, stream.Body.String())
+	}
 	oldSocket, oldReader := dynamicPublicationWebSocket(t, gateway.URL, alpha.ID)
 	defer oldSocket.Close()
+	secondOldSocket, secondOldReader := dynamicPublicationWebSocket(t, gateway.URL, alpha.ID)
+	defer secondOldSocket.Close()
 	old := request(alpha, "/defer")
 	if old.Label != "alpha-old" || old.Secret == nil || *old.Secret != "frozen-secret" {
 		t.Fatalf("old snapshot = %#v", old)
+	}
+	if got := request(alpha, "/__nanoflare_validate"); got.Label != "alpha-old" {
+		t.Fatalf("validation path bypassed application: %#v", got)
 	}
 	warm := request(beta, "/")
 	if next := request(beta, "/"); next.Counter != warm.Counter+1 {
@@ -206,12 +261,19 @@ export default {async fetch(request,env,ctx) {
 	if got := dynamicPublicationSocketMessage(t, oldSocket, oldReader, "retired"); got != "alpha-old:retired" {
 		t.Fatalf("old socket changed revision: %q", got)
 	}
+	if got := dynamicPublicationSocketMessage(t, oldSocket, oldReader, "again"); got != "alpha-old:again" {
+		t.Fatalf("old socket listener object lost its revision: %q", got)
+	}
 	newSocket, newReader := dynamicPublicationWebSocket(t, gateway.URL, alpha.ID)
 	if got := dynamicPublicationSocketMessage(t, newSocket, newReader, "fresh"); got != "alpha-new:fresh" {
 		t.Fatalf("new socket used old revision: %q", got)
 	}
 	newSocket.Close()
 	oldSocket.Close()
+	if got := dynamicPublicationSocketMessage(t, secondOldSocket, secondOldReader, "remaining"); got != "alpha-old:remaining" {
+		t.Fatalf("closing one socket revoked another: %q", got)
+	}
+	secondOldSocket.Close()
 	if fresh := request(alpha, "/"); fresh.Label != "alpha-new" {
 		t.Fatalf("new alpha = %#v", fresh)
 	}
@@ -239,6 +301,18 @@ export default {async fetch(request,env,ctx) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("retired waitUntil lost KV authority")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		operation, err := service.Executions().AcquireResource(oldGrant, nanoflare.ExecutionKV, kv.ID)
+		if err != nil {
+			break
+		}
+		operation.Release()
+		if time.Now().After(deadline) {
+			t.Fatal("old grant remained live after final socket and background work drained")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -349,6 +423,53 @@ export default {async fetch(request,env,ctx) {
 	}
 	if launcher.launches.Load() != 2 {
 		t.Fatalf("crash recovery launches = %d", launcher.launches.Load())
+	}
+	// Replacing the private listener loses the runner session while workerd is
+	// still alive. Heartbeat must rebuild the runtime with fresh grants.
+	beforeSessionLoss := grantFor(alpha)
+	controlMu.Lock()
+	previousControl := control
+	control = api.NewRuntimeExecutionServer(service, "dynamic-control")
+	controlMu.Unlock()
+	if err := previousControl.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if lease, err := service.Executions().Admit(beforeSessionLoss); err == nil {
+		lease.Release()
+		t.Fatal("closed control session retained admission authority")
+	}
+	deadline = time.Now().Add(25 * time.Second)
+	for launcher.launches.Load() < 3 {
+		if time.Now().After(deadline) {
+			t.Fatal("runner did not recover after control session loss")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+alpha.ID+"/", nil))
+		if recorder.Code == http.StatusOK {
+			if err := json.Unmarshal(recorder.Body.Bytes(), &recovered); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session recovery: HTTP %d %s", recorder.Code, recorder.Body.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if recovered.Label != "alpha-vars" || recovered.Secret == nil || *recovered.Secret != "new-secret" {
+		t.Fatalf("session recovery replayed stale snapshot: %#v", recovered)
+	}
+	if fresh := request(beta, "/"); fresh.Label != "beta" {
+		t.Fatalf("beta session recovery = %#v", fresh)
+	}
+	if afterSessionLoss := grantFor(alpha); afterSessionLoss == beforeSessionLoss {
+		t.Fatal("session recovery reused old resource grant")
+	}
+	if launcher.launches.Load() != 3 {
+		t.Fatalf("session recovery launches = %d", launcher.launches.Load())
 	}
 }
 

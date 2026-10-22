@@ -59,6 +59,9 @@ type DynamicManager struct {
 }
 type dynamicSnapshot struct {
 	registeredSession string
+	registration      string
+	registered        bool
+	retired           bool
 	frozen            *nanoflare.ExecutionSnapshot
 	code              config.WorkerCodeSnapshot
 	validated         bool
@@ -79,6 +82,11 @@ type dynamicLifetime struct {
 	responseDone bool
 	pending      int
 	tokens       []string
+}
+
+type dynamicRecoveryState struct {
+	process Process
+	session string
 }
 
 func NewDynamicManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConfig, socketDir string, healthTimeout, stopTimeout time.Duration) *DynamicManager {
@@ -246,11 +254,13 @@ func (m *DynamicManager) heartbeat() {
 			return
 		case <-ticker.C:
 			m.mu.Lock()
-			session := m.session
+			observed := dynamicRecoveryState{process: m.process, session: m.session}
 			m.mu.Unlock()
-			if err := m.control(context.Background(), "heartbeat", map[string]string{"session_id": session}, nil); err != nil {
+			if err := m.control(context.Background(), "heartbeat", map[string]string{"session_id": observed.session}, nil); err != nil {
 				log.Printf("runtime session heartbeat: %v", err)
-				m.recoverSession()
+				if recoveryErr := m.recoverSession(&observed); recoveryErr != nil {
+					log.Printf("recover runtime session: %v", recoveryErr)
+				}
 			} else {
 				m.flushReleases()
 				m.collectSnapshots()
@@ -261,25 +271,42 @@ func (m *DynamicManager) heartbeat() {
 
 // A lost control session invalidates live capability tokens. Stop its runtime
 // before reopening admission; never continue an old invocation under new grants.
-func (m *DynamicManager) recoverSession() {
+// Only recover the observed state. On failure, refresh it under the publication
+// lock so a retry owns the partial state left by this attempt, not a replacement
+// installed by another publisher or recovery after this attempt returns.
+func (m *DynamicManager) recoverSession(observed *dynamicRecoveryState) (err error) {
 	m.publication.Lock()
 	defer m.publication.Unlock()
 	m.mu.Lock()
-	if m.closed {
+	if m.closed || m.process != observed.process || m.session != observed.session {
 		m.mu.Unlock()
-		return
+		return nil
 	}
-	previousSession := m.session
-	previousDir := m.processDir
-	process := m.process
-	m.process = nil
-	m.session = ""
+	defer func() {
+		if err != nil {
+			m.mu.Lock()
+			*observed = dynamicRecoveryState{process: m.process, session: m.session}
+			m.mu.Unlock()
+		}
+	}()
+	previousSession, previousDir, process := m.session, m.processDir, m.process
+	active := append([]nanoflare.ActiveDeployment(nil), m.active...)
+	m.process, m.session = nil, ""
 	m.invocations = map[string]*dynamicInvocation{}
+	m.pending = nil
 	m.mu.Unlock()
 	if process != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), m.stopTimeout)
-		process.Stop(ctx)
+		err := process.Stop(ctx)
 		cancel()
+		if err != nil {
+			// Keep a failed stop reachable for shutdown or the next recovery.
+			// Admission remains disabled because its session was cleared above.
+			m.mu.Lock()
+			m.process = process
+			m.mu.Unlock()
+			return fmt.Errorf("stop expired runtime: %w", err)
+		}
 	}
 	if previousDir != "" {
 		os.RemoveAll(previousDir)
@@ -287,45 +314,51 @@ func (m *DynamicManager) recoverSession() {
 	if previousSession != "" {
 		m.control(context.Background(), "close-session", map[string]string{"session_id": previousSession}, nil)
 	}
-	m.collectSnapshots()
 	if err := m.openSession(); err != nil {
-		log.Printf("reopen runtime session: %v", err)
-		return
-	}
-	m.mu.Lock()
-	session := m.session
-	items := make([]*dynamicSnapshot, 0, len(m.snapshots))
-	for _, snapshot := range m.snapshots {
-		items = append(items, snapshot)
-	}
-	m.mu.Unlock()
-	for _, snapshot := range items {
-		if err := m.register(snapshot.frozen); err != nil {
-			m.mu.Lock()
-			m.session = ""
-			m.mu.Unlock()
-			log.Printf("restore execution: %v", err)
-			return
-		}
-		m.mu.Lock()
-		snapshot.registeredSession = session
-		m.mu.Unlock()
-	}
-	if err := m.boot(); err != nil {
-		log.Printf("restart dispatcher after session recovery: %v", err)
-	}
-}
-
-func (m *DynamicManager) register(snapshot *nanoflare.ExecutionSnapshot) error {
-	active := snapshot.ActiveDeployment()
-	var response struct {
-		ID string `json:"execution_id"`
-	}
-	if err := m.control(context.Background(), "register", map[string]any{"active": active, "secret_values": active.App.SecretValues, "object_key": active.Deployment.ObjectKey, "compile_options": m.compileOptions}, &response); err != nil {
 		return err
 	}
-	if response.ID != snapshot.ID() {
-		return errors.New("execution snapshot identity mismatch")
+	success := false
+	defer func() {
+		if !success {
+			m.mu.Lock()
+			session := m.session
+			m.session = ""
+			m.mu.Unlock()
+			m.control(context.Background(), "close-session", map[string]string{"session_id": session}, nil)
+		}
+	}()
+	m.mu.Lock()
+	m.snapshots = map[string]*dynamicSnapshot{}
+	m.committed = map[string]string{}
+	m.mu.Unlock()
+	id, routed, err := m.prepareDynamic(active)
+	if err != nil {
+		return err
+	}
+	if err := m.writer.WriteTraefik(routed); err != nil {
+		return err
+	}
+	if err := m.commitDynamic(id); err != nil {
+		return err
+	}
+	success = true
+	return nil
+}
+
+func (m *DynamicManager) register(snapshot *dynamicSnapshot) error {
+	active := snapshot.frozen.ActiveDeployment()
+	var response struct {
+		ID         string `json:"execution_id"`
+		SnapshotID string `json:"snapshot_id"`
+	}
+	if err := m.control(context.Background(), "register", map[string]any{
+		"active": active, "secret_values": active.App.SecretValues, "object_key": active.Deployment.ObjectKey,
+		"compile_options": m.compileOptions, "session_id": snapshot.registeredSession, "registration_id": snapshot.registration,
+	}, &response); err != nil {
+		return err
+	}
+	if response.ID != nanoflare.ResourceGrantID(snapshot.registeredSession, snapshot.registration) || response.SnapshotID != snapshot.frozen.ID() {
+		return errors.New("resource grant identity mismatch")
 	}
 	return nil
 }
@@ -347,38 +380,35 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]
 		if err != nil {
 			return nil, err
 		}
-		key := snapshot.ID()
 		m.mu.Lock()
-		existing := m.snapshots[key]
+		session := m.session
+		var key string
+		var existing *dynamicSnapshot
+		for candidateKey, candidate := range m.snapshots {
+			if candidate.frozen.ID() == snapshot.ID() && candidate.registeredSession == session && !candidate.retired {
+				key, existing = candidateKey, candidate
+				break
+			}
+		}
 		m.mu.Unlock()
 		if existing == nil {
 			code := config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(snapshot.ActiveDeployment(), m.options), snapshot.ActiveDeployment())
-			// Reject duplicate module declarations before native code loading.
 			if _, err := json.Marshal(code); err != nil {
 				return nil, err
 			}
-			existing = &dynamicSnapshot{frozen: snapshot, code: code}
+			registration := rand.Text()
+			key = nanoflare.ResourceGrantID(session, registration)
+			existing = &dynamicSnapshot{frozen: snapshot, code: code, registration: registration, registeredSession: session}
 			m.mu.Lock()
 			m.snapshots[key] = existing
 			m.mu.Unlock()
 		}
-		m.mu.Lock()
-		session := m.session
-		isCommitted := false
-		for _, committedKey := range m.committed {
-			if committedKey == key {
-				isCommitted = true
-				break
-			}
-		}
-		needsRegister := existing.registeredSession != session || !isCommitted
-		m.mu.Unlock()
-		if needsRegister {
-			if err := m.register(snapshot); err != nil {
+		if !existing.registered {
+			if err := m.register(existing); err != nil {
 				return nil, err
 			}
 			m.mu.Lock()
-			existing.registeredSession = session
+			existing.registered = true
 			m.mu.Unlock()
 		}
 		m.mu.Lock()
@@ -388,6 +418,7 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]
 			request, _ := http.NewRequest(http.MethodPost, "http://"+SocketHost(m.socketPath)+"/__nanoflare_validate", nil)
 			request.Header.Set("X-Nanoflare-Dispatcher-Token", m.dispatcherToken)
 			request.Header.Set("X-Nanoflare-Execution", key)
+			request.Header.Set("X-Nanoflare-Validate", "true")
 			ctx, cancel := context.WithTimeout(context.Background(), m.healthTimeout)
 			request = request.WithContext(ctx)
 			response, err := m.client.Do(request)
@@ -425,6 +456,10 @@ func (m *DynamicManager) Prepare(active []nanoflare.ActiveDeployment) (string, [
 }
 func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
 	m.mu.Lock()
+	// Retain candidates until pending owns them, including the detached routing
+	// copy after build returns. Cleanup can run independently of publication.
+	m.staging++
+	defer func() { m.mu.Lock(); m.staging--; m.mu.Unlock() }()
 	pending := m.pending != nil
 	m.mu.Unlock()
 	if pending {
@@ -465,6 +500,18 @@ func (m *DynamicManager) commitDynamic(id string) error {
 		return errors.New("runtime publication is not pending")
 	}
 	publication := m.pending
+	session := m.session
+	m.mu.Unlock()
+	for _, key := range publication.keys {
+		if err := m.control(context.Background(), "publish", map[string]string{"execution_id": key, "session_id": session}, nil); err != nil {
+			m.mu.Lock()
+			m.pending = nil
+			m.mu.Unlock()
+			m.collectSnapshots()
+			return err
+		}
+	}
+	m.mu.Lock()
 	m.pending = nil
 	previous := m.committed
 	m.committed = publication.keys
@@ -485,7 +532,13 @@ func (m *DynamicManager) commitDynamic(id string) error {
 	}
 	for _, key := range previous {
 		if !retained[key] {
-			if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key}, nil); err != nil {
+			m.mu.Lock()
+			snapshot := m.snapshots[key]
+			if snapshot != nil {
+				snapshot.retired = true
+			}
+			m.mu.Unlock()
+			if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key, "session_id": session}, nil); err != nil {
 				return err
 			}
 		}
@@ -683,7 +736,9 @@ func (m *DynamicManager) collectSnapshots() {
 		if !retained[key] {
 			// Retirement and removal must precede any registration of the same key.
 			// Keep failed retirements for the next sweep, including idle heartbeat sweeps.
-			if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key}, nil); err != nil {
+			snapshot := m.snapshots[key]
+			snapshot.retired = true
+			if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key, "session_id": snapshot.registeredSession}, nil); err != nil {
 				log.Printf("retire execution: %v", err)
 				continue
 			}
@@ -831,6 +886,8 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 		}
 		m.mu.Lock()
 		caller := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
+		// Callback service ownership is deferred in #52. Keep rejecting missing
+		// callers: a revision's authority does not identify a socket or call chain.
 		if caller == nil || caller.key != key || !caller.started {
 			m.mu.Unlock()
 			http.Error(w, "invalid invocation", 403)
@@ -901,13 +958,21 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 	synthetic := binding == "__NANOFLARE_DNS" || binding == "__NANOFLARE_DURATION_COLLECTOR"
 	if !synthetic {
 		m.mu.Lock()
-		invocation := m.invocations[token]
-		allowed := invocation != nil && invocation.key == key && invocation.started
+		snapshot := m.snapshots[key]
+		live := false
+		for _, committed := range m.committed {
+			live = live || committed == key
+		}
+		for _, invocation := range m.invocations {
+			live = live || invocation.key == key
+		}
+		allowed := live && snapshot != nil && snapshot.registered && snapshot.registeredSession == m.session
 		m.mu.Unlock()
 		if !allowed {
-			http.Error(w, "invalid invocation", 403)
+			http.Error(w, "resource grant is not live", 403)
 			return
 		}
+		token = key
 	}
 	headers := r.Header.Clone()
 	stripRuntimeHeaders(headers)
@@ -1018,6 +1083,7 @@ func (m *DynamicManager) watchDynamic(process Process, dir string) {
 		return
 	}
 	m.process = nil
+	observed := dynamicRecoveryState{session: m.session}
 	pins := []string{}
 	for _, invocation := range m.invocations {
 		pins = append(pins, invocation.pin)
@@ -1038,9 +1104,7 @@ func (m *DynamicManager) watchDynamic(process Process, dir string) {
 		case <-m.stop:
 			return
 		case <-ticker.C:
-			m.publication.Lock()
-			err := m.boot()
-			m.publication.Unlock()
+			err := m.recoverSession(&observed)
 			if err == nil {
 				return
 			}

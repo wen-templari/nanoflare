@@ -342,7 +342,7 @@ try {
       assert.equal(events.filter(event => event.path === "/invocation-complete" && event.body === `invocation-${name}`).length, 1);
     });
   }
-  await check("concurrent invocation capabilities stay separate and finish after nested waitUntil", async () => {
+  await check("concurrent invocations share revision resources and complete after nested waitUntil", async () => {
     await Promise.all(["alpha", "beta"].map(async label => {
       const token = `invocation-${label}`;
       const response = await fetch(base + "/invocation-isolation/" + label, { headers: { "X-Test-Invocation": token } });
@@ -356,7 +356,7 @@ try {
       }
       const calls = events.filter(event => event.path === "/invocation-resource").map(event => JSON.parse(event.body)).filter(event => event.path.includes(label));
       assert.equal(calls.length, 2);
-      assert.ok(calls.every(event => event.token === token && event.binding === "KV"));
+      assert.ok(calls.every(event => event.grant === "invocation-isolation:v1" && event.binding === "KV"));
     }));
   });
   await check("service broker preserves HTTP, RPC, and nested RPC capabilities", async () => {
@@ -376,6 +376,12 @@ try {
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { value: "direct-rpc", props: { publicValue: "safe" }, hidden: true });
     await waitEvent("/invocation-complete", "invocation-class-method");
+    const started = events.findIndex(event => event.path === "/invocation-start" && event.body === "invocation-class-method");
+    const constructed = events.findIndex((event, index) => index > started && event.path === "/invocation-resource" && (() => {
+      const call = JSON.parse(event.body);
+      return call.grant === "invocation-class:v1" && call.binding === "KV" && call.path === "/constructor";
+    })());
+    assert.ok(started >= 0 && constructed > started, "constructor resource access must follow admission acknowledgement");
     assert.deepEqual(await get("/invocation-class/nested"), { value: "scoped-session" });
   });
   const message = async (socket, value) => {

@@ -30,6 +30,12 @@ func NewRuntimeKVServer(service *nanoflare.Service) *RuntimeKVServer {
 }
 
 func (s *RuntimeKVServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionKV, r.Header.Get("X-Nanoflare-KV-Namespace-ID"))
+	if !ok {
+		return
+	}
+	defer release()
+
 	if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, "/"), "bulk/") {
 		writeError(w, http.StatusNotImplemented, errUnsupportedRuntimeKVOptions)
 		return

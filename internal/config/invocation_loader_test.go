@@ -38,7 +38,7 @@ func TestInstrumentLoaderInvocationKeepsInputDetachedAndCredentialsOutOfCode(t *
 }
 
 func TestInstrumentLoaderInvocationRejectsReservedModuleCollision(t *testing.T) {
-	for _, path := range []string{loaderInvocationContextModule, "__nanoflare_invocation_entrypoint__.js"} {
+	for _, path := range []string{loaderInvocationContextModule, "__nanoflare_imported_env__.js", "__nanoflare_invocation_entrypoint__.js"} {
 		t.Run(path, func(t *testing.T) {
 			active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{Format: "modules", Entrypoint: "worker.js", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default {};`}, {Path: path, Content: `export default "collision";`}}}}
 			code := InstrumentLoaderInvocation(SnapshotWorkerCodeForLoader(active, WorkerdOptions{}), active)

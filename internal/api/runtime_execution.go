@@ -108,6 +108,7 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		Token          string                     `json:"token"`
 		PinID          string                     `json:"pin_id"`
 		AdmissionID    string                     `json:"admission_id"`
+		RegistrationID string                     `json:"registration_id"`
 		SessionID      string                     `json:"session_id"`
 	}
 	decoder := json.NewDecoder(r.Body)
@@ -130,6 +131,7 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		s.sessions[id] = &runtimeExecutionSession{expires: time.Now().Add(runtimeExecutionSessionTTL), pins: make(map[string]struct{}), tokens: make(map[string]int)}
+		s.service.Executions().RenewResourceSession(id, s.sessions[id].expires)
 		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]string{"session_id": id})
 	case "heartbeat":
@@ -137,6 +139,7 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		session := s.liveSessionLocked(request.SessionID, time.Now())
 		if session != nil {
 			session.expires = time.Now().Add(runtimeExecutionSessionTTL)
+			s.service.Executions().RenewResourceSession(request.SessionID, session.expires)
 		}
 		s.mu.Unlock()
 		if session == nil {
@@ -150,14 +153,32 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]string{})
 	case "register":
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.liveSessionLocked(request.SessionID, time.Now()) == nil || s.closed {
+			writeError(w, http.StatusForbidden, errors.New("runner session expired"))
+			return
+		}
 		request.Active.App.SecretValues = request.Secrets
 		request.Active.Deployment.ObjectKey = request.ObjectKey
-		id, err := s.service.RegisterExecution(request.Active, request.CompileOptions)
+		id, snapshotID, err := s.service.PrepareExecutionGrant(request.Active, request.CompileOptions, request.SessionID, request.RegistrationID)
 		if err != nil {
 			writeError(w, http.StatusForbidden, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"execution_id": id})
+		writeJSON(w, http.StatusOK, map[string]string{"execution_id": id, "snapshot_id": snapshotID})
+	case "publish":
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.liveSessionLocked(request.SessionID, time.Now()) == nil || s.closed {
+			writeError(w, http.StatusForbidden, errors.New("runner session expired"))
+			return
+		}
+		if err := s.service.Executions().PublishResourceGrant(request.SessionID, request.ExecutionID); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{})
 	case "admit":
 		id := request.AdmissionID
 		var sequence uint64
@@ -242,7 +263,10 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]string{})
 	case "retire":
-		s.service.Executions().Retire(request.ExecutionID)
+		if err := s.service.Executions().RetireResourceGrant(request.SessionID, request.ExecutionID); err != nil {
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{})
 	default:
 		writeError(w, http.StatusNotFound, errors.New("unknown execution operation"))
@@ -345,6 +369,7 @@ func (s *RuntimeExecutionServer) closeSessionLocked(id string) {
 		s.releasePinLocked(pinID)
 	}
 	delete(s.sessions, id)
+	s.service.Executions().RevokeResourceSession(id)
 }
 
 func (s *RuntimeExecutionServer) expireSessions(now time.Time) {

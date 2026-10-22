@@ -31,10 +31,27 @@ rejected instead of silently replacing entries during serialization.
 A code snapshot alone is not an execution identity. `nanoflare.FreezeExecution`
 also detaches the effective variables, resolved secrets, resource and service
 binding declarations, deployment/asset references and compiler options. The
-execution registry issues admission credentials for that immutable snapshot.
-Resource authorization checks the admitted snapshot's declarations instead of
-requiring its deployment to remain active. Retirement prevents fresh admission
-while existing admitted work retains its declared authority.
+execution registry separates this content identity from resource authority. Each
+runner session registers a fresh opaque resource grant for a snapshot. The grant
+is also the Worker Loader cache key: republishing identical content after
+retirement creates a fresh grant and isolate generation without reviving old
+capabilities. Unchanged published revisions retain their grants and warm state.
+
+Resource grants move through `prepared -> published -> draining -> revoked`.
+Prepared candidates can compile but cannot admit invocations or access resources.
+Publishing enables both; published revisions may access declared resources even
+when idle. Retirement prevents fresh invocation admission. A draining grant
+permits new resource operations only while at least one admitted invocation
+remains. Each accepted resource operation takes its own pin until its HTTP
+response finishes, protecting bundle and asset objects even after the last
+invocation drains. That operation pin cannot authorize another operation.
+Session expiry immediately denies new operations and admissions; revocation
+removes the session's invocation pins while accepted operations can finish.
+
+Registration uses a random caller nonce and returns both grant and snapshot
+identity. Retries are idempotent within a session. The runner knows the grant ID
+before sending registration, so an uncertain registration can be retired; a
+session-owned cancellation tombstone rejects a registration arriving later.
 
 Private execution control uses a runner credential separate from Worker
 credentials. The control API is mounted only on the private runtime listener.
@@ -45,6 +62,29 @@ The gateway and runner discard incoming reserved `X-Nanoflare-*` headers before
 applying trusted dispatch metadata. Dynamic resource requests use a dedicated
 private resource prefix so a KV key resembling a control or telemetry path
 cannot reach those handlers.
+
+Validation uses trusted dispatch metadata rather than an application pathname.
+Before loading user modules, the loader installs concrete KV, D1, object and asset
+facades in the base `cloudflare:workers` environment. Both imported `env` and
+handler `env` refer to these revision-bound resource capabilities, including
+bindings and methods captured at module scope. Resource access does not depend
+on AsyncLocalStorage or callback registration style: raw WebSocket `onmessage`
+and stream callbacks can use imported bindings. Worker code receives a parent
+bridge capability; the opaque backend credential stays in the runner. The bridge
+resolves binding names against frozen declarations and the private resource API
+checks grant state and pins each accepted operation.
+
+Service bindings retain invocation context for call lineage and returned RPC
+lifetimes. User WorkerEntrypoint construction runs after admission inside that
+context. WebSocket `addEventListener` callbacks preserve it, including listener
+objects, removal and one-time registrations. Raw property handlers do not acquire
+service invocation context: imported SERVICE access from `onmessage` remains
+unsupported. The resource redesign does not change that separate limitation.
+Service access from callbacks remains an open follow-up in
+[#52](https://github.com/wen-templari/nanoflare/issues/52), covering explicit call
+ownership, native HTTP/RPC qualification and preservation of call-chain budgets.
+Candidate snapshots remain protected from cleanup until the pending publication
+owns them, including while detached routing metadata is copied.
 
 The Go gateway remains the traffic-selection authority, including weighted
 traffic and preferred-revision routing. Its selected revision travels through
@@ -79,7 +119,9 @@ opens the public listener. This lets snapshot registration and admission use the
 private API during recovery without exposing partially reconstructed routing to
 public requests. The process supervisor reconstructs committed snapshots after
 a workerd crash. Losing the runner control session revokes its resource authority
-and requires runtime recovery rather than continued use of expired credentials.
+and stops the old runtime. Recovery opens a new session, registers fresh grants,
+validates the current snapshots and republishes routing. Neither session loss
+nor a process crash can revive grants from the old session.
 
 ## Execution lifetimes
 
@@ -126,20 +168,25 @@ pinned native binary. Both local and actual HTTP runner variants verify:
   unchanged.
 - Remote validation/prepare/commit, bundle object-key and secret transport, and
   trusted dispatch metadata work through `runner.Client` and `runner.Server`.
-- An existing WebSocket continues using the old revision while a new socket
-  uses the replacement.
+- Raw WebSocket property handlers and stream `pull` callbacks use imported KV.
+  Two old sockets retain the old revision across replacement; closing one leaves
+  the other usable, while a new socket uses the replacement.
 - Retired `waitUntil` work uses its original variables, secret and KV authority
-  after the replacement drops the KV binding.
+  after the replacement drops the KV binding. The old resource grant rejects
+  operations once its final socket and background work drain.
 - Interrupted-publication reconciliation uses current routing and acknowledges
   its generation without resetting another Worker.
 - A real workerd process stop triggers one replacement process and restores the
-  current environment and routing.
+  current environment and routing. Replacing the execution-control listener
+  while workerd remains alive revokes the old session and triggers recovery with
+  fresh grant identities.
 
 `TestWorkerdDynamicLoaderContracts` additionally exercises the generated wrappers
 and parent bridges: HTTP/RPC and nested returned capabilities; WorkerEntrypoint
 instrumentation and duration attribution; KV, SQLite-backed D1, object and asset
 operations; legacy service-worker fetch/cron; private DNS and configured egress,
-including raw TCP; concurrent invocation credentials; exceptions; background work;
+including raw TCP; concurrent invocation isolation and stable resource grants;
+exceptions; background work;
 and static/dynamic upstream-disconnect behavior. Its object backend is an
 in-memory object-store fixture, not a live MinIO deployment.
 
@@ -155,7 +202,8 @@ not, and the lifetime implementation must not use that callback as its only
 completion signal.
 
 Focused Go tests cover transaction rollback, generation acknowledgments, weighted
-traffic recovery, vars idempotency, resource scoping, session expiry, admission
+traffic recovery, vars idempotency, resource scoping, grant generations, canceled registrations,
+operation pins through response completion, session expiry, admission
 sequence cancellation, lifecycle epochs, retryable retirement and release,
 reserved-path isolation, gateway/runner header handling and cron lease headers.
 The native local/remote publication test has also passed under the race detector.

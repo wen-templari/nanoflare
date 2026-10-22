@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -86,7 +88,7 @@ func newDynamicControlFixture(t *testing.T) (*DynamicManager, *dynamicControlFix
 		t.Fatal(err)
 	}
 	key := snapshot.ID()
-	m.snapshots[key] = &dynamicSnapshot{frozen: snapshot, registeredSession: m.session, validated: true}
+	m.snapshots[key] = &dynamicSnapshot{frozen: snapshot, registeredSession: m.session, registered: true, validated: true}
 	m.committed[dynamicIdentity(a)] = key
 	m.active = []nanoflare.ActiveDeployment{a}
 	t.Cleanup(func() {
@@ -176,7 +178,7 @@ func TestDynamicAdmissionResponseAndBackgroundLifetimes(t *testing.T) {
 	}
 }
 
-func TestDynamicBrokerScopesResourcesToInvocationRevision(t *testing.T) {
+func TestDynamicBrokerScopesResourcesToRevisionGrant(t *testing.T) {
 	m, state, a, key := newDynamicControlFixture(t)
 	endpoint, err := m.Ensure(context.Background(), a)
 	if err != nil {
@@ -192,7 +194,7 @@ func TestDynamicBrokerScopesResourcesToInvocationRevision(t *testing.T) {
 	snapshot, _ := nanoflare.FreezeExecution(other, m.compileOptions)
 	m.snapshots[snapshot.ID()] = &dynamicSnapshot{frozen: snapshot}
 	for _, test := range []struct{ key, token, binding string }{
-		{snapshot.ID(), token, "KV"}, {key, "forged", "KV"}, {key, token, "UNDECLARED"},
+		{snapshot.ID(), token, "KV"}, {key, token, "UNDECLARED"},
 	} {
 		if w := dynamicBrokerRequest(t, m, "resource", test.key, test.token, test.binding, nil); w.Code != 403 {
 			t.Fatalf("undeclared authority accepted: %d %s", w.Code, w.Body.String())
@@ -221,7 +223,7 @@ func TestDynamicBrokerScopesResourcesToInvocationRevision(t *testing.T) {
 		t.Fatalf("denied requests reached backend: %d", len(state.requests))
 	}
 	forwarded := state.requests[0]
-	if forwarded.headers.Get("Authorization") != "Bearer "+token || forwarded.headers.Get("X-Nanoflare-KV-Namespace-ID") != "declared-kv" {
+	if forwarded.headers.Get("Authorization") != "Bearer "+key || forwarded.headers.Get("X-Nanoflare-KV-Namespace-ID") != "declared-kv" {
 		t.Fatal("frozen authority not reconstructed", forwarded.headers)
 	}
 	for _, name := range []string{"X-Nanoflare-Runner-Token", "X-Nanoflare-Broker-Token", "X-Nanoflare-Database-ID", "X-Nanoflare-Invocation"} {
@@ -330,13 +332,16 @@ func TestDynamicCompletedServiceCapabilityRetainsParentLifetime(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	endpoint.Release()
-	if w := dynamicBrokerRequest(t, m, "resource", key, child.token, "KV", nil); w.Code != 403 {
-		t.Fatalf("returned capability survived parent completion: %d %s", w.Code, w.Body.String())
+	if w := dynamicBrokerRequest(t, m, "resource", key, "", "KV", nil); w.Code != 204 {
+		t.Fatalf("published resource grant incorrectly expired with parent: %d %s", w.Code, w.Body.String())
+	}
+	if w := dynamicBrokerRequest(t, m, "start", key, child.token, "", nil, "2"); w.Code != 403 {
+		t.Fatal("completed invocation was revived")
 	}
 }
 
 func TestDynamicSnapshotRetirementPrecedesConcurrentRepublication(t *testing.T) {
-	m, _, active, key := newDynamicControlFixture(t)
+	m, _, active, _ := newDynamicControlFixture(t)
 	m.committed = map[string]string{}
 	retiring := make(chan struct{})
 	allowRetire := make(chan struct{})
@@ -357,7 +362,7 @@ func TestDynamicSnapshotRetirementPrecedesConcurrentRepublication(t *testing.T) 
 			accepting = true
 			authorityMu.Unlock()
 			registered <- struct{}{}
-			body = fmt.Sprintf(`{"execution_id":%q}`, key)
+			body = dynamicGrantRegistrationResponse(t, r)
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
@@ -406,6 +411,68 @@ func TestDynamicFailedRetirementRemainsRetryable(t *testing.T) {
 	m.collectSnapshots()
 	if m.snapshots[key] != nil || attempts != 2 {
 		t.Fatal("retirement was not retried")
+	}
+}
+
+func TestDynamicPrepareRetainsCandidatesThroughRoutingCopy(t *testing.T) {
+	m, _, active, _ := newDynamicControlFixture(t)
+	// Make the detached routing copy long enough to exercise cleanup after build.
+	active.Deployment.Assets = []nanoflare.AssetFile{{Path: "large.bin", Data: make([]byte, 8<<20)}}
+	snapshot, err := nanoflare.FreezeExecution(active, m.compileOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration := "prepare-test"
+	key := nanoflare.ResourceGrantID(m.session, registration)
+	m.snapshots = map[string]*dynamicSnapshot{key: {frozen: snapshot, registeredSession: m.session, registration: registration, validated: true}}
+	m.committed = map[string]string{}
+	registered := make(chan struct{})
+	m.controlClient.Transport = dynamicUnitTransport(func(r *http.Request) (*http.Response, error) {
+		body := `{}`
+		if strings.HasSuffix(r.URL.Path, "/register") {
+			body = dynamicGrantRegistrationResponse(t, r)
+			close(registered)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	defer func() { close(stop); <-done }()
+	go func() {
+		defer close(done)
+		select {
+		case <-registered:
+		case <-stop:
+			return
+		}
+		for {
+			m.mu.Lock()
+			staging, pending := m.staging, m.pending != nil
+			m.mu.Unlock()
+			if pending {
+				m.collectSnapshots()
+				return
+			}
+			if staging == 0 {
+				m.collectSnapshots()
+				return
+			}
+			select {
+			case <-stop:
+				return
+			default:
+				goruntime.Gosched()
+			}
+		}
+	}()
+	if _, _, err := m.Prepare([]nanoflare.ActiveDeployment{active}); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.snapshots[key] == nil || m.pending == nil || m.pending.keys[dynamicIdentity(active)] != key {
+		t.Fatal("prepared publication lost its candidate during cleanup")
 	}
 }
 
@@ -602,5 +669,167 @@ func TestDynamicSyntheticBindingsFreezeDNSAndTelemetryAttribution(t *testing.T) 
 	}
 	if len(events) != 1 || events[0].ScriptName != "app" {
 		t.Fatalf("telemetry attribution not frozen: %#v", events)
+	}
+}
+
+func dynamicGrantRegistrationResponse(t *testing.T, r *http.Request) string {
+	t.Helper()
+	var input struct {
+		Active         nanoflare.ActiveDeployment `json:"active"`
+		Secrets        map[string]string          `json:"secret_values"`
+		ObjectKey      string                     `json:"object_key"`
+		CompileOptions string                     `json:"compile_options"`
+		Session        string                     `json:"session_id"`
+		Registration   string                     `json:"registration_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		t.Error(err)
+		return "{}"
+	}
+	input.Active.App.SecretValues = input.Secrets
+	input.Active.Deployment.ObjectKey = input.ObjectKey
+	snapshot, err := nanoflare.FreezeExecution(input.Active, input.CompileOptions)
+	if err != nil {
+		t.Error(err)
+		return "{}"
+	}
+	return fmt.Sprintf(`{"execution_id":%q,"snapshot_id":%q}`, nanoflare.ResourceGrantID(input.Session, input.Registration), snapshot.ID())
+}
+
+func TestDynamicRetiredSnapshotGetsFreshGrantWithoutResettingPublishedSnapshot(t *testing.T) {
+	m, _, active, oldKey := newDynamicControlFixture(t)
+	m.controlClient.Transport = dynamicUnitTransport(func(r *http.Request) (*http.Response, error) {
+		body := dynamicGrantRegistrationResponse(t, r)
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	m.client.Transport = dynamicUnitTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 204, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	keys, err := m.build([]nanoflare.ActiveDeployment{active})
+	if err != nil || keys[dynamicIdentity(active)] != oldKey {
+		t.Fatal("unchanged publication discarded warm revision", keys, err)
+	}
+	// Keep the old snapshot resident, as when a retired WebSocket is draining.
+	m.snapshots[oldKey].retired = true
+	keys, err = m.build([]nanoflare.ActiveDeployment{active})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newKey := keys[dynamicIdentity(active)]
+	if newKey == oldKey || m.snapshots[newKey].frozen.ID() != m.snapshots[oldKey].frozen.ID() {
+		t.Fatal("identical content revived retired grant or changed snapshot identity")
+	}
+	if !m.snapshots[oldKey].retired || m.snapshots[newKey].retired {
+		t.Fatal("republication mutated the old grant's retirement state")
+	}
+}
+
+type dynamicRecoveryTestProcess struct {
+	stops   int
+	stopErr error
+}
+
+func (*dynamicRecoveryTestProcess) Done() <-chan error { return make(chan error) }
+func (p *dynamicRecoveryTestProcess) Stop(context.Context) error {
+	p.stops++
+	return p.stopErr
+}
+
+func TestDynamicRecoverySkipsReplacementAfterWaitingForPublication(t *testing.T) {
+	for _, change := range []string{"process", "session", "process-and-session"} {
+		t.Run(change, func(t *testing.T) {
+			m, _, active, key := newDynamicControlFixture(t)
+			old := &dynamicRecoveryTestProcess{}
+			m.process = old
+			observed := dynamicRecoveryState{process: old, session: m.session}
+			replacement := &dynamicRecoveryTestProcess{}
+			m.publication.Lock()
+			started, done := make(chan struct{}), make(chan error, 1)
+			go func() {
+				close(started)
+				done <- m.recoverSession(&observed)
+			}()
+			<-started
+			// A publisher or another recovery wins while this attempt waits.
+			m.mu.Lock()
+			if change != "session" {
+				m.process = replacement
+			}
+			if change != "process" {
+				m.session = "replacement-session"
+			}
+			m.mu.Unlock()
+			m.publication.Unlock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if old.stops != 0 || replacement.stops != 0 {
+				t.Fatal("stale recovery stopped a process")
+			}
+			if m.committed[dynamicIdentity(active)] != key || m.snapshots[key] == nil {
+				t.Fatal("stale recovery changed committed snapshots")
+			}
+		})
+	}
+}
+
+func TestDynamicRecoveryFailureRetriesOnlyItsOwnPartialState(t *testing.T) {
+	m, _, _, _ := newDynamicControlFixture(t)
+	process := &dynamicRecoveryTestProcess{stopErr: errors.New("stop failed")}
+	m.process = process
+	observed := dynamicRecoveryState{process: process, session: m.session}
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := m.recoverSession(&observed); err == nil {
+			t.Fatal("failed stop unexpectedly recovered")
+		}
+		if process.stops != attempt || observed.process != process || observed.session != "" {
+			t.Fatal("retry lost ownership of its partial recovery state")
+		}
+	}
+	replacement := &dynamicRecoveryTestProcess{}
+	m.process, m.session = replacement, "replacement-session"
+	if err := m.recoverSession(&observed); err != nil {
+		t.Fatal(err)
+	}
+	if replacement.stops != 0 || m.process != replacement || m.session != "replacement-session" {
+		t.Fatal("retry disturbed a replacement installed after its failure")
+	}
+}
+
+func TestDynamicCrashWatcherLeavesHealthyReplacementRunning(t *testing.T) {
+	m, _, _, _ := newDynamicControlFixture(t)
+	old := &fakeProcess{done: make(chan error, 1), events: &eventLog{}}
+	m.process = old
+	m.background.Add(1)
+	done := make(chan struct{})
+	go func() { defer close(done); m.watchDynamic(old, "") }()
+	t.Cleanup(func() { close(m.stop); <-done })
+	old.crash(errors.New("original dispatcher crashed"))
+	deadline := time.Now().Add(time.Second)
+	for {
+		m.mu.Lock()
+		observed := m.process == nil
+		m.mu.Unlock()
+		if observed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("watcher did not observe the original crash")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	replacement := &dynamicRecoveryTestProcess{stopErr: errors.New("healthy replacement must not stop")}
+	m.publication.Lock()
+	m.mu.Lock()
+	m.process, m.session = replacement, "replacement-session"
+	m.mu.Unlock()
+	m.publication.Unlock()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stale watcher kept trying to recover after replacement")
+	}
+	if replacement.stops != 0 || m.process != replacement || m.session != "replacement-session" {
+		t.Fatal("stale watcher disturbed the healthy replacement")
 	}
 }

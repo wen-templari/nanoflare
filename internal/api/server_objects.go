@@ -287,6 +287,12 @@ func runtimeObjectBucketID(r *http.Request) (string, error) {
 }
 
 func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionObject, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if !ok {
+		return
+	}
+	defer release()
+
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -313,6 +319,12 @@ func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionObject, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if !ok {
+		return
+	}
+	defer release()
+
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -338,6 +350,12 @@ func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionObject, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if !ok {
+		return
+	}
+	defer release()
+
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -364,6 +382,12 @@ func (s *Server) runtimeObjectPut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runtimeObjectDelete(w http.ResponseWriter, r *http.Request) {
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionObject, r.Header.Get("X-Nanoflare-Object-Bucket-ID"))
+	if !ok {
+		return
+	}
+	defer release()
+
 	key, err := runtimeObjectKey(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

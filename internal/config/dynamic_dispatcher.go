@@ -124,7 +124,7 @@ export default {
     if (request.headers.get("X-Nanoflare-Dispatcher-Token") !== env.DISPATCHER_TOKEN) return new Response("Unauthorized", { status: 401 });
     const key = request.headers.get("X-Nanoflare-Execution");
     if (!key) return new Response("Missing execution identity", { status: 400 });
-    const validation = new URL(request.url).pathname === "/__nanoflare_validate";
+    const validation = request.headers.get("X-Nanoflare-Validate") === "true";
     const token = request.headers.get("X-Nanoflare-Invocation");
     if (!validation && !token) return new Response("Missing invocation admission", { status: 400 });
     let loaded;
