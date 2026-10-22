@@ -15,9 +15,15 @@ replacement is reserved for runtime upgrades and crash/session recovery. A
 shared-process crash still interrupts every Worker hosted by that process;
 independent publication does not provide process-level tenant isolation.
 
-Durable Objects and Workers for Platforms are excluded. Durable Object identity,
-storage ownership and migration require a separate design and must not derive
-persistent identity from a code revision.
+Workers for Platforms retains its existing opt-in trusted execution profile.
+Its namespace dispatch, resource authorization, outbound policy, invocation
+budgets, native props, nested services, logs and private-script behavior run
+through stable parent bridges. Named platform RPC exports travel as descriptors
+and are reconstructed as parent entrypoints; request-bound native channels never
+enter cached WorkerCode. Named export calls receive their own admissions within
+the original caller lifetime. HTTP error status survives the bridge explicitly.
+Durable Objects remain outside this repository's existing runtime profile;
+identity, storage ownership and migration must not derive from code revisions.
 
 ## Snapshots, authority and routing
 
@@ -77,12 +83,12 @@ checks grant state and pins each accepted operation.
 Service bindings retain invocation context for call lineage and returned RPC
 lifetimes. User WorkerEntrypoint construction runs after admission inside that
 context. WebSocket `addEventListener` callbacks preserve it, including listener
-objects, removal and one-time registrations. Raw property handlers do not acquire
-service invocation context: imported SERVICE access from `onmessage` remains
-unsupported. The resource redesign does not change that separate limitation.
-Service access from callbacks remains an open follow-up in
-[#52](https://github.com/wen-templari/nanoflare/issues/52), covering explicit call
-ownership, native HTTP/RPC qualification and preservation of call-chain budgets.
+objects, removal and one-time registrations. Raw `onmessage`/`onclose`/`onerror`
+handlers and ReadableStream callbacks capture their own originating context.
+Accepted sockets retain the invocation through closure and asynchronous listener
+work. Imported SERVICE bindings therefore use that socket or stream's caller,
+never whichever unrelated request happens to be live. Native local/remote
+qualification exercises service calls from raw `onmessage` and stream `pull`.
 Candidate snapshots remain protected from cleanup until the pending publication
 owns them, including while detached routing metadata is copied.
 
@@ -146,10 +152,11 @@ sessions and releases their pins. The private listener's shutdown also revokes
 its sessions. These mechanisms provide cleanup when a runner disappears instead
 of depending solely on a JavaScript stream callback.
 
-Returned capability facades currently forward ordinary public prototype methods.
-Instance fields, accessor getters and user-defined `Symbol.dispose` hooks are not
-forwarded. These patterns need separate compatibility work before being exposed
-as supported RPC behavior.
+Returned capability facades forward public prototype methods, getters and
+`Symbol.dispose` hooks while retaining their originating admission. Named
+entrypoint constructors remain lazy. Native props retain supported non-plain
+values such as dates and typed arrays across the parent bridge. RPC exposure
+continues to use prototype members rather than arbitrary own instance fields.
 
 This does not establish a general memory bound or force immediate workerd isolate
 collection. Retired snapshot metadata can be removed when unreferenced, and
@@ -209,7 +216,13 @@ reserved-path isolation, gateway/runner header handling and cron lease headers.
 The native local/remote publication test has also passed under the race detector.
 The full Go suite, race checks for the changed runtime/API/config/runner/service
 packages and command, and `go vet ./...` passed with the pinned native binary.
-PostgreSQL integration remains the exception described below.
+PostgreSQL integration is included when the connection setting below is supplied.
+The merge qualification also runs `TestStableRuntimePrivateDynamicDispatch` in
+both local and remote modes, plus regressions for cron preservation, streaming
+flush/cancellation and redirect handling. Native publication checks validate
+scoped log delivery and secret redaction. Publication uses current main's durable
+artifact and prepare/commit contracts; startup reconciles deployment publications
+and interrupted variable updates through the same guarded path.
 
 ## Running the checks
 
@@ -223,7 +236,7 @@ export NANOFLARE_TEST_WORKERD=/absolute/path/to/workerd
 export PATH="$(dirname "$NANOFLARE_TEST_WORKERD"):$PATH"
 
 go test ./internal/api -run 'TestWorkerdDynamic(PublicationEndToEnd|LoaderContracts)' -count=1 -v
-go test -race ./internal/api -run '^TestWorkerdDynamicPublicationEndToEnd$' -count=1
+go test -race ./internal/api -run 'TestWorkerdDynamicPublicationEndToEnd|TestStableRuntimePrivateDynamicDispatch' -count=1
 go test ./...
 ```
 
@@ -236,10 +249,39 @@ field is not a production rollout verdict.
 PostgreSQL durability tests require `NANOFLARE_TEST_POSTGRES_URL` and an instance
 where the test can create an isolated schema. They exercise persisted publication
 generations/traffic, acknowledgment, transactional failure and durable vars
-operations. They were not run in this implementation session because that
-connection setting was unavailable; ordinary test runs skip them.
+operations. Merge qualification used an isolated PostgreSQL 17 instance;
+ordinary runs without that setting skip the database integration tests.
 
 ```sh
 NANOFLARE_TEST_POSTGRES_URL=postgres://... \
   go test ./internal/database -run '^TestPostgresVarsActivationAndDurableRetries$' -count=1 -v
 ```
+
+## Deployment isolation regressions
+
+The cron scheduler is retained across publications; updating its future job list
+does not cancel existing scheduled requests. Retirement calls run outside the
+admission mutex so a delayed cleanup cannot stall other Workers. The resource
+bridge flushes response chunks, propagates client cancellation, and returns
+redirects without following them. The immutable artifact secret snapshot is
+preserved during explicit rollback and later crash recovery.
+
+## Merge qualification — 2026-10-22
+
+Integrated with main `7407b14` (Cloudflare-format configuration). Qualified on
+macOS arm64 with native workerd 2026-09-11 and an isolated PostgreSQL 17 instance.
+
+- `go test -race ./... -count=1 -timeout 180s`: passed with the native runtime
+  and PostgreSQL integration gates enabled.
+- `go vet ./...`: passed.
+- Native local/remote publication and Workers for Platforms scenarios: passed.
+- Loader contract matrix: 34/34 passed, including RPC getters and disposal hooks.
+- API JSON matches fresh generated OpenAPI structurally; schema typecheck passed.
+- Regression coverage includes empty asset bindings, in-flight cron preservation,
+  candidate admission waiting without blocking peers, raw WebSocket/stream service
+  callbacks, native props types, redirects, streaming cancellation, secret
+  redaction, runner-session isolation and PostgreSQL activation transactions.
+
+The experimental Worker Loader and shared-process failure domain remain the
+same explicit trusted-runtime constraints; deployment isolation does not imply
+CPU, memory, or process isolation between tenants.

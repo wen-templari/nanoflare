@@ -2,6 +2,5 @@
   "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
   "name": "{{projectName}}",
   "main": "worker.ts",
-  "format": "modules",
   "compatibility_date": "{{compatibilityDate}}"
 }

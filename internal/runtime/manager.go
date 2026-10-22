@@ -2,6 +2,10 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -36,6 +41,8 @@ type Launcher interface {
 }
 
 type Manager struct {
+	liveMu          sync.RWMutex
+	livePools       map[*pool]struct{}
 	mu              sync.Mutex
 	writer          ConfigWriter
 	launcher        Launcher
@@ -56,13 +63,16 @@ type Manager struct {
 }
 
 type pool struct {
-	socketDir  string
-	refs       int
-	drained    chan struct{}
-	configPath string
-	process    Process
-	active     []nanoflare.ActiveDeployment
-	scheduler  *cronRunner
+	publicationInput [32]byte
+	exited           chan struct{}
+	exitErr          error
+	socketDir        string
+	refs             int
+	drained          chan struct{}
+	configPath       string
+	process          Process
+	active           []nanoflare.ActiveDeployment
+	scheduler        *cronRunner
 }
 
 func (m *Manager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (EnsuredWorker, error) {
@@ -107,6 +117,7 @@ func NewManager(writer ConfigWriter, launcher Launcher, configDir, canonicalConf
 		output = value.Output
 	}
 	return &Manager{
+		livePools:       make(map[*pool]struct{}),
 		writer:          writer,
 		launcher:        launcher,
 		output:          output,
@@ -161,15 +172,53 @@ func (m *Manager) Abort(generation string) error {
 }
 
 func (m *Manager) prepare(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+	var static []nanoflare.ActiveDeployment
+	for _, item := range active {
+		if !item.App.IsDynamic() {
+			static = append(static, item)
+		}
+	}
+	active = static
 	if m.closed {
 		return "", nil, errors.New("runtime manager is closed")
 	}
+	identity, err := publicationInput(active)
+	if err != nil {
+		return "", nil, err
+	}
 	if m.pending != nil {
-		return "", nil, errors.New("runtime generation is already pending")
+		alive := true
+		select {
+		case <-m.pending.exited:
+			alive = false
+		default:
+		}
+		if alive && m.pending.publicationInput == identity {
+			return poolGeneration(m.pending), append([]nanoflare.ActiveDeployment(nil), m.pending.active...), nil
+		}
+		// Publications are serialized by the repository guard. Reconcile a stale
+		// uncommitted generation left by a lost response or control-plane restart.
+		if err := m.abort(poolGeneration(m.pending)); err != nil {
+			return "", nil, err
+		}
 	}
 
+	stableDispatcher := false
+	for _, item := range active {
+		if len(item.Deployment.DispatchNamespaces) > 0 {
+			stableDispatcher = true
+			break
+		}
+	}
+	if stableDispatcher && m.active != nil && m.pending == nil && m.active.publicationInput == identity {
+		select {
+		case <-m.active.exited:
+		default:
+			return poolGeneration(m.active), append([]nanoflare.ActiveDeployment{}, m.active.active...), nil
+		}
+	}
 	if len(active) == 0 {
-		m.pending = &pool{active: []nanoflare.ActiveDeployment{}}
+		m.pending = &pool{active: []nanoflare.ActiveDeployment{}, publicationInput: identity}
 		return "empty", []nanoflare.ActiveDeployment{}, nil
 	}
 
@@ -196,11 +245,21 @@ func (m *Manager) prepare(active []nanoflare.ActiveDeployment) (string, []nanofl
 	}
 	drained := make(chan struct{})
 	close(drained)
-	next := &pool{configPath: configPath, process: process, active: generation, socketDir: socketDir, drained: drained}
+	next := &pool{publicationInput: identity, configPath: configPath, process: process, active: generation, socketDir: socketDir, drained: drained, exited: make(chan struct{})}
+	m.liveMu.Lock()
+	m.livePools[next] = struct{}{}
+	m.liveMu.Unlock()
 	if err := m.waitHealthy(process, generation); err != nil {
 		m.stop(next)
 		return "", nil, err
 	}
+	go func() {
+		next.exitErr = <-process.Done()
+		close(next.exited)
+		m.liveMu.Lock()
+		delete(m.livePools, next)
+		m.liveMu.Unlock()
+	}()
 	m.pending = next
 	return filepath.Base(configPath), append([]nanoflare.ActiveDeployment(nil), generation...), nil
 }
@@ -208,6 +267,9 @@ func (m *Manager) prepare(active []nanoflare.ActiveDeployment) (string, []nanofl
 func (m *Manager) commit(generation string) error {
 	if m.closed {
 		return errors.New("runtime manager is closed")
+	}
+	if m.pending == nil && m.active != nil && poolGeneration(m.active) == generation {
+		return nil
 	}
 	if m.pending == nil || poolGeneration(m.pending) != generation {
 		return errors.New("runtime generation is not pending")
@@ -302,6 +364,9 @@ func (m *Manager) publish(next *pool, desired []nanoflare.ActiveDeployment) {
 }
 
 func (m *Manager) stop(pool *pool) error {
+	m.liveMu.Lock()
+	delete(m.livePools, pool)
+	m.liveMu.Unlock()
 	if pool.scheduler != nil {
 		pool.scheduler.Stop()
 	}
@@ -333,8 +398,14 @@ func (m *Manager) runtimeEndpoints(active []nanoflare.ActiveDeployment) ([]nanof
 	if err != nil {
 		return nil, "", err
 	}
+	var instance [16]byte
+	if _, err = rand.Read(instance[:]); err != nil {
+		os.RemoveAll(dir)
+		return nil, "", err
+	}
 	items := append([]nanoflare.ActiveDeployment(nil), active...)
 	for i := range items {
+		items[i].RuntimeInstance = hex.EncodeToString(instance[:])
 		items[i].Deployment.Port = 0
 		items[i].SocketPath = filepath.Join(dir, fmt.Sprintf("w%d.sock", i))
 		if len(items[i].SocketPath) > 100 {
@@ -376,7 +447,11 @@ func (m *Manager) waitHealthy(process Process, active []nanoflare.ActiveDeployme
 }
 
 func (m *Manager) watch(pool *pool, desired []nanoflare.ActiveDeployment) {
-	err := <-pool.process.Done()
+	<-pool.exited
+	err := pool.exitErr
+	m.liveMu.Lock()
+	delete(m.livePools, pool)
+	m.liveMu.Unlock()
 	m.mu.Lock()
 	if m.closed || m.active != pool {
 		m.mu.Unlock()
@@ -430,14 +505,18 @@ func socketsReady(active []nanoflare.ActiveDeployment) bool {
 }
 
 type CommandLauncher struct {
-	Executable   string
 	Experimental bool
+	Executable   string
 	Output       *OutputBuffer
 }
 
 func (l CommandLauncher) Launch(configPath string, active []nanoflare.ActiveDeployment) (Process, error) {
 	args := []string{"serve", configPath}
-	if l.Experimental {
+	experimental := l.Experimental
+	for _, item := range active {
+		experimental = experimental || len(item.Deployment.DispatchNamespaces) > 0
+	}
+	if experimental {
 		args = append(args, "--experimental")
 	}
 	command := exec.Command(l.Executable, args...)
@@ -498,4 +577,30 @@ func (p *commandProcess) Stop(ctx context.Context) error {
 		<-p.done
 		return ctx.Err()
 	}
+}
+
+// Include credentials hidden by the public deployment JSON. Endpoint allocation
+// is excluded because prepare assigns fresh runner-local socket paths and ports.
+func publicationInput(active []nanoflare.ActiveDeployment) ([32]byte, error) {
+	type entry struct {
+		Deployment nanoflare.ActiveDeployment
+		Root       string
+		Secrets    map[string]string
+	}
+	entries := make([]entry, 0, len(active))
+	for _, item := range active {
+		item.SocketPath = ""
+		item.RuntimeInstance = ""
+		item.Deployment.Port = 0
+		entries = append(entries, entry{item, item.App.RuntimeToken, item.App.SecretValues})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := entries[i].Deployment, entries[j].Deployment
+		if a.App.ID == b.App.ID {
+			return a.Deployment.ID < b.Deployment.ID
+		}
+		return a.App.ID < b.App.ID
+	})
+	data, err := json.Marshal(entries)
+	return sha256.Sum256(data), err
 }

@@ -67,6 +67,7 @@ type dynamicSnapshot struct {
 	validated         bool
 }
 type dynamicPublication struct {
+	done   chan struct{}
 	id     string
 	keys   map[string]string
 	active []nanoflare.ActiveDeployment
@@ -98,7 +99,7 @@ func NewDynamicManager(writer ConfigWriter, launcher Launcher, configDir, canoni
 	m.compileOptions = string(encoded)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	ConfigureTransport(transport)
-	m.client = &http.Client{Transport: transport}
+	m.client = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	controlTransport := http.DefaultTransport.(*http.Transport).Clone()
 	controlTransport.Proxy = nil
 	m.controlClient = &http.Client{Transport: controlTransport, Timeout: 15 * time.Second}
@@ -293,7 +294,7 @@ func (m *DynamicManager) recoverSession(observed *dynamicRecoveryState) (err err
 	active := append([]nanoflare.ActiveDeployment(nil), m.active...)
 	m.process, m.session = nil, ""
 	m.invocations = map[string]*dynamicInvocation{}
-	m.pending = nil
+	m.clearPendingLocked()
 	m.mu.Unlock()
 	if process != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), m.stopTimeout)
@@ -363,6 +364,7 @@ func (m *DynamicManager) register(snapshot *dynamicSnapshot) error {
 	return nil
 }
 func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]string, error) {
+	active = staticRuntimeWorkers(active)
 	m.mu.Lock()
 	m.staging++
 	m.mu.Unlock()
@@ -443,6 +445,13 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]
 func (m *DynamicManager) ValidatePublication(active []nanoflare.ActiveDeployment) error {
 	m.publication.Lock()
 	defer m.publication.Unlock()
+	active = staticRuntimeWorkers(active)
+	m.mu.Lock()
+	empty := len(active) == 0 && m.process == nil
+	m.mu.Unlock()
+	if empty {
+		return nil
+	}
 	if err := m.boot(); err != nil {
 		return err
 	}
@@ -455,6 +464,7 @@ func (m *DynamicManager) Prepare(active []nanoflare.ActiveDeployment) (string, [
 	return m.prepareDynamic(active)
 }
 func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+	active = staticRuntimeWorkers(active)
 	m.mu.Lock()
 	// Retain candidates until pending owns them, including the detached routing
 	// copy after build returns. Cleanup can run independently of publication.
@@ -464,6 +474,16 @@ func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment) (st
 	m.mu.Unlock()
 	if pending {
 		return "", nil, errors.New("runtime publication already pending")
+	}
+	if len(active) == 0 {
+		m.mu.Lock()
+		if m.process == nil {
+			id := rand.Text()
+			m.pending = &dynamicPublication{id: id, done: make(chan struct{}), keys: map[string]string{}}
+			m.mu.Unlock()
+			return id, nil, nil
+		}
+		m.mu.Unlock()
 	}
 	if err := m.boot(); err != nil {
 		return "", nil, err
@@ -484,7 +504,7 @@ func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment) (st
 	}
 	id := rand.Text()
 	m.mu.Lock()
-	m.pending = &dynamicPublication{id: id, keys: keys, active: routed}
+	m.pending = &dynamicPublication{id: id, done: make(chan struct{}), keys: keys, active: routed}
 	m.mu.Unlock()
 	return id, routed, nil
 }
@@ -505,27 +525,27 @@ func (m *DynamicManager) commitDynamic(id string) error {
 	for _, key := range publication.keys {
 		if err := m.control(context.Background(), "publish", map[string]string{"execution_id": key, "session_id": session}, nil); err != nil {
 			m.mu.Lock()
-			m.pending = nil
+			m.clearPendingLocked()
 			m.mu.Unlock()
 			m.collectSnapshots()
 			return err
 		}
 	}
 	m.mu.Lock()
-	m.pending = nil
+	m.clearPendingLocked()
 	previous := m.committed
 	m.committed = publication.keys
 	m.active = publication.active
-	oldScheduler := m.scheduler
-	m.scheduler = nil
+	scheduler := m.scheduler
 	m.mu.Unlock()
-	if oldScheduler != nil {
-		oldScheduler.Stop()
+	if scheduler != nil {
+		scheduler.Update(publication.active)
+	} else {
+		scheduler = startCronRunner(publication.active, m.output, m.Ensure)
+		m.mu.Lock()
+		m.scheduler = scheduler
+		m.mu.Unlock()
 	}
-	scheduler := startCronRunner(publication.active, m.output, m.Ensure)
-	m.mu.Lock()
-	m.scheduler = scheduler
-	m.mu.Unlock()
 	retained := map[string]bool{}
 	for _, key := range publication.keys {
 		retained[key] = true
@@ -554,7 +574,7 @@ func (m *DynamicManager) Abort(id string) error {
 		m.mu.Unlock()
 		return errors.New("runtime publication is not pending")
 	}
-	m.pending = nil
+	m.clearPendingLocked()
 	m.mu.Unlock()
 	m.collectSnapshots()
 	return nil
@@ -568,7 +588,7 @@ func (m *DynamicManager) Write(active []nanoflare.ActiveDeployment) error {
 	}
 	if err := m.writer.WriteTraefik(routed); err != nil {
 		m.mu.Lock()
-		m.pending = nil
+		m.clearPendingLocked()
 		m.mu.Unlock()
 		return err
 	}
@@ -607,35 +627,55 @@ func (m *DynamicManager) admitLocked(ctx context.Context, key string, root *dyna
 	return invocation, nil
 }
 func (m *DynamicManager) Ensure(ctx context.Context, active nanoflare.ActiveDeployment) (EnsuredWorker, error) {
-	m.mu.Lock()
-	key := m.committed[dynamicIdentity(active)]
-	if key == "" {
-		m.mu.Unlock()
-		return EnsuredWorker{}, errors.New("deployment is not published")
-	}
-	invocation, err := m.admitLocked(ctx, key, nil)
-	if err != nil {
-		m.mu.Unlock()
-		m.scheduleReleaseFlush()
-		return EnsuredWorker{}, err
-	}
-	headers := http.Header{}
-	headers.Set("X-Nanoflare-Dispatcher-Token", m.dispatcherToken)
-	headers.Set("X-Nanoflare-Execution", key)
-	headers.Set("X-Nanoflare-Invocation", invocation.token)
-	socket := m.socketPath
-	m.mu.Unlock()
-	var once sync.Once
-	return EnsuredWorker{SocketPath: socket, Headers: headers, Release: func() {
-		once.Do(func() {
-			m.mu.Lock()
-			invocation.root.responseDone = true
-			pins := m.cancelUnstartedLocked(invocation.root)
-			pins = append(pins, m.finishLocked(invocation.root)...)
+	for {
+		m.mu.Lock()
+		key := m.committed[dynamicIdentity(active)]
+		if key == "" && m.pending != nil && m.pending.keys[dynamicIdentity(active)] != "" && m.pending.done != nil {
+			done := m.pending.done
 			m.mu.Unlock()
-			m.releasePins(pins)
-		})
-	}}, nil
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return EnsuredWorker{}, ctx.Err()
+			}
+		}
+		if key == "" {
+			m.mu.Unlock()
+			return EnsuredWorker{}, errors.New("deployment is not published")
+		}
+		invocation, err := m.admitLocked(ctx, key, nil)
+		if err != nil {
+			m.mu.Unlock()
+			m.scheduleReleaseFlush()
+			return EnsuredWorker{}, err
+		}
+		headers := http.Header{}
+		headers.Set("X-Nanoflare-Dispatcher-Token", m.dispatcherToken)
+		headers.Set("X-Nanoflare-Execution", key)
+		headers.Set("X-Nanoflare-Invocation", invocation.token)
+		socket := m.socketPath
+		m.mu.Unlock()
+		var once sync.Once
+		return EnsuredWorker{SocketPath: socket, Headers: headers, Release: func() {
+			once.Do(func() {
+				m.mu.Lock()
+				invocation.root.responseDone = true
+				pins := m.cancelUnstartedLocked(invocation.root)
+				pins = append(pins, m.finishLocked(invocation.root)...)
+				m.mu.Unlock()
+				m.releasePins(pins)
+			})
+		}}, nil
+	}
+}
+
+func (m *DynamicManager) clearPendingLocked() {
+	if m.pending != nil && m.pending.done != nil {
+		close(m.pending.done)
+		m.pending.done = nil
+	}
+	m.pending = nil
 }
 
 // An admission that never reached user code has no background work. Removing
@@ -716,8 +756,8 @@ func (m *DynamicManager) flushReleases() {
 }
 func (m *DynamicManager) collectSnapshots() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.staging > 0 {
+		m.mu.Unlock()
 		return
 	}
 	retained := map[string]bool{}
@@ -732,18 +772,26 @@ func (m *DynamicManager) collectSnapshots() {
 	for _, invocation := range m.invocations {
 		retained[invocation.key] = true
 	}
-	for key := range m.snapshots {
+	retiring := map[string]*dynamicSnapshot{}
+	for key, snapshot := range m.snapshots {
 		if !retained[key] {
-			// Retirement and removal must precede any registration of the same key.
-			// Keep failed retirements for the next sweep, including idle heartbeat sweeps.
-			snapshot := m.snapshots[key]
 			snapshot.retired = true
-			if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key, "session_id": snapshot.registeredSession}, nil); err != nil {
-				log.Printf("retire execution: %v", err)
-				continue
-			}
+			retiring[key] = snapshot
+		}
+	}
+	m.mu.Unlock()
+	// Retiring a revision must not hold the admission mutex while contacting the
+	// control plane. A delayed retirement cannot stall unrelated Workers.
+	for key, snapshot := range retiring {
+		if err := m.control(context.Background(), "retire", map[string]string{"execution_id": key, "session_id": snapshot.registeredSession}, nil); err != nil {
+			log.Printf("retire execution: %v", err)
+			continue
+		}
+		m.mu.Lock()
+		if m.snapshots[key] == snapshot {
 			delete(m.snapshots, key)
 		}
+		m.mu.Unlock()
 	}
 }
 
@@ -787,6 +835,11 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 		}
 		var result map[string]any
 		json.Unmarshal(encoded, &result)
+		mapping := map[string]string{}
+		for _, b := range active.Deployment.DispatchNamespaces {
+			mapping[b.Binding] = "__NANOFLARE_DISPATCH:" + b.Binding
+		}
+		env["__NANOFLARE_DISPATCH_BINDINGS"] = mapping
 		result["env"] = env
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
@@ -886,23 +939,23 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 		}
 		m.mu.Lock()
 		caller := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
-		// Callback service ownership is deferred in #52. Keep rejecting missing
-		// callers: a revision's authority does not identify a socket or call chain.
+		// Callback wrappers retain their originating admission. A revision grant
+		// alone cannot stand in for a socket's or request's service-call lineage.
 		if caller == nil || caller.key != key || !caller.started {
 			m.mu.Unlock()
 			http.Error(w, "invalid invocation", 403)
 			return
 		}
-		name := ""
+		name, workerID := "", ""
 		for _, binding := range active.Deployment.Services {
 			if binding.Binding == parts[2] {
-				name = binding.Service
+				name, workerID = binding.Service, binding.WorkerID
 			}
 		}
 		candidates := []nanoflare.ActiveDeployment{}
 		total := 0
 		for _, a := range m.active {
-			if a.App.OrgID == active.App.OrgID && a.App.Name == name && a.TrafficPercent > 0 {
+			if nanoflare.ServiceTargetAllowed(active.App, a.App) && ((workerID != "" && a.App.ID == workerID) || (workerID == "" && a.App.Platform == nil && a.App.Name == name)) && a.TrafficPercent > 0 {
 				candidates = append(candidates, a)
 				total += a.TrafficPercent
 			}
@@ -924,7 +977,7 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if name == "" || targetKey == "" {
+		if (name == "" && workerID == "") || targetKey == "" {
 			m.mu.Unlock()
 			http.Error(w, "service is not published", 503)
 			return
@@ -938,6 +991,23 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"key": targetKey, "token": invocation.token})
+	case "export":
+		m.mu.Lock()
+		caller := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
+		if caller == nil || caller.key != key || !caller.started {
+			m.mu.Unlock()
+			http.Error(w, "invalid export caller", 403)
+			return
+		}
+		invocation, err := m.admitLocked(r.Context(), key, caller.root)
+		m.mu.Unlock()
+		if err != nil {
+			m.scheduleReleaseFlush()
+			http.Error(w, err.Error(), 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"key": key, "token": invocation.token})
 	case "resource":
 		m.forwardResource(w, r, key, active, parts)
 	default:
@@ -955,7 +1025,7 @@ func stripRuntimeHeaders(headers http.Header) {
 func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request, key string, active nanoflare.ActiveDeployment, parts []string) {
 	binding := r.Header.Get("X-Nanoflare-Binding-Name")
 	token := r.Header.Get("X-Nanoflare-Invocation")
-	synthetic := binding == "__NANOFLARE_DNS" || binding == "__NANOFLARE_DURATION_COLLECTOR"
+	synthetic := binding == "__NANOFLARE_DNS" || binding == "__NANOFLARE_DURATION_COLLECTOR" || binding == "__NANOFLARE_ACCESS" || binding == "__NANOFLARE_LOG_COLLECTOR" || strings.HasPrefix(binding, "__NANOFLARE_DISPATCH:")
 	if !synthetic {
 		m.mu.Lock()
 		snapshot := m.snapshots[key]
@@ -976,6 +1046,14 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 	}
 	headers := r.Header.Clone()
 	stripRuntimeHeaders(headers)
+	if strings.HasPrefix(binding, "__NANOFLARE_DISPATCH:") {
+		token = r.Header.Get("X-Nanoflare-Control-Invocation")
+		for _, name := range []string{"X-Nanoflare-Invocation", "X-Nanoflare-Outbound-URL", "X-Nanoflare-Outbound-Authorization"} {
+			if value := r.Header.Get(name); value != "" {
+				headers.Set(name, value)
+			}
+		}
+	}
 	headers.Set("Authorization", "Bearer "+token)
 	destination := m.options.RuntimeAddr
 	path := "/"
@@ -1018,6 +1096,25 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 		query = ""
 		headers.Set("X-Nanoflare-DNS-Profile", active.Deployment.DNS.Profile)
 		allowed = true
+	}
+	if binding == "__NANOFLARE_LOG_COLLECTOR" {
+		path = "/internal/runtime/logs"
+		query = ""
+		allowed = true
+	}
+	if binding == "__NANOFLARE_ACCESS" {
+		path = "/internal/runtime/access"
+		query = ""
+		allowed = true
+	}
+	if strings.HasPrefix(binding, "__NANOFLARE_DISPATCH:") {
+		name := strings.TrimPrefix(binding, "__NANOFLARE_DISPATCH:")
+		for _, b := range active.Deployment.DispatchNamespaces {
+			if b.Binding == name {
+				headers.Set("X-Nanoflare-Dispatch-Namespace-ID", b.NamespaceID)
+				allowed = true
+			}
+		}
 	}
 	if binding == "__NANOFLARE_DURATION_COLLECTOR" {
 		path = "/internal/runtime/durations"
@@ -1072,7 +1169,8 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	io.Copy(w, response.Body)
+	http.NewResponseController(w).Flush()
+	io.Copy(dynamicStreamWriter{w}, response.Body)
 }
 func (m *DynamicManager) watchDynamic(process Process, dir string) {
 	defer m.background.Done()
@@ -1121,6 +1219,7 @@ func (m *DynamicManager) Close() error {
 		return nil
 	}
 	m.closed = true
+	m.clearPendingLocked()
 	close(m.stop)
 	process := m.process
 	m.process = nil
@@ -1155,4 +1254,54 @@ func (m *DynamicManager) Close() error {
 	m.client.CloseIdleConnections()
 	m.controlClient.CloseIdleConnections()
 	return first
+}
+
+func (m *DynamicManager) RuntimeDeploymentLive(ctx context.Context, appID, deploymentID string) (bool, error) {
+	return m.RuntimeInstanceLive(ctx, appID, deploymentID, "")
+}
+func (m *DynamicManager) RuntimeInstanceLive(ctx context.Context, appID, deploymentID, instanceID string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.process == nil || m.session == "" {
+		return false, nil
+	}
+	for key, s := range m.snapshots {
+		a := s.frozen.ActiveDeployment()
+		if a.App.ID == appID && a.Deployment.ID == deploymentID && (instanceID == "" || key == instanceID) && s.registeredSession == m.session {
+			for _, live := range m.committed {
+				if live == key {
+					return true, nil
+				}
+			}
+			for _, invocation := range m.invocations {
+				if invocation.key == key {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+func staticRuntimeWorkers(active []nanoflare.ActiveDeployment) []nanoflare.ActiveDeployment {
+	items := make([]nanoflare.ActiveDeployment, 0, len(active))
+	for _, a := range active {
+		if !a.App.IsDynamic() {
+			items = append(items, a)
+		}
+	}
+	return items
+}
+
+type dynamicStreamWriter struct{ http.ResponseWriter }
+
+func (w dynamicStreamWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	if err == nil {
+		err = http.NewResponseController(w.ResponseWriter).Flush()
+	}
+	return n, err
 }

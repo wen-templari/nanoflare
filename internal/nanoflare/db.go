@@ -2,6 +2,7 @@ package nanoflare
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"sort"
 	"time"
@@ -159,4 +160,9 @@ type DBMigrationResult struct {
 type DatabaseRuntimeStats struct {
 	StorageBytes int64 `json:"storage_bytes"`
 	TableCount   int64 `json:"table_count"`
+}
+
+// ContextDBExecutor allows the runtime to interrupt work when its invocation ends.
+type ContextDBExecutor interface {
+	ExecuteContext(context.Context, string, DBQueryRequest) (DBQueryResponse, error)
 }

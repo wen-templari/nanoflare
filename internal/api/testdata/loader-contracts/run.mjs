@@ -251,7 +251,7 @@ try {
           (async () => {
             while (
               !logs.includes(
-                `[[nanoflare-output app=${fixture.appID} deployment=${fixture.deploymentID}]] loader-contract-output`,
+                `loader-contract-output`,
               )
             )
               await new Promise((resolve) => setTimeout(resolve, 10));
@@ -382,7 +382,8 @@ try {
       return call.grant === "invocation-class:v1" && call.binding === "KV" && call.path === "/constructor";
     })());
     assert.ok(started >= 0 && constructed > started, "constructor resource access must follow admission acknowledgement");
-    assert.deepEqual(await get("/invocation-class/nested"), { value: "scoped-session" });
+    assert.deepEqual(await get("/invocation-class/nested"), { value: "scoped-session", status:"active" });
+    await waitEvent("/disposed","session");
   });
   const message = async (socket, value) => {
     const received = new Promise((resolve) =>

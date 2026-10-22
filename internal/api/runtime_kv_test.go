@@ -70,7 +70,7 @@ func TestRuntimeKVSupportsExpirationAndDeletionSafePagination(t *testing.T) {
 	runtimeKVRequest(t, server, http.MethodPut, "/grant%3Atwo?urlencoded=true", token, namespaceID, []byte("two"), http.StatusNoContent)
 
 	expired := time.Now().Add(-time.Minute)
-	if _, err := store.KVPutWithSizeDelta(token, namespaceID, "grant:expired", []byte("expired"), nanoflare.RuntimeKVPutOptions{Expiration: &expired}); err != nil {
+	if _, err := store.KVPutWithSizeDelta("", namespaceID, "grant:expired", []byte("expired"), nanoflare.RuntimeKVPutOptions{Expiration: &expired}); err != nil {
 		t.Fatal(err)
 	}
 	runtimeKVRequest(t, server, http.MethodGet, "/grant%3Aexpired?urlencoded=true", token, namespaceID, nil, http.StatusNotFound)
@@ -129,7 +129,11 @@ func runtimeKVFixture(t testing.TB) (*nanoflare.Store, string, string, http.Hand
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store, app.RuntimeToken, namespace.ID, NewRuntimeKVServer(service)
+	deployment := nanoflare.Deployment{ID: "kv-revision", AppID: app.ID, KVNamespaces: []nanoflare.KVBinding{{Binding: "KV", ID: namespace.ID}}}
+	if err := store.Activate(deployment); err != nil {
+		t.Fatal(err)
+	}
+	return store, nanoflare.RuntimeCapability(nanoflare.ActiveDeployment{App: app, Deployment: deployment}, nanoflare.RuntimeKV, namespace.ID), namespace.ID, NewRuntimeKVServer(service)
 }
 
 func BenchmarkRuntimeKVPut(b *testing.B) {

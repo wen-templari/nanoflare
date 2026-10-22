@@ -104,6 +104,9 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 				}
 				return VarsUpdateResult{}, ErrVarsRolloutFailed
 			}
+			if err := s.reconcileDerivedManagement(appID, op.Result.ID); err != nil {
+				return VarsUpdateResult{}, err
+			}
 			if err := s.publishActiveDeployments(appID); err != nil {
 				return VarsUpdateResult{}, err
 			}
@@ -123,6 +126,9 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 	}
 	current := activeForApp(active, appID)
 	if err := validateBindingCollisions(input.Vars, current.App.SecretValues, current.Deployment.KVNamespaces, current.Deployment.Databases, current.Deployment.ObjectStorageBuckets, current.Deployment.Services, current.Deployment.AssetConfig); err != nil {
+		return VarsUpdateResult{}, fmt.Errorf("%w: %v", ErrInvalidVarsUpdate, err)
+	}
+	if err := validateDispatchNameCollisions(current.Deployment.DispatchNamespaces, input.Vars, current.App.SecretValues); err != nil {
 		return VarsUpdateResult{}, fmt.Errorf("%w: %v", ErrInvalidVarsUpdate, err)
 	}
 	// Round-trip to detach every slice/map, including nested trigger/asset config.
@@ -145,12 +151,22 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 	next.CreatedBy = strings.TrimSpace(input.CreatedBy)
 	next.CommitMessage = input.CommitMessage
 	next.Vars = cloneVars(input.Vars)
+	baseArtifact, err := s.freezeArtifact(*current, nil)
+	if err != nil {
+		return VarsUpdateResult{}, err
+	}
+	if _, err = s.freezeArtifact(ActiveDeployment{App: current.App, Deployment: next}, &baseArtifact); err != nil {
+		return VarsUpdateResult{}, err
+	}
 	result := VarsUpdateResult{ID: next.ID, BaseDeploymentID: current.Deployment.ID, CommitMessage: next.CommitMessage, CreatedBy: next.CreatedBy, CreatedAt: next.CreatedAt}
 	op = VarsUpdateOperation{AppID: appID, Key: input.IdempotencyKey, Fingerprint: fingerprint, Status: "pending", Result: result}
 	if err := s.validatePublication(appID, active, []ActiveDeployment{{App: current.App, Deployment: next, TrafficPercent: 100}}); err != nil {
 		return VarsUpdateResult{}, fmt.Errorf("validate publication: %w", err)
 	}
 	if err := s.store.BeginVarsUpdate(op, next, input.ExpectedDeploymentID); err != nil {
+		return VarsUpdateResult{}, err
+	}
+	if err := s.reconcileDerivedManagement(appID, next.ID); err != nil {
 		return VarsUpdateResult{}, err
 	}
 	if err := s.publishActiveDeployments(appID); err != nil {

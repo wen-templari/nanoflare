@@ -8,6 +8,7 @@ import {
   Sidebar,
   Text,
   Tooltip,
+  useSidebar,
 } from "@cloudflare/kumo";
 import {
   Boxes,
@@ -21,7 +22,7 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { normalizeUsageLevel } from "../../app/org-limits";
@@ -35,6 +36,7 @@ import { Input } from "../ui/input";
 const navItems = [
   { href: "/", match: "/", label: "Overview", icon: CircleGauge },
   { href: "/workers", match: "/workers", label: "Workers", icon: Waypoints },
+  { href: "/platforms", match: "/platforms", label: "Dispatch namespaces", icon: Boxes },
   { href: "/kv", match: "/kv", label: "KV", icon: KeyRound },
   { href: "/databases", match: "/databases", label: "Databases", icon: Database },
   { href: "/object-storage", match: "/object-storage", label: "Object storage", icon: DatabaseZap },
@@ -133,7 +135,8 @@ export function ConsoleLayout() {
   }
 
   return (
-    <Sidebar.Provider className="h-svh overflow-hidden" collapsible="none" defaultOpen>
+    <Sidebar.Provider className="h-svh overflow-hidden" collapsible="offcanvas" defaultOpen>
+      <MobileNavigationSync />
       <Sidebar className="bg-kumo-canvas">
         <Sidebar.Header>
           <div className="flex w-full items-center gap-2">
@@ -308,6 +311,13 @@ export function ConsoleLayout() {
   );
 }
 
+function MobileNavigationSync() {
+  const { pathname } = useLocation();
+  const { setOpenMobile } = useSidebar();
+  useEffect(() => setOpenMobile(false), [pathname, setOpenMobile]);
+  return null;
+}
+
 function DatabaseExplorerLayout({ breadcrumbs }: { breadcrumbs: BreadcrumbItem[] }) {
   return (
     <div className="flex h-svh min-w-0 flex-col overflow-hidden bg-kumo-canvas text-kumo-default">
@@ -473,6 +483,11 @@ function getBreadcrumbs(
   const [, section, id, resource, ...rest] = pathname.split("/");
 
   if (!section) return [{ label: "Overview" }];
+
+  if (section === "platforms")
+    return id
+      ? [{ href: "/platforms", label: "Dispatch namespaces" }, { label: "Namespace" }]
+      : [{ label: "Dispatch namespaces" }];
 
   if (section === "workers") {
     const worker = workspace.workers.find((item) => item.id === id);

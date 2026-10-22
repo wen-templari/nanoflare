@@ -38,7 +38,7 @@ func (r *Runner) newRootCommand() *cobra.Command {
 			c.Flags().String("compatibility-date", "", "Worker compatibility date (YYYY-MM-DD)")
 			c.Flags().Bool("provision", true, "Create missing KV namespaces, databases, and object-storage buckets")
 		}),
-		r.deploymentCommand(), r.authCommand(), r.secretCommand(), r.kvCommand(), r.dbCommand(), r.objectStorageCommand(),
+		r.platformCommand(), r.deploymentCommand(), r.authCommand(), r.secretCommand(), r.kvCommand(), r.dbCommand(), r.objectStorageCommand(),
 	)
 	return root
 }

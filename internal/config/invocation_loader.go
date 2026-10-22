@@ -20,6 +20,7 @@ func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.Active
 		KV       []string `json:"kv"`
 		Fetch    []string `json:"fetch"`
 		Services []string `json:"services"`
+		Dispatch []string `json:"dispatch"`
 	}{KV: []string{}, Fetch: []string{}, Services: []string{}}
 	for _, binding := range active.Deployment.KVNamespaces {
 		declarations.KV = append(declarations.KV, binding.Binding)
@@ -30,11 +31,14 @@ func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.Active
 	for _, binding := range active.Deployment.ObjectStorageBuckets {
 		declarations.Fetch = append(declarations.Fetch, binding.Binding)
 	}
-	if len(active.Deployment.Assets) > 0 {
+	if len(active.Deployment.Assets) > 0 || active.Deployment.AssetConfig.Binding != "" {
 		declarations.Fetch = append(declarations.Fetch, assetBindingName(active.Deployment.AssetConfig))
 	}
 	for _, binding := range active.Deployment.Services {
 		declarations.Services = append(declarations.Services, binding.Binding)
+	}
+	for _, binding := range active.Deployment.DispatchNamespaces {
+		declarations.Dispatch = append(declarations.Dispatch, binding.Binding)
 	}
 	declarationJSON, _ := json.Marshal(declarations)
 	const importedEnvModule = "__nanoflare_imported_env__.js"
@@ -49,12 +53,22 @@ installImportedBindings(` + string(declarationJSON) + `, env => wrapEnv(env, ` +
 		code.moduleOrder = append(code.moduleOrder, loaderInvocationContextModule)
 	}
 	code.Modules[main] = WorkerCodeModule{JS: `import "./` + importedEnvModule + `";
-import UserWorker from "./` + code.MainModule + `";
+import UserWorker, * as UserModule from "./` + code.MainModule + `";
+export * from "./` + code.MainModule + `";
+export class NanoflareExportDispatcher extends WorkerEntrypoint {
+ invoke(name,props,method,args,read=false) {
+  const state=this._state??=invocationState(this.env,this.ctx);
+  const Type=UserModule[name];
+  if(typeof Type!=="function" || typeof method!=="string" || method.startsWith("_") || ["constructor","ctx","env","prototype","__proto__"].includes(method)) throw new Error("Invalid named export call");
+  return runInvocation(state,()=>{const instance=this._instance??=new Type({...state.ctx,props},state.env);return read?instance[method]:instance[method](...args);});
+ }
+}
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { makeInvocation, runInvocation } from "` + loaderInvocationContextModule + `";
+import { makeInvocation, runInvocation, wrapInvocationExports } from "` + loaderInvocationContextModule + `";
 const declarations = ` + string(declarationJSON) + `;
 function invocationState(env, ctx) {
   const state = makeInvocation(env, ctx, declarations);
+  state.ctx.exports = wrapInvocationExports(state,UserModule,ctx.exports);
   return state;
 }
 const states = new WeakMap();
@@ -74,6 +88,9 @@ if (typeof UserWorker === "function") {
       if (seen.has(name)) continue;
       seen.add(name);
       const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+      if(typeof descriptor.get==="function"){
+       Object.defineProperty(WrappedWorker.prototype,name,{configurable:true,get(){const state=states.get(this);return runInvocation(state,()=>{let worker=workers.get(this);if(!worker){worker=new UserWorker(state.ctx,state.env);workers.set(this,worker);}return Reflect.apply(descriptor.get,worker,[]);});}});continue;
+      }
       if (typeof descriptor.value !== "function") continue;
       Object.defineProperty(WrappedWorker.prototype, name, {
         configurable: true,
@@ -113,18 +130,66 @@ export default WrappedWorker;
 const loaderInvocationContextSource = `import { AsyncLocalStorage } from "node:async_hooks";
 import { env as nativeEnv, RpcTarget } from "cloudflare:workers";
 const storage = new AsyncLocalStorage();
+function recordLog(state,level,args) {
+ if(!state?.log) return;
+ let message;
+ try{message=args.map(value=>typeof value==="string"?value:JSON.stringify(value)).join(" ");}catch{message="[unserializable log]";}
+ state.log(level,message);
+}
+for(const level of ["debug","info","log","warn","error"]){const original=console[level];console[level]=(...args)=>{recordLog(storage.getStore(),level,args);return original.apply(console,args);};}
+
 export function currentInvocationEnv() { return storage.getStore()?.env ?? nativeEnv; }
 
 // workerd dispatches WebSocket events outside the registering async context.
 // Capture it at registration, without changing synchronous EventTarget behavior.
+// Native property handlers and stream callbacks also run outside the registering
+// async context. Preserve their originating admission rather than borrowing an
+// unrelated live request from the revision.
+function socketCallback(state,listener,receiver,args){
+ const result=storage.run(state,()=>Reflect.apply(listener,receiver,args));
+ if(result&&typeof result.then==="function")state.ctx.waitUntil(result);
+ return result;
+}
+const acceptedSockets=new WeakSet();
+const nativeAccept=WebSocket.prototype.accept;
+WebSocket.prototype.accept=function(...args){
+ const result=Reflect.apply(nativeAccept,this,args),state=storage.getStore();
+ if(state&&!acceptedSockets.has(this)){
+  acceptedSockets.add(this);let release;state.ctx.waitUntil(new Promise(resolve=>{release=resolve;}));
+  const finished=()=>queueMicrotask(release);
+  addSocketListener.call(this,"close",finished,{once:true});
+  addSocketListener.call(this,"error",finished,{once:true});
+ }
+ return result;
+};
+for(const name of ["onmessage","onclose","onerror"]){
+ const descriptor=Object.getOwnPropertyDescriptor(WebSocket.prototype,name);
+ const handlers=new WeakMap();
+ if(!descriptor){Object.defineProperty(WebSocket.prototype,name,{configurable:true,enumerable:true,get(){return handlers.get(this)?.wrapped??null;},set(listener){const state=storage.getStore();const wrapped=state&&typeof listener==="function"?function(...args){return socketCallback(state,listener,this,args);}:listener;handlers.set(this,{original:listener,wrapped});}});continue;}
+ if(!descriptor.set||!descriptor.get)continue;
+ Object.defineProperty(WebSocket.prototype,name,{...descriptor,get(){return handlers.get(this)?.original??descriptor.get.call(this);},set(listener){
+  const state=storage.getStore();let wrapped=listener;
+  if(state&&typeof listener==="function")wrapped=function(...args){return socketCallback(state,listener,this,args);};
+  descriptor.set.call(this,wrapped);handlers.set(this,{original:listener});
+ }});
+}
+function scopeStreamConstructor(name,callbacks){
+ const NativeStream=globalThis[name];
+ globalThis[name]=new Proxy(NativeStream,{construct(Type,args,newTarget){
+  const state=storage.getStore(),source=args[0];
+  if(state&&source&&typeof source==="object")args=[new Proxy(source,{get(target,name){const value=Reflect.get(target,name,target);return callbacks.includes(name)&&typeof value==="function"?function(...args){return storage.run(state,()=>Reflect.apply(value,target,args));}:value;}}),...args.slice(1)];
+  return Reflect.construct(Type,args,newTarget);
+ }});
+}
+scopeStreamConstructor("ReadableStream",["start","pull","cancel"]);
+scopeStreamConstructor("WritableStream",["start","write","close","abort"]);
+scopeStreamConstructor("TransformStream",["start","transform","flush","cancel"]);
 const socketListeners = new WeakMap();
 const addSocketListener = WebSocket.prototype.addEventListener;
 const removeSocketListener = WebSocket.prototype.removeEventListener;
 function socketListener(state, listener) {
   return function(...args) {
-    return storage.run(state, () => typeof listener === "function"
-      ? Reflect.apply(listener, this, args)
-      : Reflect.apply(listener.handleEvent, listener, args));
+    return socketCallback(state,typeof listener==="function"?listener:listener.handleEvent,typeof listener==="function"?this:listener,args);
   };
 }
 WebSocket.prototype.addEventListener = function(type, listener, options) {
@@ -173,11 +238,12 @@ export function installImportedBindings(declarations, wrapEnv) {
   for (const name of [...declarations.kv, ...declarations.fetch]) {
     Object.defineProperty(nativeEnv, name, { enumerable: true, configurable: true, value: wrapped[name] });
   }
-  for (const name of declarations.services) {
-    // TODO(#52): raw onmessage can lose this caller context. Service callback
-    // ownership remains unresolved; revision-bound resource support does not
-    // establish service support. Never substitute another live invocation.
-    // https://github.com/wen-templari/nanoflare/issues/52
+  for (const name of declarations.dispatch || []) {
+  Object.defineProperty(nativeEnv,name,{enumerable:true,configurable:true,value:{get(script,options={},dispatchOptions={}) {return {fetch(input,init){const state=storage.getStore();if(!state)throw new Error("Dispatch outside admitted invocation");return state.env.__NANOFLARE_WFP.invoke(name,script,options,dispatchOptions,null,new Request(input,init));}};}}});
+ }
+ for (const name of declarations.services) {
+    // The callback wrappers above retain this exact admission. Never substitute
+    // another live invocation when a callback's original lifetime has drained.
     const binding = new Proxy({}, { get(_, method) {
       if (method === "then") return undefined;
       if (typeof method !== "string") return undefined;
@@ -192,26 +258,56 @@ export function installImportedBindings(declarations, wrapEnv) {
   }
 }
 
-function returnedValue(state, value, seen = new WeakMap()) {
+const exportReferences=new WeakMap();
+function exportProps(value,seen=new WeakSet()) {
+ if(!value||typeof value!=="object") return value;
+ const reference=exportReferences.get(value);
+ if(reference)return {__nanoflare_export:{...reference,props:exportProps(reference.props,seen)}};
+ if(Array.isArray(value))return value.map(item=>exportProps(item,seen));
+ if(Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)return value;
+ if(seen.has(value))throw new TypeError("Cyclic native props");seen.add(value);
+ const out={};for(const [name,item]of Object.entries(value))Object.defineProperty(out,name,{enumerable:true,configurable:true,writable:true,value:exportProps(item,seen)});seen.delete(value);return out;
+}
+export function wrapInvocationExports(state,module,nativeExports) {
+ if(!nativeExports)return nativeExports;
+ return new Proxy(nativeExports,{get(target,name){
+  const Type=module[name];
+  if(typeof Type!=="function" || name==="default") return target[name];
+  return (options={})=>{
+   let instance;
+   const resolveInstance=()=>instance??=new Type({...state.ctx,props:options.props??{}},state.env);
+   resolveInstance.prototype=Type.prototype;
+   resolveInstance.dispose=()=>instance?.[Symbol.dispose]?.();
+   const facade=returnedValue(state,new (class extends RpcTarget {})(),new WeakMap(),resolveInstance);
+   const methods=[],properties=[],seen=new Set(["constructor","ctx","env","then"]);
+   for(let proto=Type.prototype;proto&&proto!==Object.prototype;proto=Object.getPrototypeOf(proto)){for(const name of Object.getOwnPropertyNames(proto)){if(seen.has(name)||name.startsWith("_"))continue;seen.add(name);const descriptor=Object.getOwnPropertyDescriptor(proto,name);if(typeof descriptor.value==="function")methods.push(name);else if(typeof descriptor.get==="function")properties.push(name);}}
+   exportReferences.set(facade,{name,props:options.props??{},methods,properties});return facade;
+  };
+ }});
+}
+function returnedValue(state, value, seen = new WeakMap(), exportedInstance) {
   if (!value || typeof value !== "object") return value;
   if (value instanceof RpcTarget) {
     if (state.capabilities.has(value)) return state.capabilities.get(value);
-    // This facade forwards ordinary public prototype methods. Instance fields,
-    // accessor properties and custom Symbol.dispose hooks are not forwarded.
-    // Native disposal releases the facade capability, not a user disposal hook.
+    // Forward public prototype methods and getters in the same admission.
+    // Native disposal forwards the original hook without instantiating unused
+    // named entrypoints. Own fields retain native RPC's prototype-only boundary.
     class ScopedCapability extends RpcTarget {}
-    const methods = new Set(["constructor", "then", "__proto__", "prototype"]);
-    for (let prototype = Object.getPrototypeOf(value); prototype && prototype !== RpcTarget.prototype; prototype = Object.getPrototypeOf(prototype)) {
+    const resolveInstance=exportedInstance??(()=>value);
+    const methods = new Set(["constructor", "then", "__proto__", "prototype","ctx","env"]);
+    for (let prototype = exportedInstance?.prototype ?? Object.getPrototypeOf(value); prototype && prototype !== RpcTarget.prototype && prototype!==Object.prototype; prototype = Object.getPrototypeOf(prototype)) {
       for (const name of Object.getOwnPropertyNames(prototype)) {
         if (methods.has(name) || name.startsWith("_")) continue;
         methods.add(name);
         const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+        if(typeof descriptor.get==="function"){Object.defineProperty(ScopedCapability.prototype,name,{get(){return runInvocation(state,()=>Reflect.apply(descriptor.get,resolveInstance(),[]));}});continue;}
         if (typeof descriptor.value !== "function") continue;
         Object.defineProperty(ScopedCapability.prototype, name, {
-          value: function(...args) { return runInvocation(state, () => Reflect.apply(descriptor.value, value, args)); },
+          value: function(...args) { return runInvocation(state, () => Reflect.apply(descriptor.value, resolveInstance(), args)); },
         });
       }
     }
+    if(exportedInstance || typeof value[Symbol.dispose]==="function")Object.defineProperty(ScopedCapability.prototype,Symbol.dispose,{value(){const result=storage.run(state,()=>exportedInstance?exportedInstance.dispose?.():value[Symbol.dispose]());if(result&&typeof result.then==="function")state.ctx.waitUntil(result);}});
     const capability = new ScopedCapability();
     state.capabilities.set(value, capability);
     return capability;
@@ -282,7 +378,7 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
   const token = metadata.token;
   const state = { env: {}, pending: 0, running: 0, mainDone: false, completing: false, epoch: 0, capabilities: new WeakMap() };
   for (const [name, value] of Object.entries(rawEnv)) {
-    if (!["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_LIFECYCLE", "__NANOFLARE_SERVICE_BROKER"].includes(name)) state.env[name] = value;
+    if (!["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_LIFECYCLE", "__NANOFLARE_SERVICE_BROKER", "__NANOFLARE_LOG_COLLECTOR", "__NANOFLARE_WFP"].includes(name)) state.env[name] = value;
   }
   for (const name of declarations.services) {
     state.env[name] = new Proxy({}, { get(_, method) {
@@ -292,6 +388,8 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
       return (...args) => rawEnv.__NANOFLARE_SERVICE_BROKER.invoke(token, name, method, args);
     } });
   }
+  state.env.__NANOFLARE_WFP={invoke(binding,script,options,dispatchOptions,root,request){return rawEnv.__NANOFLARE_WFP.invoke(token,binding,script,exportProps(options),dispatchOptions,rawCtx.props.__nanoflare_dispatch_root,request).then(result=>{if(result.error)throw Object.assign(new Error(result.error),{status:result.status});return result.response;});}};
+  for(const name of ["__NANOFLARE_ACCESS","__NANOFLARE_DURATION_COLLECTOR"]){if(rawEnv[name])state.env[name]={fetch(input,init){const request=new Request(input,init);request.headers.set("X-Nanoflare-Invocation",token);return rawEnv[name].fetch(request);}};}
   let finish, fail;
   async function lifecycle(operation, epoch) {
     let attempt = 0;
@@ -342,7 +440,7 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
     });
   };
   state.ctx = {
-    props: Object.fromEntries(Object.entries(rawCtx.props ?? {}).filter(([name]) => name !== "__nanoflare_invocation")),
+    props: Object.fromEntries(Object.entries(rawCtx.props ?? {}).filter(([name]) => name !== "__nanoflare_invocation" && name !== "__nanoflare_dispatch_root")),
     exports: rawCtx.exports,
     waitUntil(value) {
       state.pending++;
@@ -354,6 +452,7 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
     },
     passThroughOnException() { rawCtx.passThroughOnException(); },
   };
+  if(rawEnv.__NANOFLARE_LOG_COLLECTOR) state.log=(level,message)=>state.ctx.waitUntil(rawEnv.__NANOFLARE_LOG_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/logs",{method:"POST",headers:{"content-type":"application/json","X-Nanoflare-Invocation":token},body:JSON.stringify([{logs:[{level,message:[message]}]}])}));
   return state;
 }
 
@@ -363,14 +462,14 @@ export function runInvocation(state, callback) {
   const invoke = () => storage.run(state, () => {
     try {
       const result = callback();
-      if (result && typeof result.then === "function") return Promise.resolve(result).then(value => { try { return returnedValue(state,value); } finally { done(); } }, error => { done(); throw error; });
+      if (result && typeof result.then === "function") return Promise.resolve(result).then(value => { try { return returnedValue(state,value); } finally { done(); } }, error => {recordLog(state,"error",[String(error)]); done(); throw error; });
       const wrapped = returnedValue(state,result);
       done();
       return wrapped;
-    } catch (error) { done(); throw error; }
+    } catch (error) {recordLog(state,"error",[String(error)]); done(); throw error; }
   });
   // Once admitted, ordinary synchronous calls between methods retain their
   // synchronous behavior. Only the first runtime entry waits for the handshake.
-  return state.started && !state.completing ? invoke() : state.start().then(invoke, error => { done(); throw error; });
+  return state.started && !state.completing ? invoke() : state.start().then(invoke, error => {recordLog(state,"error",[String(error)]); done(); throw error; });
 }
 `

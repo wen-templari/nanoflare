@@ -226,7 +226,7 @@ export default { async fetch(request, env, ctx) {
 	invocationPrograms["isolation"] = config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(invocation, config.WorkerdOptions{}), invocation)
 	invocation.Deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: `import { WorkerEntrypoint, RpcTarget, env as importedEnv } from "cloudflare:workers";
 const { DB, ASSETS, KV, OBJECTS } = importedEnv;
-class Session extends RpcTarget { greet() { return "scoped-session"; } }
+class Session extends RpcTarget { greet() { return "scoped-session"; } get status(){return "active";} [Symbol.dispose](){return importedEnv.EVENTS.fetch("http://events.invalid/disposed",{method:"POST",body:"session"});} }
 export default class extends WorkerEntrypoint {
   constructor(ctx, env) {
     super(ctx, env);
@@ -247,8 +247,17 @@ export default class extends WorkerEntrypoint {
   async fetch() { await this.constructorRead; return Response.json({ ready: true }); }
 }`}}
 	invocationPrograms["class"] = config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(invocation, config.WorkerdOptions{}), invocation)
+	executionID, err := service.RegisterExecution(nanoflare.ActiveDeployment{App: app, Deployment: deployment}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureLease, err := service.Executions().Admit(executionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fixtureLease.Release()
 	fixture, err := json.Marshal(map[string]any{
-		"backend": strings.TrimPrefix(backend.URL, "http://"), "token": app.RuntimeToken,
+		"backend": strings.TrimPrefix(backend.URL, "http://"), "token": fixtureLease.Token(),
 		"namespaceID": namespace.ID, "databaseID": db.ID, "bucketID": bucket.ID,
 		"appID": app.ID, "deploymentID": deployment.ID, "programs": programs,
 		"dnsAddr": resolver.Addr(), "egressAddr": adapter.Addr(), "echoAddr": echoAddr,

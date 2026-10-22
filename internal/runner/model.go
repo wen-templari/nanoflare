@@ -3,7 +3,8 @@ package runner
 import "github.com/clas/nanoflare/internal/nanoflare"
 
 type PrepareRequest struct {
-	Deployments []runtimeDeployment `json:"deployments"`
+	ArtifactProtocol int                 `json:"artifact_protocol"`
+	Deployments      []runtimeDeployment `json:"deployments"`
 }
 
 type PrepareResponse struct {
@@ -14,8 +15,8 @@ type PrepareResponse struct {
 type runtimeDeployment struct {
 	App            nanoflare.App        `json:"app"`
 	Deployment     nanoflare.Deployment `json:"deployment"`
-	ObjectKey      string               `json:"object_key"`
-	SecretValues   map[string]string    `json:"secret_values"`
+	ObjectKey      string               `json:"object_key,omitempty"`
+	SecretValues   map[string]string    `json:"secret_values,omitempty"`
 	TrafficPercent int                  `json:"traffic_percent"`
 	RuntimeToken   string               `json:"runtime_token"`
 }
@@ -32,7 +33,7 @@ func prepareRequest(deployments []nanoflare.ActiveDeployment) PrepareRequest {
 			TrafficPercent: deployment.TrafficPercent,
 		}
 	}
-	return PrepareRequest{Deployments: items}
+	return PrepareRequest{Deployments: items, ArtifactProtocol: 1}
 }
 
 func (r PrepareRequest) activeDeployments() []nanoflare.ActiveDeployment {

@@ -49,7 +49,7 @@ func SnapshotWorkerCode(item nanoflare.ActiveDeployment, options WorkerdOptions)
 	const mainModule = "__nanoflare_internal_entrypoint__.js"
 	snapshot := WorkerCodeSnapshot{
 		CompatibilityDate:  deployment.CompatibilityDate,
-		CompatibilityFlags: outputIdentityCompatibilityFlags(deployment.CompatibilityFlags),
+		CompatibilityFlags: runtimeCompatibilityFlags(deployment),
 		MainModule:         mainModule,
 		Modules:            make(map[string]WorkerCodeModule, len(deployment.Files)+4),
 	}
@@ -59,7 +59,19 @@ func SnapshotWorkerCode(item nanoflare.ActiveDeployment, options WorkerdOptions)
 		snapshot.moduleOrder = append(snapshot.moduleOrder, name)
 		snapshot.Modules[name] = WorkerCodeModule{JS: source}
 	}
-	if deploymentFormat(deployment) == "service-worker" {
+	if len(deployment.DispatchNamespaces) > 0 {
+		source := entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)
+		source = `import { wrapDispatchEnv, DispatchBroker } from "nanoflare-internal:dispatch";
+export { DispatchBroker };
+` + source
+		source = strings.ReplaceAll(source, "wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames)", `wrapDispatchEnv(wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames),ctx,request.headers.get("X-Nanoflare-Dispatch-Root"))`)
+		add(mainModule, source)
+		add("nanoflare-internal:dispatch", runtimeassets.DispatchModule)
+		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
+		for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
+			add(file.Path, workerdSafeSource(file.Content))
+		}
+	} else if deploymentFormat(deployment) == "service-worker" {
 		source := deployment.Files[0].Content
 		if dnsEnabled {
 			source = rewriteDNSImports(source, nodeCompatibility.v2)

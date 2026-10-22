@@ -40,7 +40,7 @@ func SnapshotWorkerCodeForLoader(item nanoflare.ActiveDeployment, options Worker
 		names = append(names, binding.Binding)
 		resourceNames = append(resourceNames, binding.Binding)
 	}
-	if len(item.Deployment.Assets) > 0 {
+	if len(item.Deployment.Assets) > 0 || item.Deployment.AssetConfig.Binding != "" {
 		names = append(names, assetBindingName(item.Deployment.AssetConfig))
 		resourceNames = append(resourceNames, assetBindingName(item.Deployment.AssetConfig))
 	}

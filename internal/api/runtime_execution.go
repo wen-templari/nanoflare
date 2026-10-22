@@ -318,7 +318,7 @@ func (s *RuntimeExecutionServer) admit(sessionID, id, executionID string, sequen
 		}
 		session.highWater = sequence
 	}
-	lease, err := s.service.Executions().Admit(executionID)
+	lease, err := s.service.Executions().AdmitResourceGrant(sessionID, executionID)
 	if err != nil {
 		return "", err
 	}

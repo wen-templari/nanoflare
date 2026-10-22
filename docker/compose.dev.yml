@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: nanoflare
       POSTGRES_PASSWORD: nanoflare-development
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,8 +22,8 @@ services:
       MINIO_ROOT_USER: nanoflare
       MINIO_ROOT_PASSWORD: nanoflare-development
     ports:
-      - "9000:9000"
-      - "19001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:19001:9001"
     volumes:
       - minio-data:/data
 
@@ -44,7 +44,7 @@ services:
     ports:
       - "8088:80"
       - "443:443"
-      - "8089:8080"
+      - "127.0.0.1:8089:8080"
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -54,9 +54,11 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      - ${NANOFLARE_METRICS_TOKEN_FILE:-./prometheus/metrics-token.example}:/run/secrets/nanoflare-metrics-token:ro
+      - ./prometheus/nanoflare-alerts.yml:/etc/prometheus/nanoflare-alerts.yml:ro
       - prometheus-data:/prometheus
     depends_on:
       - traefik
@@ -65,7 +67,7 @@ services:
     image: grafana/loki:3.5.0
     command: -config.file=/etc/loki/config.yml
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./loki/loki-config.yml:/etc/loki/config.yml:ro
       - loki-data:/loki
@@ -74,7 +76,7 @@ services:
     image: grafana/tempo:2.10.7
     command: -config.file=/etc/tempo/tempo.yml
     ports:
-      - "3200:3200"
+      - "127.0.0.1:3200:3200"
     volumes:
       - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
       - tempo-data:/var/tempo
@@ -101,7 +103,7 @@ services:
     command: --config /etc/vector/vector.yaml
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./vector/vector.dev.yaml:/etc/vector/vector.yaml:ro
       - vector-data:/var/lib/vector
       - ../var/vector:/var/run/nanoflare
     ports:
@@ -117,7 +119,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

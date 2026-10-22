@@ -9,6 +9,7 @@ import { CLILoginPage } from "./pages/cli-login-page";
 import { DatabaseDetailPage } from "./pages/database-detail-page";
 import { DatabaseExplorerPage } from "./pages/database-explorer-page";
 import { DatabasesPage } from "./pages/databases-page";
+import { DispatchNamespacesPage } from "./pages/dispatch-namespaces-page";
 import { InvitePage } from "./pages/invite-page";
 import { KVNamespaceDetailPage } from "./pages/kv-namespace-detail-page";
 import { KVNamespacesPage } from "./pages/kv-namespaces-page";
@@ -36,6 +37,8 @@ export function App() {
             <Route element={<ProtectedConsole />}>
               <Route index element={<OverviewPage />} />
               <Route path="workers" element={<WorkersPage />} />
+              <Route path="platforms" element={<DispatchNamespacesPage />} />
+              <Route path="platforms/:namespaceId" element={<DispatchNamespacesPage />} />
               <Route path="workers/:workerId" element={<WorkerDetailPage />} />
               <Route path="kv" element={<KVNamespacesPage />} />
               <Route path="kv/:namespaceId" element={<KVNamespaceDetailPage />} />

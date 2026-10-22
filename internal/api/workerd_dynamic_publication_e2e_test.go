@@ -102,7 +102,10 @@ func runDynamicPublicationEndToEnd(t *testing.T, workerd string, remote bool) {
 		defer controlMu.RUnlock()
 		control.ServeHTTP(w, r)
 	})
-	privateMux.HandleFunc("/internal/runtime/durations", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	logOutput := runtime.NewOutputBuffer()
+	durations := runtime.NewDurationTelemetry()
+	privateMux.Handle("/internal/runtime/logs", api.NewRuntimeLogServer(service, logOutput))
+	privateMux.Handle("/internal/runtime/durations", api.NewRuntimeDurationServer(service, durations))
 	resources := api.NewRuntimeKVServer(service)
 	privateMux.Handle("/", resources)
 	privateMux.Handle("/internal/runtime/resources/", http.StripPrefix("/internal/runtime/resources", resources))
@@ -143,14 +146,22 @@ func runDynamicPublicationEndToEnd(t *testing.T, workerd string, remote bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	helper, err := service.CreateApp(nanoflare.CreateAppInput{OrgID: "dynamic-org", Name: "Helper", Hostname: "helper.dynamic.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Deploy(helper.ID, nanoflare.DeployInput{Entrypoint: "worker.js", Format: "modules", CompatibilityDate: "2024-01-01", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default {fetch(){return new Response("service-ok")}}`}}}); err != nil {
+		t.Fatal(err)
+	}
 	const code = `import { env as importedEnv } from "cloudflare:workers";
-const { KV } = importedEnv;
+const { KV, SERVICE } = importedEnv;
 let counter = 0;
 export default {async fetch(request,env,ctx) {
  if (new URL(request.url).pathname === "/ws") {
   const pair = new WebSocketPair(); pair[1].accept();
   const listener = async event => {
    try {
+    if(event.data==="service"){pair[1].send(await (await SERVICE.fetch("https://helper/")).text());return;}
     if (KV) {
      await KV.put("socket:" + event.data, env.LABEL + ":" + event.data);
      pair[1].send(await KV.get("socket:" + event.data));
@@ -167,6 +178,7 @@ export default {async fetch(request,env,ctx) {
   }});
   return new Response(null,{status:101,webSocket:pair[0]});
  }
+ if(new URL(request.url).pathname==="/service-stream") {return new Response(new ReadableStream({async pull(controller){controller.enqueue(new TextEncoder().encode(await (await SERVICE.fetch("https://helper/")).text()));controller.close();}}).pipeThrough(new TransformStream({async transform(chunk,controller){controller.enqueue(new TextEncoder().encode(new TextDecoder().decode(chunk)+":"+await (await SERVICE.fetch("https://helper/")).text()));}})));}
  if (new URL(request.url).pathname === "/stream") {
   let sent = false;
   return new Response(new ReadableStream({async pull(controller) {
@@ -175,6 +187,7 @@ export default {async fetch(request,env,ctx) {
    controller.enqueue(new TextEncoder().encode(await KV.get("stream")));
   }}));
  }
+ if(new URL(request.url).pathname==="/log"){console.log("publication-log",env.SECRET??"none");}
  if (new URL(request.url).pathname === "/defer") {
   ctx.waitUntil((async () => {
    while (await KV.get("release") !== "yes") await new Promise(resolve => setTimeout(resolve,10));
@@ -184,7 +197,7 @@ export default {async fetch(request,env,ctx) {
  return Response.json({counter:++counter,label:env.LABEL,secret:env.SECRET??null});
 }};`
 	deploy := func(app nanoflare.App, label string, bindings []nanoflare.KVBinding) (nanoflare.Deployment, error) {
-		return service.Deploy(app.ID, nanoflare.DeployInput{Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: code}}, Entrypoint: "worker.js", Format: "modules", CompatibilityDate: "2026-09-11", Vars: map[string]json.RawMessage{"LABEL": json.RawMessage(fmt.Sprintf("%q", label))}, KVNamespaces: bindings})
+		return service.Deploy(app.ID, nanoflare.DeployInput{Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: code}}, Entrypoint: "worker.js", Format: "modules", CompatibilityDate: "2026-09-11", Vars: map[string]json.RawMessage{"LABEL": json.RawMessage(fmt.Sprintf("%q", label))}, KVNamespaces: bindings, Services: []nanoflare.ServiceBinding{{Binding: "SERVICE", WorkerID: helper.ID, Service: helper.Name}}})
 	}
 	_, err = deploy(alpha, "alpha-old", []nanoflare.KVBinding{{Binding: "KV", ID: kv.ID}})
 	if err != nil {
@@ -239,6 +252,14 @@ export default {async fetch(request,env,ctx) {
 	}
 	oldSocket, oldReader := dynamicPublicationWebSocket(t, gateway.URL, alpha.ID)
 	defer oldSocket.Close()
+	if got := dynamicPublicationSocketMessage(t, oldSocket, oldReader, "service"); got != "service-ok" {
+		t.Fatalf("service in raw WebSocket callback: %s", got)
+	}
+	serviceStream := httptest.NewRecorder()
+	server.ServeHTTP(serviceStream, httptest.NewRequest(http.MethodGet, "/internal/http/workers/"+alpha.ID+"/service-stream", nil))
+	if serviceStream.Code != 200 || serviceStream.Body.String() != "service-ok:service-ok" {
+		t.Fatalf("service in stream pull: %d %s", serviceStream.Code, serviceStream.Body.String())
+	}
 	secondOldSocket, secondOldReader := dynamicPublicationWebSocket(t, gateway.URL, alpha.ID)
 	defer secondOldSocket.Close()
 	old := request(alpha, "/defer")
@@ -366,6 +387,26 @@ export default {async fetch(request,env,ctx) {
 	if launcher.launches.Load() != 1 {
 		t.Fatalf("application publication replaced workerd: launches=%d", launcher.launches.Load())
 	}
+	request(alpha, "/log")
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		lines := logOutput.Output(alpha.ID)
+		found := false
+		for _, line := range lines {
+			if strings.Contains(line.Message, "new-secret") {
+				t.Fatal("dynamic logs leaked a secret")
+			}
+			found = found || strings.Contains(line.Message, "publication-log [redacted]")
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("missing scoped dynamic log: %#v", lines)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	// Simulate a transaction committed just before runtime publication was lost.
 	if err := store.SetActive(alpha.ID, result.ID); err != nil {
 		t.Fatal(err)
@@ -415,7 +456,7 @@ export default {async fetch(request,env,ctx) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if recovered.Label != "alpha-vars" || recovered.Secret == nil || *recovered.Secret != "new-secret" {
+	if recovered.Label != "alpha-vars" || recovered.Secret == nil || *recovered.Secret != "frozen-secret" {
 		t.Fatalf("crash replayed stale snapshot: %#v", recovered)
 	}
 	if fresh := request(beta, "/"); fresh.Label != "beta" {
@@ -459,7 +500,7 @@ export default {async fetch(request,env,ctx) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if recovered.Label != "alpha-vars" || recovered.Secret == nil || *recovered.Secret != "new-secret" {
+	if recovered.Label != "alpha-vars" || recovered.Secret == nil || *recovered.Secret != "frozen-secret" {
 		t.Fatalf("session recovery replayed stale snapshot: %#v", recovered)
 	}
 	if fresh := request(beta, "/"); fresh.Label != "beta" {
@@ -517,4 +558,23 @@ func dynamicPublicationSocketMessage(t *testing.T, conn net.Conn, reader *bufio.
 		t.Fatal(err)
 	}
 	return string(payload)
+}
+
+func (w *dynamicPublicationWriter) PreparePublication(active []nanoflare.ActiveDeployment) (nanoflare.PublicationPreparation, error) {
+	if w.remote != nil {
+		return w.remote.PreparePublication(active)
+	}
+	return w.manager.PreparePublication(active)
+}
+func (w *dynamicPublicationWriter) CommitPublication(p nanoflare.PublicationPreparation) error {
+	if w.remote != nil {
+		return w.remote.CommitPublication(p)
+	}
+	return w.manager.CommitPublication(p)
+}
+func (w *dynamicPublicationWriter) AbortPublication(p nanoflare.PublicationPreparation) error {
+	if w.remote != nil {
+		return w.remote.AbortPublication(p)
+	}
+	return w.manager.AbortPublication(p)
 }

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,8 @@ type VectorForwarder struct {
 	queue   chan nanoflare.WorkerOutputLine
 	dropped atomic.Uint64
 	stopped chan struct{}
+	done    chan struct{}
+	close   sync.Once
 }
 
 func NewVectorForwarder(socket string, capacity int) *VectorForwarder {
@@ -31,7 +34,7 @@ func NewVectorForwarder(socket string, capacity int) *VectorForwarder {
 		capacity = 1024
 	}
 	network, address := vectorAddress(socket)
-	f := &VectorForwarder{network: network, socket: address, queue: make(chan nanoflare.WorkerOutputLine, capacity), stopped: make(chan struct{})}
+	f := &VectorForwarder{network: network, socket: address, queue: make(chan nanoflare.WorkerOutputLine, capacity), stopped: make(chan struct{}), done: make(chan struct{})}
 	go f.run()
 	return f
 }
@@ -39,6 +42,12 @@ func NewVectorForwarder(socket string, capacity int) *VectorForwarder {
 func (f *VectorForwarder) Append(line nanoflare.WorkerOutputLine) {
 	if f == nil {
 		return
+	}
+	select {
+	case <-f.stopped:
+		f.dropped.Add(1)
+		return
+	default:
 	}
 	select {
 	case f.queue <- line:
@@ -56,12 +65,19 @@ func (f *VectorForwarder) Dropped() uint64 {
 
 func (f *VectorForwarder) Close() {
 	if f != nil {
-		close(f.stopped)
+		f.close.Do(func() { close(f.stopped) })
+		<-f.done
 	}
 }
 
 func (f *VectorForwarder) run() {
+	defer close(f.done)
 	for {
+		select {
+		case <-f.stopped:
+			return
+		default:
+		}
 		select {
 		case <-f.stopped:
 			return
@@ -80,6 +96,13 @@ func (f *VectorForwarder) write(line nanoflare.WorkerOutputLine) {
 		return
 	}
 	defer connection.Close()
+	// DialContext bounds connecting only. A collector that accepts but stops
+	// reading must not leave the forwarder stuck in Encode or block shutdown.
+	deadline, _ := ctx.Deadline()
+	if err := connection.SetDeadline(deadline); err != nil {
+		f.dropped.Add(1)
+		return
+	}
 	if err := json.NewEncoder(connection).Encode(line); err != nil {
 		f.dropped.Add(1)
 	}

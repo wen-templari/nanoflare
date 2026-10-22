@@ -22,6 +22,8 @@ RUN npm run build
 FROM node:22-bookworm-slim AS runtime-base
 ARG WORKERD_VERSION=1.20260911.1
 RUN npm install -g workerd@${WORKERD_VERSION}
+# A stable architecture-independent native path avoids the npm launcher in pools.
+RUN node -e 'const fs = require("node:fs"); fs.symlinkSync(require.resolve("@cloudflare/workerd-linux-" + (process.arch === "x64" ? "64" : process.arch) + "/bin/workerd", {paths: ["/usr/local/lib/node_modules/workerd"]}), "/usr/local/bin/workerd-native")'
 
 FROM litestream/litestream:latest AS litestream
 

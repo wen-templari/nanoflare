@@ -1,0 +1,37 @@
+{
+  "at": "2026-10-21T16:36:54.241420+00:00",
+  "passed": true,
+  "probe_sha256": "db8562a23364363d270d791a3f25bf58bf00b4e7a4d8ad07cf05607e3ae38dcb",
+  "matrix_expression": "^Test(RuntimeCapabilityBoundaries|RuntimeStorageCancellationReachesBackend|RuntimeReconciliationSerializesWithDeletion|PoolMetricsKeepUnknownAndStaleUsageUnavailable|DispatchLeaseAuthorization|DynamicServicesInheritAuthorityAndBudget|DispatchResourceSharingRevisionAndRevocationMatrix|DispatchTelemetryScopesPolicyAndTrustedElapsedTime|PrivateDynamicDispatchEndToEnd|ImmutableArtifactsAndPublicationRecovery|ArtifactAPIProtectionAndIdempotency|ManagedPublication.*|ManagedRecovery.*|Cloudflare.*)$",
+  "stages": [
+    {
+      "name": "authorization",
+      "exit_code": 0,
+      "passes": 89,
+      "skips": [],
+      "memory.max": "2147483648",
+      "memory.swap.max": "0",
+      "memory.current": "57532416",
+      "memory.peak": "168353792",
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "pids.max": "128",
+      "pids.current": "3"
+    }
+  ],
+  "source_scope": "cmd/**/*.go, internal/**/*.go, internal/**/*.js, go.mod, go.sum; sorted relative path NUL SHA-256 newline",
+  "source_files": 221,
+  "source_tree_sha256": "757248dd043c0978a935dea01bb5f4dc2b4a9809bf96905b3312337924affdc6",
+  "limitations": [
+    "single-host trusted shared profile; no untrusted sandbox or CPU enforcement",
+    "capacity has memory metadata/object fixtures; separate process drills cover real S3/PG recovery",
+    "whole probe cgroup includes the Go control fixture and native engine; production API is outside runner cgroup",
+    "RSS is approximate and point-in-time; cgroup peak is whole-probe memory, not per-isolate RSS",
+    "bounded sustained slices are not production soak or an advertised maximum tenant count"
+  ],
+  "image_id": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "phase_seconds": 15,
+  "memory_bytes": 2147483648,
+  "sdk_version": "7.3.0",
+  "cleanup_verified": true
+}

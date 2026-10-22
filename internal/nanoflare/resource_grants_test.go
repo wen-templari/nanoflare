@@ -143,7 +143,11 @@ func TestResourceGrantSessionIsolationExpiryAndCanceledRegistration(t *testing.T
 	if err := r.PublishResourceGrant("second", second); err != nil {
 		t.Fatal(err)
 	}
-	invocation, err := r.Admit(first)
+	if lease, err := r.AdmitResourceGrant("second", first); err == nil {
+		lease.Release()
+		t.Fatal("another session admitted a foreign resource grant")
+	}
+	invocation, err := r.AdmitResourceGrant("first", first)
 	if err != nil {
 		t.Fatal(err)
 	}

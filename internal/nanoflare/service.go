@@ -94,14 +94,18 @@ type kvOrgUsageCacheDisabler interface {
 }
 
 type Service struct {
+	executions           *ExecutionRegistry
+	dispatch             dispatchRuntime
+	telemetry            telemetryState
+	runtimeAuthorization runtimeAuthorization
 	// Serialize configuration snapshots and publication, including rollbacks.
 	configMu             sync.Mutex
 	store                Repository
 	writer               ConfigWriter
-	executions           *ExecutionRegistry
 	objects              ObjectStore
 	db                   DBExecutor
 	output               WorkerOutputReader
+	outputQueries        chan struct{}
 	traffic              WorkerTrafficReader
 	dbTimeseries         DatabaseMetricsTimeseriesReader
 	kvTimeseries         KVNamespaceMetricsTimeseriesReader
@@ -155,9 +159,11 @@ func NewServiceWithConsole(store Repository, writer ConfigWriter, objects Object
 
 func newService(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
 	return &Service{
-		store:                store,
-		writer:               writer,
 		executions:           NewExecutionRegistry(),
+		store:                store,
+		telemetry:            telemetryState{policy: TelemetryPolicy{Enabled: true, SamplePercent: 100}},
+		outputQueries:        make(chan struct{}, 16),
+		writer:               writer,
 		objects:              objects,
 		maxCompatibilityDate: time.Now().UTC().Format("2006-01-02"),
 		randomHostnameSuffix: randomHostnameSuffix,
@@ -608,6 +614,13 @@ func (s *Service) UpdateApp(appID string, input UpdateAppInput) (App, error) {
 }
 
 func (s *Service) updateApp(appID string, input UpdateAppInput) (App, error) {
+	current, err := s.store.GetApp(appID)
+	if err != nil {
+		return App{}, err
+	}
+	if current.IsPrivate() && input.Hostname != nil {
+		return App{}, fmt.Errorf("%w: private scripts cannot have a hostname", ErrInvalidAppUpdate)
+	}
 	if input.Hostname != nil {
 		hostname, err := normalizeHostname(*input.Hostname)
 		if err != nil {
@@ -652,6 +665,22 @@ func (s *Service) ListSecrets(appID string) ([]Secret, error) {
 	if _, err := s.store.GetApp(appID); err != nil {
 		return nil, err
 	}
+	if artifact, managed, err := s.managedLatestArtifact(appID); err != nil {
+		return nil, err
+	} else if managed {
+		result := []Secret{}
+		for _, secret := range artifact.Secrets {
+			created, updated := secret.CreatedAt, secret.UpdatedAt
+			if created.IsZero() {
+				created = artifact.Deployment.CreatedAt
+			}
+			if updated.IsZero() {
+				updated = artifact.Deployment.CreatedAt
+			}
+			result = append(result, Secret{Name: secret.Name, CreatedAt: created, UpdatedAt: updated})
+		}
+		return result, nil
+	}
 	records, err := s.store.ListSecrets(appID)
 	if err != nil {
 		return nil, err
@@ -688,6 +717,9 @@ func (s *Service) PutSecret(appID, name, value string) error {
 	if _, _, err := s.worker(appID); err != nil {
 		return err
 	}
+	if managed, err := s.mutateManagedSecretLocked(appID, name, &value); managed || err != nil {
+		return err
+	}
 	records, err := s.store.ListSecrets(appID)
 	if err != nil {
 		return err
@@ -705,10 +737,16 @@ func (s *Service) PutSecret(appID, name, value string) error {
 	if err != nil {
 		return err
 	}
-	if item := activeForApp(active, appID); item != nil {
+	for _, item := range activeForAppDeployments(active, appID) {
+		if err := validateDispatchNameCollisions(item.Deployment.DispatchNamespaces, item.Deployment.Vars, secretValues); err != nil {
+			return err
+		}
 		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.Databases, item.Deployment.ObjectStorageBuckets, item.Deployment.Services, item.Deployment.AssetConfig); err != nil {
 			return err
 		}
+	}
+	if err := s.pinActiveArtifacts(appID); err != nil {
+		return err
 	}
 	nonce, ciphertext, err := s.secrets.Encrypt(value)
 	if err != nil {
@@ -747,6 +785,12 @@ func (s *Service) DeleteSecret(appID, name string) error {
 		return errors.New("secret name is required")
 	}
 	if _, _, err := s.worker(appID); err != nil {
+		return err
+	}
+	if managed, err := s.mutateManagedSecretLocked(appID, name, nil); managed || err != nil {
+		return err
+	}
+	if err := s.pinActiveArtifacts(appID); err != nil {
 		return err
 	}
 	if err := s.store.DeleteSecret(appID, name); err != nil {
@@ -914,6 +958,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		Databases:            append([]DatabaseBinding(nil), active.Deployment.Databases...),
 		ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), active.Deployment.ObjectStorageBuckets...),
 		AssetConfig:          active.Deployment.AssetConfig,
+		DispatchNamespaces:   append([]DispatchBinding(nil), active.Deployment.DispatchNamespaces...),
 		Bindings:             s.deploymentBindings(active.Deployment),
 		Port:                 active.Deployment.Port,
 		TrafficPercent:       active.TrafficPercent,
@@ -999,29 +1044,6 @@ func (s *Service) SetDeploymentTraffic(appID string, traffic []DeploymentTraffic
 		return nil, err
 	}
 	previousTraffic := activeTrafficForApp(previous, appID)
-	if _, ok := s.writer.(PublicationValidator); ok {
-		records, err := s.store.ListDeployments()
-		if err != nil {
-			return nil, err
-		}
-		selected := make([]ActiveDeployment, 0, len(traffic))
-		for _, item := range traffic {
-			found := false
-			for _, record := range records {
-				if record.Deployment.AppID == appID && record.Deployment.ID == item.ID {
-					selected = append(selected, ActiveDeployment{App: record.App, Deployment: record.Deployment, TrafficPercent: item.TrafficPercent})
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, errors.New("deployment not found")
-			}
-		}
-		if err := s.validatePublication(appID, previous, selected); err != nil {
-			return nil, fmt.Errorf("validate publication: %w", err)
-		}
-	}
 	if err := s.store.SetActiveTraffic(appID, traffic); err != nil {
 		return nil, err
 	}
@@ -1034,11 +1056,11 @@ func (s *Service) SetDeploymentTraffic(appID string, traffic []DeploymentTraffic
 	}
 	if err := s.writePublication(active); err != nil {
 		if rollbackErr := s.store.SetActiveTraffic(appID, previousTraffic); rollbackErr != nil {
-			return nil, fmt.Errorf("write generated config: %w; restore traffic: %v", err, rollbackErr)
+			return nil, fmt.Errorf("publish: %w; restore traffic: %v", err, rollbackErr)
 		}
 		s.invalidateRuntimeDeployments(appID)
 		if rollbackErr := s.publishActiveDeployments(appID); rollbackErr != nil {
-			return nil, fmt.Errorf("write generated config: %w; restore publication: %v", err, rollbackErr)
+			return nil, fmt.Errorf("publish: %w; restore runtime: %v", err, rollbackErr)
 		}
 		return nil, fmt.Errorf("write generated config: %w", err)
 	}
@@ -1103,16 +1125,7 @@ func (s *Service) WorkerOutputForOrg(orgID, appID string) ([]WorkerOutputLine, e
 }
 
 func (s *Service) WorkerOutputQueryForOrg(ctx context.Context, orgID, appID string, query WorkerOutputQuery) ([]WorkerOutputLine, error) {
-	if _, err := s.appForOrg(orgID, appID); err != nil {
-		return nil, err
-	}
-	if s.output == nil {
-		return []WorkerOutputLine{}, nil
-	}
-	if reader, ok := s.output.(WorkerOutputQuerier); ok {
-		return reader.Query(ctx, appID, query)
-	}
-	return s.WorkerOutput(appID)
+	return s.queryWorkerOutput(ctx, orgID, appID, query)
 }
 
 func (s *Service) WorkerTraffic(appID string) (WorkerTraffic, error) {
@@ -1185,7 +1198,17 @@ func (s *Service) appForOrg(orgID, appID string) (App, error) {
 }
 
 func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
-	if _, _, err := s.worker(appID); err != nil {
+	return s.deployPublication(appID, input)
+}
+func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fingerprint string, managed *managedPublication) (result Deployment, retErr error) {
+	app, _, err := s.worker(appID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := s.validateDispatchBindings(app, input); err != nil {
+		return Deployment{}, err
+	}
+	if err := s.checkNamespaceBindings(app, input); err != nil {
 		return Deployment{}, err
 	}
 	files, entrypoint, err := deploymentFiles(input.Files, input.Entrypoint)
@@ -1265,10 +1288,37 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		Databases:            databases,
 		ObjectStorageBuckets: objectStorageBuckets,
 		Services:             services,
+		DispatchNamespaces:   append([]DispatchBinding(nil), input.DispatchNamespaces...),
 		AssetConfig:          assetConfig,
 		BundleSize:           bundleSize(files),
 		CreatedAt:            time.Now().UTC(),
 	}
+	if managed == nil {
+		managed, err = s.nativeManagedPublication(app, deployment)
+		if err != nil {
+			return Deployment{}, err
+		}
+	}
+	original, err := s.store.ActiveDeploymentsForApp(appID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	publication := Publication{AppID: appID, Key: input.IdempotencyKey, Fingerprint: fingerprint, DeploymentID: deployment.ID, Stage: "building", PreviousTraffic: activeTrafficForApp(original, appID), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if managed != nil {
+		publication.RequestIdentity = managed.RequestIdentity
+		publication.ConfigurationOnly = managed.ConfigurationOnly
+	}
+	if err = s.store.SavePublication(publication); err != nil {
+		return Deployment{}, err
+	}
+	defer func() {
+		if retErr != nil {
+			current, found, e := s.store.GetPublication(appID, input.IdempotencyKey)
+			if e == nil && found && current.Stage == "building" {
+				_ = s.savePublication(&current, "failed")
+			}
+		}
+	}()
 	if len(deployment.Assets) > 0 && s.objects == nil {
 		return Deployment{}, errors.New("object storage is not configured")
 	}
@@ -1291,18 +1341,17 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 			deployment.Assets[i].Data = nil
 		}
 	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	release, err := s.store.LockDeploymentUpdates()
-	if err != nil {
-		s.cleanupDeploymentObject(deployment)
-		s.cleanupDeploymentAssets(deployment)
-		return Deployment{}, err
-	}
-	defer release()
 	// Check secrets under the publication guard so a concurrent configuration
 	// rollout cannot introduce a binding collision.
-	secrets, err := s.resolvedSecretValues(appID)
+	var secrets map[string]string
+	if managed != nil {
+		secrets = map[string]string{}
+		for _, secret := range managed.Secrets {
+			secrets[secret.Name] = ""
+		}
+	} else {
+		secrets, err = s.resolvedSecretValues(appID)
+	}
 	if err == nil {
 		err = validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig)
 	}
@@ -1311,64 +1360,56 @@ func (s *Service) Deploy(appID string, input DeployInput) (Deployment, error) {
 		s.cleanupDeploymentAssets(deployment)
 		return Deployment{}, err
 	}
-	activeBefore, err := s.activeDeployments()
-	if err != nil {
-		s.cleanupDeploymentObject(deployment)
-		s.cleanupDeploymentAssets(deployment)
-		return Deployment{}, err
-	}
-	previousTraffic := activeTrafficForApp(activeBefore, appID)
-	app, err := s.store.GetApp(appID)
-	if err == nil {
-		err = s.validatePublication(appID, activeBefore, []ActiveDeployment{{App: app, Deployment: deployment, TrafficPercent: 100}})
-	}
-	if err != nil {
-		s.cleanupDeploymentObject(deployment)
-		s.cleanupDeploymentAssets(deployment)
-		return Deployment{}, fmt.Errorf("validate publication: %w", err)
-	}
-	if err := s.store.Activate(deployment); err != nil {
-		s.cleanupDeploymentObject(deployment)
-		s.cleanupDeploymentAssets(deployment)
-		return Deployment{}, err
-	}
-	s.invalidateRuntimeDeployments(appID)
-	active, err := s.activeDeployments()
-	if err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, deployment); rollbackErr != nil {
-			return Deployment{}, fmt.Errorf("list active deployments: %w; rollback active deployment: %v", err, rollbackErr)
+	var artifact DeploymentArtifact
+	if managed != nil {
+		artifact, err = s.captureArtifact(ActiveDeployment{App: app, Deployment: deployment}, managed.Secrets)
+		if err == nil {
+			artifact.Management = &ArtifactManagement{ExpectedRevision: managed.ExpectedRevision, Metadata: managed.Metadata}
+			err = s.store.PutDeploymentArtifact(artifact)
 		}
+	} else {
+		artifact, err = s.freezeArtifact(ActiveDeployment{App: app, Deployment: deployment}, nil)
+	}
+	if err != nil {
 		return Deployment{}, err
 	}
-	if err := s.writePublication(active); err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, deployment); rollbackErr != nil {
-			return Deployment{}, fmt.Errorf("write generated config: %w; rollback active deployment: %v", err, rollbackErr)
-		}
-		return Deployment{}, fmt.Errorf("write generated config: %w", err)
+	publication.Digest = artifact.Digest
+	publication.Stage = "stored"
+	if err = s.store.StoreDeployment(deployment); err != nil {
+		return Deployment{}, err
 	}
-	return deployment, nil
+	if err = s.store.SavePublication(publication); err != nil {
+		return Deployment{}, err
+	}
+	return s.publishStoredArtifact(&publication, artifact)
 }
 
 func (s *Service) DeployForOrg(orgID, appID string, input DeployInput) (Deployment, error) {
-	if _, err := s.appForOrg(orgID, appID); err != nil {
+	if err := s.validateDeploymentForOrg(orgID, appID, input); err != nil {
 		return Deployment{}, err
+	}
+	return s.Deploy(appID, input)
+}
+func (s *Service) validateDeploymentForOrg(orgID, appID string, input DeployInput) error {
+	if _, err := s.appForOrg(orgID, appID); err != nil {
+		return err
 	}
 	for _, binding := range input.KVNamespaces {
 		if _, err := s.GetKVNamespaceForOrg(orgID, strings.TrimSpace(binding.ID)); err != nil {
-			return Deployment{}, err
+			return err
 		}
 	}
 	for _, binding := range input.Databases {
 		if _, err := s.GetDatabaseForOrg(orgID, strings.TrimSpace(binding.DatabaseID)); err != nil {
-			return Deployment{}, err
+			return err
 		}
 	}
 	for _, binding := range input.ObjectStorageBuckets {
 		if _, err := s.GetObjectStorageBucketForOrg(orgID, strings.TrimSpace(binding.BucketID)); err != nil {
-			return Deployment{}, err
+			return err
 		}
 	}
-	return s.Deploy(appID, input)
+	return nil
 }
 
 func workerFormat(format string, fileCount int) (string, error) {
@@ -1396,6 +1437,9 @@ func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, strin
 	totalSize := 0
 	for _, file := range files {
 		file.Path = path.Clean(strings.TrimSpace(file.Path))
+		if strings.HasPrefix(file.Path, "nanoflare-internal:") || strings.HasPrefix(file.Path, "__nanoflare_") {
+			return nil, "", errors.New("worker file uses a reserved runtime module name")
+		}
 		if file.Path == "." || strings.HasPrefix(file.Path, "/") || strings.HasPrefix(file.Path, "../") {
 			return nil, "", errors.New("file paths must be relative and remain inside the worker")
 		}
@@ -1437,9 +1481,6 @@ func deploymentAssets(files []AssetFile, config AssetConfig) ([]AssetFile, error
 		}
 		seen[file.Path] = true
 		file.Size = int64(len(file.Data))
-		if file.Size == 0 {
-			return nil, fmt.Errorf("asset %q is empty", file.Path)
-		}
 		if file.ContentType == "" {
 			file.ContentType = detectAssetContentType(file.Path)
 		}
@@ -1577,7 +1618,7 @@ func (s *Service) normalizeServiceBindings(appID string, bindings []ServiceBindi
 	if len(bindings) == 0 {
 		return nil, nil
 	}
-	app, _, err := s.worker(appID)
+	app, err := s.store.GetApp(appID)
 	if err != nil {
 		return nil, err
 	}
@@ -1589,46 +1630,58 @@ func (s *Service) normalizeServiceBindings(appID string, bindings []ServiceBindi
 	if err != nil {
 		return nil, err
 	}
-	normalized := make([]ServiceBinding, 0, len(bindings))
-	seen := make(map[string]bool, len(bindings))
-	for _, binding := range bindings {
-		binding.Binding = strings.TrimSpace(binding.Binding)
-		binding.Service = strings.TrimSpace(binding.Service)
-		if binding.Binding == "" {
-			return nil, errors.New("services.binding is required")
+	out := make([]ServiceBinding, 0, len(bindings))
+	seen := map[string]bool{}
+	for _, b := range bindings {
+		b.Binding = strings.TrimSpace(b.Binding)
+		b.Service = strings.TrimSpace(b.Service)
+		b.WorkerID = strings.TrimSpace(b.WorkerID)
+		if b.Binding == "" || (b.Service == "" && b.WorkerID == "") || seen[b.Binding] {
+			return nil, errors.New("service requires a unique binding and service name or worker_id")
 		}
-		if binding.Service == "" {
-			return nil, errors.New("services.service is required")
-		}
-		if seen[binding.Binding] {
-			return nil, fmt.Errorf("services binding %q is duplicated", binding.Binding)
-		}
-		found := false
+		var targets []App
 		for _, candidate := range apps {
-			if candidate.OrgID == app.OrgID && candidate.Name == binding.Service {
-				found = true
+			if candidate.OrgID != app.OrgID {
+				continue
+			}
+			if (b.WorkerID != "" && candidate.ID == b.WorkerID) || (b.WorkerID == "" && candidate.Platform == nil && candidate.Name == b.Service) {
+				targets = append(targets, candidate)
+			}
+		}
+		if len(targets) > 1 {
+			return nil, ErrAmbiguousService
+		}
+		if len(targets) == 0 {
+			return nil, errors.New("service binding targets unknown Worker in this organization")
+		}
+		target := targets[0]
+		b.Execution = ""
+		if target.IsDynamic() {
+			if !app.IsDynamic() {
+				return nil, errors.New("dynamic fetch services require a dynamic caller; platform hosts use dispatch_namespaces")
+			}
+			b.Execution = "dynamic"
+		}
+		if b.WorkerID != "" && b.Service != "" && target.Name != b.Service {
+			return nil, errors.New("service and worker_id identify different Workers")
+		}
+		if !ServiceTargetAllowed(app, target) {
+			return nil, ErrNamespaceGrantDenied
+		}
+		ready := false
+		for _, d := range active {
+			if d.App.ID == target.ID {
+				ready = true
 				break
 			}
 		}
-		if !found {
-			return nil, fmt.Errorf("service binding %q targets unknown Worker %q in this organization", binding.Binding, binding.Service)
+		if !ready {
+			return nil, errors.New("service target has no active deployment")
 		}
-		if _, ok := activeDeploymentForService(active, app.OrgID, binding.Service); !ok {
-			return nil, fmt.Errorf("service binding %q targets Worker %q without an active deployment", binding.Binding, binding.Service)
-		}
-		seen[binding.Binding] = true
-		normalized = append(normalized, binding)
+		seen[b.Binding] = true
+		out = append(out, b)
 	}
-	return normalized, nil
-}
-
-func activeDeploymentForService(active []ActiveDeployment, orgID, name string) (ActiveDeployment, bool) {
-	for _, item := range active {
-		if item.App.OrgID == orgID && item.App.Name == name {
-			return item, true
-		}
-	}
-	return ActiveDeployment{}, false
+	return out, nil
 }
 
 func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage, error) {
@@ -1659,6 +1712,9 @@ func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage,
 func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, dbBindings []DatabaseBinding, objectBindings []ObjectStorageBucketBinding, serviceBindings []ServiceBinding, assetConfig AssetConfig) error {
 	seen := make(map[string]string)
 	add := func(name, kind string) error {
+		if strings.HasPrefix(name, "__NANOFLARE_") {
+			return fmt.Errorf("binding %q uses a reserved runtime name", name)
+		}
 		if existing, exists := seen[name]; exists {
 			return fmt.Errorf("binding %q is defined by both %s and %s", name, existing, kind)
 		}
@@ -1926,14 +1982,9 @@ func (s *Service) activeDeployments() ([]ActiveDeployment, error) {
 		return nil, err
 	}
 	for i := range active {
-		if err := s.hydrateDeploymentFiles(&active[i].Deployment); err != nil {
+		if err := s.hydrateArtifact(&active[i]); err != nil {
 			return nil, err
 		}
-		secretValues, err := s.resolvedSecretValues(active[i].App.ID)
-		if err != nil {
-			return nil, err
-		}
-		active[i].App.SecretValues = secretValues
 	}
 	return active, nil
 }
@@ -1947,16 +1998,9 @@ func (s *Service) activeDeploymentsForApp(appID string) ([]ActiveDeployment, err
 		return active, nil
 	}
 	for i := range active {
-		if err := s.hydrateDeploymentFiles(&active[i].Deployment); err != nil {
+		if err := s.hydrateArtifact(&active[i]); err != nil {
 			return nil, err
 		}
-	}
-	secretValues, err := s.resolvedSecretValues(appID)
-	if err != nil {
-		return nil, err
-	}
-	for i := range active {
-		active[i].App.SecretValues = secretValues
 	}
 	return active, nil
 }
@@ -2020,6 +2064,11 @@ func (s *Service) hydrateDeploymentFiles(deployment *Deployment) error {
 }
 
 func (s *Service) resolvedSecretValues(appID string) (map[string]string, error) {
+	if artifact, managed, err := s.managedLatestArtifact(appID); err != nil {
+		return nil, err
+	} else if managed {
+		return s.artifactSecretValues(artifact)
+	}
 	records, err := s.store.ListSecrets(appID)
 	if err != nil {
 		if errors.Is(err, ErrAppNotFound) {
@@ -2044,55 +2093,78 @@ func (s *Service) resolvedSecretValues(appID string) (map[string]string, error) 
 	return values, nil
 }
 
+// Pin legacy active revisions before changing mutable secret records.
+func (s *Service) pinActiveArtifacts(appID string) error {
+	active, err := s.store.ActiveDeploymentsForApp(appID)
+	if err != nil {
+		return err
+	}
+	for _, item := range active {
+		if _, err := s.freezeArtifact(item, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func (s *Service) rolloutSecretsIfActive(appID string) error {
 	active, err := s.activeDeployments()
 	if err != nil {
 		return err
 	}
-	current := activeForApp(active, appID)
-	if current == nil {
+	previous := activeTrafficForApp(active, appID)
+	if len(previous) == 0 {
 		return nil
 	}
-	deploymentID, err := randomToken()
+	nextTraffic := []DeploymentTraffic{}
+	for _, current := range active {
+		if current.App.ID != appID {
+			continue
+		}
+		next := cloneArtifact(DeploymentArtifact{Deployment: current.Deployment, ObjectKey: current.Deployment.ObjectKey, BundleSize: current.Deployment.BundleSize}).Deployment
+		next.ID, err = randomToken()
+		if err != nil {
+			return err
+		}
+		next.Port = 0
+		next.CreatedAt = time.Now().UTC()
+		base, e := s.store.GetDeploymentArtifact(appID, current.Deployment.ID)
+		if e != nil {
+			return e
+		}
+		records, e := s.store.ListSecrets(appID)
+		if e != nil {
+			return e
+		}
+		base.Secrets = sealRecords(records)
+		if _, err = s.freezeArtifact(ActiveDeployment{App: current.App, Deployment: next}, &base); err != nil {
+			return err
+		}
+		if err = s.store.StoreDeployment(next); err != nil {
+			return err
+		}
+		nextTraffic = append(nextTraffic, DeploymentTraffic{ID: next.ID, TrafficPercent: current.TrafficPercent})
+	}
+	key, err := randomToken()
 	if err != nil {
 		return err
 	}
-	next := current.Deployment
-	next.ID = deploymentID
-	next.Port = 0
-	next.CreatedAt = time.Now().UTC()
-	next.Vars = cloneVars(current.Deployment.Vars)
-	next.KVNamespaces = append([]KVBinding(nil), current.Deployment.KVNamespaces...)
-	next.CompatibilityFlags = append([]string(nil), current.Deployment.CompatibilityFlags...)
-	next.ObjectStorageBuckets = append([]ObjectStorageBucketBinding(nil), current.Deployment.ObjectStorageBuckets...)
-	next.Assets = append([]AssetFile(nil), current.Deployment.Assets...)
-	next.Files = append([]WorkerFile(nil), current.Deployment.Files...)
-	previousTraffic := activeTrafficForApp(active, appID)
-	if err := s.validatePublication(appID, active, []ActiveDeployment{{App: current.App, Deployment: next, TrafficPercent: 100}}); err != nil {
-		return fmt.Errorf("validate publication: %w", err)
-	}
-	if err := s.store.Activate(next); err != nil {
-		return err
-	}
-	s.invalidateRuntimeDeployments(appID)
-	updated, err := s.activeDeployments()
+	p := Publication{AppID: appID, Key: "secret-" + key, Fingerprint: key, DeploymentID: nextTraffic[0].ID, Stage: "stored", PreviousTraffic: previous, TargetTraffic: nextTraffic, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	artifact, err := s.store.GetDeploymentArtifact(appID, p.DeploymentID)
 	if err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, next); rollbackErr != nil {
-			return fmt.Errorf("list active deployments: %w; rollback active deployment: %v", err, rollbackErr)
-		}
 		return err
 	}
-	if err := s.writePublication(updated); err != nil {
-		if rollbackErr := s.rollbackDeployment(appID, previousTraffic, next); rollbackErr != nil {
-			return fmt.Errorf("write generated config: %w; rollback active deployment: %v", err, rollbackErr)
-		}
-		return fmt.Errorf("write generated config: %w", err)
+	p.Digest = artifact.Digest
+	if err = s.store.SavePublication(p); err != nil {
+		return err
+	}
+	if _, err = s.publishStoredArtifact(&p, artifact); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (s *Service) deploymentObjectReferenced(appID, key string) bool {
-	if s.executions != nil && s.executions.ReferencesObject(appID, key) {
+	if s.executions.ReferencesObject(appID, key) {
 		return true
 	}
 	records, err := s.store.ListDeployments()
@@ -2116,7 +2188,7 @@ func (s *Service) deploymentObjectReferenced(appID, key string) bool {
 }
 
 func (s *Service) cleanupDeploymentObject(deployment Deployment) {
-	if s.executions != nil && s.executions.ReferencesDeployment(deployment.AppID, deployment.ID) {
+	if s.executions.ReferencesDeployment(deployment.AppID, deployment.ID) {
 		return
 	}
 	if s.objects == nil || deployment.ObjectKey == "" {
@@ -2128,7 +2200,7 @@ func (s *Service) cleanupDeploymentObject(deployment Deployment) {
 }
 
 func (s *Service) cleanupDeploymentAssets(deployment Deployment) {
-	if s.executions != nil && s.executions.ReferencesDeployment(deployment.AppID, deployment.ID) {
+	if s.executions.ReferencesDeployment(deployment.AppID, deployment.ID) {
 		return
 	}
 	if s.objects == nil {
@@ -2183,15 +2255,15 @@ func deploymentAssetObjectPath(deploymentID, assetPath string) string {
 const objectStorageBucketScope = "object-storage-buckets"
 
 func objectStorageBucketPath(bucketID, objectPath string) string {
-	return path.Join("buckets", bucketID, strings.TrimPrefix(objectPath, "/"))
+	// Normalize the user key within its own root before joining the authorized
+	// bucket prefix. Cleaning the combined path could traverse into another bucket.
+	key := strings.TrimPrefix(path.Clean("/"+objectPath), "/")
+	return path.Join("buckets", bucketID, key)
 }
 
 func (s *Service) PresignUpload(capability, bucketID, objectPath string) (string, error) {
-	appID, err := s.appIDForCapability(capability)
+	_, err := s.objectCapabilityAppID(capability, bucketID)
 	if err != nil {
-		return "", err
-	}
-	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return "", err
 	}
 	bucket, err := s.GetObjectStorageBucket(bucketID)
@@ -2205,43 +2277,32 @@ func (s *Service) PresignUpload(capability, bucketID, objectPath string) (string
 }
 
 func (s *Service) PresignDownload(capability, bucketID, objectPath string) (string, error) {
-	appID, err := s.appIDForCapability(capability)
+	_, err := s.objectCapabilityAppID(capability, bucketID)
 	if err != nil {
-		return "", err
-	}
-	if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
 		return "", err
 	}
 	return s.objects.PresignDownload(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
 }
 
 func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
-	_, execution, err := s.executionAuthorization(capability, ExecutionObject, bucketID)
+	return s.DeleteObjectContext(context.Background(), capability, bucketID, objectPath)
+}
+
+func (s *Service) DeleteObjectContext(ctx context.Context, capability, bucketID, objectPath string) error {
+	_, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID)
 	if err != nil {
-		return err
-	}
-	if !execution {
-		appID, err := s.appIDForCapability(capability)
-		if err != nil {
-			return err
-		}
-		if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
-			return err
-		}
-	} else if s.objects == nil {
-		err := errors.New("object storage is not configured")
 		return err
 	}
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
 	var oldSize int64
 	existed := false
-	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
+	if existing, err := s.objectHeadContext(ctx, objectStorageBucketScope, storedPath); err == nil {
 		oldSize = existing.Size
 		existed = true
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return err
 	}
-	if err := s.objects.Delete(objectStorageBucketScope, storedPath); err != nil {
+	if err := s.objectDeleteContext(ctx, objectStorageBucketScope, storedPath); err != nil {
 		return err
 	}
 	if oldSize > 0 {
@@ -2254,26 +2315,18 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 }
 
 func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
-	_, execution, err := s.executionAuthorization(capability, ExecutionObject, bucketID)
+	return s.ObjectPutContext(context.Background(), capability, bucketID, objectPath, contentType, data)
+}
+
+func (s *Service) ObjectPutContext(ctx context.Context, capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
+	_, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID)
 	if err != nil {
-		return ObjectInfo{}, err
-	}
-	if !execution {
-		appID, err := s.appIDForCapability(capability)
-		if err != nil {
-			return ObjectInfo{}, err
-		}
-		if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
-			return ObjectInfo{}, err
-		}
-	} else if s.objects == nil {
-		err := errors.New("object storage is not configured")
 		return ObjectInfo{}, err
 	}
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
 	var oldSize int64
 	existed := false
-	if existing, err := s.objects.Head(objectStorageBucketScope, storedPath); err == nil {
+	if existing, err := s.objectHeadContext(ctx, objectStorageBucketScope, storedPath); err == nil {
 		oldSize = existing.Size
 		existed = true
 	} else if !errors.Is(err, ErrObjectNotFound) {
@@ -2282,7 +2335,7 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 	if err := s.enforceObjectStorageBytesLimit(bucketID, int64(len(data))-oldSize); err != nil {
 		return ObjectInfo{}, err
 	}
-	object, err := s.objects.Put(objectStorageBucketScope, storedPath, contentType, data)
+	object, err := s.objectPutContext(ctx, objectStorageBucketScope, storedPath, contentType, data)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -2295,23 +2348,15 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 }
 
 func (s *Service) ObjectGet(capability, bucketID, objectPath string) (ObjectBody, bool, error) {
-	_, execution, err := s.executionAuthorization(capability, ExecutionObject, bucketID)
+	return s.ObjectGetContext(context.Background(), capability, bucketID, objectPath)
+}
+
+func (s *Service) ObjectGetContext(ctx context.Context, capability, bucketID, objectPath string) (ObjectBody, bool, error) {
+	_, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID)
 	if err != nil {
 		return ObjectBody{}, false, err
 	}
-	if !execution {
-		appID, err := s.appIDForCapability(capability)
-		if err != nil {
-			return ObjectBody{}, false, err
-		}
-		if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
-			return ObjectBody{}, false, err
-		}
-	} else if s.objects == nil {
-		err := errors.New("object storage is not configured")
-		return ObjectBody{}, false, err
-	}
-	object, err := s.objects.Get(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
+	object, err := s.objectGetContext(ctx, objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
 	if errors.Is(err, ErrObjectNotFound) {
 		return ObjectBody{}, false, nil
 	}
@@ -2320,23 +2365,15 @@ func (s *Service) ObjectGet(capability, bucketID, objectPath string) (ObjectBody
 }
 
 func (s *Service) ObjectHead(capability, bucketID, objectPath string) (ObjectInfo, bool, error) {
-	_, execution, err := s.executionAuthorization(capability, ExecutionObject, bucketID)
+	return s.ObjectHeadContext(context.Background(), capability, bucketID, objectPath)
+}
+
+func (s *Service) ObjectHeadContext(ctx context.Context, capability, bucketID, objectPath string) (ObjectInfo, bool, error) {
+	_, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID)
 	if err != nil {
 		return ObjectInfo{}, false, err
 	}
-	if !execution {
-		appID, err := s.appIDForCapability(capability)
-		if err != nil {
-			return ObjectInfo{}, false, err
-		}
-		if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
-			return ObjectInfo{}, false, err
-		}
-	} else if s.objects == nil {
-		err := errors.New("object storage is not configured")
-		return ObjectInfo{}, false, err
-	}
-	object, err := s.objects.Head(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
+	object, err := s.objectHeadContext(ctx, objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath))
 	if errors.Is(err, ErrObjectNotFound) {
 		return ObjectInfo{}, false, nil
 	}
@@ -2345,20 +2382,8 @@ func (s *Service) ObjectHead(capability, bucketID, objectPath string) (ObjectInf
 }
 
 func (s *Service) ObjectList(capability, bucketID string) ([]ObjectInfo, error) {
-	_, execution, err := s.executionAuthorization(capability, ExecutionObject, bucketID)
+	_, err := s.objectCapabilityAppID(capability, bucketID)
 	if err != nil {
-		return nil, err
-	}
-	if !execution {
-		appID, err := s.appIDForCapability(capability)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.ensureCapabilityBindsObjectStorageBucket(appID, bucketID); err != nil {
-			return nil, err
-		}
-	} else if s.objects == nil {
-		err := errors.New("object storage is not configured")
 		return nil, err
 	}
 	objects, err := s.objects.List(objectStorageBucketScope, objectStorageBucketPath(bucketID, ""))
@@ -2380,10 +2405,10 @@ func (s *Service) appIDForCapability(capability string) (string, error) {
 }
 
 func (s *Service) KVGet(capability, namespaceID, key string) ([]byte, bool, error) {
-	if _, execution, err := s.executionAuthorization(capability, ExecutionKV, namespaceID); err != nil {
+	var err error
+	capability, err = s.runtimeKVCapability(capability, namespaceID)
+	if err != nil {
 		return nil, false, err
-	} else if execution {
-		capability = "" // Internal repository access after exact frozen binding authorization.
 	}
 	return s.store.KVGet(capability, namespaceID, key)
 }
@@ -2393,10 +2418,10 @@ func (s *Service) KVPut(capability, namespaceID, key string, value []byte) error
 }
 
 func (s *Service) KVPutWithOptions(capability, namespaceID, key string, value []byte, options RuntimeKVPutOptions) error {
-	if _, execution, err := s.executionAuthorization(capability, ExecutionKV, namespaceID); err != nil {
+	var err error
+	capability, err = s.runtimeKVCapability(capability, namespaceID)
+	if err != nil {
 		return err
-	} else if execution {
-		capability = "" // Internal repository access after exact frozen binding authorization.
 	}
 	oldSize, _, err := s.kvValueSize(capability, namespaceID, key)
 	if err != nil {
@@ -2433,19 +2458,19 @@ func (s *Service) KVPutWithOptions(capability, namespaceID, key string, value []
 }
 
 func (s *Service) KVListPage(capability, namespaceID string, options RuntimeKVListOptions) (RuntimeKVListResult, error) {
-	if _, execution, err := s.executionAuthorization(capability, ExecutionKV, namespaceID); err != nil {
+	var err error
+	capability, err = s.runtimeKVCapability(capability, namespaceID)
+	if err != nil {
 		return RuntimeKVListResult{}, err
-	} else if execution {
-		capability = "" // Internal repository access after exact frozen binding authorization.
 	}
 	return s.store.KVListPage(capability, namespaceID, options)
 }
 
 func (s *Service) KVDelete(capability, namespaceID, key string) error {
-	if _, execution, err := s.executionAuthorization(capability, ExecutionKV, namespaceID); err != nil {
+	var err error
+	capability, err = s.runtimeKVCapability(capability, namespaceID)
+	if err != nil {
 		return err
-	} else if execution {
-		capability = "" // Internal repository access after exact frozen binding authorization.
 	}
 	oldSize, ok, err := s.kvValueSize(capability, namespaceID, key)
 	if err != nil {
@@ -2591,23 +2616,29 @@ func (s *Service) KVNamespaceDeleteForOrg(orgID, namespaceID, key string) error 
 }
 
 func (s *Service) DBExecute(capability, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
-	_, execution, err := s.executionAuthorization(capability, ExecutionDatabase, databaseID)
+	return s.DBExecuteContext(context.Background(), capability, databaseID, request)
+}
+func (s *Service) DBExecuteContext(ctx context.Context, capability, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
+	if isRevisionCapability(capability) {
+		if _, err := s.AuthorizeRuntime(ctx, capability, RuntimeDatabase, databaseID); err != nil {
+			return DBQueryResponse{}, err
+		}
+		if s.db == nil {
+			return DBQueryResponse{}, errors.New("database runtime is not configured")
+		}
+		return s.executeDBWithMetricsContext(ctx, databaseID, request)
+	}
+	appID, err := s.store.AppIDForCapability(capability)
 	if err != nil {
 		return DBQueryResponse{}, err
 	}
-	if !execution {
-		appID, err := s.store.AppIDForCapability(capability)
-		if err != nil {
-			return DBQueryResponse{}, err
-		}
-		if err := s.ensureActiveDeploymentBindsDatabase(appID, databaseID); err != nil {
-			return DBQueryResponse{}, err
-		}
+	if err := s.ensureActiveDeploymentBindsDatabase(appID, databaseID); err != nil {
+		return DBQueryResponse{}, err
 	}
 	if s.db == nil {
 		return DBQueryResponse{}, errors.New("database runtime is not configured")
 	}
-	return s.executeDBWithMetrics(databaseID, request)
+	return s.executeDBWithMetricsContext(ctx, databaseID, request)
 }
 
 func (s *Service) WorkerDBExecuteForOrg(orgID, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
@@ -2759,7 +2790,16 @@ func (s *Service) OrganizationWorkerMetricsTimeseries(orgID string) (WorkerMetri
 }
 
 func (s *Service) executeDBWithMetrics(databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
-	response, err := s.db.Execute(databaseID, request)
+	return s.executeDBWithMetricsContext(context.Background(), databaseID, request)
+}
+func (s *Service) executeDBWithMetricsContext(ctx context.Context, databaseID string, request DBQueryRequest) (DBQueryResponse, error) {
+	var response DBQueryResponse
+	var err error
+	if executor, ok := s.db.(ContextDBExecutor); ok {
+		response, err = executor.ExecuteContext(ctx, databaseID, request)
+	} else {
+		response, err = s.db.Execute(databaseID, request)
+	}
 	if err != nil {
 		return DBQueryResponse{}, err
 	}
@@ -3257,17 +3297,26 @@ func (s *Service) ensureCapabilityBindsObjectStorageBucket(appID, bucketID strin
 }
 
 func (s *Service) AssetFetch(capability, deploymentID, assetPath string) (AssetResponse, error) {
-	if frozen, execution, err := s.executionAuthorization(capability, ExecutionAssets, deploymentID); err != nil {
+	return s.AssetFetchContext(context.Background(), capability, deploymentID, assetPath)
+}
+
+func (s *Service) AssetFetchContext(ctx context.Context, capability, deploymentID, assetPath string) (AssetResponse, error) {
+	if err := ctx.Err(); err != nil {
 		return AssetResponse{}, err
-	} else if execution {
-		return s.assetResponseForDeployment(frozen.Deployment, frozen.App.ID, assetPath)
+	}
+	if isRevisionCapability(capability) {
+		p, err := s.AuthorizeRuntime(ctx, capability, RuntimeAssets, deploymentID)
+		if err != nil {
+			return AssetResponse{}, err
+		}
+		return s.assetResponseForDeploymentContext(ctx, p.Deployment, p.App.ID, assetPath)
 	}
 	appID, err := s.appIDForCapability(capability)
 	if err != nil {
 		return AssetResponse{}, err
 	}
 	if strings.TrimSpace(deploymentID) == "" {
-		return s.assetResponse(appID, assetPath)
+		return s.assetResponseContext(ctx, appID, assetPath)
 	}
 	active, err := s.activeDeployments()
 	if err != nil {
@@ -3275,7 +3324,7 @@ func (s *Service) AssetFetch(capability, deploymentID, assetPath string) (AssetR
 	}
 	for _, item := range active {
 		if item.App.ID == appID && item.Deployment.ID == deploymentID {
-			return s.assetResponseForDeployment(item.Deployment, appID, assetPath)
+			return s.assetResponseForDeploymentContext(ctx, item.Deployment, appID, assetPath)
 		}
 	}
 	return AssetResponse{}, ErrAppNotFound
@@ -3292,6 +3341,9 @@ func (s *Service) PublicAsset(appID, requestPath string) (AssetResponse, bool, e
 }
 
 func (s *Service) PublicAssetForDeployment(active ActiveDeployment, requestPath string) (AssetResponse, bool, error) {
+	if active.App.IsPrivate() {
+		return AssetResponse{}, false, ErrAppNotFound
+	}
 	if len(active.Deployment.Assets) == 0 {
 		return AssetResponse{}, false, nil
 	}
@@ -3389,6 +3441,10 @@ func routePatternMatches(pattern, requestPath string) bool {
 }
 
 func (s *Service) assetResponse(appID, requestPath string) (AssetResponse, error) {
+	return s.assetResponseContext(context.Background(), appID, requestPath)
+}
+
+func (s *Service) assetResponseContext(ctx context.Context, appID, requestPath string) (AssetResponse, error) {
 	if s.objects == nil {
 		return AssetResponse{}, errors.New("object storage is not configured")
 	}
@@ -3399,10 +3455,14 @@ func (s *Service) assetResponse(appID, requestPath string) (AssetResponse, error
 	if active == nil {
 		return AssetResponse{}, ErrAppNotFound
 	}
-	return s.assetResponseForDeployment(active.Deployment, appID, requestPath)
+	return s.assetResponseForDeploymentContext(ctx, active.Deployment, appID, requestPath)
 }
 
 func (s *Service) assetResponseForDeployment(deployment Deployment, appID, requestPath string) (AssetResponse, error) {
+	return s.assetResponseForDeploymentContext(context.Background(), deployment, appID, requestPath)
+}
+
+func (s *Service) assetResponseForDeploymentContext(ctx context.Context, deployment Deployment, appID, requestPath string) (AssetResponse, error) {
 	if s.objects == nil {
 		return AssetResponse{}, errors.New("object storage is not configured")
 	}
@@ -3413,9 +3473,18 @@ func (s *Service) assetResponseForDeployment(deployment Deployment, appID, reque
 	if !ok {
 		return AssetResponse{StatusCode: 404}, nil
 	}
-	object, err := s.objects.Get(appID, resolved.ObjectKey)
+	object, err := s.objectGetContext(ctx, appID, resolved.ObjectKey)
 	if err != nil {
 		return AssetResponse{}, err
+	}
+	artifact, artifactErr := s.store.GetDeploymentArtifact(appID, deployment.ID)
+	if artifactErr == nil {
+		expected, ok := artifact.AssetDigests[resolved.Path]
+		if !ok || expected != hashBytes(object.Body) {
+			return AssetResponse{}, errors.New("deployment asset integrity check failed")
+		}
+	} else if !errors.Is(artifactErr, ErrArtifactNotFound) {
+		return AssetResponse{}, artifactErr
 	}
 	return AssetResponse{
 		Body:        object.Body,
@@ -3579,4 +3648,15 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+func (s *Service) runtimeKVCapability(capability, namespaceID string) (string, error) {
+	if !isRevisionCapability(capability) {
+		return capability, nil
+	}
+	principal, err := s.AuthorizeRuntime(context.Background(), capability, RuntimeKV, namespaceID)
+	if err != nil {
+		return "", err
+	}
+	return principal.App.RuntimeToken, nil
 }

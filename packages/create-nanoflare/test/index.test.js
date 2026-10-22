@@ -66,7 +66,6 @@ test("creates a starter project with the directory name and UTC date", async () 
     $schema: "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
     name: "hello-worker",
     main: "worker.ts",
-    format: "modules",
     compatibility_date: "2026-06-01",
   });
   assert.equal(
@@ -158,9 +157,7 @@ test("scaffolds public and OAuth MCP templates with the expected dependencies", 
   assert.equal(oauthProject.name, "private-echo");
   assert.equal(oauthProject.compatibility_date, latestCompatibilityDate);
   assert.deepEqual(oauthProject.compatibility_flags, ["global_fetch_strictly_public"]);
-  assert.deepEqual(oauthProject.kv_namespaces, [
-    { binding: "OAUTH_KV", id: "replace-with-oauth-kv-namespace-id" },
-  ]);
+  assert.deepEqual(oauthProject.kv_namespaces, [{ binding: "OAUTH_KV" }]);
   assert.equal(oauthPackage.dependencies["@cloudflare/workers-oauth-provider"], "^0.10.3");
   assert.match(
     await readFile(resolve(oauthDirectory, "src/worker-runtime.d.ts"), "utf8"),
@@ -194,7 +191,8 @@ test("scaffolds every documented template", async () => {
     const project = JSON.parse(await readFile(resolve(cwd, id, "nanoflare.json"), "utf8"));
     assert.equal(project.name, id);
     if (["pages", "spa", "oauth-mcp"].includes(id)) {
-      assert.ok(project.files.includes("dist/worker.js"));
+      assert.equal(project.main, "dist/worker.js");
+      assert.equal(project.files, undefined);
     } else {
       assert.equal(project.files, undefined);
     }

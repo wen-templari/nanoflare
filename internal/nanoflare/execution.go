@@ -28,7 +28,7 @@ func FreezeExecution(active ActiveDeployment, compileOptions ...string) (*Execut
 	}
 	frozen := cloneExecutionActive(active)
 	// Routing metadata and the legacy app-wide credential are not execution state.
-	identity := ActiveDeployment{App: App{ID: frozen.App.ID, OrgID: frozen.App.OrgID}, Deployment: frozen.Deployment}
+	identity := ActiveDeployment{App: App{ID: frozen.App.ID, OrgID: frozen.App.OrgID, Platform: frozen.App.Platform}, Deployment: frozen.Deployment}
 	identity.Deployment.Port = 0
 	identity.Deployment.CommitHash = ""
 	identity.Deployment.CommitMessage = ""
@@ -53,6 +53,7 @@ func (s *ExecutionSnapshot) ActiveDeployment() ActiveDeployment {
 }
 
 func cloneExecutionActive(a ActiveDeployment) ActiveDeployment {
+	a.App = clonePlatformApp(a.App)
 	a.App.SecretValues = maps.Clone(a.App.SecretValues)
 	a.App.Auth.ProtectedRoutes = slices.Clone(a.App.Auth.ProtectedRoutes)
 	d := &a.Deployment
@@ -68,6 +69,7 @@ func cloneExecutionActive(a ActiveDeployment) ActiveDeployment {
 	d.Databases = slices.Clone(d.Databases)
 	d.ObjectStorageBuckets = slices.Clone(d.ObjectStorageBuckets)
 	d.Services = slices.Clone(d.Services)
+	d.DispatchNamespaces = slices.Clone(d.DispatchNamespaces)
 	d.AssetConfig.RunWorkerFirst = slices.Clone(d.AssetConfig.RunWorkerFirst)
 	return a
 }
@@ -182,7 +184,11 @@ type ExecutionLease struct {
 	once     sync.Once
 }
 
-func (r *ExecutionRegistry) Admit(id string) (*ExecutionLease, error) {
+func (r *ExecutionRegistry) Admit(id string) (*ExecutionLease, error) { return r.admit(id, "") }
+func (r *ExecutionRegistry) AdmitResourceGrant(session, id string) (*ExecutionLease, error) {
+	return r.admit(id, session)
+}
+func (r *ExecutionRegistry) admit(id, session string) (*ExecutionLease, error) {
 	var entropy [32]byte
 	if _, err := rand.Read(entropy[:]); err != nil {
 		return nil, err
@@ -191,7 +197,7 @@ func (r *ExecutionRegistry) Admit(id string) (*ExecutionLease, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	revision := r.revisions[id]
-	if revision == nil || !revision.accepting || (revision.session != "" && !r.sessionLiveLocked(revision.session)) {
+	if revision == nil || !revision.accepting || (session != "" && revision.session != session) || (revision.session != "" && !r.sessionLiveLocked(revision.session)) {
 		return nil, ErrExecutionRetired
 	}
 	revision.leases++
@@ -272,7 +278,9 @@ func (r *ExecutionRegistry) authorizeLocked(token string, kind ExecutionResource
 	if resourceID == "" || !allowed {
 		return ActiveDeployment{}, ErrInvalidCapability
 	}
-	return cloneExecutionActive(a.revision.snapshot.active), nil
+	active := cloneExecutionActive(a.revision.snapshot.active)
+	active.RuntimeInstance = a.revision.key
+	return active, nil
 }
 
 func (s *Service) Executions() *ExecutionRegistry { return s.executions }
@@ -352,4 +360,17 @@ func (s *Service) executionAuthorization(token string, kind ExecutionResourceKin
 	}
 	a, err := s.executions.Authorize(token, kind, resourceID)
 	return a, true, err
+}
+
+// AuthorizeInternal checks an admitted invocation for non-resource adapters.
+func (r *ExecutionRegistry) AuthorizeInternal(token string) (ActiveDeployment, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a := r.tokens[token]
+	if a == nil || a.operation || (a.revision.session != "" && !r.sessionLiveLocked(a.revision.session)) {
+		return ActiveDeployment{}, ErrInvalidCapability
+	}
+	active := cloneExecutionActive(a.revision.snapshot.active)
+	active.RuntimeInstance = a.revision.key
+	return active, nil
 }

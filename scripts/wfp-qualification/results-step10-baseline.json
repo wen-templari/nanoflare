@@ -1,0 +1,299 @@
+{
+  "at": "2026-10-21T11:03:34.127272Z",
+  "os": "darwin",
+  "arch": "arm64",
+  "logical_cpus": 12,
+  "go": "go1.25.0",
+  "workerd": "workerd 2025-12-10",
+  "binary_sha256": "8cb49978cb5cf7d8499f4448419c167369c2ef2562a7f4b92b711ef25e73140c",
+  "load_phase_seconds": 2,
+  "stages": [
+    {
+      "workers": 1,
+      "added_deployment_ms": 0.159,
+      "first_request_per_new_revision": {
+        "count": 1,
+        "p50_ms": 10.885,
+        "p95_ms": 10.885,
+        "p99_ms": 10.885,
+        "max_ms": 10.885
+      },
+      "repeat_requests": {
+        "count": 3,
+        "p50_ms": 2.221,
+        "p95_ms": 2.221,
+        "p99_ms": 2.221,
+        "max_ms": 3.673
+      },
+      "native_rss_bytes": 90013696,
+      "native_processes": 1,
+      "load": [
+        {
+          "concurrency": 1,
+          "elapsed_seconds": 2.010940417,
+          "success": 32,
+          "admission_429": 155,
+          "errors": 0,
+          "success_per_second": 15.912952830168313,
+          "successful_latency": {
+            "count": 32,
+            "p50_ms": 0.939,
+            "p95_ms": 2.157,
+            "p99_ms": 2.178,
+            "max_ms": 4.779
+          }
+        },
+        {
+          "concurrency": 8,
+          "elapsed_seconds": 2.004111,
+          "success": 32,
+          "admission_429": 1288,
+          "errors": 0,
+          "success_per_second": 15.967179462614595,
+          "successful_latency": {
+            "count": 32,
+            "p50_ms": 5.83,
+            "p95_ms": 13.877,
+            "p99_ms": 13.931,
+            "max_ms": 15.633
+          }
+        },
+        {
+          "concurrency": 32,
+          "elapsed_seconds": 2.011380083,
+          "success": 32,
+          "admission_429": 5515,
+          "errors": 0,
+          "success_per_second": 15.909474430248695,
+          "successful_latency": {
+            "count": 32,
+            "p50_ms": 24.978,
+            "p95_ms": 32.791,
+            "p99_ms": 32.889,
+            "max_ms": 33.823
+          }
+        }
+      ]
+    },
+    {
+      "workers": 16,
+      "added_deployment_ms": 4.243,
+      "first_request_per_new_revision": {
+        "count": 15,
+        "p50_ms": 6.49,
+        "p95_ms": 8.243,
+        "p99_ms": 8.243,
+        "max_ms": 9.788
+      },
+      "repeat_requests": {
+        "count": 45,
+        "p50_ms": 3.272,
+        "p95_ms": 4.243,
+        "p99_ms": 7.083,
+        "max_ms": 9.978
+      },
+      "native_rss_bytes": 138149888,
+      "native_processes": 1,
+      "load": [
+        {
+          "concurrency": 1,
+          "elapsed_seconds": 2.007320042,
+          "success": 128,
+          "admission_429": 148,
+          "errors": 0,
+          "success_per_second": 63.76661285784143,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 0.557,
+            "p95_ms": 1.305,
+            "p99_ms": 2.394,
+            "max_ms": 6.483
+          }
+        },
+        {
+          "concurrency": 8,
+          "elapsed_seconds": 2.000825417,
+          "success": 128,
+          "admission_429": 1272,
+          "errors": 0,
+          "success_per_second": 63.97359755251449,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 3.366,
+            "p95_ms": 11.008,
+            "p99_ms": 14.259,
+            "max_ms": 14.339
+          }
+        },
+        {
+          "concurrency": 32,
+          "elapsed_seconds": 2.007711167,
+          "success": 128,
+          "admission_429": 5490,
+          "errors": 0,
+          "success_per_second": 63.754190395455424,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 17.732,
+            "p95_ms": 31.682,
+            "p99_ms": 31.997,
+            "max_ms": 32.053
+          }
+        }
+      ]
+    },
+    {
+      "workers": 64,
+      "added_deployment_ms": 37.969,
+      "first_request_per_new_revision": {
+        "count": 48,
+        "p50_ms": 8.372,
+        "p95_ms": 10.705,
+        "p99_ms": 11.56,
+        "max_ms": 12.075
+      },
+      "repeat_requests": {
+        "count": 144,
+        "p50_ms": 3.644,
+        "p95_ms": 5.016,
+        "p99_ms": 5.783,
+        "max_ms": 7.139
+      },
+      "native_rss_bytes": 215482368,
+      "native_processes": 1,
+      "load": [
+        {
+          "concurrency": 1,
+          "elapsed_seconds": 2.000464542,
+          "success": 128,
+          "admission_429": 147,
+          "errors": 0,
+          "success_per_second": 63.98513810798652,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 0.559,
+            "p95_ms": 1.495,
+            "p99_ms": 2.419,
+            "max_ms": 3.967
+          }
+        },
+        {
+          "concurrency": 8,
+          "elapsed_seconds": 2.011216167,
+          "success": 128,
+          "admission_429": 1277,
+          "errors": 0,
+          "success_per_second": 63.643084269220665,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 3.48,
+            "p95_ms": 10.27,
+            "p99_ms": 11.916,
+            "max_ms": 15.358
+          }
+        },
+        {
+          "concurrency": 32,
+          "elapsed_seconds": 2.010168291,
+          "success": 128,
+          "admission_429": 5410,
+          "errors": 0,
+          "success_per_second": 63.67626062608109,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 15.732,
+            "p95_ms": 28.236,
+            "p99_ms": 29.651,
+            "max_ms": 37.884
+          }
+        }
+      ]
+    },
+    {
+      "workers": 128,
+      "added_deployment_ms": 100.775,
+      "first_request_per_new_revision": {
+        "count": 64,
+        "p50_ms": 8.383,
+        "p95_ms": 10.336,
+        "p99_ms": 10.579,
+        "max_ms": 12.554
+      },
+      "repeat_requests": {
+        "count": 192,
+        "p50_ms": 3.861,
+        "p95_ms": 5.858,
+        "p99_ms": 6.954,
+        "max_ms": 7.251
+      },
+      "native_rss_bytes": 314277888,
+      "native_processes": 1,
+      "load": [
+        {
+          "concurrency": 1,
+          "elapsed_seconds": 2.002358417,
+          "success": 128,
+          "admission_429": 155,
+          "errors": 0,
+          "success_per_second": 63.92461954527295,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 0.618,
+            "p95_ms": 1.553,
+            "p99_ms": 2.923,
+            "max_ms": 5.314
+          }
+        },
+        {
+          "concurrency": 8,
+          "elapsed_seconds": 2.00989525,
+          "success": 128,
+          "admission_429": 1254,
+          "errors": 0,
+          "success_per_second": 63.68491094249812,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 3.693,
+            "p95_ms": 13.054,
+            "p99_ms": 14.518,
+            "max_ms": 16.675
+          }
+        },
+        {
+          "concurrency": 32,
+          "elapsed_seconds": 2.004902833,
+          "success": 128,
+          "admission_429": 5344,
+          "errors": 0,
+          "success_per_second": 63.843493007822985,
+          "successful_latency": {
+            "count": 128,
+            "p50_ms": 18.336,
+            "p95_ms": 33.531,
+            "p99_ms": 36.653,
+            "max_ms": 37.477
+          }
+        }
+      ]
+    }
+  ],
+  "churn_publish_ms": {
+    "count": 16,
+    "p50_ms": 2.745,
+    "p95_ms": 4.6,
+    "p99_ms": 4.6,
+    "max_ms": 8.791
+  },
+  "churn_rss_bytes": 333856768,
+  "revisit_after_128_revision_scan_same_isolate": true,
+  "rollback_same_isolate": true,
+  "runtime_launches": 1,
+  "passed": true,
+  "limitations": [
+    "single-host trusted shared pool; no untrusted sandbox/CPU qualification",
+    "memory metadata and object-store fixture; not PostgreSQL/S3 capacity",
+    "first request means first observed revision request, not a cold machine",
+    "RSS samples are not peaks; immutable descriptor eviction does not prove native isolate eviction",
+    "short bounded load slices; not a production soak or maximum capacity"
+  ]
+}

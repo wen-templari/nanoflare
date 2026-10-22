@@ -162,7 +162,7 @@ export default {
       return Response.json(await target.inspect("direct-rpc"));
     if (name === "invocation-class" && url.pathname === "/nested") {
       using session = await target.session();
-      return Response.json({ value: await session.greet() });
+      return Response.json({ value: await session.greet(), status: await session.status });
     }
     return target
       .fetch(new Request(url, request))

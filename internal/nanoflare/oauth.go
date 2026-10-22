@@ -599,7 +599,7 @@ func normalizeOAuthScopes(values []string) ([]string, error) {
 
 func isAllowedOAuthScope(scope string) bool {
 	switch scope {
-	case "workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner":
+	case "namespaces:read", "namespaces:write", "namespaces:dispatch", "workers:read", "workers:write", "deployments:write", "secrets:write", "kv:read", "kv:write", "db:read", "db:write", "objects:read", "objects:write", "orgs:read", "orgs:write", "members:read", "members:write", "members:owner":
 		return true
 	default:
 		return false

@@ -158,7 +158,7 @@ func TestRuntimeExecutionRunnerSessionLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.Executions().Publish(snapshot)
+
 	handler := NewRuntimeExecutionServer(service, "runner")
 	t.Cleanup(func() { _ = handler.Close() })
 	call := func(operation string, body map[string]string, want int) map[string]string {
@@ -181,7 +181,14 @@ func TestRuntimeExecutionRunnerSessionLifetime(t *testing.T) {
 	}
 	call("admit", map[string]string{"execution_id": snapshot.ID()}, http.StatusForbidden)
 	session := call("open-session", map[string]string{}, http.StatusOK)["session_id"]
-	admission := call("admit", map[string]string{"execution_id": snapshot.ID(), "session_id": session}, http.StatusOK)
+	executionID, err := service.Executions().PrepareResourceGrant(snapshot, session, "test-registration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Executions().PublishResourceGrant(session, executionID); err != nil {
+		t.Fatal(err)
+	}
+	admission := call("admit", map[string]string{"execution_id": executionID, "session_id": session}, http.StatusOK)
 	call("pin", map[string]string{"token": admission["token"]}, http.StatusOK)
 	// The heartbeat renews a still-live session, so sweeping its former deadline
 	// must retain both the invocation and its background pin.
@@ -194,7 +201,7 @@ func TestRuntimeExecutionRunnerSessionLifetime(t *testing.T) {
 	if _, err := service.Executions().Authorize(admission["token"], nanoflare.ExecutionKV, "kv"); err != nil {
 		t.Fatal("heartbeat did not retain authority", err)
 	}
-	service.Executions().Retire(snapshot.ID())
+	service.Executions().Retire(executionID)
 	handler.expireSessions(time.Now().Add(2 * runtimeExecutionSessionTTL))
 	if _, err := service.Executions().Authorize(admission["token"], nanoflare.ExecutionKV, "kv"); !errors.Is(err, nanoflare.ErrInvalidCapability) {
 		t.Fatal("dead runner retained authority", err)
@@ -211,10 +218,17 @@ func TestRuntimeExecutionRunnerSessionLifetime(t *testing.T) {
 	call("release", map[string]string{"pin_id": admission["pin_id"]}, http.StatusOK)
 	// An orderly runner shutdown revokes pins immediately, and listener shutdown
 	// also cleans sessions that never reached their orderly close request.
-	service.Executions().Publish(snapshot)
+
 	for _, closeListener := range []bool{false, true} {
 		id := call("open-session", map[string]string{}, http.StatusOK)["session_id"]
-		lease := call("admit", map[string]string{"execution_id": snapshot.ID(), "session_id": id}, http.StatusOK)
+		executionID, err := service.Executions().PrepareResourceGrant(snapshot, id, "test-registration")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := service.Executions().PublishResourceGrant(id, executionID); err != nil {
+			t.Fatal(err)
+		}
+		lease := call("admit", map[string]string{"execution_id": executionID, "session_id": id}, http.StatusOK)
 		if closeListener {
 			if err := handler.Close(); err != nil {
 				t.Fatal(err)
@@ -240,7 +254,7 @@ func TestRuntimeExecutionAdmissionSequenceIsIdempotentAndCancellationSafe(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.Executions().Publish(snapshot)
+
 	handler := NewRuntimeExecutionServer(service, "runner")
 	t.Cleanup(func() { _ = handler.Close() })
 	call := func(operation string, body map[string]string, want int) map[string]string {
@@ -262,8 +276,15 @@ func TestRuntimeExecutionAdmissionSequenceIsIdempotentAndCancellationSafe(t *tes
 		return result
 	}
 	session := call("open-session", map[string]string{}, 200)["session_id"]
+	executionID, err := service.Executions().PrepareResourceGrant(snapshot, session, "test-registration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Executions().PublishResourceGrant(session, executionID); err != nil {
+		t.Fatal(err)
+	}
 	admit := func(sequence string, want int) map[string]string {
-		return call("admit", map[string]string{"session_id": session, "admission_id": sequence, "execution_id": snapshot.ID()}, want)
+		return call("admit", map[string]string{"session_id": session, "admission_id": sequence, "execution_id": executionID}, want)
 	}
 	first := admit("1", 200)
 	duplicate := admit("1", 200)
@@ -292,7 +313,15 @@ func TestRuntimeExecutionAdmissionSequenceIsIdempotentAndCancellationSafe(t *tes
 	}
 	other := call("open-session", map[string]string{}, 200)["session_id"]
 	call("release", map[string]string{"session_id": other, "pin_id": fourth["pin_id"]}, 403)
-	call("admit", map[string]string{"session_id": other, "admission_id": "4", "execution_id": snapshot.ID()}, 200)
+	call("admit", map[string]string{"session_id": other, "admission_id": "4", "execution_id": executionID}, 409)
+	otherExecution, err := service.Executions().PrepareResourceGrant(snapshot, other, "test-registration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Executions().PublishResourceGrant(other, otherExecution); err != nil {
+		t.Fatal(err)
+	}
+	call("admit", map[string]string{"session_id": other, "admission_id": "5", "execution_id": otherExecution}, 200)
 	if len(handler.pins) != 2 {
 		t.Fatal("session-scoped sequences collided")
 	}

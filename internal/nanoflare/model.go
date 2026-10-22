@@ -8,6 +8,7 @@ import (
 )
 
 type App struct {
+	Platform      *WorkerPlatform   `json:"platform,omitempty"`
 	ID            string            `json:"id"`
 	OrgID         string            `json:"org_id,omitempty"`
 	Name          string            `json:"name"`
@@ -43,6 +44,7 @@ type Deployment struct {
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	DispatchNamespaces   []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
 	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	BundleSize           int64                        `json:"-"`
@@ -52,10 +54,11 @@ type Deployment struct {
 }
 
 type ActiveDeployment struct {
-	SocketPath     string     `json:"socket_path,omitempty"`
-	App            App        `json:"app"`
-	Deployment     Deployment `json:"deployment"`
-	TrafficPercent int        `json:"traffic_percent"`
+	RuntimeInstance string     `json:"runtime_instance,omitempty"`
+	SocketPath      string     `json:"socket_path,omitempty"`
+	App             App        `json:"app"`
+	Deployment      Deployment `json:"deployment"`
+	TrafficPercent  int        `json:"traffic_percent"`
 }
 
 type DeploymentRecord struct {
@@ -174,6 +177,7 @@ type VarsUpdateOperation struct {
 }
 
 type DeployInput struct {
+	IdempotencyKey       string                       `json:"idempotency_key,omitempty"`
 	CommitHash           string                       `json:"commit_hash,omitempty"`
 	CommitMessage        string                       `json:"commit_message,omitempty"`
 	CreatedBy            string                       `json:"-"`
@@ -189,6 +193,7 @@ type DeployInput struct {
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	DispatchNamespaces   []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
 	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 }
@@ -210,6 +215,7 @@ type WorkerDeployment struct {
 	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	DispatchNamespaces   []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
 	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	Bindings             []Binding                    `json:"bindings,omitempty"`
@@ -359,11 +365,13 @@ type ObjectStorageBucketBinding struct {
 	BucketID string `json:"bucket_id"`
 }
 
-// ServiceBinding matches Cloudflare's service-binding configuration. Service
-// is the target Worker's name, scoped to the caller's organization.
+// ServiceBinding accepts an immutable WorkerID or an unambiguous legacy public
+// Worker name within the caller organization. Private targets require WorkerID.
 type ServiceBinding struct {
-	Binding string `json:"binding"`
-	Service string `json:"service"`
+	Execution string `json:"execution,omitempty"`
+	WorkerID  string `json:"worker_id,omitempty"`
+	Binding   string `json:"binding"`
+	Service   string `json:"service,omitempty"`
 }
 
 func (d *DeployInput) UnmarshalJSON(data []byte) error {
@@ -535,11 +543,17 @@ func (r *RunWorkerFirst) UnmarshalJSON(data []byte) error {
 }
 
 type WorkerOutputLine struct {
-	Timestamp    time.Time `json:"timestamp"`
-	Level        string    `json:"level"`
-	Message      string    `json:"message"`
-	AppID        string    `json:"app_id,omitempty"`
-	DeploymentID string    `json:"deployment_id,omitempty"`
+	OrgID              string    `json:"org_id,omitempty"`
+	NamespaceID        string    `json:"namespace_id,omitempty"`
+	CustomerID         string    `json:"customer_id,omitempty"`
+	RequestChainID     string    `json:"request_chain_id,omitempty"`
+	InvocationID       string    `json:"invocation_id,omitempty"`
+	ParentInvocationID string    `json:"parent_invocation_id,omitempty"`
+	Timestamp          time.Time `json:"timestamp"`
+	Level              string    `json:"level"`
+	Message            string    `json:"message"`
+	AppID              string    `json:"app_id,omitempty"`
+	DeploymentID       string    `json:"deployment_id,omitempty"`
 }
 
 type WorkerStatusCode struct {
@@ -677,18 +691,19 @@ type WorkerStatusCodeTimeseries struct {
 }
 
 type WorkerMetricsTimeseries struct {
-	Available           bool                         `json:"available"`
-	TotalRequests       []MetricPoint                `json:"total_requests"`
-	Invocations         []MetricPoint                `json:"invocations"`
-	Requests            []MetricPoint                `json:"requests"`
-	Errors              []MetricPoint                `json:"errors"`
-	ErrorRate           []MetricPoint                `json:"error_rate"`
-	P95LatencyMS        []MetricPoint                `json:"p95_latency_ms"`
-	StatusCodes         []WorkerStatusCodeTimeseries `json:"status_codes"`
-	DurationAvgMS       []MetricPoint                `json:"duration_avg_ms"`
-	DurationP95MS       []MetricPoint                `json:"duration_p95_ms"`
-	DurationMSPerSecond []MetricPoint                `json:"duration_ms_per_second"`
-	CPUTimeP90MS        []MetricPoint                `json:"cpu_time_p90_ms"`
+	Available              bool                         `json:"available"`
+	TotalRequests          []MetricPoint                `json:"total_requests"`
+	Invocations            []MetricPoint                `json:"invocations"`
+	Requests               []MetricPoint                `json:"requests"`
+	Errors                 []MetricPoint                `json:"errors"`
+	ErrorRate              []MetricPoint                `json:"error_rate"`
+	P95LatencyMS           []MetricPoint                `json:"p95_latency_ms"`
+	StatusCodes            []WorkerStatusCodeTimeseries `json:"status_codes"`
+	DurationAvgMS          []MetricPoint                `json:"duration_avg_ms"`
+	DurationP95MS          []MetricPoint                `json:"duration_p95_ms"`
+	DurationMSPerSecond    []MetricPoint                `json:"duration_ms_per_second"`
+	CPUAccountingAvailable bool                         `json:"cpu_accounting_available"`
+	DurationP90MS          []MetricPoint                `json:"duration_p90_ms"`
 }
 
 type DatabaseQueryMetricsInput struct {

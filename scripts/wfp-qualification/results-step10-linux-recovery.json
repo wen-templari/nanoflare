@@ -1,0 +1,32 @@
+{
+  "at": "2026-10-21T11:32:46.047748Z",
+  "control_metadata_available_after_oom": true,
+  "empty_runner_dispatch_status": 503,
+  "image_id": "sha256:4146a603ac1001623672c656b3d2cdf315604e29e0a27ac4684ba2e09e328f0b",
+  "limitations": [
+    "single disposable Linux shared pool; no production sizing or untrusted qualification",
+    "control API remains in the host test process; not a control-process crash drill",
+    "PostgreSQL remains available; storage/network failure drills are separate",
+    "no per-invocation CPU enforcement claim"
+  ],
+  "memory_bytes": 268435456,
+  "native_child_automatic_recovery_verified": true,
+  "object_store_image_id": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d",
+  "oom_kill_delta": 1,
+  "passed": true,
+  "pids_limit": 128,
+  "pinned_rollback_after_restart_verified": true,
+  "postgres_kv_and_minio_assets_verified": true,
+  "pressure_worker_attempts": 7,
+  "reconciliation_poll_errors": 1,
+  "recovery_after_native_cgroup_oom_verified": true,
+  "runner_boot_automatic_reconciliation_verified": true,
+  "runner_kill_dispatch_status": 502,
+  "runner_restart_and_explicit_reconciliation_verified": true,
+  "runner_sha256": "6bec597ede21c5d9e9a6c1978ac39814fd54723e98d5fa77dac18c71157e263e",
+  "successful_reconciliations": 2,
+  "swap_total_bytes": 268435456,
+  "verified_cgroup_limits": "268435456\n0\n128",
+  "workerd": "workerd 2026-09-11",
+  "workerd_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35"
+}

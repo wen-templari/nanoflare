@@ -1,16 +1,39 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clas/nanoflare/internal/api"
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtime"
 )
+
+func TestCompatibilityFlagRequiresNativePilot(t *testing.T) {
+	if os.Getenv("NANOFLARE_TEST_FEATURE_FLAG_CHILD") == "1" {
+		flag.CommandLine = flag.NewFlagSet("nanoflared", flag.ExitOnError)
+		os.Args = []string{"nanoflared", "--enable-cloudflare-compatibility"}
+		main()
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCompatibilityFlagRequiresNativePilot$")
+	command.Dir = t.TempDir() // No project .env, production state or credentials.
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "NANOFLARE_TEST_FEATURE_FLAG_CHILD=1"}
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "Cloudflare compatibility requires --enable-platform-dispatch") {
+		t.Fatalf("adapter flag did not reject missing native pilot before startup: %v %s", err, output)
+	}
+}
 
 func TestRuntimeMuxRoutesObjectRequestsToObjectHandler(t *testing.T) {
 	store := nanoflare.NewStore()
@@ -23,18 +46,18 @@ func TestRuntimeMuxRoutesObjectRequestsToObjectHandler(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	runtimeMux.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusBadRequest {
+	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "missing object storage bucket id") {
-		t.Fatalf("body = %q, want object storage bucket error", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "invalid runtime capability") {
+		t.Fatalf("body = %q, want authentication error", recorder.Body.String())
 	}
 }
 
 func TestRuntimeExecutionControlIsPrivateAndAuthenticated(t *testing.T) {
 	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter("", "", "", ""))
 	public := api.NewServer(service)
-	private := newRuntimeMux(service, public, runtime.NewDurationTelemetry(), "runner-control")
+	private := newRuntimeMuxWithControl(service, public, runtime.NewDurationTelemetry(), nil, "runner-control")
 	defer private.Close()
 	for _, token := range []string{"", "wrong", "runner-control"} {
 		request := httptest.NewRequest(http.MethodPost, "/internal/runtime/executions/open-session", strings.NewReader(`{}`))
@@ -65,14 +88,28 @@ func TestRuntimeResourcePrefixPreservesReservedKVKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	private := newRuntimeMux(service, api.NewServer(service), runtime.NewDurationTelemetry(), "runner-control")
+	private := newRuntimeMuxWithControl(service, api.NewServer(service), runtime.NewDurationTelemetry(), nil, "runner-control")
 	defer private.Close()
+	app, err := service.CreateApp(nanoflare.CreateAppInput{Name: "reserved-worker", Hostname: "reserved.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := service.RegisterExecution(nanoflare.ActiveDeployment{App: app, Deployment: nanoflare.Deployment{ID: "reserved-rev", AppID: app.ID, KVNamespaces: []nanoflare.KVBinding{{Binding: "KV", ID: kv.ID}}}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := service.Executions().Admit(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
 	for _, key := range []string{"internal/runtime/durations", "internal/runtime/executions/open-session", "internal/runtime/objects/demo.txt"} {
 		if err := store.KVPut("", kv.ID, key, []byte("resource-value")); err != nil {
 			t.Fatal(err)
 		}
 		request := httptest.NewRequest(http.MethodGet, "/internal/runtime/resources/"+key+"?urlencoded=true", nil)
 		request.Header.Set("X-Nanoflare-KV-Namespace-ID", kv.ID)
+		request.Header.Set("Authorization", "Bearer "+lease.Token())
 		response := httptest.NewRecorder()
 		private.ServeHTTP(response, request)
 		if response.Code != http.StatusOK || response.Body.String() != "resource-value" {

@@ -513,6 +513,18 @@ END $$;`)
 	if err != nil {
 		return err
 	}
+	if err := p.migrateArtifacts(ctx); err != nil {
+		return err
+	}
+	if err := p.migrateManagement(ctx); err != nil {
+		return err
+	}
+	if err := p.migratePlatform(ctx); err != nil {
+		return err
+	}
+	if err := p.migrateAssetUploads(ctx); err != nil {
+		return err
+	}
 	if err := p.migrateBundlePaths(ctx); err != nil {
 		return err
 	}
@@ -1543,12 +1555,34 @@ FROM oauth_tokens WHERE `+where, value).
 }
 
 func (p *Postgres) CreateApp(app nanoflare.App) error {
-	_, err := p.db.Exec(`INSERT INTO workers (id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.ExternalID, app.OAuthClientID, app.CreatedBy, app.RuntimeToken, app.CreatedAt)
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if app.Platform != nil {
+		ns, err := scanDispatchNamespace(tx.QueryRow(`SELECT `+namespaceColumns+` FROM dispatch_namespaces WHERE id=$1 FOR KEY SHARE`, app.Platform.NamespaceID))
+		if err != nil {
+			return err
+		}
+		if err = nanoflare.ValidatePlatformMembership(app, ns); err != nil {
+			return err
+		}
+		if app.Platform.Exposure != "private" || app.Hostname != "" {
+			return nanoflare.ErrInvalidAppUpdate
+		}
+	}
+	_, err = tx.Exec(`INSERT INTO workers (id,org_id,name,hostname,auth,external_id,oauth_client_id,created_by,runtime_token,created_at,platform) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, app.ID, app.OrgID, app.Name, app.Hostname, mustJSON(app.Auth), app.ExternalID, app.OAuthClientID, app.CreatedBy, app.RuntimeToken, app.CreatedAt, mustJSON(app.Platform))
 	if isUniqueViolation(err) {
+		if app.Platform != nil {
+			return nanoflare.ErrDispatchNamespaceExists
+		}
 		return nanoflare.ErrAppExists
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (p *Postgres) CountAppsByOrg(orgID string) (int, error) {
@@ -1867,7 +1901,7 @@ func (p *Postgres) GetApp(appID string) (nanoflare.App, error) {
 }
 
 func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
-	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM workers`
+	query := `SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at, platform FROM workers`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -1882,8 +1916,11 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 	workers := make([]nanoflare.App, 0)
 	for rows.Next() {
 		var app nanoflare.App
-		var auth []byte
-		if err := rows.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt); err != nil {
+		var auth, platform []byte
+		if err := rows.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt, &platform); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(platform, &app.Platform); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &app.Auth); err != nil {
@@ -1895,13 +1932,13 @@ func (p *Postgres) ListAppsByOrg(orgID string) ([]nanoflare.App, error) {
 }
 
 func (p *Postgres) getApp(appID string) (nanoflare.App, error) {
-	return scanApp(p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at FROM workers WHERE id = $1`, appID))
+	return scanApp(p.db.QueryRow(`SELECT id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at, platform FROM workers WHERE id = $1`, appID))
 }
 
 func scanApp(row interface{ Scan(...any) error }) (nanoflare.App, error) {
 	var app nanoflare.App
-	var auth []byte
-	err := row.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt)
+	var auth, platform []byte
+	err := row.Scan(&app.ID, &app.OrgID, &app.Name, &app.Hostname, &auth, &app.ExternalID, &app.OAuthClientID, &app.CreatedBy, &app.RuntimeToken, &app.CreatedAt, &platform)
 	if isUniqueViolation(err) {
 		return nanoflare.App{}, nanoflare.ErrAppExists
 	}
@@ -1909,6 +1946,9 @@ func scanApp(row interface{ Scan(...any) error }) (nanoflare.App, error) {
 		return nanoflare.App{}, nanoflare.ErrAppNotFound
 	}
 	if err != nil {
+		return nanoflare.App{}, err
+	}
+	if err := json.Unmarshal(platform, &app.Platform); err != nil {
 		return nanoflare.App{}, err
 	}
 	if err := json.Unmarshal(auth, &app.Auth); err != nil {
@@ -1926,7 +1966,7 @@ func (p *Postgres) PatchApp(appID string, input nanoflare.UpdateAppInput) (nanof
 	return scanApp(p.db.QueryRow(`UPDATE workers
 SET hostname = COALESCE($2, hostname), auth = COALESCE($3::jsonb, auth)
 WHERE id = $1
-RETURNING id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at`, appID, input.Hostname, auth))
+RETURNING id, org_id, name, hostname, auth, external_id, oauth_client_id, created_by, runtime_token, created_at, platform`, appID, input.Hostname, auth))
 }
 
 func (p *Postgres) UpdateApp(app nanoflare.App) error {
@@ -2098,7 +2138,7 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 	return tx.Commit()
 }
 
-func activateDeploymentTx(tx *sql.Tx, deployment nanoflare.Deployment) error {
+func storeDeploymentTx(tx *sql.Tx, deployment nanoflare.Deployment) error {
 	files := []byte(`[]`)
 	assets, err := json.Marshal(deployment.Assets)
 	if err != nil {
@@ -2110,15 +2150,10 @@ func activateDeploymentTx(tx *sql.Tx, deployment nanoflare.Deployment) error {
 			return err
 		}
 	}
-	result, err := tx.Exec(`UPDATE deployments SET active = false, traffic_percent = 0 WHERE worker_id = $1 AND active`, deployment.AppID)
-	if err != nil {
-		return err
-	}
-	_ = result
 	_, err = tx.Exec(`
 INSERT INTO deployments
 	(id, worker_id, commit_hash, commit_message, created_by, files, assets, entrypoint, format, compatibility_date, compatibility_flags, dns, triggers, vars, kv_namespaces, db, object_storage_bucket, services, asset_config, bundle_size, object_key, port, created_at, active, traffic_percent)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, true, 100)`,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, false, 0)`,
 		deployment.ID, deployment.AppID, deployment.CommitHash, deployment.CommitMessage, deployment.CreatedBy, files, assets, deployment.Entrypoint, deployment.Format,
 		deployment.CompatibilityDate, mustJSON(deployment.CompatibilityFlags), mustJSON(deployment.DNS), mustJSON(deployment.Triggers), mustJSON(deployment.Vars), mustJSON(deployment.KVNamespaces), mustJSON(deployment.Databases), mustJSON(deployment.ObjectStorageBuckets), mustJSON(deployment.Services), mustJSON(deployment.AssetConfig), deployment.BundleSize, deployment.ObjectKey, deployment.Port, deployment.CreatedAt)
 	if isForeignKeyViolation(err) {
@@ -2127,7 +2162,21 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 	if err != nil {
 		return err
 	}
-	return advancePublicationTx(tx, deployment.AppID)
+	return nil
+}
+
+func activateDeploymentTx(tx *sql.Tx, d nanoflare.Deployment) error {
+	if err := storeDeploymentTx(tx, d); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE deployments SET active=false,traffic_percent=0 WHERE worker_id=$1 AND active`, d.AppID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`UPDATE deployments SET active=true,traffic_percent=100 WHERE id=$1 AND worker_id=$2`, d.ID, d.AppID)
+	if err != nil {
+		return err
+	}
+	return advancePublicationTx(tx, d.AppID)
 }
 
 func (p *Postgres) SetActive(appID, deploymentID string) error {
@@ -2181,7 +2230,7 @@ func (p *Postgres) ActiveDeploymentsForApp(appID string) ([]nanoflare.ActiveDepl
 
 func (p *Postgres) activeDeployments(appID string) ([]nanoflare.ActiveDeployment, error) {
 	query := `
-SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
+SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at, a.platform,
 	d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.files, d.assets, d.entrypoint, d.format, d.compatibility_date, d.compatibility_flags, d.dns, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.services, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.traffic_percent
 FROM deployments d
 JOIN workers a ON a.id = d.worker_id
@@ -2201,9 +2250,9 @@ WHERE d.traffic_percent > 0
 	var active []nanoflare.ActiveDeployment
 	for rows.Next() {
 		var item nanoflare.ActiveDeployment
-		var files, assets, compatibilityFlags, dns, triggers, vars, kvNamespaces, databases, objectStorageBuckets, services, assetConfig, auth []byte
+		var files, assets, compatibilityFlags, dns, triggers, vars, kvNamespaces, databases, objectStorageBuckets, services, assetConfig, auth, platform []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt, &platform,
 			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.CommitHash, &item.Deployment.CommitMessage, &item.Deployment.CreatedBy, &files, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &compatibilityFlags, &dns, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &services, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
@@ -2213,6 +2262,9 @@ WHERE d.traffic_percent > 0
 			return nil, err
 		}
 		if err := json.Unmarshal(files, &item.Deployment.Files); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(platform, &item.App.Platform); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &item.App.Auth); err != nil {
@@ -2255,7 +2307,7 @@ WHERE d.traffic_percent > 0
 
 func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	rows, err := p.db.Query(`
-	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at,
+	SELECT a.id, a.org_id, a.name, a.hostname, a.auth, a.external_id, a.oauth_client_id, a.created_by, a.runtime_token, a.created_at, a.platform,
 		d.id, d.worker_id, d.commit_hash, d.commit_message, d.created_by, d.assets, d.entrypoint, d.format, d.compatibility_date, d.compatibility_flags, d.dns, d.triggers, d.vars, d.kv_namespaces, d.db, d.object_storage_bucket, d.services, d.asset_config, d.bundle_size, d.object_key, d.port, d.created_at, d.active, d.traffic_percent
 	FROM deployments d
 	JOIN workers a ON a.id = d.worker_id
@@ -2267,9 +2319,9 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 	var records []nanoflare.DeploymentRecord
 	for rows.Next() {
 		var item nanoflare.DeploymentRecord
-		var assets, compatibilityFlags, dns, triggers, vars, kvNamespaces, databases, objectStorageBuckets, services, assetConfig, auth []byte
+		var assets, compatibilityFlags, dns, triggers, vars, kvNamespaces, databases, objectStorageBuckets, services, assetConfig, auth, platform []byte
 		err := rows.Scan(
-			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt,
+			&item.App.ID, &item.App.OrgID, &item.App.Name, &item.App.Hostname, &auth, &item.App.ExternalID, &item.App.OAuthClientID, &item.App.CreatedBy, &item.App.RuntimeToken, &item.App.CreatedAt, &platform,
 			&item.Deployment.ID, &item.Deployment.AppID, &item.Deployment.CommitHash, &item.Deployment.CommitMessage, &item.Deployment.CreatedBy, &assets, &item.Deployment.Entrypoint,
 			&item.Deployment.Format, &item.Deployment.CompatibilityDate, &compatibilityFlags, &dns, &triggers, &vars, &kvNamespaces, &databases, &objectStorageBuckets, &services, &assetConfig, &item.Deployment.BundleSize,
 			&item.Deployment.ObjectKey, &item.Deployment.Port,
@@ -2291,6 +2343,9 @@ func (p *Postgres) ListDeployments() ([]nanoflare.DeploymentRecord, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal(vars, &item.Deployment.Vars); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(platform, &item.App.Platform); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(auth, &item.App.Auth); err != nil {

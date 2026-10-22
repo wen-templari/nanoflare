@@ -124,6 +124,13 @@ func (s *Server) workerOutput(w http.ResponseWriter, r *http.Request) {
 
 func workerOutputQuery(r *http.Request) (nanoflare.WorkerOutputQuery, error) {
 	values := r.URL.Query()
+	for name := range values {
+		switch name {
+		case "deployment_id", "level", "q", "limit", "since", "until":
+		default:
+			return nanoflare.WorkerOutputQuery{}, nanoflare.ErrTelemetryQuery
+		}
+	}
 	query := nanoflare.WorkerOutputQuery{DeploymentID: strings.TrimSpace(values.Get("deployment_id")), Level: strings.TrimSpace(values.Get("level")), Text: strings.TrimSpace(values.Get("q")), Limit: 500}
 	if raw := values.Get("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
@@ -264,10 +271,24 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if len(input.DispatchNamespaces) > 0 && !s.requireScope(w, r, "namespaces:dispatch") {
+		return
+	}
+	headerKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if headerKey != "" {
+		if input.IdempotencyKey != "" && input.IdempotencyKey != headerKey {
+			writeError(w, 400, errors.New("idempotency key header and body differ"))
+			return
+		}
+		input.IdempotencyKey = headerKey
+	}
 	input.CreatedBy = controlActor(r)
 	deployment, err := s.service.DeployForOrg(controlOrgID(r), r.PathValue("workerID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrIdempotencyConflict) || errors.Is(err, nanoflare.ErrPublicationFailed) {
+			status = http.StatusConflict
+		}
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
 			status = http.StatusNotFound
 		}
@@ -354,10 +375,28 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		writeWorkerError(w, err)
 		return
 	}
-	if !ok {
+	if !ok || active.App.IsPrivate() {
 		gatewaySpan.SetStatus(codes.Error, "worker deployment not found")
 		writeWorkerError(w, nanoflare.ErrAppNotFound)
 		return
+	}
+	rootID := ""
+	if len(active.Deployment.DispatchNamespaces) > 0 {
+		var deadline time.Time
+		rootID, deadline, err = s.service.BeginDispatchRoot(active)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		rootContext, cancel := context.WithDeadline(r.Context(), deadline)
+		r = r.WithContext(rootContext)
+		stop := context.AfterFunc(rootContext, func() { s.service.EndDispatchRoot(rootID, true) })
+		defer func() { stop(); s.service.EndDispatchRoot(rootID, rootContext.Err() != nil); cancel() }()
+		r.Header = r.Header.Clone()
+		r.Header.Set("X-Nanoflare-Dispatch-Root", rootID)
+	} else {
+		r.Header = r.Header.Clone()
+		r.Header.Del("X-Nanoflare-Dispatch-Root")
 	}
 	gatewaySpan.SetAttributes(attribute.String("nanoflare.deployment.id", active.Deployment.ID))
 	setStickyDeploymentCookie(w, appID, active.Deployment.ID)
@@ -386,7 +425,11 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
-		defer endpoint.Release()
+		if rootID != "" {
+			defer s.service.HoldDispatchRoot(rootID, endpoint.Release)
+		} else {
+			defer endpoint.Release()
+		}
 		workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath)
 		if err != nil {
 			gatewaySpan.SetStatus(codes.Error, err.Error())
@@ -409,7 +452,11 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	defer endpoint.Release()
+	if rootID != "" {
+		defer s.service.HoldDispatchRoot(rootID, endpoint.Release)
+	} else {
+		defer endpoint.Release()
+	}
 	workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath)
 	if err != nil {
 		gatewaySpan.SetStatus(codes.Error, err.Error())
@@ -564,7 +611,7 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
 	request.Header = r.Header.Clone()
 	for name := range request.Header {
-		if strings.HasPrefix(strings.ToLower(name), "x-nanoflare-") {
+		if strings.HasPrefix(strings.ToLower(name), "x-nanoflare-") && !strings.EqualFold(name, "X-Nanoflare-Dispatch-Root") {
 			delete(request.Header, name)
 		}
 	}

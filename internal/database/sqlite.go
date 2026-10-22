@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,7 +13,8 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
-	_ "modernc.org/sqlite"
+	sqliteDriver "modernc.org/sqlite"
+	sqliteLib "modernc.org/sqlite/lib"
 )
 
 type SQLiteManager struct {
@@ -22,6 +24,7 @@ type SQLiteManager struct {
 	dbs        map[string]*sql.DB
 	bookmarks  map[string]int64
 	restoreMu  sync.RWMutex
+	queries    chan struct{}
 }
 
 func NewSQLiteManager(dir string, litestream *LitestreamSupervisor) (*SQLiteManager, error) {
@@ -33,6 +36,7 @@ func NewSQLiteManager(dir string, litestream *LitestreamSupervisor) (*SQLiteMana
 	}
 	manager := &SQLiteManager{
 		dir:        dir,
+		queries:    make(chan struct{}, 32),
 		litestream: litestream,
 		dbs:        make(map[string]*sql.DB),
 		bookmarks:  make(map[string]int64),
@@ -58,6 +62,23 @@ func NewSQLiteManager(dir string, litestream *LitestreamSupervisor) (*SQLiteMana
 }
 
 func (m *SQLiteManager) Execute(databaseID string, request nanoflare.DBQueryRequest) (nanoflare.DBQueryResponse, error) {
+	return m.ExecuteContext(context.Background(), databaseID, request)
+}
+func (m *SQLiteManager) ExecuteContext(ctx context.Context, databaseID string, request nanoflare.DBQueryRequest) (nanoflare.DBQueryResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := m.admitQuery(ctx); err != nil {
+		return nanoflare.DBQueryResponse{}, err
+	}
+	defer m.releaseQuery()
+	if len(request.Statements) > 100 {
+		return nanoflare.DBQueryResponse{}, nanoflare.ErrSQLPolicy
+	}
+	for _, statement := range request.Statements {
+		if _, err := nanoflare.InspectSQL(statement.SQL); err != nil {
+			return nanoflare.DBQueryResponse{}, err
+		}
+	}
 	m.restoreMu.RLock()
 	defer m.restoreMu.RUnlock()
 	databaseID = strings.TrimSpace(databaseID)
@@ -71,6 +92,12 @@ func (m *SQLiteManager) Execute(databaseID string, request nanoflare.DBQueryRequ
 	if err != nil {
 		return nanoflare.DBQueryResponse{}, err
 	}
+
+	conn, err := scopedSQLiteConnection(ctx, db)
+	if err != nil {
+		return nanoflare.DBQueryResponse{}, err
+	}
+	defer conn.Close()
 	started := time.Now()
 	method := strings.TrimSpace(request.Method)
 	if method == "" {
@@ -78,19 +105,19 @@ func (m *SQLiteManager) Execute(databaseID string, request nanoflare.DBQueryRequ
 	}
 	switch method {
 	case "exec":
-		result, err := m.exec(context.Background(), db, databaseID, request.Statements[0].SQL, started)
+		result, err := m.exec(ctx, conn, databaseID, request.Statements[0].SQL, started)
 		if err != nil {
 			return nanoflare.DBQueryResponse{}, err
 		}
 		return nanoflare.DBQueryResponse{Exec: &result, Bookmark: m.nextBookmark(databaseID)}, nil
 	case "batch":
-		results, err := m.batch(context.Background(), db, databaseID, request.Statements)
+		results, err := m.batch(ctx, conn, databaseID, request.Statements)
 		if err != nil {
 			return nanoflare.DBQueryResponse{}, err
 		}
 		return nanoflare.DBQueryResponse{Results: results, Bookmark: m.nextBookmark(databaseID)}, nil
 	case "raw", "first", "run", "all":
-		result, err := m.run(context.Background(), db, databaseID, request.Statements[0])
+		result, err := m.run(ctx, conn, databaseID, request.Statements[0])
 		if err != nil {
 			return nanoflare.DBQueryResponse{}, err
 		}
@@ -123,6 +150,17 @@ func (m *SQLiteManager) Execute(databaseID string, request nanoflare.DBQueryRequ
 }
 
 func (m *SQLiteManager) ApplyMigration(databaseID, name, migrationSQL string) (nanoflare.DBMigrationResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.admitQuery(ctx); err != nil {
+		return nanoflare.DBMigrationResult{}, err
+	}
+	defer m.releaseQuery()
+	if strings.TrimSpace(migrationSQL) != "" {
+		if _, err := nanoflare.InspectSQL(migrationSQL); err != nil {
+			return nanoflare.DBMigrationResult{}, err
+		}
+	}
 	m.restoreMu.RLock()
 	defer m.restoreMu.RUnlock()
 	name = strings.TrimSpace(name)
@@ -133,16 +171,21 @@ func (m *SQLiteManager) ApplyMigration(databaseID, name, migrationSQL string) (n
 	if err != nil {
 		return nanoflare.DBMigrationResult{}, err
 	}
-	tx, err := db.BeginTx(context.Background(), nil)
+	conn, err := scopedSQLiteConnection(ctx, db)
+	if err != nil {
+		return nanoflare.DBMigrationResult{}, err
+	}
+	defer conn.Close()
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return nanoflare.DBMigrationResult{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS nanoflare_db_migrations (name text PRIMARY KEY, applied_at text NOT NULL)`); err != nil {
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS nanoflare_db_migrations (name text PRIMARY KEY, applied_at text NOT NULL)`); err != nil {
 		return nanoflare.DBMigrationResult{}, err
 	}
 	var existing string
-	err = tx.QueryRow(`SELECT name FROM nanoflare_db_migrations WHERE name = ?`, name).Scan(&existing)
+	err = tx.QueryRowContext(ctx, `SELECT name FROM nanoflare_db_migrations WHERE name = ?`, name).Scan(&existing)
 	if err == nil {
 		return nanoflare.DBMigrationResult{Name: name, Applied: false}, tx.Commit()
 	}
@@ -150,11 +193,11 @@ func (m *SQLiteManager) ApplyMigration(databaseID, name, migrationSQL string) (n
 		return nanoflare.DBMigrationResult{}, err
 	}
 	if strings.TrimSpace(migrationSQL) != "" {
-		if _, err := tx.Exec(migrationSQL); err != nil {
+		if _, err := tx.ExecContext(ctx, migrationSQL); err != nil {
 			return nanoflare.DBMigrationResult{}, err
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO nanoflare_db_migrations (name, applied_at) VALUES (?, ?)`, name, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO nanoflare_db_migrations (name, applied_at) VALUES (?, ?)`, name, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return nanoflare.DBMigrationResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -312,15 +355,16 @@ func (m *SQLiteManager) nextBookmark(databaseID string) string {
 	return fmt.Sprintf("%s:%d", databaseID, m.bookmarks[databaseID])
 }
 
-func (m *SQLiteManager) batch(ctx context.Context, db *sql.DB, databaseID string, statements []nanoflare.DBStatementRequest) ([]nanoflare.D1Result, error) {
+func (m *SQLiteManager) batch(ctx context.Context, db *sql.Conn, databaseID string, statements []nanoflare.DBStatementRequest) ([]nanoflare.D1Result, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	results := make([]nanoflare.D1Result, 0, len(statements))
+	budget := &sqlResultBudget{}
 	for _, statement := range statements {
-		result, err := runStatement(ctx, tx, m.path(databaseID), statement)
+		result, err := runStatement(ctx, tx, m.path(databaseID), statement, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -332,11 +376,11 @@ func (m *SQLiteManager) batch(ctx context.Context, db *sql.DB, databaseID string
 	return results, nil
 }
 
-func (m *SQLiteManager) run(ctx context.Context, db *sql.DB, databaseID string, statement nanoflare.DBStatementRequest) (nanoflare.D1Result, error) {
-	return runStatement(ctx, db, m.path(databaseID), statement)
+func (m *SQLiteManager) run(ctx context.Context, db *sql.Conn, databaseID string, statement nanoflare.DBStatementRequest) (nanoflare.D1Result, error) {
+	return runStatement(ctx, db, m.path(databaseID), statement, &sqlResultBudget{})
 }
 
-func (m *SQLiteManager) exec(ctx context.Context, db *sql.DB, databaseID, query string, started time.Time) (nanoflare.D1ExecResult, error) {
+func (m *SQLiteManager) exec(ctx context.Context, db *sql.Conn, databaseID, query string, started time.Time) (nanoflare.D1ExecResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nanoflare.D1ExecResult{}, errors.New("SQL query is required")
 	}
@@ -351,7 +395,7 @@ type statementRunner interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func runStatement(ctx context.Context, runner statementRunner, dbPath string, statement nanoflare.DBStatementRequest) (nanoflare.D1Result, error) {
+func runStatement(ctx context.Context, runner statementRunner, dbPath string, statement nanoflare.DBStatementRequest, budget *sqlResultBudget) (nanoflare.D1Result, error) {
 	started := time.Now()
 	if strings.TrimSpace(statement.SQL) == "" {
 		return nanoflare.D1Result{}, errors.New("SQL query is required")
@@ -360,7 +404,7 @@ func runStatement(ctx context.Context, runner statementRunner, dbPath string, st
 	if err != nil {
 		return nanoflare.D1Result{}, err
 	}
-	resultRows, columns, err := scanRows(rows)
+	resultRows, columns, err := scanRows(rows, budget)
 	closeErr := rows.Close()
 	if err != nil {
 		return nanoflare.D1Result{}, err
@@ -414,13 +458,18 @@ func normalizeParams(params []any) []any {
 	return out
 }
 
-func scanRows(rows *sql.Rows) ([]map[string]any, []string, error) {
+type sqlResultBudget struct{ rows, bytes int }
+
+func scanRows(rows *sql.Rows, budget *sqlResultBudget) ([]map[string]any, []string, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, nil, err
 	}
 	result := make([]map[string]any, 0)
 	for rows.Next() {
+		if budget.rows >= 10000 {
+			return nil, nil, nanoflare.ErrSQLPolicy
+		}
 		values := make([]any, len(columns))
 		pointers := make([]any, len(columns))
 		for i := range values {
@@ -432,6 +481,15 @@ func scanRows(rows *sql.Rows) ([]map[string]any, []string, error) {
 		row := make(map[string]any, len(columns))
 		for i, column := range columns {
 			row[column] = normalizeSQLiteValue(values[i])
+		}
+		encoded, err := json.Marshal(row)
+		if err != nil {
+			return nil, nil, err
+		}
+		budget.bytes += len(encoded)
+		budget.rows++
+		if budget.bytes > 4<<20 {
+			return nil, nil, nanoflare.ErrSQLPolicy
 		}
 		result = append(result, row)
 	}
@@ -475,18 +533,7 @@ func databaseFileSize(path string) int64 {
 	return info.Size()
 }
 
-func statementCount(sql string) int {
-	count := 0
-	for _, part := range strings.Split(sql, ";") {
-		if strings.TrimSpace(part) != "" {
-			count++
-		}
-	}
-	if count == 0 {
-		return 1
-	}
-	return count
-}
+func statementCount(query string) int { count, _ := nanoflare.InspectSQL(query); return count }
 
 func looksLikeWrite(sql string) bool {
 	sql = strings.ToUpper(strings.TrimSpace(sql))
@@ -497,3 +544,33 @@ func looksLikeWrite(sql string) bool {
 	}
 	return false
 }
+
+func scopedSQLiteConnection(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	limits := map[int]int{sqliteLib.SQLITE_LIMIT_ATTACHED: 0, sqliteLib.SQLITE_LIMIT_SQL_LENGTH: 100 << 10, sqliteLib.SQLITE_LIMIT_LENGTH: 10 << 20, sqliteLib.SQLITE_LIMIT_EXPR_DEPTH: 100, sqliteLib.SQLITE_LIMIT_TRIGGER_DEPTH: 16, sqliteLib.SQLITE_LIMIT_WORKER_THREADS: 2}
+	for id, value := range limits {
+		if _, err = sqliteDriver.Limit(conn, id, value); err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+	if _, err = conn.ExecContext(ctx, "PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=500;"); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// Bound concurrent database work across tenant files, including time queued.
+func (m *SQLiteManager) admitQuery(ctx context.Context) error {
+	select {
+	case m.queries <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (m *SQLiteManager) releaseQuery() { <-m.queries }

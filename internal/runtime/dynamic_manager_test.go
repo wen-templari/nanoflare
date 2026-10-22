@@ -341,13 +341,13 @@ func TestDynamicCompletedServiceCapabilityRetainsParentLifetime(t *testing.T) {
 }
 
 func TestDynamicSnapshotRetirementPrecedesConcurrentRepublication(t *testing.T) {
-	m, _, active, _ := newDynamicControlFixture(t)
+	m, _, active, oldKey := newDynamicControlFixture(t)
 	m.committed = map[string]string{}
 	retiring := make(chan struct{})
 	allowRetire := make(chan struct{})
 	registered := make(chan struct{}, 1)
 	var authorityMu sync.Mutex
-	accepting := true
+	accepting := map[string]bool{oldKey: true}
 	m.controlClient.Transport = dynamicUnitTransport(func(r *http.Request) (*http.Response, error) {
 		body := `{}`
 		switch {
@@ -355,14 +355,16 @@ func TestDynamicSnapshotRetirementPrecedesConcurrentRepublication(t *testing.T) 
 			close(retiring)
 			<-allowRetire
 			authorityMu.Lock()
-			accepting = false
+			accepting[oldKey] = false
 			authorityMu.Unlock()
 		case strings.HasSuffix(r.URL.Path, "/register"):
+			body = dynamicGrantRegistrationResponse(t, r)
+			var result map[string]string
+			json.Unmarshal([]byte(body), &result)
 			authorityMu.Lock()
-			accepting = true
+			accepting[result["execution_id"]] = true
 			authorityMu.Unlock()
 			registered <- struct{}{}
-			body = dynamicGrantRegistrationResponse(t, r)
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
@@ -373,9 +375,14 @@ func TestDynamicSnapshotRetirementPrecedesConcurrentRepublication(t *testing.T) 
 	go func() { m.collectSnapshots(); close(collected) }()
 	<-retiring
 	built := make(chan error, 1)
-	go func() { _, err := m.build([]nanoflare.ActiveDeployment{active}); built <- err }()
-	// A previously issued retirement is deliberately delayed while a new
-	// publication of the same execution starts. Registration must run after it.
+	var newKey string
+	go func() {
+		keys, err := m.build([]nanoflare.ActiveDeployment{active})
+		newKey = keys[dynamicIdentity(active)]
+		built <- err
+	}()
+	// Fresh authority can register while an old grant retires. The delayed
+	// retirement must affect only the old key, without blocking new admissions.
 	select {
 	case <-registered:
 	case <-time.After(100 * time.Millisecond):
@@ -387,7 +394,7 @@ func TestDynamicSnapshotRetirementPrecedesConcurrentRepublication(t *testing.T) 
 	<-collected
 	authorityMu.Lock()
 	defer authorityMu.Unlock()
-	if !accepting {
+	if newKey == oldKey || !accepting[newKey] || accepting[oldKey] {
 		t.Fatal("delayed old retirement revoked newly published execution")
 	}
 }

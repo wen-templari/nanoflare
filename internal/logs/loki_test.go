@@ -58,3 +58,17 @@ func TestLokiReaderQueryReportsHTTPError(t *testing.T) {
 		t.Fatal("expected an HTTP error")
 	}
 }
+
+func TestLokiReaderRejectsUnexpectedWorkerStreams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("query"); got != `{worker_id="allowed"}` {
+			t.Errorf("wrong server scope: %s", got)
+		}
+		w.Write([]byte(`{"status":"success","data":{"result":[{"stream":{"worker_id":"foreign","deployment_id":"foreign-revision"},"values":[["1785286925000000000","foreign secret"]]},{"stream":{"deployment_id":"unknown"},"values":[["1785286925000000000","unattributed"]]}]}}`))
+	}))
+	defer server.Close()
+	result, err := NewLokiReader(server.URL).Query(context.Background(), "allowed", nanoflare.WorkerOutputQuery{})
+	if err != nil || len(result) != 0 {
+		t.Fatalf("unexpected backend scope leaked: %#v %v", result, err)
+	}
+}

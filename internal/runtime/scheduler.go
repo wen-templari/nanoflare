@@ -28,6 +28,7 @@ type cronJob struct {
 type cronRunner struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	jobsMu sync.RWMutex
 	jobs   []cronJob
 	client cronHTTPClient
 	output *OutputBuffer
@@ -59,6 +60,13 @@ func newCronRunner(active []nanoflare.ActiveDeployment, output *OutputBuffer, cl
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
 	}
+	runner.Update(active)
+	return runner
+}
+
+// Update replaces future triggers without canceling admitted cron executions.
+func (runner *cronRunner) Update(active []nanoflare.ActiveDeployment) {
+	jobs := []cronJob{}
 	for _, item := range active {
 		for _, expression := range item.Deployment.Triggers.Crons {
 			schedule, err := nanoflare.ParseCron(expression)
@@ -66,7 +74,7 @@ func newCronRunner(active []nanoflare.ActiveDeployment, output *OutputBuffer, cl
 				runner.log(item, "error", fmt.Sprintf("skip invalid cron trigger for %s: %v", item.App.ID, err))
 				continue
 			}
-			runner.jobs = append(runner.jobs, cronJob{
+			jobs = append(jobs, cronJob{
 				appID:    item.App.ID,
 				cron:     expression,
 				schedule: schedule,
@@ -74,7 +82,9 @@ func newCronRunner(active []nanoflare.ActiveDeployment, output *OutputBuffer, cl
 			})
 		}
 	}
-	return runner
+	runner.jobsMu.Lock()
+	runner.jobs = jobs
+	runner.jobsMu.Unlock()
 }
 
 func (r *cronRunner) Run() {
@@ -102,7 +112,10 @@ func (r *cronRunner) Stop() {
 }
 
 func (r *cronRunner) runDue(now time.Time) {
-	for _, job := range r.jobs {
+	r.jobsMu.RLock()
+	jobs := append([]cronJob(nil), r.jobs...)
+	r.jobsMu.RUnlock()
+	for _, job := range jobs {
 		if !job.schedule.Matches(now) {
 			continue
 		}

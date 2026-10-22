@@ -1,0 +1,15 @@
+{
+  "created_at": "2026-10-21T12:27:23.030258+00:00",
+  "source_scope": "cmd/**/*.go, internal/**/*.go, internal/**/*.js, docker/**/*.yml, docker/**/*.yaml, Dockerfile, go.mod, go.sum, process_recovery.py, monitoring.py; sorted relative paths and SHA-256 digests separated by NUL and newline",
+  "source_file_count": 229,
+  "source_tree_sha256": "26cd62c1e4aefff6e921d32e0361fb8c4c9c5de8ce105554c3830fbdd66d9162",
+  "probe_source_sha256": "81e5388517d55e86c787ae4ca7267d58bea8c063715b7226cf3e98e035d804ea",
+  "shared_fixture_sha256": "6cab4e0c9919c6e4d55ecb369a57b5d5beb3ff1fcd1414927997a1c8839ab17e",
+  "report_sha256": "865cb821125c058c9796aa34b089d7de1ebe6d071302c27edefe8fd56867188c",
+  "builds": [
+    "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath ./cmd/nanoflared",
+    "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath ./cmd/nanoflare-runner"
+  ],
+  "race_evidence": "/tmp/nf-step10-vector-race-final.log",
+  "full_suite_evidence": "/tmp/nf-step10-monitoring-full.log"
+}

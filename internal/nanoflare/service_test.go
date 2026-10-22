@@ -135,34 +135,8 @@ func TestWorkerRuntimeDeploymentLoadsOnlyRequestedWorker(t *testing.T) {
 	if repo.getAppCalls != 0 || repo.activeDeploymentsForAppCalls != 1 || repo.activeDeploymentsCalls != 0 {
 		t.Fatalf("repository calls = get app:%d active for app:%d all active:%d", repo.getAppCalls, repo.activeDeploymentsForAppCalls, repo.activeDeploymentsCalls)
 	}
-	if len(objects.gets) != 1 || objects.gets[0] != target.ID+":"+targetDeployment.ObjectKey {
-		t.Fatalf("object reads = %#v, want only requested deployment", objects.gets)
-	}
-	if strings.Contains(objects.gets[0], otherDeployment.ObjectKey) {
-		t.Fatalf("object reads unexpectedly hydrated other deployment %s", otherDeployment.ID)
-	}
-
-	active, _, ok, err = service.WorkerRuntimeDeploymentWithPreference(target.ID, "/plain", targetDeployment.ID)
-	if err != nil || !ok || active.Deployment.ID != targetDeployment.ID {
-		t.Fatalf("cached active deployment = %#v, ok %v, error %v", active, ok, err)
-	}
-	if repo.activeDeploymentsForAppCalls != 1 || len(objects.gets) != 1 {
-		t.Fatalf("cached repository calls = %d, object reads = %d; want 1 each", repo.activeDeploymentsForAppCalls, len(objects.gets))
-	}
-
-	replacement, err := service.Deploy(target.ID, DeployInput{
-		Files:             []WorkerFile{{Path: "worker.js", Content: "replacement"}},
-		CompatibilityDate: "2025-12-10",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	active, _, ok, err = service.WorkerRuntimeDeploymentWithPreference(target.ID, "/plain", targetDeployment.ID)
-	if err != nil || !ok || active.Deployment.ID != replacement.ID {
-		t.Fatalf("replacement active deployment = %#v, ok %v, error %v; want %s", active, ok, err, replacement.ID)
-	}
-	if repo.activeDeploymentsForAppCalls != 2 {
-		t.Fatalf("repository calls after cache invalidation = %d, want 2", repo.activeDeploymentsForAppCalls)
+	if len(objects.gets) != 0 {
+		t.Fatalf("immutable snapshot unexpectedly read mutable source objects: %#v (other revision %s)", objects.gets, otherDeployment.ID)
 	}
 }
 
@@ -336,7 +310,7 @@ func TestDeployRestoresPreviousActivationWhenRuntimePublicationFails(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "second.js", Content: "second"}}, CompatibilityDate: "2025-12-10"})
+	_, err = service.Deploy(app.ID, DeployInput{Files: []WorkerFile{{Path: "second.js", Content: "second"}}, CompatibilityDate: "2025-12-10"})
 	if err == nil {
 		t.Fatal("Deploy() error = nil, want runtime publication error")
 	}
@@ -352,11 +326,20 @@ func TestDeployRestoresPreviousActivationWhenRuntimePublicationFails(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].Deployment.ID != first.ID {
-		t.Fatalf("deployment records = %#v, want failed deployment removed", records)
+	if len(records) != 2 {
+		t.Fatalf("deployment records = %#v, want retained failed revision", records)
 	}
-	if _, ok := objects.objects[app.ID+":"+failed.ObjectKey]; ok {
-		t.Fatalf("failed deployment object %q was not cleaned up", failed.ObjectKey)
+	for _, record := range records {
+		if record.Deployment.ID != first.ID && record.Active {
+			t.Fatal("failed revision is active")
+		}
+	}
+	for _, record := range records {
+		if record.Deployment.ID != first.ID {
+			if _, err := store.GetDeploymentArtifact(app.ID, record.Deployment.ID); err != nil {
+				t.Fatalf("failed artifact was not retained: %v", err)
+			}
+		}
 	}
 
 	apps, err := store.ListApps()

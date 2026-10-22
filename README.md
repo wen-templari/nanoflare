@@ -1,5 +1,7 @@
 # nanoflare
 
+[Documentation](docs/README.md) · [Workers for Platforms integration](docs/guides/workers-for-platforms.md)
+
 `nanoflare` is a lightweight self-hosted runtime for trusted business apps generated
 with AI. The design keeps the custom control plane small and uses existing
 infrastructure directly:
@@ -157,10 +159,32 @@ NANOFLARE_WORKERD_EGRESS_CA_FILES=/run/secrets/corp-root.pem
 NANOFLARE_WORKERD_EGRESS_NO_PROXY=10.0.0.0/8,.corp.example
 ```
 
+Compose forwards these settings to both the runner and daemon. Mount each CA
+file read-only at its configured path in **both** services through a Compose
+override: the runner handles static outbound and the daemon handles dynamic
+outbound. A configured CA path that is absent prevents service startup.
+
+For the single CA path above, an override can contain:
+
+```yaml
+services:
+  nanoflared:
+    volumes:
+      - ./corp-root.pem:/run/secrets/corp-root.pem:ro
+  nanoflare-runner:
+    volumes:
+      - ./corp-root.pem:/run/secrets/corp-root.pem:ro
+```
+
 When a proxy is configured, `globalOutbound` directs Worker `fetch()` through
-the adapter, so treat the no-proxy list as an explicit egress policy. Keep it
-aligned with the private destinations intended to be allowed by
-`NANOFLARE_WORKERD_NETWORK_ALLOW`.
+the adapter. `NANOFLARE_WORKERD_NETWORK_ALLOW` authorizes resolved destinations
+before routing; the no-proxy list only chooses whether authorized traffic uses
+the corporate proxy. The adapter pins an authorized IP while preserving the
+original HTTP Host and TLS identity, including when tunneling through the proxy.
+Private dynamic dispatch uses the same policy through an invocation-scoped HTTP
+adapter; its native raw TCP and Cache API remain unavailable. See the
+[runtime contract](docs/reference/workers-for-platforms-runtime.md)
+for supported operations and initial bounds.
 
 ### Updating worker variables without uploading files
 
@@ -324,28 +348,35 @@ When `nanoflare-runner` and `nanoflared` run on separate hosts, set
 `nanoflared -runtime-addr` to a private reachable listener and pass that address
 to `nanoflare-runner -nanoflare-runtime-addr`.
 
-The runner prepares a fresh `workerd` generation and health-checks its sockets.
-`nanoflared` publishes the corresponding routes from its HTTP discovery endpoint
-and then commits the generation. Both direct and runner execution keep one shared
-`workerd` process alive for all active Workers. Each deployment receives a private
-Unix socket, using HTTP over that socket instead of a TCP port. Configure its
-parent directory with `-runtime-socket-dir` (default `/tmp/nanoflare-sockets`);
-keep the absolute path short enough for Unix socket path limits. Socket paths are
-ephemeral and stay on the runtime host. Traefik reaches the Nanoflare gateway;
-in split mode the gateway forwards through the authenticated runner API.
+The runner compiles and validates immutable Worker revisions before publishing
+routing. Both direct and runner execution keep one shared `workerd` process and
+a stable Unix dispatcher socket. Deploying a Worker, updating its variables or
+secrets, and changing traffic do not restart the process or reset other Workers'
+warm state. Existing requests, streams, WebSockets, scheduled executions and
+background work retain their admitted revisions while new requests use the
+published revision. Cron changes update future triggers without canceling jobs
+already running.
+
+Configure the socket parent directory with `-runtime-socket-dir` (default
+`/tmp/nanoflare-sockets`); keep its absolute path short enough for Unix socket
+limits. Sockets stay on the runtime host. Traefik reaches the Nanoflare gateway;
+in split mode the gateway forwards through the authenticated runner API. The
+private runtime listener must be reachable by the runner and must not be exposed
+as a public application endpoint. Local mode generates a control credential;
+remote mode uses the configured runner credential.
 
 The runtime requires Unix sockets; the lazy manager and TCP port allocator have
-been removed. New deployments, variable updates, and secret rollouts do not
-reserve TCP ports. The legacy deployment `port` field remains for stored-data
-compatibility and is zero for new deployments.
+been removed. Deployment `port` remains only for stored-data compatibility and is
+zero for new revisions. Workers for Platforms continues to use the existing
+trusted namespace, authorization, resource, outbound and invocation-budget
+contracts through stable parent bridges.
 
-Deployment updates briefly run a candidate process alongside the active process.
-Once the candidate's sockets are ready, routing switches and the previous process
-drains tracked requests for up to five seconds before shutdown. Failed candidates
-leave the existing process serving. Idle Workers do not stop the shared process;
-unexpected exits trigger a restart. Restarting a generation resets all Worker
-in-memory state. Per-invocation CPU limits and Durable Object ownership handoff
-are not provided by this runtime model.
+Process replacement is reserved for runtime upgrades and crash/session recovery.
+A shared-process failure still interrupts its Workers and resets their in-memory
+state. Independent publication does not add process-level tenant isolation,
+per-invocation CPU limits, or Durable Object ownership handoff. See the
+[independent publication design](docs/design/dynamic-worker-loading.md) for
+revision lifetimes and qualification checks.
 
 Build the CLI:
 
@@ -886,6 +917,13 @@ set `NANOFLARE_LOG_VECTOR_SOCKET` to Vector's Unix socket path (or
 Nanoflare continues running and drops newly queued log events rather than
 blocking Workers.
 
+Production Compose mounts a restricted Unix collector socket into the daemon
+and runner automatically. Only trusted UID 0/GID 65532 producers should receive
+that mount. Prometheus uses a separate operator token and the container daemon
+target; host-run development uses its own scrape configuration. See the
+[operator notes](docs/guides/workers-for-platforms-operator.md) for credential
+file ownership, collector permissions and collection-loss monitoring.
+
 Worker drill-down data is served by `nanoflared`:
 
 ```text
@@ -916,3 +954,6 @@ integration step, not a hardened sandbox.
 Runtime APIs use stable app-scoped capability tokens injected into private
 `workerd` configuration. An application never chooses its own worker ID when
 reading or writing KV data.
+
+Use an existing Cloudflare Worker project with the Nanoflare CLI: see the
+[Cloudflare configuration guide](docs/guides/cloudflare-config.md).

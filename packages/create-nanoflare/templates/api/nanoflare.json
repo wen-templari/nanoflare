@@ -2,7 +2,11 @@
   "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
   "name": "{{projectName}}",
   "main": "src/worker.ts",
-  "format": "modules",
   "compatibility_date": "{{compatibilityDate}}",
-  "db": [{ "binding": "DB", "database_id": "replace-with-database-id" }]
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "{{projectName}}-db"
+    }
+  ]
 }

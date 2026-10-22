@@ -30,7 +30,9 @@
     "test": "pnpm run build && node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "miniflare": "^4.20260206.0"
+    "jsonc-parser": "catalog:",
+    "miniflare": "^4.20260206.0",
+    "smol-toml": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

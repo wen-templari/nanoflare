@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/clas/nanoflare/internal/runtimeassets"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
 	fmt.Fprintf(&out, `(name = "broker", external = (address = %s, http = (injectRequestHeaders = [(name = "X-Nanoflare-Broker-Token", value = %s)]))),
 (name = "dispatcher", worker = (
   compatibilityDate = "2026-09-08",
-  modules = [(name = "dispatcher.js", esModule = %s)],
+  modules = [(name = "dispatcher.js", esModule = %s), (name = "dispatch.js", esModule = %s)],
   bindings = [
     (name = "LOADER", workerLoader = (id = "nanoflare-publications")),
     (name = "BROKER", service = "broker"),
@@ -30,11 +31,44 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
  ],
  sockets = [(name = "dispatcher", address = %s, http = (), service = "dispatcher")],
 );
-`, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
+`, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(runtimeassets.DispatchModule), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
 	return out.String()
 }
 
 const dynamicDispatcherSource = `import { WorkerEntrypoint } from "cloudflare:workers";
+import { wrapDispatchEnv, setDispatchExports } from "./dispatch.js";
+let parentExports;
+export { DispatchBroker } from "./dispatch.js";
+function restoreExportProps(value,key,token) {
+ if(!value||typeof value!=="object")return value;
+ if(Array.isArray(value))return value.map(item=>restoreExportProps(item,key,token));
+ if(Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)return value;
+ if(Object.hasOwn(value,"__nanoflare_export")){const ref=value.__nanoflare_export;return parentExports.NamedExportBridge({props:{key,token,name:ref.name,props:restoreExportProps(ref.props,key,token),methods:ref.methods,properties:ref.properties}});}
+ return Object.fromEntries(Object.entries(value).map(([name,item])=>[name,restoreExportProps(item,key,token)]));
+}
+export class NamedExportBridge extends WorkerEntrypoint {
+ constructor(ctx,env){
+  super(ctx,env);const proto=Object.create(NamedExportBridge.prototype);
+  const invoke=async function(method,args,read){
+   const {key,token,name,props}=this.ctx.props;
+   this._target??=(async()=>{const response=await this.env.BROKER.fetch(brokerURL("/export/"+key),{method:"POST",headers:{"X-Nanoflare-Invocation":token}});if(!response.ok)throw new Error("Export admission rejected: "+response.status);const child=await response.json();const worker=await load(this.env,this.ctx,key);return worker.getEntrypoint("NanoflareExportDispatcher",{props:{__nanoflare_invocation:{key,token:child.token}}});})();
+   return (await this._target).invoke(name,props,method,args,read);
+  };
+  const seen=new Set(["constructor","ctx","env","then","prototype"]);
+  for(const [names,read]of [[ctx.props.methods||[],false],[ctx.props.properties||[],true]])for(const method of names){if(typeof method!=="string"||method.startsWith("_")||seen.has(method))continue;seen.add(method);
+   Object.defineProperty(proto,method,read?{get(){return invoke.call(this,method,[],true);}}:{value:function(...args){return invoke.call(this,method,args,false);}});
+  }Object.setPrototypeOf(this,proto);
+ }
+}
+export class WFPBridge extends WorkerEntrypoint {
+ async invoke(token,binding,script,options,dispatchOptions,root,request) {
+  const control=parentExports.ResourceBridge({props:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token}});
+  const env={__NANOFLARE_RESOURCE_CONTROL:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token},__NANOFLARE_WORKER_LOADER:this.env.LOADER,__NANOFLARE_DISPATCH_BINDINGS:{[binding]:"control"},control};
+  try{return {response:await wrapDispatchEnv(env,this.ctx,root)[binding].get(script,restoreExportProps(options,this.ctx.props.key,token),dispatchOptions).fetch(request)};}
+  catch(error){return {error:error.message,status:error.status||500};}
+ }
+}
+
 
 function brokerURL(path) { return "http://nanoflare.broker" + path; }
 
@@ -45,11 +79,14 @@ async function load(env, ctx, key, validation = false) {
     const code = await response.json();
     const childEnv = {
       ...code.env,
-      __NANOFLARE_RESOURCE_BROKER: ctx.exports.ResourceBridge({ props: { key } }),
-      __NANOFLARE_LIFECYCLE: ctx.exports.LifecycleBridge({ props: { key } }),
-      __NANOFLARE_SERVICE_BROKER: ctx.exports.ServiceBridge({ props: { key } }),
-      __NANOFLARE_DNS: ctx.exports.ResourceBridge({ props: { key, binding: "__NANOFLARE_DNS" } }),
-      __NANOFLARE_DURATION_COLLECTOR: ctx.exports.ResourceBridge({ props: { key, binding: "__NANOFLARE_DURATION_COLLECTOR" } }),
+      __NANOFLARE_RESOURCE_BROKER: parentExports.ResourceBridge({ props: { key } }),
+      __NANOFLARE_LIFECYCLE: parentExports.LifecycleBridge({ props: { key } }),
+      __NANOFLARE_WFP: parentExports.WFPBridge({props:{key}}),
+      __NANOFLARE_LOG_COLLECTOR: parentExports.ResourceBridge({props:{key,binding:"__NANOFLARE_LOG_COLLECTOR"}}),
+      __NANOFLARE_ACCESS: parentExports.ResourceBridge({props:{key,binding:"__NANOFLARE_ACCESS"}}),
+      __NANOFLARE_SERVICE_BROKER: parentExports.ServiceBridge({ props: { key } }),
+      __NANOFLARE_DNS: parentExports.ResourceBridge({ props: { key, binding: "__NANOFLARE_DNS" } }),
+      __NANOFLARE_DURATION_COLLECTOR: parentExports.ResourceBridge({ props: { key, binding: "__NANOFLARE_DURATION_COLLECTOR" } }),
     };
     let mainModule = code.mainModule;
     let modules = code.modules;
@@ -78,6 +115,7 @@ export class ResourceBridge extends WorkerEntrypoint {
   fetch(input) {
     const request = new Request(input);
     const original = new URL(request.url);
+    if(this.ctx.props.token) request.headers.set("X-Nanoflare-Control-Invocation",this.ctx.props.token);
     if (this.ctx.props.binding) request.headers.set("X-Nanoflare-Binding-Name", this.ctx.props.binding);
     const path = "/resource/" + encodeURIComponent(this.ctx.props.key) + original.pathname + original.search;
     return this.env.BROKER.fetch(new Request(brokerURL(path), request));
@@ -121,6 +159,7 @@ export class ServiceBridge extends WorkerEntrypoint {
 
 export default {
   async fetch(request, env, ctx) {
+    parentExports ??= ctx.exports;setDispatchExports(parentExports);
     if (request.headers.get("X-Nanoflare-Dispatcher-Token") !== env.DISPATCHER_TOKEN) return new Response("Unauthorized", { status: 401 });
     const key = request.headers.get("X-Nanoflare-Execution");
     if (!key) return new Response("Missing execution identity", { status: 400 });
@@ -133,9 +172,10 @@ export default {
       if (!validation) ctx.waitUntil(completeWithoutExecution(env, key, token));
       throw error;
     }
+    const root = request.headers.get("X-Nanoflare-Dispatch-Root");
     const headers = new Headers(request.headers);
     for (const name of [...headers.keys()]) if (name.toLowerCase().startsWith("x-nanoflare-")) headers.delete(name);
-    return loaded.getEntrypoint(undefined, { props: { __nanoflare_invocation: { key, token } } }).fetch(new Request(request, { headers }));
+    return loaded.getEntrypoint(undefined, { props: { __nanoflare_invocation: { key, token }, __nanoflare_dispatch_root:root } }).fetch(new Request(request, { headers }));
   },
 };
 `

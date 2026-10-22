@@ -23,6 +23,11 @@ func (s *RuntimeDBServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeDatabase, r.Header.Get("X-Nanoflare-Database-ID"))
+	if r == nil {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, errors.New("unsupported database operation"))
@@ -38,7 +43,7 @@ func (s *RuntimeDBServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	response, err := s.service.DBExecute(bearerToken(r), databaseID, request)
+	response, err := s.service.DBExecuteContext(r.Context(), bearerToken(r), databaseID, request)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
