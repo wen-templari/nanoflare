@@ -4,20 +4,16 @@ This Worker exposes an MCP endpoint at `/mcp`, protected by OAuth 2.1 with PKCE.
 It includes a browser consent page and an `echo` tool requiring the `echo:use`
 scope. OAuth clients, grants, and tokens are stored in Nanoflare KV.
 
-Install dependencies and create the Worker and KV namespace:
+Install dependencies and deploy. Nanoflare creates the Worker and provisions
+its KV namespace automatically:
 
 ```sh
 npm install
-npx nanoflare create
-npx nanoflare kv namespace create oauth-mcp
-```
-
-Replace `replace-with-oauth-kv-namespace-id` in `nanoflare.json` with the
-namespace ID returned by the last command, then deploy:
-
-```sh
 npm run deploy
 ```
+
+To use an existing Nanoflare namespace instead, set
+`nanoflare.resource_ids.OAUTH_KV` to its namespace ID in `nanoflare.json`.
 
 Open the deployed Worker hostname. The root response reports the full MCP URL:
 

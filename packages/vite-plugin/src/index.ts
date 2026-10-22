@@ -1,11 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
+import { parse as parseJSONC, type ParseError } from "jsonc-parser";
 import { Miniflare } from "miniflare";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
+import { parse as parseTOML } from "smol-toml";
 import { build, normalizePath } from "vite";
 
 export type BindingValue = string | number | boolean;
@@ -13,12 +15,12 @@ export type BindingValue = string | number | boolean;
 export interface NanoflarePluginOptions {
   /**
    * The Worker module Vite bundles and runs locally. When omitted, this comes
-   * from `main` in `nanoflare.json`.
+   * from `main` in the Worker configuration.
    */
   entry?: string;
   /**
-   * The Nanoflare project file to load. Defaults to `nanoflare.json` in the
-   * Vite root. Set to `false` to require all Worker settings in Vite config.
+   * The Worker project file to load. Discovers Nanoflare, then Wrangler,
+   * JSON/JSONC/TOML files in the Vite root. Set to `false` to require all Worker settings in Vite config.
    */
   configPath?: string | false;
   /** Values exposed to the Worker as `env`. Explicit bindings override `.dev.vars`. */
@@ -47,7 +49,9 @@ interface NanoflareProjectConfig {
   compatibility_date?: string;
   compatibility_flags?: string[];
   vars?: Record<string, BindingValue>;
+  d1_databases?: Array<{ binding?: string }>;
   db?: Array<{ binding?: string }>;
+  r2_buckets?: Array<{ binding?: string }>;
   object_storage_buckets?: Array<{ binding?: string }>;
 }
 
@@ -309,25 +313,55 @@ async function readProjectConfig(
   root: string,
 ): Promise<NanoflareProjectConfig | undefined> {
   if (configPath === false) return undefined;
-  const path = resolve(root, configPath ?? "nanoflare.json");
-  try {
-    return JSON.parse(await readFile(path, "utf8")) as NanoflareProjectConfig;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" && configPath === undefined) {
-      return undefined;
+  const candidates =
+    configPath === undefined
+      ? [
+          "nanoflare.json",
+          "nanoflare.jsonc",
+          "nanoflare.toml",
+          "wrangler.json",
+          "wrangler.jsonc",
+          "wrangler.toml",
+        ]
+      : [configPath];
+  for (const candidate of candidates) {
+    const path = resolve(root, candidate);
+    try {
+      const text = await readFile(path, "utf8");
+      let project: NanoflareProjectConfig;
+      if (extname(path) === ".toml") {
+        project = parseTOML(text) as NanoflareProjectConfig;
+      } else {
+        const errors: ParseError[] = [];
+        project = parseJSONC(text, errors, { allowTrailingComma: true }) as NanoflareProjectConfig;
+        if (errors.length) throw new Error("Invalid JSON/JSONC configuration");
+      }
+      if (!project || typeof project !== "object" || Array.isArray(project)) {
+        throw new Error("Worker configuration must be an object");
+      }
+      if (project.d1_databases && project.db)
+        throw new Error("Cannot combine d1_databases with db");
+      if (project.r2_buckets && project.object_storage_buckets)
+        throw new Error("Cannot combine r2_buckets with object_storage_buckets");
+      return project;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && configPath === undefined) continue;
+      throw new Error(`[nanoflare] Could not read ${path}: ${formatError(error)}`);
     }
-    throw new Error(`[nanoflare] Could not read ${path}: ${formatError(error)}`);
   }
+  return undefined;
 }
 
 function getD1Options(project: NanoflareProjectConfig | undefined) {
-  const bindings = project?.db?.flatMap(({ binding }) => (binding ? [binding] : []));
+  const bindings = (project?.d1_databases ?? project?.db)?.flatMap(({ binding }) =>
+    binding ? [binding] : [],
+  );
   return bindings?.length ? { bindings } : undefined;
 }
 
 function getR2Options(project: NanoflareProjectConfig | undefined) {
-  const bindings = project?.object_storage_buckets?.flatMap(({ binding }) =>
-    binding ? [binding] : [],
+  const bindings = (project?.r2_buckets ?? project?.object_storage_buckets)?.flatMap(
+    ({ binding }) => (binding ? [binding] : []),
   );
   return bindings?.length ? { bindings } : undefined;
 }

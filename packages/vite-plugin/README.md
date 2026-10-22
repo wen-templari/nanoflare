@@ -69,3 +69,8 @@ Durable Objects, browser/client builds, and remote Nanoflare bindings are
 deliberately outside this first version. D1 and R2 use Miniflare's local
 emulation; they do not connect to Nanoflare's deployed database or object
 storage services.
+
+Worker configuration uses Cloudflare field names, including `d1_databases` and
+`r2_buckets`. The plugin discovers `nanoflare.json`, `.jsonc`, or `.toml`, then
+the equivalent Wrangler filenames. Legacy `db` and `object_storage_buckets`
+remain accepted. See the [shared configuration guide](../../docs/guides/cloudflare-config.md).

@@ -50,26 +50,30 @@ type Runner struct {
 	Command func(string, ...string) *exec.Cmd
 }
 
+// Project is the internal deployment representation; source aliases are normalized
+// before decoding it. Its JSON tags also preserve existing build manifests.
 type Project struct {
-	Schema               string                                 `json:"$schema,omitempty"`
-	Name                 string                                 `json:"name"`
-	WorkerID             string                                 `json:"worker_id,omitempty"`
-	DispatchNamespaces   []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
-	Main                 string                                 `json:"main"`
-	Format               string                                 `json:"format,omitempty"`
-	CompatibilityDate    string                                 `json:"compatibility_date"`
-	CompatibilityFlags   []string                               `json:"compatibility_flags,omitempty"`
-	DNS                  nanoflare.DNSSelection                 `json:"dns,omitempty"`
-	Triggers             nanoflare.TriggerConfig                `json:"triggers,omitempty"`
-	Vars                 map[string]json.RawMessage             `json:"vars,omitempty"`
-	Files                []string                               `json:"files"`
-	KVNamespaces         []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
-	Databases            []nanoflare.DatabaseBinding            `json:"db,omitempty"`
-	ObjectStorageBuckets []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
-	Services             []nanoflare.ServiceBinding             `json:"services,omitempty"`
-	Assets               ProjectAssets                          `json:"assets,omitempty"`
-	Auth                 ProjectAuth                            `json:"auth,omitempty"`
-	Secrets              ProjectSecrets                         `json:"secrets,omitempty"`
+	bundledFiles           []nanoflare.WorkerFile
+	dispatchNamespaceNames map[string]string
+	Schema                 string                                 `json:"$schema,omitempty"`
+	Name                   string                                 `json:"name"`
+	WorkerID               string                                 `json:"worker_id,omitempty"`
+	DispatchNamespaces     []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	Main                   string                                 `json:"main"`
+	Format                 string                                 `json:"format,omitempty"`
+	CompatibilityDate      string                                 `json:"compatibility_date"`
+	CompatibilityFlags     []string                               `json:"compatibility_flags,omitempty"`
+	DNS                    nanoflare.DNSSelection                 `json:"dns,omitempty"`
+	Triggers               nanoflare.TriggerConfig                `json:"triggers,omitempty"`
+	Vars                   map[string]json.RawMessage             `json:"vars,omitempty"`
+	Files                  []string                               `json:"files"`
+	KVNamespaces           []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases              []nanoflare.DatabaseBinding            `json:"db,omitempty"`
+	ObjectStorageBuckets   []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Services               []nanoflare.ServiceBinding             `json:"services,omitempty"`
+	Assets                 ProjectAssets                          `json:"assets,omitempty"`
+	Auth                   ProjectAuth                            `json:"auth,omitempty"`
+	Secrets                ProjectSecrets                         `json:"secrets,omitempty"`
 }
 
 type projectAlias struct {
@@ -255,6 +259,9 @@ func (r *Runner) deploy(args []string) error {
 	if err := validateCompatibilityFlags(project.CompatibilityFlags); err != nil {
 		return err
 	}
+	if _, err := generateWorkerTypes(project, "Env"); err != nil {
+		return fmt.Errorf("validate Worker bindings: %w", err)
+	}
 	date := project.CompatibilityDate
 	if *compatibilityDate != "" {
 		date = *compatibilityDate
@@ -277,7 +284,7 @@ func (r *Runner) deploy(args []string) error {
 	}, nil); err != nil {
 		return err
 	}
-	files, err := loadWorkerFiles(project.Files)
+	files, err := projectWorkerFiles(project)
 	if err != nil {
 		return err
 	}
@@ -350,7 +357,7 @@ func (r *Runner) check(args []string) error {
 	if _, err := generateWorkerTypes(project, "Env"); err != nil {
 		return fmt.Errorf("validate Worker bindings: %w", err)
 	}
-	if _, err := loadWorkerFiles(project.Files); err != nil {
+	if _, err := projectWorkerFiles(project); err != nil {
 		return err
 	}
 	if _, err := loadAssetFiles(project.Assets.Directory); err != nil {
@@ -1044,11 +1051,11 @@ func (r *Runner) refreshAuthConfig(auth AuthConfig) (AuthConfig, error) {
 }
 
 func loadProject() (string, Project, error) {
-	path, err := filepath.Abs(projectFilename)
+	path, err := discoverProjectPath()
 	if err != nil {
 		return "", Project{}, err
 	}
-	project, err := loadProjectAtPathWithValidation(path, true, false)
+	project, err := loadProjectAtPath(path, true)
 	if err != nil {
 		return "", Project{}, err
 	}
@@ -1058,11 +1065,11 @@ func loadProject() (string, Project, error) {
 // loadDeploymentProject resolves the artifact manifest written by the Vite
 // plugin when the source project intentionally has no deploy-time file list.
 func loadDeploymentProject() (string, Project, error) {
-	path, err := filepath.Abs(projectFilename)
+	path, err := discoverProjectPath()
 	if err != nil {
 		return "", Project{}, err
 	}
-	source, err := loadProjectAtPathWithValidation(path, true, false)
+	source, err := loadProjectAtPath(path, true)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", Project{}, missingDeploymentProjectError(path)
@@ -1076,11 +1083,16 @@ func loadDeploymentProject() (string, Project, error) {
 	project, err := loadProjectAtPath(artifactPath, false)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			if _, mainErr := os.Stat(filepath.Join(filepath.Dir(path), source.Main)); mainErr == nil {
+				project, bundleErr := bundleSourceProject(path, source)
+				return path, project, bundleErr
+			}
 			return "", Project{}, fmt.Errorf("Vite build output is missing at %s; run vite build before nanoflare deploy", artifactPath)
 		}
 		return "", Project{}, err
 	}
-	return path, project, nil
+	source.Main, source.Files, source.Format = project.Main, project.Files, project.Format
+	return path, source, nil
 }
 
 func missingDeploymentProjectError(path string) error {
@@ -1102,50 +1114,37 @@ To attach static assets, configure assets.directory alongside main. Then run:
 }
 
 func loadProjectAtPath(path string, migrateAliases bool) (Project, error) {
-	return loadProjectAtPathWithValidation(path, migrateAliases, true)
-}
-
-func loadProjectAtPathWithValidation(path string, migrateAliases bool, requireFiles bool) (Project, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return Project{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	return parseProjectConfig(path, content, migrateAliases)
+}
+
+func parseProjectConfig(path string, content []byte, migrateAliases bool) (Project, error) {
+	originalContent := content
+	content, namespaceNames, err := decodeProjectConfig(path, content)
+	if err != nil {
+		return Project{}, err
 	}
 	var project Project
 	if err := json.Unmarshal(content, &project); err != nil {
 		return Project{}, fmt.Errorf("decode %s: %w", path, err)
 	}
+	project.dispatchNamespaceNames = namespaceNames
 	var alias projectAlias
 	if err := json.Unmarshal(content, &alias); err != nil {
 		return Project{}, fmt.Errorf("decode %s aliases: %w", path, err)
-	}
-	if len(project.ObjectStorageBuckets) == 0 || hasEmptyObjectStorageBucketIDs(project.ObjectStorageBuckets) {
-		legacy := alias.ObjectStorageBuckets
-		if len(legacy) == 0 {
-			legacy = alias.ObjectStorageBucketLegacy
-		}
-		if len(legacy) > 0 {
-			project.ObjectStorageBuckets = project.ObjectStorageBuckets[:0]
-		}
-		for _, binding := range legacy {
-			bucketID := strings.TrimSpace(binding.BucketID)
-			if bucketID == "" {
-				bucketID = strings.TrimSpace(binding.ID)
-			}
-			project.ObjectStorageBuckets = append(project.ObjectStorageBuckets, nanoflare.ObjectStorageBucketBinding{
-				Binding:  binding.Binding,
-				BucketID: bucketID,
-			})
-		}
 	}
 	if project.Main == "" && alias.Entrypoint != "" {
 		project.Main = alias.Entrypoint
 	}
 	if migrateAliases && alias.Entrypoint != "" {
-		if err := writeProject(path, project, os.O_TRUNC); err != nil {
+		if err := migrateProjectEntrypoint(path, originalContent, project.Main); err != nil {
 			return Project{}, fmt.Errorf("migrate %s: %w", path, err)
 		}
 	}
-	if project.Name == "" || project.Main == "" || project.CompatibilityDate == "" || (requireFiles && len(project.Files) == 0) {
+	if project.Name == "" || project.Main == "" || project.CompatibilityDate == "" {
 		return Project{}, fmt.Errorf("%s is missing required worker configuration", path)
 	}
 	return project, nil
@@ -1440,6 +1439,31 @@ func (r *Runner) ensureProjectApp(baseURL string, project Project) (nanoflare.Ap
 // its deterministic project-and-binding name or created when provisioning is
 // enabled. Resolved IDs live in the deployment record, not nanoflare.json.
 func (r *Runner) resolveProjectBindings(baseURL string, project *Project, provision bool) error {
+	if len(project.dispatchNamespaceNames) > 0 {
+		var namespaces []nanoflare.DispatchNamespace
+		if err := r.request(http.MethodGet, baseURL+"/v1/dispatch-namespaces", nil, &namespaces); err != nil {
+			return err
+		}
+		for i := range project.DispatchNamespaces {
+			binding := &project.DispatchNamespaces[i]
+			name := project.dispatchNamespaceNames[binding.Binding]
+			if name == "" {
+				continue
+			}
+			for _, namespace := range namespaces {
+				if namespace.Name == name {
+					if binding.NamespaceID != "" {
+						return fmt.Errorf("dispatch namespace %q is ambiguous", name)
+					}
+					binding.NamespaceID = namespace.ID
+				}
+			}
+			if binding.NamespaceID == "" {
+				return fmt.Errorf("dispatch namespace %q was not found; create it with nanoflare platform namespace create %s", name, name)
+			}
+		}
+	}
+
 	for index := range project.KVNamespaces {
 		binding := &project.KVNamespaces[index]
 		if strings.TrimSpace(binding.ID) != "" {

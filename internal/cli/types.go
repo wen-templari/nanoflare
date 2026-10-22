@@ -81,7 +81,11 @@ func (r *Runner) typesWithOptions(outputPath, envInterface string, check bool, c
 func loadTypeGenerationProject(configPaths []string, outputPath string) (Project, map[string]string, error) {
 	configsSupplied := len(configPaths) > 0
 	if len(configPaths) == 0 {
-		configPaths = []string{projectFilename}
+		path, err := discoverProjectPath()
+		if err != nil {
+			return Project{}, nil, err
+		}
+		configPaths = []string{path}
 	}
 	outputAbsolutePath, err := filepath.Abs(outputPath)
 	if err != nil {

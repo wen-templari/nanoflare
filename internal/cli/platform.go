@@ -187,7 +187,7 @@ func (r *Runner) platformBundle(output string) error {
 	if _, err = generateWorkerTypes(project, "Env"); err != nil {
 		return err
 	}
-	files, err := loadWorkerFiles(project.Files)
+	files, err := projectWorkerFiles(project)
 	if err != nil {
 		return err
 	}

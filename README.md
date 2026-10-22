@@ -947,3 +947,6 @@ integration step, not a hardened sandbox.
 Runtime APIs use stable app-scoped capability tokens injected into private
 `workerd` configuration. An application never chooses its own worker ID when
 reading or writing KV data.
+
+Use an existing Cloudflare Worker project with the Nanoflare CLI: see the
+[Cloudflare configuration guide](docs/guides/cloudflare-config.md).
