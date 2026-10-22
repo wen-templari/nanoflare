@@ -1,0 +1,83 @@
+{
+  "at": "2026-10-21T15:54:46.542221+00:00",
+  "host_os": "Darwin",
+  "host_arch": "arm64",
+  "python": "3.14.3",
+  "passed": true,
+  "observations": [
+    {
+      "name": "collector_permissions_verified",
+      "stat": "0:65532 710\n0:65532 660"
+    },
+    {
+      "name": "foreign_uid_cannot_submit_collector_identity"
+    },
+    {
+      "name": "trusted_group_can_connect_readonly_collector_mount"
+    },
+    {
+      "name": "production_admin_ports_bind_loopback"
+    },
+    {
+      "name": "grafana_global_datasources_require_operator_login"
+    },
+    {
+      "name": "normal_daemon_experimental_adapter_requires_explicit_trust_acknowledgment"
+    },
+    {
+      "name": "native_authenticated_logs_reach_vector_loki_scoped_output_with_secret_redaction"
+    },
+    {
+      "name": "customer_markers_and_docker_json_cannot_assign_producer_identity"
+    },
+    {
+      "name": "operator_metrics_authentication_and_truthful_elapsed_metrics_verified"
+    },
+    {
+      "name": "real_prometheus_uses_private_readable_token_and_container_target"
+    },
+    {
+      "name": "selected_pilot_bounds_measured_and_operator_alert_rules_loaded"
+    },
+    {
+      "name": "collector_outage_preserves_dispatch_and_exports_collection_loss"
+    },
+    {
+      "name": "real_prometheus_collection_loss_alert_fires"
+    },
+    {
+      "name": "runner_transport_stall_marks_samples_unavailable_without_blocking_control_metadata"
+    }
+  ],
+  "limitations": [
+    "disposable single-host Linux monitoring stack, not production retention/sizing",
+    "Docker log source restricted to this fixture forge container; no unrelated logs read",
+    "socket UID/GID permissions qualify Linux only; trusted UID 0/GID 65532 producers can submit identity",
+    "no untrusted sandbox, per-invocation CPU, multi-host outage or soak qualification"
+  ],
+  "control_sha256": "cdd57bc1406ed415ceb1433638dd4ad859bbac4c6ed810da9d2837c310ee11e8",
+  "runner_sha256": "b9bce182d29343e3d4b7fc128cd0965d3d15af0dbe348b4191d872e0f3e663d9",
+  "image_ids": {
+    "runtime": "sha256:d01b4ea4320d96fe812f53abd90d9f7bc70341a59dcaab90ac293efc60d00ca3",
+    "node_fixture": "sha256:1c261b8cd71d78fcdc0507b08bc7156a29785b92f0d3496861455a598bcc042d",
+    "vector": "sha256:7f9d7b0043c6270f46f1990f1620b350f6a74824ddb48a07093b4651715ad028",
+    "loki": "sha256:c8f7864de9ad688bb9219730b06c8941b86997dd2122f7066a6289e63c6f87e7",
+    "prometheus": "sha256:5a1d4a6d0adfd8f785bb0f1243f2a90457e508eaf5eb7e958aa5ea1463020fcb",
+    "grafana": "sha256:8c161ed7e7d04dbbe374789311bbc394d366af9a47b8b7b7b228700f3242526f",
+    "postgres": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+    "minio": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d"
+  },
+  "pilot_bounds": {
+    "nanoflared": {
+      "mem_limit": "536870912",
+      "memswap_limit": "536870912",
+      "pids_limit": 128
+    },
+    "nanoflare-runner": {
+      "mem_limit": "2147483648",
+      "memswap_limit": "2147483648",
+      "pids_limit": 128
+    }
+  },
+  "cleanup_verified": true
+}

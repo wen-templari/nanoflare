@@ -214,7 +214,7 @@ func (c *Client) workerMetricsTimeseries(routerSelector, durationSelector string
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
 	}
-	requests, err := points(`sum(increase(traefik_router_requests_total{` + routerSelector + `}[5m]))`)
+	requests, err := points(`(sum(increase(traefik_router_requests_total{` + routerSelector + `}[5m])) or vector(0)) + (sum(increase(nanoflare_worker_dispatch_invocations_total{` + durationSelector + `}[5m])) or vector(0))`)
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
 	}
@@ -242,7 +242,7 @@ func (c *Client) workerMetricsTimeseries(routerSelector, durationSelector string
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
 	}
-	cpuTimeP90, err := points(`quantile(0.90, nanoflare_worker_cpu_time_milliseconds_p90{` + durationSelector + `})`)
+	durationP90, err := points(`max(nanoflare_worker_duration_milliseconds_p90{` + durationSelector + `})`)
 	if err != nil {
 		return nanoflare.WorkerMetricsTimeseries{}, err
 	}
@@ -255,7 +255,7 @@ func (c *Client) workerMetricsTimeseries(routerSelector, durationSelector string
 		statusCodes = append(statusCodes, nanoflare.WorkerStatusCodeTimeseries{Code: string(series.Metric["code"]), Points: pointsForStream(series)})
 	}
 	sort.Slice(statusCodes, func(i, j int) bool { return statusCodes[i].Code < statusCodes[j].Code })
-	return nanoflare.WorkerMetricsTimeseries{Available: true, TotalRequests: totalRequests, Invocations: requests, Requests: requests, Errors: errors, ErrorRate: errorRate, P95LatencyMS: p95, StatusCodes: statusCodes, DurationAvgMS: avg, DurationP95MS: durationP95, DurationMSPerSecond: perSecond, CPUTimeP90MS: cpuTimeP90}, nil
+	return nanoflare.WorkerMetricsTimeseries{Available: true, TotalRequests: totalRequests, Invocations: requests, Requests: requests, Errors: errors, ErrorRate: errorRate, P95LatencyMS: p95, StatusCodes: statusCodes, DurationAvgMS: avg, DurationP95MS: durationP95, DurationMSPerSecond: perSecond, DurationP90MS: durationP90}, nil
 }
 
 func (c *Client) query(query string) (model.Value, error) {

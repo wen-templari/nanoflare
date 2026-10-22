@@ -1,6 +1,7 @@
 package nanoflare
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"sort"
@@ -46,6 +47,26 @@ var (
 )
 
 type Repository interface {
+	DeleteNamespaceScripts(string, string, []string) error
+	PruneAssetUploadSessions(context.Context, time.Time, int) (int, error)
+	GetAssetUploadSession(string) (AssetUploadSession, error)
+	SaveAssetUploadSession(AssetUploadSession, int64) error
+	CountAssetUploadSessions(string, time.Time) (int, error)
+	GetScriptManagementState(string) (ScriptManagementState, bool, error)
+	CommitScriptManagementState(ScriptManagementState, int64) error
+	PutDeploymentArtifact(DeploymentArtifact) error
+	GetDeploymentArtifact(string, string) (DeploymentArtifact, error)
+	StoreDeployment(Deployment) error
+	GetPublication(string, string) (Publication, bool, error)
+	SavePublication(Publication) error
+	ListPublications() ([]Publication, error)
+	CreateDispatchNamespace(DispatchNamespace) error
+	GetDispatchNamespace(string) (DispatchNamespace, error)
+	ListDispatchNamespaces(string) ([]DispatchNamespace, error)
+	RenameDispatchNamespace(string, string) error
+	DeleteDispatchNamespace(string) error
+	SetNamespaceGrants(string, int64, []NamespaceResourceGrant) (DispatchNamespace, error)
+	NamespacePolicies(string) ([]NamespacePolicy, error)
 	CreateUser(User) error
 	UserByID(string) (User, error)
 	UserByEmail(string) (User, error)
@@ -104,6 +125,7 @@ type Repository interface {
 	CreateApp(App) error
 	CountAppsByOrg(string) (int, error)
 	GetApp(string) (App, error)
+	GetRuntimeDeployment(appID, deploymentID string) (Deployment, error)
 	ListApps() ([]App, error)
 	ListAppsByOrg(string) ([]App, error)
 	UpdateApp(App) error
@@ -167,6 +189,12 @@ type Repository interface {
 }
 
 type Store struct {
+	assetUploads        map[string]AssetUploadSession
+	artifacts           map[string]DeploymentArtifact
+	publications        map[string]Publication
+	management          map[string]ScriptManagementState
+	dispatchNamespaces  map[string]DispatchNamespace
+	namespacePolicies   map[string][]NamespacePolicy
 	deploymentMu        sync.Mutex
 	varsUpdates         map[string]map[string]VarsUpdateOperation
 	mu                  sync.RWMutex
@@ -207,6 +235,8 @@ type runtimeKVValue struct {
 
 func NewStore() *Store {
 	return &Store{
+		artifacts: map[string]DeploymentArtifact{}, publications: map[string]Publication{},
+		dispatchNamespaces: map[string]DispatchNamespace{}, namespacePolicies: map[string][]NamespacePolicy{},
 		varsUpdates:         make(map[string]map[string]VarsUpdateOperation),
 		users:               make(map[string]User),
 		usersByEmail:        make(map[string]string),
@@ -980,11 +1010,24 @@ func (s *Store) RevokePartnerConnectionTokens(connectionID string, revokedAt tim
 func (s *Store) CreateApp(app App) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if app.Platform != nil {
+		if err := ValidatePlatformMembership(app, s.dispatchNamespaces[app.Platform.NamespaceID]); err != nil {
+			return err
+		}
+		for _, existing := range s.apps {
+			if existing.Platform != nil && existing.Platform.NamespaceID == app.Platform.NamespaceID && existing.Platform.ScriptName == app.Platform.ScriptName {
+				return ErrDispatchNamespaceExists
+			}
+		}
+		cp := *app.Platform
+		app.Platform = &cp
+	}
+
 	if _, exists := s.apps[app.ID]; exists {
 		return ErrAppExists
 	}
 	for _, existing := range s.apps {
-		if existing.Hostname == app.Hostname {
+		if app.Hostname != "" && existing.Hostname == app.Hostname {
 			return ErrAppExists
 		}
 	}
@@ -1012,7 +1055,7 @@ func (s *Store) GetApp(appID string) (App, error) {
 	if !ok {
 		return App{}, ErrAppNotFound
 	}
-	return app, nil
+	return clonePlatformApp(app), nil
 }
 
 func (s *Store) ListApps() ([]App, error) {
@@ -1027,7 +1070,7 @@ func (s *Store) ListAppsByOrg(orgID string) ([]App, error) {
 		if orgID != "" && app.OrgID != orgID {
 			continue
 		}
-		apps = append(apps, app)
+		apps = append(apps, clonePlatformApp(app))
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
 	return apps, nil
@@ -1041,10 +1084,11 @@ func (s *Store) UpdateApp(app App) error {
 		return ErrAppNotFound
 	}
 	for _, candidate := range s.apps {
-		if candidate.ID != app.ID && candidate.Hostname == app.Hostname {
+		if candidate.ID != app.ID && app.Hostname != "" && candidate.Hostname == app.Hostname {
 			return ErrAppExists
 		}
 	}
+	app.Platform = existing.Platform
 	app.RuntimeToken = existing.RuntimeToken
 	app.CreatedAt = existing.CreatedAt
 	s.apps[app.ID] = app
@@ -1059,6 +1103,9 @@ func (s *Store) PatchApp(appID string, input UpdateAppInput) (App, error) {
 	if !exists {
 		return App{}, ErrAppNotFound
 	}
+	if app.IsPrivate() && input.Hostname != nil {
+		return App{}, ErrInvalidAppUpdate
+	}
 	if input.Hostname != nil {
 		for _, candidate := range s.apps {
 			if candidate.ID != appID && candidate.Hostname == *input.Hostname {
@@ -1071,17 +1118,32 @@ func (s *Store) PatchApp(appID string, input UpdateAppInput) (App, error) {
 		app.Auth = *input.Auth
 	}
 	s.apps[appID] = app
-	return app, nil
+	return clonePlatformApp(app), nil
 }
 
 func (s *Store) DeleteApp(appID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.deleteAppLocked(appID)
+}
+
+func (s *Store) deleteAppLocked(appID string) error {
 	app, exists := s.apps[appID]
 	if !exists {
 		return ErrAppNotFound
 	}
+	for id, a := range s.artifacts {
+		if a.Deployment.AppID == appID {
+			delete(s.artifacts, id)
+		}
+	}
+	for key, p := range s.publications {
+		if p.AppID == appID {
+			delete(s.publications, key)
+		}
+	}
 	delete(s.apps, appID)
+	delete(s.management, appID)
 	delete(s.secrets, appID)
 	delete(s.deployments, appID)
 	delete(s.varsUpdates, appID)
@@ -1595,7 +1657,7 @@ func (s *Store) ActiveDeployments() ([]ActiveDeployment, error) {
 		for _, deployment := range s.deployments[appID] {
 			percent := traffic[deployment.ID]
 			if percent > 0 {
-				active = append(active, ActiveDeployment{App: s.apps[appID], Deployment: deployment, TrafficPercent: percent})
+				active = append(active, ActiveDeployment{App: clonePlatformApp(s.apps[appID]), Deployment: deployment, TrafficPercent: percent})
 			}
 		}
 	}
@@ -1620,7 +1682,7 @@ func (s *Store) ActiveDeploymentsForApp(appID string) ([]ActiveDeployment, error
 	for _, deployment := range s.deployments[appID] {
 		percent := traffic[deployment.ID]
 		if percent > 0 {
-			active = append(active, ActiveDeployment{App: app, Deployment: deployment, TrafficPercent: percent})
+			active = append(active, ActiveDeployment{App: clonePlatformApp(app), Deployment: deployment, TrafficPercent: percent})
 		}
 	}
 	sort.Slice(active, func(i, j int) bool {
@@ -1637,7 +1699,7 @@ func (s *Store) ListDeployments() ([]DeploymentRecord, error) {
 		for _, deployment := range deployments {
 			percent := s.active[appID][deployment.ID]
 			records = append(records, DeploymentRecord{
-				App:            s.apps[appID],
+				App:            clonePlatformApp(s.apps[appID]),
 				Deployment:     deployment,
 				Active:         percent > 0,
 				TrafficPercent: percent,

@@ -23,13 +23,16 @@ import (
 )
 
 type Config struct {
-	ProxyURL string
-	CAFiles  []string
-	NoProxy  []string
-	Addr     string
+	NetworkAllow []string
+	ProxyURL     string
+	CAFiles      []string
+	NoProxy      []string
+	Addr         string
 }
 
 type Server struct {
+	policy       *NetworkPolicy
+	httpPolicy   *policyTransport
 	listener     net.Listener
 	addr         string
 	transport    *http.Transport
@@ -96,7 +99,16 @@ func New(config Config) (*Server, error) {
 		ExpectContinueTimeout: time.Second,
 		IdleConnTimeout:       90 * time.Second,
 	}
+	var policy *NetworkPolicy
+	if config.NetworkAllow != nil {
+		policy, err = NewNetworkPolicy(config.NetworkAllow)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &Server{
+		policy:       policy,
+		httpPolicy:   &policyTransport{policy: policy, base: transport, slots: make(chan struct{}, 64)},
 		addr:         addr,
 		transport:    transport,
 		proxy:        proxy,
@@ -350,11 +362,22 @@ func (s *Server) handleConnect(conn net.Conn, reader *bufio.Reader, request *htt
 		return
 	}
 
+	dialTarget := target
+	if s.policy != nil {
+		host, port, e := net.SplitHostPort(target)
+		if e == nil {
+			dialTarget, e = s.policy.resolve(ctx, host, port)
+		}
+		if e != nil {
+			_, _ = io.WriteString(conn, "HTTP/1.1 403 Forbidden\r\n\r\n")
+			return
+		}
+	}
 	var upstream net.Conn
-	if proxyURL == nil || s.resolvesDirect(ctx, target) {
-		upstream, err = s.dialer.DialContext(ctx, "tcp", target)
+	if proxyURL == nil || s.resolvesDirect(ctx, dialTarget) {
+		upstream, err = s.dialer.DialContext(ctx, "tcp", dialTarget)
 	} else {
-		upstream, err = s.dialProxyConnect(ctx, proxyURL, target)
+		upstream, err = s.dialProxyConnect(ctx, proxyURL, dialTarget)
 	}
 	if err != nil {
 		_, _ = io.WriteString(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
@@ -493,7 +516,14 @@ func (s *Server) forward(request *http.Request) *http.Response {
 	out.Host = out.URL.Host
 	out.Body = noCloseReadCloser{request.Body}
 	removeHopHeaders(out.Header)
-	response, err := s.transport.RoundTrip(out)
+	var roundTripper http.RoundTripper = s.transport
+	if s.policy != nil {
+		roundTripper = s.httpPolicy
+	}
+	response, err := roundTripper.RoundTrip(out)
+	if errors.Is(err, ErrDestinationDenied) {
+		return errorResponse(http.StatusForbidden, "outbound destination denied")
+	}
 	if err != nil {
 		return errorResponse(http.StatusBadGateway, "egress request failed")
 	}

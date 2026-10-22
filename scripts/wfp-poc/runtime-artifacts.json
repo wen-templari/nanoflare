@@ -1,0 +1,11 @@
+{
+  "candidate": {
+    "name": "@cloudflare/workerd-darwin-arm64",
+    "version": "1.20261018.1",
+    "shasum": "9803f0ad4e4b425b4450b448b3131f6fcc066800",
+    "integrity": "sha512-tZFTif8vLeDrBbTGGyClcdYrxxSrZl7JAJ0AF+pWyu0Nx2lh6bPY+UYtQOHJxOB781f48Ve/h1YqCwWMbZSOeA=="
+  },
+  "installed_version": "workerd 2025-12-10",
+  "candidate_installation": "separate temporary extraction; global installation and repository lockfiles unchanged",
+  "baseline_commit": "c7547cbb4a0d26740dc8f3e5688f86a996a78c20"
+}

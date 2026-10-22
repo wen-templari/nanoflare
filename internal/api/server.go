@@ -19,25 +19,30 @@ import (
 )
 
 type Server struct {
-	service                *nanoflare.Service
-	traefik                TraefikConfigReader
-	traefikToken           string
-	auth                   Authenticator
-	controlAuth            *nanoflare.ControlAuthService
-	controlOIDC            ControlOIDCAuthenticator
-	controlOIDCDirectLogin bool
-	controlOIDCMu          sync.Mutex
-	controlOIDCCodes       map[string]controlOIDCCode
-	controlCLICodes        map[string]controlCLICode
-	oauth                  *nanoflare.OAuthService
-	partner                *nanoflare.PartnerService
-	runtime                RuntimeEnsurer
-	workerClient           *http.Client
-	workerGatewayMetrics   workerGatewayMetrics
-	durationTelemetry      durationStatsReader
-	metricsHandler         http.Handler
-	mux                    *http.ServeMux
-	openAPI                huma.API
+	service                 *nanoflare.Service
+	traefik                 TraefikConfigReader
+	traefikToken            string
+	auth                    Authenticator
+	controlAuth             *nanoflare.ControlAuthService
+	controlOIDC             ControlOIDCAuthenticator
+	controlOIDCDirectLogin  bool
+	controlOIDCMu           sync.Mutex
+	controlOIDCCodes        map[string]controlOIDCCode
+	controlCLICodes         map[string]controlCLICode
+	oauth                   *nanoflare.OAuthService
+	partner                 *nanoflare.PartnerService
+	runtime                 RuntimeEnsurer
+	workerClient            *http.Client
+	workerGatewayMetrics    workerGatewayMetrics
+	durationTelemetry       durationStatsReader
+	logForwarderStats       interface{ Dropped() uint64 }
+	runnerResourceReader    func() (*nanoflare.RunnerResources, time.Time)
+	metricsHandler          http.Handler
+	metricsToken            string
+	metricsTokenRequired    bool
+	mux                     *http.ServeMux
+	openAPI                 huma.API
+	cloudflareCompatibility atomic.Bool
 }
 
 type durationStatsReader interface {
@@ -144,6 +149,16 @@ func (s *Server) SetPartnerService(partner *nanoflare.PartnerService) {
 func (s *Server) SetDurationTelemetry(telemetry durationStatsReader) { s.durationTelemetry = telemetry }
 
 func newServer(service *nanoflare.Service, traefik TraefikConfigReader, token string, auth Authenticator, controlAuth *nanoflare.ControlAuthService, runtime RuntimeEnsurer, oauth *nanoflare.OAuthService) *Server {
+	if checker, ok := runtime.(interface {
+		RuntimeDeploymentLive(context.Context, string, string) (bool, error)
+	}); ok {
+		service.SetRuntimeDeploymentChecker(checker.RuntimeDeploymentLive)
+	}
+	if checker, ok := runtime.(interface {
+		RuntimeInstanceLive(context.Context, string, string, string) (bool, error)
+	}); ok {
+		service.SetRuntimeInstanceChecker(checker.RuntimeInstanceLive)
+	}
 	mux := http.NewServeMux()
 	server := &Server{
 		service:      service,
@@ -190,6 +205,10 @@ func (s *Server) SetControlOIDCDirectLogin(enabled bool) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Request-Id", newRequestID())
+	if strings.HasPrefix(r.URL.Path, "/client/v4/") {
+		s.serveCloudflareCompatibility(w, r)
+		return
+	}
 	if s.controlAuth != nil && strings.HasPrefix(r.URL.Path, "/v1/") && !isPublicControlPath(r.URL.Path) && !isPartnerMachineRequest(r) {
 		next, ok := s.authenticateControlRequest(w, r)
 		if !ok {
@@ -212,8 +231,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	s.mux.Handle("GET /metrics", s.metricsHandler)
+	s.mux.HandleFunc("GET /metrics", s.serveMetrics)
 	s.registerAppRoutes()
+	s.registerPlatformRoutes()
+	s.registerArtifactRoutes()
 	s.registerKVRoutes()
 	s.registerDBRoutes()
 	s.registerObjectRoutes()

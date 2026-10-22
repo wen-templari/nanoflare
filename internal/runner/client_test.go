@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -106,4 +108,43 @@ func deployments(port int) []nanoflare.ActiveDeployment {
 		App:        nanoflare.App{ID: "hello", Hostname: "hello.example.com"},
 		Deployment: nanoflare.Deployment{ID: "deployment", Port: port},
 	}}
+}
+
+func TestPublicationTransportsPinnedSecretsAndTrafficWeights(t *testing.T) {
+	manager := &fakeManager{generation: "workerd-000001.capnp", routed: deployments(10001)}
+	server := httptest.NewServer(NewServer(manager, "secret"))
+	defer server.Close()
+	client := NewClient(server.URL, "secret", &fakeTraefikWriter{})
+	active := deployments(9001)
+	active[0].TrafficPercent = 40
+	active[0].App.SecretValues = map[string]string{"TOKEN": "pinned-revision-value"}
+	prepared, err := client.PreparePublication(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.prepared[0].TrafficPercent != 40 || manager.prepared[0].App.SecretValues["TOKEN"] != "pinned-revision-value" {
+		t.Fatal("runner lost the revision secret snapshot or traffic weight")
+	}
+	data, err := json.Marshal(PrepareResponse{Generation: prepared.Generation, Deployments: manager.prepared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "pinned-revision-value") {
+		t.Fatal("runner response exposed private secret values")
+	}
+	if err = client.CommitPublication(prepared); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunnerRejectsLegacyArtifactProtocolBeforePreparation(t *testing.T) {
+	manager := &fakeManager{}
+	server := NewServer(manager, "secret")
+	request := httptest.NewRequest("POST", "/v1/generations/prepare", strings.NewReader(`{"deployments":[]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != 409 || len(manager.events) != 0 {
+		t.Fatal("legacy protocol prepared an incomplete snapshot")
+	}
 }

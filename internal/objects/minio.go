@@ -15,8 +15,9 @@ import (
 )
 
 type MinIO struct {
-	client *minio.Client
-	bucket string
+	client  *minio.Client
+	bucket  string
+	timeout time.Duration
 }
 
 type MinIOConfig struct {
@@ -25,9 +26,21 @@ type MinIOConfig struct {
 	SecretKey string
 	Bucket    string
 	Secure    bool
+	// OperationTimeout bounds retries and body reads. Zero selects 30 seconds.
+	// Caller cancellation or an earlier deadline wins.
+	OperationTimeout time.Duration
 }
 
 func Open(ctx context.Context, config MinIOConfig) (*MinIO, error) {
+	if config.OperationTimeout < 0 {
+		return nil, errors.New("object operation timeout must not be negative")
+	}
+	timeout := config.OperationTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	if config.Endpoint == "" || config.AccessKey == "" || config.SecretKey == "" || config.Bucket == "" {
 		return nil, errors.New("MinIO endpoint, credentials, and bucket are required")
 	}
@@ -38,7 +51,7 @@ func Open(ctx context.Context, config MinIOConfig) (*MinIO, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &MinIO{client: client, bucket: config.Bucket}
+	store := &MinIO{client: client, bucket: config.Bucket, timeout: timeout}
 	exists, err := client.BucketExists(ctx, config.Bucket)
 	if err != nil {
 		return nil, err
@@ -52,11 +65,13 @@ func Open(ctx context.Context, config MinIOConfig) (*MinIO, error) {
 }
 
 func (m *MinIO) PresignUpload(appID, objectPath string, expiry time.Duration) (string, error) {
+	ctx, cancel := m.operationContext(context.Background())
+	defer cancel()
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
 		return "", err
 	}
-	signed, err := m.client.PresignedPutObject(context.Background(), m.bucket, key, expiry)
+	signed, err := m.client.PresignedPutObject(ctx, m.bucket, key, expiry)
 	if err != nil {
 		return "", err
 	}
@@ -64,11 +79,13 @@ func (m *MinIO) PresignUpload(appID, objectPath string, expiry time.Duration) (s
 }
 
 func (m *MinIO) PresignDownload(appID, objectPath string, expiry time.Duration) (string, error) {
+	ctx, cancel := m.operationContext(context.Background())
+	defer cancel()
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
 		return "", err
 	}
-	signed, err := m.client.PresignedGetObject(context.Background(), m.bucket, key, expiry, nil)
+	signed, err := m.client.PresignedGetObject(ctx, m.bucket, key, expiry, nil)
 	if err != nil {
 		return "", err
 	}
@@ -76,25 +93,37 @@ func (m *MinIO) PresignDownload(appID, objectPath string, expiry time.Duration) 
 }
 
 func (m *MinIO) Put(appID, objectPath string, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
+	return m.PutContext(context.Background(), appID, objectPath, contentType, data)
+}
+
+func (m *MinIO) PutContext(ctx context.Context, appID, objectPath string, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
+	ctx, cancel := m.operationContext(ctx)
+	defer cancel()
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
 		return nanoflare.ObjectInfo{}, err
 	}
-	_, err = m.client.PutObject(context.Background(), m.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+	_, err = m.client.PutObject(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
 		ContentType: contentType,
 	})
 	if err != nil {
 		return nanoflare.ObjectInfo{}, err
 	}
-	return m.Head(appID, objectPath)
+	return m.HeadContext(ctx, appID, objectPath)
 }
 
 func (m *MinIO) Get(appID, objectPath string) (nanoflare.ObjectBody, error) {
+	return m.GetContext(context.Background(), appID, objectPath)
+}
+
+func (m *MinIO) GetContext(ctx context.Context, appID, objectPath string) (nanoflare.ObjectBody, error) {
+	ctx, cancel := m.operationContext(ctx)
+	defer cancel()
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
 		return nanoflare.ObjectBody{}, err
 	}
-	object, err := m.client.GetObject(context.Background(), m.bucket, key, minio.GetObjectOptions{})
+	object, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return nanoflare.ObjectBody{}, err
 	}
@@ -114,11 +143,17 @@ func (m *MinIO) Get(appID, objectPath string) (nanoflare.ObjectBody, error) {
 }
 
 func (m *MinIO) Head(appID, objectPath string) (nanoflare.ObjectInfo, error) {
+	return m.HeadContext(context.Background(), appID, objectPath)
+}
+
+func (m *MinIO) HeadContext(ctx context.Context, appID, objectPath string) (nanoflare.ObjectInfo, error) {
+	ctx, cancel := m.operationContext(ctx)
+	defer cancel()
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
 		return nanoflare.ObjectInfo{}, err
 	}
-	info, err := m.client.StatObject(context.Background(), m.bucket, key, minio.StatObjectOptions{})
+	info, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
 		return nanoflare.ObjectInfo{}, minioNotFound(err)
 	}
@@ -126,12 +161,18 @@ func (m *MinIO) Head(appID, objectPath string) (nanoflare.ObjectInfo, error) {
 }
 
 func (m *MinIO) List(appID, prefix string) ([]nanoflare.ObjectInfo, error) {
+	return m.ListContext(context.Background(), appID, prefix)
+}
+
+func (m *MinIO) ListContext(ctx context.Context, appID, prefix string) ([]nanoflare.ObjectInfo, error) {
+	ctx, cancel := m.operationContext(ctx)
+	defer cancel()
 	key, err := objectKey(appID, prefix)
 	if err != nil {
 		return nil, err
 	}
 	objects := make([]nanoflare.ObjectInfo, 0)
-	for object := range m.client.ListObjects(context.Background(), m.bucket, minio.ListObjectsOptions{
+	for object := range m.client.ListObjects(ctx, m.bucket, minio.ListObjectsOptions{
 		Prefix:    key + "/",
 		Recursive: true,
 	}) {
@@ -140,7 +181,7 @@ func (m *MinIO) List(appID, prefix string) ([]nanoflare.ObjectInfo, error) {
 		}
 		// ListObjects does not consistently populate ContentType. Stat each object so
 		// callers receive the same HTTP metadata from list and object-detail views.
-		info, err := m.client.StatObject(context.Background(), m.bucket, object.Key, minio.StatObjectOptions{})
+		info, err := m.client.StatObject(ctx, m.bucket, object.Key, minio.StatObjectOptions{})
 		if err != nil {
 			return nil, minioNotFound(err)
 		}
@@ -151,11 +192,17 @@ func (m *MinIO) List(appID, prefix string) ([]nanoflare.ObjectInfo, error) {
 }
 
 func (m *MinIO) Delete(appID, objectPath string) error {
+	return m.DeleteContext(context.Background(), appID, objectPath)
+}
+
+func (m *MinIO) DeleteContext(ctx context.Context, appID, objectPath string) error {
+	ctx, cancel := m.operationContext(ctx)
+	defer cancel()
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
 		return err
 	}
-	return m.client.RemoveObject(context.Background(), m.bucket, key, minio.RemoveObjectOptions{})
+	return m.client.RemoveObject(ctx, m.bucket, key, minio.RemoveObjectOptions{})
 }
 
 func objectInfo(objectPath string, info minio.ObjectInfo) nanoflare.ObjectInfo {
@@ -188,4 +235,12 @@ func objectKey(appID, objectPath string) (string, error) {
 		return "", errors.New("object path is required")
 	}
 	return path.Join("apps", appID, clean), nil
+}
+
+func (m *MinIO) operationContext(parent context.Context) (context.Context, context.CancelFunc) {
+	timeout := m.timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	return context.WithTimeout(parent, timeout)
 }

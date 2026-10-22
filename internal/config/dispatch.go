@@ -1,0 +1,79 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtimeassets"
+)
+
+func staticDeployments(active []nanoflare.ActiveDeployment) []nanoflare.ActiveDeployment {
+	out := make([]nanoflare.ActiveDeployment, 0, len(active))
+	for _, item := range active {
+		if !item.App.IsDynamic() {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+func dispatchServiceName(item nanoflare.ActiveDeployment, index int) string {
+	return fmt.Sprintf("%s-dispatch-%d", deploymentServiceName(item), index)
+}
+func writeDispatchServices(out *strings.Builder, runtimeAddr string, active []nanoflare.ActiveDeployment) {
+	for _, item := range active {
+		for index, binding := range item.Deployment.DispatchNamespaces {
+			fmt.Fprintf(out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Dispatch-Namespace-ID\", value = %s)]))),\n", quote(dispatchServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeDispatch, binding.NamespaceID)), quote(binding.NamespaceID))
+		}
+	}
+}
+func dispatchWorkerBindings(item nanoflare.ActiveDeployment) []string {
+	if len(item.Deployment.DispatchNamespaces) == 0 {
+		return nil
+	}
+	bindings := []string{`(name = "__NANOFLARE_WORKER_LOADER", workerLoader = ())`}
+	mapping := map[string]string{}
+	for index, binding := range item.Deployment.DispatchNamespaces {
+		control := fmt.Sprintf("__NANOFLARE_DISPATCH_CONTROL_%d", index)
+		mapping[binding.Binding] = control
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(control), quote(dispatchServiceName(item, index))))
+	}
+	data, _ := json.Marshal(mapping)
+	return append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DISPATCH_BINDINGS\", json = %s)", quote(string(data))))
+}
+func writeDispatchPlatform(out *strings.Builder, item nanoflare.ActiveDeployment) {
+	d := item.Deployment
+	source := entrypointWrapper(d.Entrypoint, assetBindingName(d.AssetConfig), d.Databases, d.ObjectStorageBuckets)
+	source = `import { wrapDispatchEnv, DispatchBroker } from "nanoflare-internal:dispatch";
+export { DispatchBroker };
+` + source
+	source = strings.ReplaceAll(source, "wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames)", "wrapDispatchEnv(wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames),ctx,request.headers.get(\"X-Nanoflare-Dispatch-Root\"))")
+	fmt.Fprintf(out, "  modules = [\n    (name = \"__nanoflare_internal_entrypoint__.js\", esModule = %s),\n", quote(source))
+	fmt.Fprintf(out, "    (name = \"nanoflare-internal:dispatch\", esModule = %s),\n", quote(runtimeassets.DispatchModule))
+	fmt.Fprintf(out, "    (name = \"nanoflare-internal:runtime-bindings\", esModule = %s),\n", quote(runtimeassets.BindingsModule))
+	for _, file := range entrypointFirst(d.Files, d.Entrypoint) {
+		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(file.Path), quote(workerdSafeSource(file.Content)))
+	}
+	out.WriteString("  ],\n")
+}
+
+// DynamicEntrypoint wraps module handlers without capturing a request capability
+// in revision-cached code. Native props retain their workerd RPC lifetime.
+func DynamicEntrypoint(d nanoflare.Deployment) string {
+	metadata, _ := json.Marshal(struct {
+		KV       []nanoflare.KVBinding                  `json:"kv_namespaces"`
+		DB       []nanoflare.DatabaseBinding            `json:"db"`
+		Objects  []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets"`
+		Services []nanoflare.ServiceBinding             `json:"services"`
+		Assets   nanoflare.AssetConfig                  `json:"asset_config"`
+	}{d.KVNamespaces, d.Databases, d.ObjectStorageBuckets, d.Services, d.AssetConfig})
+	header := fmt.Sprintf("import { dynamicEnv, withInvocation } from \"nanoflare-internal:dynamic-env.js\";\nimport userWorker from %s;\nconst metadata=%s;\n", quote("./"+d.Entrypoint), string(metadata))
+	return header + `const handler = typeof userWorker === "function" ? class extends userWorker {
+ constructor(ctx,env) { super(ctx,dynamicEnv(env,ctx,metadata)); }
+ fetch(request) { return withInvocation(this.ctx,()=>super.fetch(request)); }
+} : {
+ async fetch(request,env,ctx) { if(typeof userWorker.fetch!=="function") return new Response("fetch handler not found",{status:404}); return withInvocation(ctx,()=>userWorker.fetch(request,dynamicEnv(env,ctx,metadata),ctx)); }
+};
+export default handler;`
+}

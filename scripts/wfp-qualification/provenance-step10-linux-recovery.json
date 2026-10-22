@@ -1,0 +1,10 @@
+{
+  "created_at": "2026-10-21T11:34:09.664567+00:00",
+  "source_scope": "cmd/**/*.go, internal/**/*.go, internal/**/*.js, go.mod, go.sum; sorted relative paths and SHA-256 digests",
+  "source_file_count": 212,
+  "source_tree_sha256": "3e77eca0574b75e8f3db96eed1671f8ed824b64d606de8a942534fbb09678dd3",
+  "probe_source_sha256": "a003de386732d5e74076e03cd1c23e6b985ddc408da365d18e73920b8b62f288",
+  "report_sha256": "7aa9142e674267b758790be17b68da86216a45f1e876b470e14ae33a0c93a83a",
+  "runner_build": "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath ./cmd/nanoflare-runner",
+  "race_detector": true
+}

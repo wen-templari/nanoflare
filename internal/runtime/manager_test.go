@@ -347,3 +347,39 @@ func waitFor(t *testing.T, timeout time.Duration, condition func() bool, descrip
 	}
 	t.Fatalf("timed out waiting for %s", description)
 }
+
+func TestManagerRecoversUnacknowledgedPreparation(t *testing.T) {
+	writer := &fakeWriter{}
+	launcher := &fakeLauncher{healthy: true}
+	manager := NewManager(writer, launcher, t.TempDir(), filepath.Join(t.TempDir(), "workerd.capnp"), testSocketDir(t), time.Second, time.Second)
+	defer manager.Close()
+	candidate := deployments(9001)
+	generation, _, err := manager.Prepare(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, _, err := manager.Prepare(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay != generation || launcher.count() != 1 {
+		t.Fatal("lost prepare acknowledgement created another generation")
+	}
+	// A successor cancels the stale uncommitted generation.
+	successor := deployments(9002)
+	successor[0].Deployment.ID = "successor"
+	next, _, err := manager.Prepare(successor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == generation || !launcher.process(0).isStopped() {
+		t.Fatal("stale pending generation was not replaced")
+	}
+	// Recovery publishes the pending candidate after durable DB activation.
+	if err = manager.Write(successor); err != nil {
+		t.Fatal(err)
+	}
+	if launcher.count() != 2 {
+		t.Fatal("recovery relaunched an already healthy prepared generation")
+	}
+}

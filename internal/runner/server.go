@@ -2,12 +2,14 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtime"
@@ -24,18 +26,62 @@ type Server struct {
 	token     string
 	mux       *http.ServeMux
 	transport *http.Transport
+	bootID    string
 }
 
 func NewServer(manager RuntimeManager, token string) *Server {
-	server := &Server{manager: manager, token: token, mux: http.NewServeMux()}
+	server := &Server{manager: manager, token: token, mux: http.NewServeMux(), bootID: rand.Text()}
 	server.transport = http.DefaultTransport.(*http.Transport).Clone()
 	runtime.ConfigureTransport(server.transport)
 	server.mux.HandleFunc("GET /healthz", server.health)
+	server.mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, struct {
+			BootID    string                     `json:"boot_id"`
+			Resources *nanoflare.RunnerResources `json:"resources,omitempty"`
+		}{server.bootID, readRunnerResources()})
+	})
 	server.mux.HandleFunc("POST /v1/generations/prepare", server.prepare)
 	server.mux.HandleFunc("POST /v1/generations/{generation}/commit", server.commit)
 	server.mux.HandleFunc("POST /v1/generations/{generation}/abort", server.abort)
+	server.mux.HandleFunc("POST /v1/runtime-grants/check", server.checkRuntimeGrant)
 	server.mux.HandleFunc("/v1/workers/{app}/{deployment}/{path...}", server.worker)
 	return server
+}
+
+func (s *Server) checkRuntimeGrant(w http.ResponseWriter, r *http.Request) {
+	checker, ok := s.manager.(interface {
+		RuntimeDeploymentLive(context.Context, string, string) (bool, error)
+	})
+	if !ok {
+		http.Error(w, "runtime authorization unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var input struct {
+		InstanceID   string `json:"instance_id,omitempty"`
+		AppID        string `json:"app_id"`
+		DeploymentID string `json:"deployment_id"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	live, err := checker.RuntimeDeploymentLive(r.Context(), input.AppID, input.DeploymentID)
+	if input.InstanceID != "" {
+		instanceChecker, ok := s.manager.(interface {
+			RuntimeInstanceLive(context.Context, string, string, string) (bool, error)
+		})
+		if !ok {
+			http.Error(w, "runtime instance authorization unavailable", 503)
+			return
+		}
+		live, err = instanceChecker.RuntimeInstanceLive(r.Context(), input.AppID, input.DeploymentID, input.InstanceID)
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"live": live})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +110,13 @@ func (s *Server) worker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	defer endpoint.Release()
+	defer func() {
+		if r.Header.Get("X-Nanoflare-Dispatch-Root") != "" && r.Context().Err() == nil {
+			time.AfterFunc(2*time.Second, endpoint.Release)
+		} else {
+			endpoint.Release()
+		}
+	}()
 	prefix := "/v1/workers/" + active.App.ID + "/" + active.Deployment.ID
 	proxy := &httputil.ReverseProxy{Transport: s.transport, FlushInterval: -1, Director: func(req *http.Request) {
 		req.URL.Scheme = "http"
@@ -86,6 +138,10 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) {
 	var input PrepareRequest
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if input.ArtifactProtocol != 1 {
+		writeError(w, http.StatusConflict, errors.New("runner artifact protocol mismatch; upgrade control plane and runner together"))
 		return
 	}
 	generation, deployments, err := s.manager.Prepare(input.activeDeployments())

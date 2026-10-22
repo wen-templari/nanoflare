@@ -1,8 +1,11 @@
 package api
 
 import (
+	"crypto/subtle"
+	"errors"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/prometheus/client_golang/prometheus"
+	"net/http"
 )
 
 type serverMetricsCollector struct {
@@ -20,6 +23,17 @@ func (c serverMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	collectWorkerGatewayMetrics(ch, s)
 	collectRepositoryPoolMetrics(ch, s)
 	collectOrganizationMetrics(ch, s)
+	collectRunnerResources(ch, s)
+	if s.logForwarderStats != nil {
+		dropped := metricDesc("nanoflare_log_forwarder_dropped_total", "Attributed log events dropped by the local collector forwarder.", nil)
+		ch <- prometheus.MustNewConstMetric(dropped, prometheus.CounterValue, float64(s.logForwarderStats.Dropped()))
+	}
+}
+
+// SetLogForwarderStats exposes aggregate collection loss only on the protected
+// operator exporter. Configure it before serving requests.
+func (s *Server) SetLogForwarderStats(stats interface{ Dropped() uint64 }) {
+	s.logForwarderStats = stats
 }
 
 func metricDesc(name, help string, labels []string) *prometheus.Desc {
@@ -147,13 +161,21 @@ func collectWorkerDurationMetrics(ch chan<- prometheus.Metric, s *Server) {
 	}
 	average := metricDesc("nanoflare_worker_duration_milliseconds_average", "Rolling average worker execution duration.", []string{"worker_id", "worker_name"})
 	p95 := metricDesc("nanoflare_worker_duration_milliseconds_p95", "Rolling p95 worker execution duration.", []string{"worker_id", "worker_name"})
-	p90CPUTime := metricDesc("nanoflare_worker_cpu_time_milliseconds_p90", "Rolling p90 worker CPU execution time.", []string{"worker_id", "worker_name"})
+	p90Duration := metricDesc("nanoflare_worker_duration_milliseconds_p90", "Rolling p90 elapsed worker handler or dispatch duration; not CPU time.", []string{"worker_id", "worker_name"})
 	perSecond := metricDesc("nanoflare_worker_duration_milliseconds_per_second", "Rolling worker execution time per second.", []string{"worker_id", "worker_name"})
 	workers, err := s.service.ListApps()
 	if err != nil {
 		return
 	}
+	dispatchCount := metricDesc("nanoflare_worker_dispatch_invocations_total", "Admitted private dynamic Worker invocations since control-plane start.", []string{"worker_id", "worker_name"})
+	dispatchCanceled := metricDesc("nanoflare_worker_dispatch_cancellations_total", "Private dynamic Worker foreground cancellations since control-plane start.", []string{"worker_id", "worker_name"})
 	for _, worker := range workers {
+		if worker.IsDynamic() {
+			count := s.service.DispatchCounters(worker.ID)
+			labels := []string{worker.ID, worker.Name}
+			ch <- prometheus.MustNewConstMetric(dispatchCount, prometheus.CounterValue, float64(count.Invocations), labels...)
+			ch <- prometheus.MustNewConstMetric(dispatchCanceled, prometheus.CounterValue, float64(count.Canceled), labels...)
+		}
 		stats := s.durationTelemetry.Stats(worker.ID)
 		if !stats.Available {
 			continue
@@ -161,7 +183,7 @@ func collectWorkerDurationMetrics(ch chan<- prometheus.Metric, s *Server) {
 		labels := []string{worker.ID, worker.Name}
 		ch <- prometheus.MustNewConstMetric(average, prometheus.GaugeValue, stats.DurationMsAvg, labels...)
 		ch <- prometheus.MustNewConstMetric(p95, prometheus.GaugeValue, stats.DurationMsP95, labels...)
-		ch <- prometheus.MustNewConstMetric(p90CPUTime, prometheus.GaugeValue, stats.DurationMsP90, labels...)
+		ch <- prometheus.MustNewConstMetric(p90Duration, prometheus.GaugeValue, stats.DurationMsP90, labels...)
 		ch <- prometheus.MustNewConstMetric(perSecond, prometheus.GaugeValue, stats.DurationMsPerSecond, labels...)
 	}
 }
@@ -279,4 +301,22 @@ func collectOrganizationMetrics(ch chan<- prometheus.Metric, s *Server) {
 		ch <- prometheus.MustNewConstMetric(databaseCount, prometheus.GaugeValue, float64(count.databases), values...)
 		ch <- prometheus.MustNewConstMetric(bucketCount, prometheus.GaugeValue, float64(count.buckets), values...)
 	}
+}
+
+// SetMetricsToken restricts the global infrastructure exporter independently of
+// organization tokens. Empty credentials disable it instead of exposing tenants.
+func (s *Server) SetMetricsToken(token string) { s.metricsToken = token; s.metricsTokenRequired = true }
+func (s *Server) serveMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.metricsTokenRequired || s.controlAuth != nil {
+		if s.metricsToken == "" {
+			http.NotFound(w, r)
+			return
+		}
+		supplied := bearerToken(r)
+		if len(supplied) != len(s.metricsToken) || subtle.ConstantTimeCompare([]byte(supplied), []byte(s.metricsToken)) != 1 {
+			writeError(w, 401, errors.New("operator metrics credential required"))
+			return
+		}
+	}
+	s.metricsHandler.ServeHTTP(w, r)
 }

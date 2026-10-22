@@ -163,6 +163,7 @@ type WorkerdOptions struct {
 }
 
 func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOptions) string {
+	active = staticDeployments(active)
 	runtimeAddr := strings.TrimSpace(options.RuntimeAddr)
 	if runtimeAddr == "" {
 		runtimeAddr = "127.0.0.1:8081"
@@ -175,7 +176,8 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	if egressAddr := strings.TrimSpace(options.EgressAddr); egressAddr != "" {
 		fmt.Fprintf(&out, "    (name = \"nanoflare-egress\", external = (address = %s, http = (style = proxy))),\n", quote(egressAddr))
 	}
-	out.WriteString(durationTelemetryServices(runtimeAddr))
+	out.WriteString(durationTelemetryServices(runtimeAddr, active))
+	writeDispatchServices(&out, runtimeAddr, active)
 	for _, item := range active {
 		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(deploymentServiceName(item)), workerName(deploymentServiceName(item)))
 	}
@@ -186,21 +188,24 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		}
 		for index, binding := range item.Deployment.KVNamespaces {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-KV-Namespace-ID\", value = %s)]))),\n",
-				quote(kvServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.ID))
+				quote(kvServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeKV, binding.ID)), quote(binding.ID))
 		}
 		for index, binding := range item.Deployment.Databases {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"db\"), (name = \"X-Nanoflare-Database-ID\", value = %s)]))),\n",
-				quote(dbServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.DatabaseID))
+				quote(dbServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeDatabase, binding.DatabaseID)), quote(binding.DatabaseID))
 		}
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\"), (name = \"X-Nanoflare-Deployment-ID\", value = %s)]))),\n",
-			quote(assetServiceName(item)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(item.Deployment.ID))
+			quote(assetServiceName(item)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeAssets, item.Deployment.ID)), quote(item.Deployment.ID))
 		for index, binding := range item.Deployment.ObjectStorageBuckets {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Object-Bucket-ID\", value = %s)]))),\n",
-				quote(objectServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+item.App.RuntimeToken), quote(binding.BucketID))
+				quote(objectServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeObjects, binding.BucketID)), quote(binding.BucketID))
 		}
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
 	for _, item := range active {
+		if item.App.IsPrivate() && item.SocketPath == "" {
+			continue
+		}
 		address := fmt.Sprintf("*:%d", item.Deployment.Port)
 		if item.SocketPath != "" {
 			address = "unix:" + item.SocketPath
@@ -214,6 +219,7 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		dnsEnabled := strings.TrimSpace(options.DNSAddr) != "" && nodeCompatibility.runtime
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(deploymentServiceName(item)))
 		writeWorkerSource(&out, item, dnsEnabled, nodeCompatibility.v2)
+		fmt.Fprintf(&out, "  tails = [%s],\n", quote(telemetryServiceName(item, "tail")))
 		if strings.TrimSpace(options.EgressAddr) != "" {
 			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
 		}
@@ -258,8 +264,24 @@ func quotedList(values []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-func durationTelemetryServices(runtimeAddr string) string {
-	return fmt.Sprintf("    (name = \"nanoflare-duration-collector\", external = (address = %s)),\n", quote(runtimeAddr))
+func telemetryServiceName(item nanoflare.ActiveDeployment, kind string) string {
+	return "nanoflare-" + kind + "-" + deploymentServiceName(item)
+}
+
+func durationTelemetryServices(runtimeAddr string, active []nanoflare.ActiveDeployment) string {
+	var out strings.Builder
+	for _, item := range active {
+		for _, kind := range []string{nanoflare.RuntimeDurations, nanoflare.RuntimeLogs} {
+			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n", quote(telemetryServiceName(item, kind)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, kind, "")))
+		}
+		source := `export default { async tail(events, env) {
+  await env.COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/logs", {
+    method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(events)
+  });
+}};`
+		fmt.Fprintf(&out, "    (name = %s, worker = (compatibilityDate = \"2025-01-01\", modules = [(name = \"tail.js\", esModule = %s)], bindings = [(name = \"COLLECTOR\", service = %s)])),\n", quote(telemetryServiceName(item, "tail")), quote(source), quote(telemetryServiceName(item, nanoflare.RuntimeLogs)))
+	}
+	return out.String()
 }
 
 func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDeployment, dnsEnabled bool) []string {
@@ -267,11 +289,12 @@ func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDe
 	bindings = append(bindings,
 		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", quote(item.App.ID)),
 		fmt.Sprintf("(name = \"__NANOFLARE_DEPLOYMENT_ID\", text = %s)", quote(item.Deployment.ID)),
-		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
+		fmt.Sprintf("(name = \"__NANOFLARE_DURATION_COLLECTOR\", service = %s)", quote(telemetryServiceName(item, nanoflare.RuntimeDurations))),
 	)
 	if dnsEnabled {
 		bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DNS\", service = %s)", quote(dnsServiceName(item))))
 	}
+	bindings = append(bindings, dispatchWorkerBindings(item)...)
 	varNames := make([]string, 0, len(item.Deployment.Vars))
 	for name := range item.Deployment.Vars {
 		varNames = append(varNames, name)
@@ -308,24 +331,41 @@ func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDe
 		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(objectServiceName(item, index))))
 	}
 	for _, binding := range item.Deployment.Services {
-		if target, ok := activeServiceByName(active, item.App.OrgID, binding.Service); ok {
+		if target, ok := activeServiceBinding(active, item.App, binding); ok {
 			bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(deploymentServiceName(target))))
 		}
 	}
 	return bindings
 }
 
-func activeServiceByName(active []nanoflare.ActiveDeployment, orgID, name string) (nanoflare.ActiveDeployment, bool) {
+func activeServiceBinding(active []nanoflare.ActiveDeployment, source nanoflare.App, binding nanoflare.ServiceBinding) (nanoflare.ActiveDeployment, bool) {
+	var found nanoflare.ActiveDeployment
+	id := ""
 	for _, item := range active {
-		if item.App.OrgID == orgID && item.App.Name == name {
-			return item, true
+		match := binding.WorkerID != "" && item.App.ID == binding.WorkerID
+		if binding.WorkerID == "" {
+			match = item.App.Platform == nil && item.App.Name == binding.Service
+		}
+		if !match || !nanoflare.ServiceTargetAllowed(source, item.App) {
+			continue
+		}
+		if id != "" && id != item.App.ID {
+			return nanoflare.ActiveDeployment{}, false
+		}
+		if id == "" {
+			found = item
+			id = item.App.ID
 		}
 	}
-	return nanoflare.ActiveDeployment{}, false
+	return found, id != ""
 }
 
 func writeWorkerSource(out *strings.Builder, item nanoflare.ActiveDeployment, dnsEnabled, nodeCompatibilityV2 bool) {
 	deployment := item.Deployment
+	if len(deployment.DispatchNamespaces) > 0 {
+		writeDispatchPlatform(out, item)
+		return
+	}
 	if deploymentFormat(deployment) == "service-worker" {
 		source := deployment.Files[0].Content
 		if dnsEnabled {
@@ -515,30 +555,9 @@ func workerEntrypointModule(deployment nanoflare.Deployment) bool {
 }
 
 func workerEntrypointInstrumentationWrapper(entrypoint string) string {
-	return fmt.Sprintf(`import { AsyncLocalStorage } from "node:async_hooks";
-import userWorker from %s;
+	return fmt.Sprintf(`import userWorker from %s;
 
-function outputIdentityMarker(env) {
-  const appID = encodeURIComponent(env?.__NANOFLARE_APP_ID || "");
-  const deploymentID = encodeURIComponent(env?.__NANOFLARE_DEPLOYMENT_ID || "");
-  return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
-}
-
-const outputIdentity = new AsyncLocalStorage();
-for (const level of ["debug", "error", "info", "log", "warn"]) {
-  const original = console[level];
-  console[level] = (...args) => {
-    const marker = outputIdentity.getStore();
-    if (!marker || (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output "))) {
-      return original.apply(console, args);
-    }
-    return original.call(console, marker, ...args);
-  };
-}
-
-function withOutputIdentity(env, callback) {
-  return outputIdentity.run(outputIdentityMarker(env), callback);
-}
+function withOutputIdentity(_env, callback) { return callback(); }
 
 function recordRuntimeDuration(env, ctx, startedAt, outcome) {
   const durationMs = Math.max(1, Date.now() - startedAt);
@@ -603,35 +622,15 @@ func workerdSafeSource(source string) string {
 }
 
 func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return fmt.Sprintf(`import { AsyncLocalStorage } from "node:async_hooks";
-import { wrapEnv as wrapRuntimeEnv } from "nanoflare-internal:runtime-bindings";
+	return fmt.Sprintf(`import { wrapEnv as wrapRuntimeEnv } from "nanoflare-internal:runtime-bindings";
 import userWorker from %s;
+export * from %s;
 
 const assetBindingName = %s;
 const dbBindingNames = %s;
 const objectBindingNames = %s;
 
-function outputIdentityMarker(env) {
-  const appID = encodeURIComponent(env?.__NANOFLARE_APP_ID || "");
-  const deploymentID = encodeURIComponent(env?.__NANOFLARE_DEPLOYMENT_ID || "");
-  return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
-}
-
-const outputIdentity = new AsyncLocalStorage();
-for (const level of ["debug", "error", "info", "log", "warn"]) {
-  const original = console[level];
-  console[level] = (...args) => {
-    const marker = outputIdentity.getStore();
-    if (!marker || (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output "))) {
-      return original.apply(console, args);
-    }
-    return original.call(console, marker, ...args);
-  };
-}
-
-function withOutputIdentity(env, callback) {
-  return outputIdentity.run(outputIdentityMarker(env), callback);
-}
+function withOutputIdentity(_env, callback) { return callback(); }
 
 function recordRuntimeDuration(env, ctx, startedAt, outcome) {
   const durationMs = Math.max(1, Date.now() - startedAt);
@@ -694,12 +693,11 @@ export default {
       }
     });
   },
-};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
+};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
 }
 
 func serviceWorkerWrapper(script string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return `import { AsyncLocalStorage } from "node:async_hooks";
-import { installGlobalBindings } from "nanoflare-internal:runtime-bindings";
+	return `import { installGlobalBindings } from "nanoflare-internal:runtime-bindings";
 
 function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
   const durationMs = Math.max(1, Date.now() - startedAt);
@@ -720,27 +718,7 @@ const __nanoflareAddEventListener = globalThis.addEventListener.bind(globalThis)
 const __nanoflareScheduledListeners = [];
 let __nanoflareFetchListenerCount = 0;
 
-function __nanoflareOutputIdentityMarker() {
-  const appID = encodeURIComponent(globalThis.__NANOFLARE_APP_ID || "");
-  const deploymentID = encodeURIComponent(globalThis.__NANOFLARE_DEPLOYMENT_ID || "");
-  return "[[nanoflare-output app=" + appID + " deployment=" + deploymentID + "]]";
-}
-
-const __nanoflareOutputIdentity = new AsyncLocalStorage();
-for (const level of ["debug", "error", "info", "log", "warn"]) {
-  const original = console[level];
-  console[level] = (...args) => {
-    const marker = __nanoflareOutputIdentity.getStore();
-    if (!marker || (typeof args[0] === "string" && args[0].startsWith("[[nanoflare-output "))) {
-      return original.apply(console, args);
-    }
-    return original.call(console, marker, ...args);
-  };
-}
-
-function __nanoflareWithOutputIdentity(callback) {
-  return __nanoflareOutputIdentity.run(__nanoflareOutputIdentityMarker(), callback);
-}
+function __nanoflareWithOutputIdentity(callback) { return callback(); }
 
 function __nanoflareScheduledEvent(request) {
   const url = new URL(request.url);
@@ -947,7 +925,7 @@ func uniqueActiveApps(active []nanoflare.ActiveDeployment) []nanoflare.ActiveDep
 	seen := make(map[string]bool, len(active))
 	apps := make([]nanoflare.ActiveDeployment, 0, len(active))
 	for _, item := range active {
-		if seen[item.App.ID] {
+		if item.App.IsPrivate() || item.App.Hostname == "" || seen[item.App.ID] {
 			continue
 		}
 		seen[item.App.ID] = true

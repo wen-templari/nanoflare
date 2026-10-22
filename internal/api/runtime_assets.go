@@ -17,6 +17,10 @@ func NewRuntimeAssetServer(service *nanoflare.Service) *RuntimeAssetServer {
 }
 
 func (s *RuntimeAssetServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeAssets, r.Header.Get("X-Nanoflare-Deployment-ID"))
+	if r == nil {
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		writeError(w, http.StatusMethodNotAllowed, errors.New("unsupported asset operation"))
@@ -29,7 +33,7 @@ func (s *RuntimeAssetServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestPath == "" {
 		requestPath = "/"
 	}
-	response, err := s.service.AssetFetch(bearerToken(r), strings.TrimSpace(r.Header.Get("X-Nanoflare-Deployment-ID")), requestPath)
+	response, err := s.service.AssetFetchContext(r.Context(), bearerToken(r), strings.TrimSpace(r.Header.Get("X-Nanoflare-Deployment-ID")), requestPath)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return

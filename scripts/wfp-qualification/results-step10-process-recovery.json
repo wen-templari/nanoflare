@@ -1,0 +1,66 @@
+{
+  "at": "2026-10-21T11:49:50.313325+00:00",
+  "host_os": "Darwin",
+  "host_arch": "arm64",
+  "python": "3.14.3",
+  "passed": true,
+  "observations": [
+    {
+      "name": "initial_real_process_pg_kv_minio_asset_secret_snapshot_verified"
+    },
+    {
+      "name": "sigkill_control_restart_recovers_durable_active_revision"
+    },
+    {
+      "name": "postgres_server_outage_fails_closed",
+      "status": 401,
+      "client_error": null,
+      "elapsed_ms": 3
+    },
+    {
+      "name": "postgres_server_restart_recovers_existing_pool"
+    },
+    {
+      "name": "object_server_outage_fails_closed_at_client",
+      "status": null,
+      "client_error": "TimeoutError",
+      "elapsed_ms": 2003
+    },
+    {
+      "name": "object_server_restart_preserves_pinned_assets"
+    },
+    {
+      "name": "paused_object_transport_does_not_return_success",
+      "status": null,
+      "client_error": "TimeoutError",
+      "elapsed_ms": 2002
+    },
+    {
+      "name": "sigkill_during_durable_building_recovers_old_revision_and_conflict_retry",
+      "recovered_stage": "failed",
+      "retry_status": 409
+    },
+    {
+      "name": "sigkill_after_durable_artifact_recovers_new_revision_and_idempotent_identity",
+      "recovered_stage": "route_published"
+    },
+    {
+      "name": "rollback_and_successful_idempotent_retry_survive_process_restart"
+    }
+  ],
+  "limitations": [
+    "single-host trusted fixture, not production sizing or an untrusted sandbox",
+    "client deadlines do not prove backend work is cancelled",
+    "brief server pauses exercise transport stalls; no packet loss or multi-host partition",
+    "no monitoring pipeline or per-invocation CPU qualification"
+  ],
+  "runner_image_id": "sha256:4146a603ac1001623672c656b3d2cdf315604e29e0a27ac4684ba2e09e328f0b",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "object_store_image_id": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d",
+  "control_sha256": "71b32c0c5e151325ed05741aaf0d0668709380884bea05b79c75696a3521edeb",
+  "runner_sha256": "d1badc46ec87548a308502f5fc79dc91ec771ba5b544e3b141d15cd96fce32f5",
+  "verified_runner_cgroup_limits": "536870912\n0\n128",
+  "workerd": "workerd 2026-09-11",
+  "workerd_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "cleanup_verified": true
+}

@@ -26,7 +26,7 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`export function installGlobalBindings(target, dbBindingNames, objectBindingNames)`,
 		`(name = "internet", network = (allow = ["public", "10.0.0.0/8"], tlsOptions = (trustBrowserCas = true)))`,
 		`(name = "hello-app", worker = .workerHelloApp)`,
-		`(name = "nanoflare-duration-collector", external = (address = "127.0.0.1:8081"))`,
+		`(name = "nanoflare-durations-hello-app", external = (address = "127.0.0.1:8081", http = `,
 		`address = "*:9001"`,
 		`http = (forwardedProtoHeader = "X-Forwarded-Proto")`,
 		`(name = "kv-hello-app-0", external = (address = "127.0.0.1:8081"`,
@@ -39,10 +39,8 @@ func TestWorkerdGeneratesSharedPoolConfig(t *testing.T) {
 		`durationMs`,
 		`(name = "__NANOFLARE_APP_ID", text = "hello-app")`,
 		`(name = "__NANOFLARE_DEPLOYMENT_ID", text = "")`,
-		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-duration-collector")`,
+		`(name = "__NANOFLARE_DURATION_COLLECTOR", service = "nanoflare-durations-hello-app")`,
 		`globalThis.__NANOFLARE_DURATION_COLLECTOR.fetch(\"http://nanoflare.internal/internal/runtime/durations\"`,
-		`[[nanoflare-output app=`,
-		`value = "Bearer secret"`,
 		`compatibilityDate = "2025-12-10"`,
 		`compatibilityFlags = ["nodejs_compat"]`,
 	} {
@@ -422,7 +420,6 @@ func TestWorkerdServiceWorkerWrapperHandlesScheduledListeners(t *testing.T) {
 		`type === \"scheduled\"`,
 		`__nanoflareRunScheduledListeners(event.request)`,
 		`function __nanoflareWithOutputIdentity(callback)`,
-		`[[nanoflare-output app=`,
 		`/cdn-cgi/handler/scheduled`,
 		`new Response(null, { status: 204 })`,
 	} {
@@ -575,21 +572,14 @@ func TestWorkerdOutputIdentityWrappersAreSafeForOverlappingRequests(t *testing.T
 				App:        nanoflare.App{ID: "app"},
 				Deployment: deployment,
 			}})
-			for _, expected := range []string{
-				`import { AsyncLocalStorage } from \"node:async_hooks\"`,
-				`new AsyncLocalStorage()`,
-				`.getStore()`,
-				`.run(`,
-				`args[0].startsWith(\"[[nanoflare-output \")`,
-				`compatibilityFlags = ["nodejs_als"]`,
-			} {
+			for _, expected := range []string{`tails = ["nanoflare-tail-`, `name = "COLLECTOR"`, `/internal/runtime/logs`} {
 				if !strings.Contains(generated, expected) {
-					t.Fatalf("output identity wrapper is missing %q:\n%s", expected, generated)
+					t.Fatalf("missing native tail %q", expected)
 				}
 			}
-			for _, obsolete := range []string{`const originals = {}`, `console[level] = originals[level]`, `.finally(restore)`} {
-				if strings.Contains(generated, obsolete) {
-					t.Fatalf("output identity still uses time-scoped global console mutation %q:\n%s", obsolete, generated)
+			for _, unsafe := range []string{`[[nanoflare-output`, `console[level] =`, `new AsyncLocalStorage()`} {
+				if strings.Contains(generated, unsafe) {
+					t.Fatalf("unsafe identity wrapper %q", unsafe)
 				}
 			}
 		})

@@ -1,0 +1,181 @@
+{
+  "fixture_sha256": {
+    "customer.js": "edbe86f29e5415beb7bf6fd96ca8ea9f32eddd422409c5f29c805f6dd76638e2",
+    "dispatcher.js": "b79187a342fe7994b11d37d54ba7d79862e6ddc75d7adcb50c8d71f930efe512",
+    "namespace.js": "9a0ec7420844afbb2e0556b14f11acd4c3cfeb51ef9fadd7618ddc0264681835",
+    "poc_test.go": "f913d24d4245d00c7634e3782fb3ec48e0de4d950b6f51c3d5a6beb2e9e3d765"
+  },
+  "host": "darwin/arm64",
+  "not_verified": [
+    "hardened VM/container boundary",
+    "memory exhaustion isolation",
+    "production load/capacity",
+    "DNS rebinding and redirect enforcement",
+    "weighted revision/resource grants",
+    "Cloudflare live parity",
+    "CPU accounting accuracy beyond the bounded interruption probe"
+  ],
+  "observations": [
+    {
+      "name": "dispatch, authorization, namespace and concurrent native props",
+      "status": "verified",
+      "evidence": {
+        "backend": "experimental Worker Loader",
+        "public_sockets": 1,
+        "requests": 24,
+        "unique_contexts": 24
+      }
+    },
+    {
+      "name": "explicit resource capability",
+      "status": "verified",
+      "evidence": "alpha can call STATE; beta has no STATE, REGISTRY, or LOADER binding; this is not a production KV grant test"
+    },
+    {
+      "name": "request-scoped RPC in native props",
+      "status": "verified",
+      "evidence": {
+        "error": "Cannot perform I/O on behalf of a different request. I/O objects (such as streams, request/response bodies, and others) created in the context of one request handler cannot be accessed from a different request's handler. This is a limitation of Cloudflare Workers which allows us to improve overall performance. (I/O type: SubrequestChannel)",
+        "rejected": true
+      }
+    },
+    {
+      "name": "request-bound outbound policy",
+      "status": "verified",
+      "evidence": {
+        "denied_status": 403,
+        "distinct_contexts": [
+          "c2a063e1-96bb-4cec-af20-1d1081840939",
+          "54122b55-5270-4ae9-b6a2-9294d0e72cb8"
+        ],
+        "tradeoff": "unique loader key per outbound invocation; no isolate-reuse claim"
+      }
+    },
+    {
+      "name": "null globalOutbound rejects HTTP and TCP attempts",
+      "status": "verified",
+      "evidence": {
+        "httpBlocked": true,
+        "httpError": "This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world.",
+        "tcpBlocked": true,
+        "tcpError": "This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world."
+      }
+    },
+    {
+      "name": "subrequest limit enforcement",
+      "status": "blocker",
+      "evidence": {
+        "limits_supplied_at": [
+          "WorkerCode",
+          "EntrypointOptions"
+        ],
+        "requested_limit": 2,
+        "response": {
+          "completed": 5
+        },
+        "response_status": 200
+      }
+    },
+    {
+      "name": "independent revision update and old stream drain",
+      "status": "verified",
+      "evidence": {
+        "dispatcher_restarted": false,
+        "dispatcher_sha256": "b79187a342fe7994b11d37d54ba7d79862e6ddc75d7adcb50c8d71f930efe512",
+        "new_code_marker": "updated-source",
+        "new_invocation": "v2",
+        "old_stream": "v1:first + v1:last"
+      }
+    },
+    {
+      "name": "stream cancellation reaches customer stream",
+      "status": "verified",
+      "evidence": {
+        "customer_cancel_callback_observed": true
+      }
+    },
+    {
+      "name": "CPU interruption: spin",
+      "status": "blocker",
+      "evidence": {
+        "bounded_by": "parent kills disposable process after observation",
+        "client_timeout_ms": 150,
+        "limits_supplied_at": [
+          "WorkerCode",
+          "EntrypointOptions"
+        ],
+        "loader_cpu_ms_requested": false,
+        "peer_responsive": false,
+        "peer_timeout_ms": 250,
+        "process_alive_after_client_abort": true
+      }
+    },
+    {
+      "name": "CPU interruption: cpu-limit",
+      "status": "blocker",
+      "evidence": {
+        "bounded_by": "parent kills disposable process after observation",
+        "client_timeout_ms": 150,
+        "limits_supplied_at": [
+          "WorkerCode",
+          "EntrypointOptions"
+        ],
+        "loader_cpu_ms_requested": true,
+        "peer_responsive": false,
+        "peer_timeout_ms": 250,
+        "process_alive_after_client_abort": true
+      }
+    },
+    {
+      "name": "current Nanoflare telemetry identity forgery",
+      "status": "verified",
+      "evidence": {
+        "attacker_telemetry_received": true,
+        "victim_duration_accepted": false,
+        "victim_log_entries": 0
+      }
+    },
+    {
+      "name": "current telemetry capability confined to its handler",
+      "status": "verified",
+      "evidence": {
+        "status": 403,
+        "unbound_victim_kv_read": false
+      }
+    },
+    {
+      "name": "current corporate egress adapter bypasses native network allowlist",
+      "status": "blocker",
+      "evidence": {
+        "interpretation": "documented corporate routing behavior; unsuitable as untrusted egress enforcement",
+        "loopback_target_hits": 1,
+        "native_public_only_status": 403,
+        "with_adapter_no_proxy_status": 200
+      }
+    },
+    {
+      "name": "small sequential loader sample",
+      "status": "measured",
+      "evidence": [
+        {
+          "elapsed_ms": 2,
+          "new_revisions": 1,
+          "process_tree_rss_kib": 32352
+        },
+        {
+          "elapsed_ms": 14,
+          "new_revisions": 10,
+          "process_tree_rss_kib": 47808
+        },
+        {
+          "elapsed_ms": 65,
+          "new_revisions": 50,
+          "process_tree_rss_kib": 125024
+        }
+      ]
+    }
+  ],
+  "runtime": "workerd 2026-10-18",
+  "suite_exit_code": 0,
+  "tested_at_utc": "2026-10-18T05:31:54Z"
+}

@@ -2,6 +2,8 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   fmt: {
+    // Qualification records are immutable evidence referenced by byte digests.
+    ignorePatterns: ["scripts/wfp-*/**/*.json"],
     sortImports: {
       groups: [
         "type-import",

@@ -1,0 +1,6 @@
+{
+  "at": "2026-10-21T15:47:24.390762+00:00",
+  "removed": [],
+  "attributable_volume_events": 3,
+  "scope": "Only anonymous volumes correlated to this task's labeled fixture containers by Docker events and with no remaining container references. Unattributed or referenced volumes left untouched."
+}

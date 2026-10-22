@@ -11,26 +11,41 @@
       "type": "string",
       "format": "uri"
     },
-    "name": { "type": "string", "minLength": 1 },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
     "main": {
       "description": "Path to the entrypoint, relative to the project directory.",
       "type": "string",
       "minLength": 1
     },
-    "format": { "enum": ["modules", "service-worker"] },
-    "compatibility_date": { "type": "string", "format": "date" },
+    "format": {
+      "enum": ["modules", "service-worker"]
+    },
+    "compatibility_date": {
+      "type": "string",
+      "format": "date"
+    },
     "compatibility_flags": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
-    "dns": { "$ref": "#/$defs/dns" },
-    "dns": { "$ref": "#/$defs/dns" },
+    "dns": {
+      "$ref": "#/$defs/dns"
+    },
     "triggers": {
       "type": "object",
       "properties": {
         "crons": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "additionalProperties": true
@@ -44,45 +59,83 @@
       "description": "Worker files to upload, relative to the project directory.",
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "kv_namespaces": {
       "type": "array",
-      "items": { "$ref": "#/$defs/kvBinding" }
+      "items": {
+        "$ref": "#/$defs/kvBinding"
+      }
     },
     "db": {
       "type": "array",
-      "items": { "$ref": "#/$defs/databaseBinding" }
+      "items": {
+        "$ref": "#/$defs/databaseBinding"
+      }
     },
     "object_storage_buckets": {
       "type": "array",
-      "items": { "$ref": "#/$defs/objectStorageBucketBinding" }
+      "items": {
+        "$ref": "#/$defs/objectStorageBucketBinding"
+      }
     },
     "services": {
       "description": "Private bindings to Workers in the same organization.",
       "type": "array",
-      "items": { "$ref": "#/$defs/serviceBinding" }
+      "items": {
+        "$ref": "#/$defs/serviceBinding"
+      }
     },
-    "assets": { "$ref": "#/$defs/assets" },
-    "auth": { "$ref": "#/$defs/auth" },
-    "secrets": { "$ref": "#/$defs/secrets" }
+    "assets": {
+      "$ref": "#/$defs/assets"
+    },
+    "auth": {
+      "$ref": "#/$defs/auth"
+    },
+    "secrets": {
+      "$ref": "#/$defs/secrets"
+    },
+    "worker_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Existing immutable Worker ID, including a private namespace script. Deploy never creates a public Worker when this is set."
+    },
+    "dispatch_namespaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["binding", "namespace_id"],
+        "properties": {
+          "binding": {
+            "type": "string",
+            "minLength": 1
+          },
+          "namespace_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    }
   },
   "additionalProperties": true,
   "$defs": {
-    "bindingName": { "type": "string", "minLength": 1 },
-    "dns": {
-      "description": "Selects a platform-managed private DNS profile. Omit profile to inherit the platform default.",
-      "type": "object",
-      "properties": {
-        "profile": { "type": "string", "minLength": 1 }
-      },
-      "additionalProperties": false
+    "bindingName": {
+      "type": "string",
+      "minLength": 1
     },
     "dns": {
       "description": "Selects a platform-managed private DNS profile. Omit profile to inherit the platform default.",
       "type": "object",
       "properties": {
-        "profile": { "type": "string", "minLength": 1 }
+        "profile": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
@@ -90,9 +143,17 @@
       "type": "object",
       "required": ["binding"],
       "properties": {
-        "binding": { "$ref": "#/$defs/bindingName" },
-        "id": { "type": "string", "minLength": 1 },
-        "preview_id": { "type": "string", "minLength": 1 }
+        "binding": {
+          "$ref": "#/$defs/bindingName"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preview_id": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": true
     },
@@ -100,8 +161,13 @@
       "type": "object",
       "required": ["binding"],
       "properties": {
-        "binding": { "$ref": "#/$defs/bindingName" },
-        "database_id": { "type": "string", "minLength": 1 }
+        "binding": {
+          "$ref": "#/$defs/bindingName"
+        },
+        "database_id": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": true
     },
@@ -109,30 +175,64 @@
       "type": "object",
       "required": ["binding"],
       "properties": {
-        "binding": { "$ref": "#/$defs/bindingName" },
-        "bucket_id": { "type": "string", "minLength": 1 }
+        "binding": {
+          "$ref": "#/$defs/bindingName"
+        },
+        "bucket_id": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": true
     },
     "serviceBinding": {
       "type": "object",
-      "required": ["binding", "service"],
       "properties": {
-        "binding": { "$ref": "#/$defs/bindingName" },
-        "service": { "type": "string", "minLength": 1 }
+        "binding": {
+          "$ref": "#/$defs/bindingName"
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worker_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact immutable target Worker ID."
+        }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": ["binding"],
+      "anyOf": [
+        {
+          "required": ["service"]
+        },
+        {
+          "required": ["worker_id"]
+        }
+      ]
     },
     "assets": {
       "type": "object",
       "properties": {
-        "binding": { "$ref": "#/$defs/bindingName" },
-        "directory": { "type": "string", "minLength": 1 },
-        "html_handling": { "enum": ["none", "auto-trailing-slash"] },
-        "not_found_handling": { "enum": ["none", "404-page", "single-page-application"] },
+        "binding": {
+          "$ref": "#/$defs/bindingName"
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "html_handling": {
+          "enum": ["none", "auto-trailing-slash"]
+        },
+        "not_found_handling": {
+          "enum": ["none", "404-page", "single-page-application"]
+        },
         "run_worker_first": {
           "oneOf": [
-            { "type": "boolean" },
+            {
+              "type": "boolean"
+            },
             {
               "type": "array",
               "items": {
@@ -163,7 +263,9 @@
       "properties": {
         "required": {
           "type": "array",
-          "items": { "$ref": "#/$defs/bindingName" }
+          "items": {
+            "$ref": "#/$defs/bindingName"
+          }
         }
       },
       "additionalProperties": true

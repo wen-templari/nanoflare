@@ -73,15 +73,21 @@ function WorkerRow({ worker, onSelect }: { worker: Worker; onSelect: () => void 
       <Table.Cell>
         <div>
           <Text>{worker.name}</Text>
-          <Link
-            href={hostnameHref(worker.hostname)}
-            onClick={(event) => event.stopPropagation()}
-            target="_blank"
-            variant="plain"
-            className="text-gray-300 hover:underline"
-          >
-            {worker.hostname}
-          </Link>
+          {worker.platform?.exposure === "private" ? (
+            <Text variant="secondary">
+              Private dispatch · {worker.platform.customer_id || "Organization"}
+            </Text>
+          ) : (
+            <Link
+              href={hostnameHref(worker.hostname)}
+              onClick={(event) => event.stopPropagation()}
+              target="_blank"
+              variant="plain"
+              className="text-gray-300 hover:underline"
+            >
+              {worker.hostname}
+            </Link>
+          )}
         </div>
       </Table.Cell>
       <Table.Cell>

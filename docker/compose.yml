@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: nanoflare
       POSTGRES_PASSWORD: nanoflare-development
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,8 +22,8 @@ services:
       MINIO_ROOT_USER: nanoflare
       MINIO_ROOT_PASSWORD: nanoflare-development
     ports:
-      - "9000:9000"
-      - "19001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:19001:9001"
     volumes:
       - minio-data:/data
 
@@ -51,6 +51,12 @@ services:
       NANOFLARE_TRAEFIK_TOKEN: ${NANOFLARE_TRAEFIK_TOKEN:-nanoflare-development}
       NANOFLARE_RUNNER_TOKEN: ${NANOFLARE_RUNNER_TOKEN:-nanoflare-development}
       NANOFLARE_SECRET_KEY: ${NANOFLARE_SECRET_KEY:-}
+      NANOFLARE_METRICS_TOKEN: ${NANOFLARE_METRICS_TOKEN:-}
+      NANOFLARE_LOG_VECTOR_SOCKET: unix:///var/run/nanoflare/vector.sock
+      # Dynamic outbound runs in this daemon; mount configured CA paths in both services.
+      NANOFLARE_WORKERD_EGRESS_PROXY_URL: ${NANOFLARE_WORKERD_EGRESS_PROXY_URL:-}
+      NANOFLARE_WORKERD_EGRESS_CA_FILES: ${NANOFLARE_WORKERD_EGRESS_CA_FILES:-}
+      NANOFLARE_WORKERD_EGRESS_NO_PROXY: ${NANOFLARE_WORKERD_EGRESS_NO_PROXY:-}
       NANOFLARE_OIDC_ISSUER: ${NANOFLARE_OIDC_ISSUER:-}
       NANOFLARE_OIDC_AUDIENCE: ${NANOFLARE_OIDC_AUDIENCE:-}
       NANOFLARE_OIDC_CLIENT_ID: ${NANOFLARE_OIDC_CLIENT_ID:-}
@@ -70,6 +76,7 @@ services:
       - "8080:8080"
     volumes:
       - nanoflared-data:/var/lib/nanoflare/generated
+      - nanoflare-vector-socket:/var/run/nanoflare:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +96,7 @@ services:
       - -nanoflare-runtime-addr=nanoflared:8081
     environment:
       NANOFLARE_RUNNER_TOKEN: ${NANOFLARE_RUNNER_TOKEN:-nanoflare-development}
+      NANOFLARE_LOG_VECTOR_SOCKET: unix:///var/run/nanoflare/vector.sock
       # Optional proxy URL; mount any configured CA paths through an override file.
       NANOFLARE_WORKERD_EGRESS_PROXY_URL: ${NANOFLARE_WORKERD_EGRESS_PROXY_URL:-}
       NANOFLARE_WORKERD_EGRESS_CA_FILES: ${NANOFLARE_WORKERD_EGRESS_CA_FILES:-}
@@ -97,6 +105,7 @@ services:
       NANOFLARE_DNS_ADDR: ${NANOFLARE_DNS_ADDR:-127.0.0.1:8083}
     volumes:
       - nanoflare-runner-data:/var/lib/nanoflare/runner
+      - nanoflare-vector-socket:/var/run/nanoflare:ro
 
   traefik:
     image: traefik:v3.4
@@ -113,7 +122,7 @@ services:
     ports:
       - "8088:80"
       - "8443:443"
-      - "8089:8080"
+      - "127.0.0.1:8089:8080"
     depends_on:
       nanoflared:
         condition: service_started
@@ -124,9 +133,11 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${NANOFLARE_METRICS_TOKEN_FILE:-./prometheus/metrics-token.example}:/run/secrets/nanoflare-metrics-token:ro
+      - ./prometheus/nanoflare-alerts.yml:/etc/prometheus/nanoflare-alerts.yml:ro
       - prometheus-data:/prometheus
     depends_on:
       - traefik
@@ -142,7 +153,7 @@ services:
     image: grafana/tempo:2.10.7
     command: -config.file=/etc/tempo/tempo.yml
     ports:
-      - "3200:3200"
+      - "127.0.0.1:3200:3200"
     volumes:
       - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
       - tempo-data:/var/tempo
@@ -166,7 +177,16 @@ services:
 
   vector:
     image: timberio/vector:0.46.1-alpine
-    command: --config /etc/vector/vector.yaml
+    # Only trusted UID 0 / GID 65532 producers may traverse the collector dir.
+    # Producers mount it read-only and cannot replace the collector socket.
+    user: "0:65532"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        mkdir -p /var/run/nanoflare &&
+        chown 0:65532 /var/run/nanoflare &&
+        chmod 0710 /var/run/nanoflare &&
+        exec /usr/local/bin/vector --config /etc/vector/vector.yaml
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
@@ -178,10 +198,10 @@ services:
   grafana:
     image: grafana/grafana:12.0.2
     environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

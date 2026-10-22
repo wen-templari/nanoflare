@@ -1,0 +1,130 @@
+{
+  "runtime": "workerd 2026-09-11",
+  "binary_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "image_id": "sha256:4146a603ac1001623672c656b3d2cdf315604e29e0a27ac4684ba2e09e328f0b",
+  "architecture": "arm64",
+  "fixture_sha256": {
+    "bridge.py": "71f43c1c55197722a52570ad8477c2771d75dc65c6a97784bf81477fcaf004c4",
+    "run.py": "f04d5e827ca95d8720050afdc8e2a468b94846fb92fed8344a85626319a01b6b",
+    "bridge/dispatcher.js": "a4171c5a913bd0e43d4c1d322cdacbe933d639722083c862550e7713a36aea37",
+    "bridge/customer.js": "06e57ad9aef3b61ae6f5b3c6ddb6e98caeb8b1cbcf9b40af97718b8b1fb83231",
+    "bridge/relay.js": "b4a52389cdf2d9139ab226795597eda57801468f751064b8afe7aa26acee5841"
+  },
+  "tested_at_utc": "2026-10-18T06:43:20Z",
+  "not_verified": [
+    "arbitrary native RPC serialization across processes",
+    "global fetch with request-specific outbound and warm reuse",
+    "production resource adapters and sandbox hardening",
+    "per-invocation CPU enforcement",
+    "loader eviction, WebSockets and production capacity"
+  ],
+  "suite_exit_code": 0,
+  "observations": [
+    {
+      "name": "Warm revision reuse with per-request native capability facade",
+      "status": "verified",
+      "evidence": {
+        "requests": 36,
+        "unique_instances": 1,
+        "subjects": [
+          "alpha",
+          "beta"
+        ],
+        "forged_headers_ignored": true,
+        "authority": "external fixture broker, reached through typed local RPC facade",
+        "global_outbound": "null"
+      }
+    },
+    {
+      "name": "Saved native facade cannot cross request contexts",
+      "status": "verified",
+      "evidence": {
+        "later_request_rejected": true
+      }
+    },
+    {
+      "name": "Explicit transport subset and broker budget",
+      "status": "verified",
+      "evidence": {
+        "unsupported": {
+          "rawFetchDenied": true,
+          "unknownRpcDenied": true,
+          "undeclaredResourceDenied": true
+        },
+        "limit": {
+          "statuses": [
+            200,
+            200,
+            200,
+            429
+          ]
+        },
+        "arbitrary_cross_process_native_rpc": false
+      }
+    },
+    {
+      "name": "Revision transition preserves stream and authority snapshot",
+      "status": "verified",
+      "evidence": {
+        "old_stream": "v1:first\nv1:last\n",
+        "new_revision": "v2",
+        "unique_revision_instances": 2
+      }
+    },
+    {
+      "name": "Background effects share original bounded lease",
+      "status": "verified",
+      "evidence": {
+        "accepted_before_deadline": 1,
+        "late_effect_status": 410,
+        "reason": "background_deadline"
+      }
+    },
+    {
+      "name": "Wall deadline revokes authority independently of CPU",
+      "status": "verified",
+      "evidence": {
+        "accepted_effects": 0,
+        "reason": "deadline",
+        "does_not_interrupt_cpu": true
+      }
+    },
+    {
+      "name": "Client stream cancellation revokes invocation lease",
+      "status": "verified",
+      "evidence": {
+        "reason": "cancelled",
+        "accepted_before_cancel": 1
+      }
+    },
+    {
+      "name": "Explicit revocation stops further broker effects",
+      "status": "verified",
+      "evidence": {
+        "accepted_effects": 1,
+        "reason": "explicit_revoke",
+        "forged_transport_status": 401,
+        "replayed_revoked_lease_status": 410
+      }
+    },
+    {
+      "name": "Admission rejects excess live invocation leases",
+      "status": "verified",
+      "evidence": {
+        "admitted": 16,
+        "excess_status": 503
+      }
+    },
+    {
+      "name": "Bounded fixture lease retention",
+      "status": "verified",
+      "evidence": {
+        "history_entries": 64,
+        "history_cap": 64,
+        "active_cap": 16,
+        "note": "loader eviction/capacity not qualified"
+      }
+    }
+  ],
+  "relay_image_id": "sha256:1c261b8cd71d78fcdc0507b08bc7156a29785b92f0d3496861455a598bcc042d"
+}

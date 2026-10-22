@@ -53,6 +53,8 @@ type Runner struct {
 type Project struct {
 	Schema               string                                 `json:"$schema,omitempty"`
 	Name                 string                                 `json:"name"`
+	WorkerID             string                                 `json:"worker_id,omitempty"`
+	DispatchNamespaces   []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
 	Main                 string                                 `json:"main"`
 	Format               string                                 `json:"format,omitempty"`
 	CompatibilityDate    string                                 `json:"compatibility_date"`
@@ -163,7 +165,7 @@ func (r *Runner) create(args []string) error {
 		return err
 	}
 	baseURL := projectAPIURL(*apiURL)
-	if _, err := r.projectApp(baseURL, project.Name); err == nil {
+	if _, err := r.projectTarget(baseURL, project); err == nil {
 		return fmt.Errorf("worker %q already exists", project.Name)
 	} else if !errors.Is(err, errProjectAppNotFound) {
 		return err
@@ -220,7 +222,7 @@ func (r *Runner) delete(args []string) error {
 			return err
 		}
 		baseURL := projectAPIURL(*apiURL)
-		app, err := r.projectApp(baseURL, project.Name)
+		app, err := r.projectTarget(baseURL, project)
 		if err != nil {
 			return err
 		}
@@ -301,6 +303,7 @@ func (r *Runner) deploy(args []string) error {
 		Databases:            append([]nanoflare.DatabaseBinding(nil), project.Databases...),
 		ObjectStorageBuckets: append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
 		Services:             append([]nanoflare.ServiceBinding(nil), project.Services...),
+		DispatchNamespaces:   append([]nanoflare.DispatchBinding(nil), project.DispatchNamespaces...),
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,
@@ -467,7 +470,7 @@ func (r *Runner) deploymentOutput(args []string) error {
 		if err != nil {
 			return err
 		}
-		app, err := r.projectApp(projectAPIURL(*apiURL), project.Name)
+		app, err := r.projectTarget(projectAPIURL(*apiURL), project)
 		if err != nil {
 			return err
 		}
@@ -1418,7 +1421,7 @@ func (r *Runner) projectApp(baseURL, name string) (nanoflare.App, error) {
 // Wrangler while preserving `nanoflare create` for users who want to register a
 // Worker explicitly.
 func (r *Runner) ensureProjectApp(baseURL string, project Project) (nanoflare.App, error) {
-	app, err := r.projectApp(baseURL, project.Name)
+	app, err := r.projectTarget(baseURL, project)
 	if err == nil || !errors.Is(err, errProjectAppNotFound) {
 		return app, err
 	}
@@ -1765,7 +1768,7 @@ func (r *Runner) secretPut(args []string) error {
 		return errors.New("secret value is required")
 	}
 	baseURL := projectAPIURL(*apiURL)
-	app, err := r.projectApp(baseURL, project.Name)
+	app, err := r.projectTarget(baseURL, project)
 	if err != nil {
 		return err
 	}
@@ -1792,7 +1795,7 @@ func (r *Runner) secretList(args []string) error {
 	}
 	var secrets []nanoflare.Secret
 	baseURL := projectAPIURL(*apiURL)
-	app, err := r.projectApp(baseURL, project.Name)
+	app, err := r.projectTarget(baseURL, project)
 	if err != nil {
 		return err
 	}
@@ -1820,7 +1823,7 @@ func (r *Runner) secretDelete(args []string) error {
 		return err
 	}
 	baseURL := projectAPIURL(*apiURL)
-	app, err := r.projectApp(baseURL, project.Name)
+	app, err := r.projectTarget(baseURL, project)
 	if err != nil {
 		return err
 	}
