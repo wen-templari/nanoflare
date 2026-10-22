@@ -76,7 +76,7 @@ func decodeSettingsPatch(data []byte) (settingsPatch, error) {
 	var bindings []map[string]json.RawMessage
 	_ = json.Unmarshal(fields["bindings"], &bindings)
 	for _, binding := range bindings {
-		if err := exactFields(binding, "name", "type", "text", "json", "namespace_id", "id", "bucket_name", "service", "environment", "old_name", "version_id"); err != nil {
+		if err := exactFields(binding, "name", "type", "text", "json", "namespace_id", "id", "database_id", "bucket_name", "service", "environment", "old_name", "version_id"); err != nil {
 			return patch, err
 		}
 	}

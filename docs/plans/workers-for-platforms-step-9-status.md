@@ -640,3 +640,106 @@ verified fixture cleanup. This is a bounded 4 MiB distinct / 8 MiB manifest-byte
 correctness/load check, not production capacity or extended soak. Earlier
 validation tests cover manifest limits and unsupported contracts; this drill
 does not claim empty-file or cross-session deduplication support.
+
+## Managed Sites compatibility follow-up — 2026-10-22
+
+The third-party Managed Sites design uses the documented dynamic-dispatch pattern:
+an ordinary platform dispatcher passes a named `WorkerEntrypoint` RPC stub through
+per-request props to a private namespace script. The native runtime already tests
+that pattern, including concurrent context separation and cross-request reuse
+rejection. This does not establish full acceptance of the application's generated
+modules, publication marker, asset routing or production control service.
+
+The D1 wire mismatch is fixed locally. Uploads and settings edits accept
+`database_id`, retain the deprecated `id` alias, reject conflicting nonempty
+identifiers, and emit the current spelling in newly translated/native-projected
+metadata. Retained legacy metadata works with preservation and renamed inheritance.
+Parser and HTTP lifecycle tests cover these paths and verify that an ungranted
+database cannot replace the confirmed binding. PostgreSQL cases remain opt-in
+through `NANOFLARE_TEST_POSTGRES_URL`.
+
+Remaining integration work is explicit:
+
+1. Ordinary Worker multipart dispatcher upload is now implemented locally at
+   `PUT /client/v4/accounts/{account}/workers/scripts/{name}`; see the addendum
+   below. Live provider/client acceptance remains open. Routing/TLS remain
+   separate configuration, not side effects inferred from a multipart upload.
+2. Exercise the actual Managed Sites dispatcher, control adapter and generated
+   publication wrapper through Nanoflare's public serving path. Cover first
+   publication with authenticated candidate admission, expected marker and artifact
+   checksum, stable-script update, lost upload response reconciliation, secret
+   preservation, rollback, and Worker-first/SPA asset routing. Explicitly check the
+   asset limits and empty-file difference before declaring their uploader portable.
+3. Configure an immutable Site-to-customer mapping and scoped resource grants for
+   platform-mode namespaces. Maico must send Nanoflare's explicit profile/customer
+   headers, use native resource adapters, and implement route authorization,
+   capability grants and current revocation checks in its own control service.
+4. Keep untrusted Site execution unavailable until CPU enforcement and a qualified
+   hardened failure boundary pass their separate release gates. An API schema fix
+   does not upgrade the shared trusted runtime into an untrusted hosting profile.
+5. Validate the selected client/runtime flows against an entitled Cloudflare
+   staging target before claiming cross-provider portability. The existing live
+   comparison gate remains blocked; no new credentials or billing are requested.
+
+Validation for the D1 change: `go test -race ./internal/cfcompat
+./internal/nanoflare ./internal/api` passes with the native workerd 2025-12-10
+binary selected directly. PostgreSQL cases were skipped because the test URL was
+not configured. The initial wrapper-based broad run stalled in child-process
+cleanup and was stopped; its test-owned runtime processes were terminated. The
+first native run hit an address-in-use failure in
+`TestReproEgressHangsOnHTTP2Upstream`; that targeted test and the complete rerun
+both passed. This evidence does not include a live Cloudflare or Maico deployment.
+
+## Ordinary dispatcher upload — 2026-10-22
+
+`server_cfcompat_ordinary.go` adds ordinary module upload and settings inspection.
+Uploads reuse the namespace adapter's complete snapshot translator, management
+state, secret preservation, request identity and recoverable native publication.
+Only the ordinary route enables `dispatch_namespace` translation. It resolves
+names in the authenticated account, and checks `namespaces:dispatch` before
+inheritance or replay in addition to the existing upload scopes. Namespace customer
+uploads cannot acquire namespace-wide lookup through this path.
+
+Ordinary script identity is a domain-separated SHA-256 of account and script name,
+using the existing Worker primary key. Creation is serialized with the repository
+publication/deletion lock; concurrent upserts cannot create separate identities.
+It survives service recreation without a new schema or interpreting nonunique
+native display names as Cloudflare script identities. New ordinary Workers have
+no hostname. The upload receipt exposes `nanoflare_worker_id` for separate native
+routing/administration. Existing matching native display names remain separate.
+
+Native management metadata now validates and projects namespace bindings as well
+as resource bindings. Native managed-secret edits also reject namespace binding
+name collisions. Unsupported dispatch options, ordinary asset sessions and other
+ordinary API operations remain explicit errors. The trusted execution restriction
+and live Cloudflare acceptance gate are unchanged.
+
+The new parser and HTTP tests cover ordinary-only binding authority, account and
+namespace isolation, required scopes/profile, secret retention, latest upload
+settings, rollback-safe keyed retries, service recreation and concurrent first
+uploads. The existing local/remote native dispatch fixture now uploads its
+ordinary dispatcher through the compatible multipart endpoint and routes its named
+RPC capability through a real platform-owned CONTROL service binding. It retains
+its resource, concurrency, cross-request RPC and runner-recovery checks.
+
+Final validation passes with the native workerd 2025-12-10 executable and a
+separate disposable PostgreSQL 17 server:
+
+```sh
+go test -race ./internal/cfcompat ./internal/nanoflare ./internal/api
+```
+
+Both memory/PostgreSQL HTTP cases and local/remote native dispatch cases run in
+that suite. A separate targeted run also passes the native secret/code editing
+interop checks on both repositories. Retained namespace bindings are compared
+with their original native IDs before publication; parser tests reject silent
+rebinding after namespace name reuse. Renaming a namespace therefore requires an
+explicit updated binding on the next compatible upload.
+
+The first expanded native fixture assumed the dispatcher was the first Worker
+in a pool; adding CONTROL exposed that assumption. The fixture now selects the
+dispatcher by Worker ID for its restart/credential checks. That initial broad run
+also encountered an unrelated egress fixture port-bind conflict. The corrected
+targeted run and subsequent complete runs pass. Test databases/containers and
+native-path fixtures were cleaned up. No live Cloudflare comparison, Maico
+production deployment, release or untrusted-profile activation was performed.

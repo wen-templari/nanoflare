@@ -211,3 +211,100 @@ func TestUploadPlainMetadataFieldKeepsExactJSONValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestD1DatabaseIdentifierCompatibility(t *testing.T) {
+	for _, fields := range []string{`"database_id":"db-id"`, `"id":"db-id"`, `"database_id":"db-id","id":"db-id"`} {
+		t.Run(fields, func(t *testing.T) {
+			candidate, err := parseFixture(t, `{"main_module":"worker.js","bindings":[{"name":"DB","type":"d1",`+fields+`}]}`, nil, nil, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(candidate.Deployment.Databases, []nanoflare.DatabaseBinding{{Binding: "DB", DatabaseID: "db-id"}}) || !reflect.DeepEqual(candidate.Bindings, []Binding{{Name: "DB", Type: "d1", DatabaseID: "db-id"}}) {
+				t.Fatalf("incorrect D1 translation: %#v", candidate)
+			}
+		})
+	}
+	for _, binding := range []string{
+		`{"name":"DB","type":"d1","database_id":"db-id","id":"other"}`,
+		`{"name":"DB","type":"d1","database_id":""}`,
+		`{"name":"DB","type":"d1","DATABASE_ID":"db-id"}`,
+		`{"name":"STATE","type":"kv_namespace","namespace_id":"kv-id","database_id":"db-id"}`,
+		`{"name":"DB","type":"inherit","database_id":"db-id"}`,
+	} {
+		if _, err := parseFixture(t, `{"main_module":"worker.js","bindings":[`+binding+`]}`, nil, nil, Options{}); err == nil {
+			t.Fatalf("accepted invalid database identifier: %s", binding)
+		}
+	}
+	previous := &Previous{Deployment: nanoflare.DeployInput{Format: "modules", Entrypoint: "worker.js"}, Bindings: []Binding{{Name: "DB", Type: "d1", ID: "legacy-db"}}}
+	for _, settings := range []string{`{}`, `{"bindings":[{"name":"RENAMED_DB","type":"inherit","old_name":"DB"}]}`, `{"bindings":[{"name":"DB","type":"d1","database_id":"new-db"}]}`} {
+		candidate, err := ApplySettings([]byte(settings), previous, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantID, wantName := "legacy-db", "DB"
+		if strings.Contains(settings, "RENAMED_DB") {
+			wantName = "RENAMED_DB"
+		}
+		if strings.Contains(settings, "new-db") {
+			wantID = "new-db"
+		}
+		if !reflect.DeepEqual(candidate.Bindings, []Binding{{Name: wantName, Type: "d1", DatabaseID: wantID}}) || candidate.Deployment.Databases[0].DatabaseID != wantID {
+			t.Fatalf("incorrect retained/settings D1 binding: %#v", candidate)
+		}
+	}
+	if previous.Bindings[0].ID != "legacy-db" || previous.Bindings[0].DatabaseID != "" {
+		t.Fatal("legacy snapshot mutated")
+	}
+	if _, err := ApplySettings([]byte(`{"bindings":[{"name":"DB","type":"d1","database_id":"new-db","id":"other"}]}`), previous, nil); err == nil {
+		t.Fatal("settings accepted conflicting D1 identifiers")
+	}
+}
+
+func TestOrdinaryDispatchNamespaceBinding(t *testing.T) {
+	metadata := `{"main_module":"worker.js","bindings":[{"name":"DISPATCHER","type":"dispatch_namespace","namespace":"sites"}]}`
+	kind, body := uploadFixture(t, uploadPart{"metadata", "application/json", metadata}, uploadPart{"worker.js", "application/javascript+module", `export default {}`})
+	upload, err := DecodeUpload(kind, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(kind, name string) (string, error) {
+		if kind != "dispatch_namespace" || name != "sites" {
+			t.Fatalf("unexpected resolver request %s %s", kind, name)
+		}
+		return "namespace-id", nil
+	}
+	candidate, err := CompleteUpload(upload, nil, resolve, Options{AllowDispatchNamespaces: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(candidate.Deployment.DispatchNamespaces, []nanoflare.DispatchBinding{{Binding: "DISPATCHER", NamespaceID: "namespace-id"}}) {
+		t.Fatalf("incorrect namespace binding: %#v", candidate.Deployment)
+	}
+	previous := &Previous{Bindings: candidate.Bindings, Deployment: candidate.Deployment}
+	for _, next := range []Metadata{
+		{MainModule: "worker.js", KeepBindings: []string{"dispatch_namespace"}},
+		{MainModule: "worker.js", Bindings: []Binding{{Name: "RENAMED", Type: "inherit", OldName: "DISPATCHER"}}},
+	} {
+		if _, err := translate(next, previous, resolve, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := translate(next, previous, func(string, string) (string, error) { return "replacement-namespace", nil }, true); err == nil {
+			t.Fatal("retained namespace silently rebound to a new identity")
+		}
+		if _, err := Translate(next, previous, resolve); err == nil {
+			t.Fatal("customer translation inherited namespace authority")
+		}
+	}
+	if _, err := CompleteUpload(upload, nil, resolve, Options{}); err == nil {
+		t.Fatal("customer upload accepted dispatch_namespace")
+	}
+	if _, err := CompleteUpload(upload, nil, func(string, string) (string, error) { return "", errors.New("private namespace credential") }, Options{AllowDispatchNamespaces: true}); err == nil || strings.Contains(err.Error(), "credential") {
+		t.Fatalf("namespace resolution error was missing or leaked: %v", err)
+	}
+	for _, fields := range []string{`"namespace":""`, `"namespace":"sites","service":"other"`, `"namespace":"sites","outbound":{"service":"other"}`} {
+		_, err := parseFixture(t, `{"main_module":"worker.js","bindings":[{"name":"D","type":"dispatch_namespace",`+fields+`}]}`, nil, resolve, Options{AllowDispatchNamespaces: true})
+		if err == nil {
+			t.Fatalf("accepted unsupported dispatch configuration: %s", fields)
+		}
+	}
+}

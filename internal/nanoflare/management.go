@@ -166,10 +166,13 @@ func validateManagementMetadata(metadata ScriptManagementMetadata) error {
 			allowed["text"] = true
 		case "json":
 			allowed["json"] = true
+		case "dispatch_namespace":
+			allowed["namespace"] = true
 		case "kv_namespace":
 			allowed["namespace_id"] = true
 		case "d1":
 			allowed["id"] = true
+			allowed["database_id"] = true
 		case "r2_bucket":
 			allowed["bucket_name"] = true
 		case "service":
@@ -203,7 +206,7 @@ func (s *Service) ManagedDeployForOrg(org, worker string, in ManagedDeployInput)
 	if err := validateManagementMetadata(in.Metadata); err != nil {
 		return Deployment{}, err
 	}
-	if err := validateManagedBindingIntent(in); err != nil {
+	if err := s.validateManagedBindingIntent(org, in); err != nil {
 		return Deployment{}, err
 	}
 	if in.ExpectedRevision < 0 {
@@ -371,7 +374,7 @@ type ArtifactManagement struct {
 
 // Metadata is a projection of the actual native snapshot, not an independent
 // source of authority. Refuse misleading binding names/types or variable values.
-func validateManagedBindingIntent(in ManagedDeployInput) error {
+func (s *Service) validateManagedBindingIntent(org string, in ManagedDeployInput) error {
 	actual := map[string]string{}
 	for name := range in.Deployment.Vars {
 		actual[name] = "var"
@@ -397,7 +400,10 @@ func validateManagedBindingIntent(in ManagedDeployInput) error {
 	for name := range in.KeepSecrets {
 		actual[name] = "secret_text"
 	}
-	if len(in.Deployment.DispatchNamespaces) > 0 || len(actual) != len(in.Metadata.Bindings) {
+	for _, binding := range in.Deployment.DispatchNamespaces {
+		actual[binding.Binding] = "dispatch_namespace"
+	}
+	if len(actual) != len(in.Metadata.Bindings) {
 		return errors.New("management metadata does not match native bindings")
 	}
 	for _, raw := range in.Metadata.Bindings {
@@ -407,7 +413,9 @@ func validateManagedBindingIntent(in ManagedDeployInput) error {
 			Text        *string         `json:"text"`
 			JSON        json.RawMessage `json:"json"`
 			NamespaceID string          `json:"namespace_id"`
+			Namespace   string          `json:"namespace"`
 			ID          string          `json:"id"`
+			DatabaseID  string          `json:"database_id"`
 		}
 		if err := json.Unmarshal(raw, &binding); err != nil {
 			return errors.New("invalid management binding")
@@ -436,6 +444,17 @@ func validateManagedBindingIntent(in ManagedDeployInput) error {
 				return errors.New("management variable does not match native value")
 			}
 		}
+		if kind == "dispatch_namespace" {
+			for _, native := range in.Deployment.DispatchNamespaces {
+				if native.Binding != binding.Name {
+					continue
+				}
+				ns, err := s.DispatchNamespaceForOrg(org, native.NamespaceID)
+				if err != nil || ns.Name != binding.Namespace {
+					return errors.New("management namespace does not match native binding")
+				}
+			}
+		}
 		if kind == "kv_namespace" {
 			for _, native := range in.Deployment.KVNamespaces {
 				if native.Binding == binding.Name && native.ID != binding.NamespaceID {
@@ -444,6 +463,12 @@ func validateManagedBindingIntent(in ManagedDeployInput) error {
 			}
 		}
 		if kind == "d1" {
+			if binding.DatabaseID != "" {
+				if binding.ID != "" && binding.ID != binding.DatabaseID {
+					return errors.New("conflicting management database identifiers")
+				}
+				binding.ID = binding.DatabaseID
+			}
 			for _, native := range in.Deployment.Databases {
 				if native.Binding == binding.Name && native.DatabaseID != binding.ID {
 					return errors.New("management database identifier does not match native binding")

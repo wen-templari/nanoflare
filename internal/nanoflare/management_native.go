@@ -41,8 +41,19 @@ func (s *Service) nativeManagementMetadata(d Deployment, secrets []ArtifactSecre
 	for _, binding := range d.KVNamespaces {
 		add(binding.Binding, "kv_namespace", map[string]any{"namespace_id": binding.ID})
 	}
+	for _, binding := range d.DispatchNamespaces {
+		app, err := s.store.GetApp(d.AppID)
+		if err != nil {
+			return metadata, err
+		}
+		ns, err := s.DispatchNamespaceForOrg(app.OrgID, binding.NamespaceID)
+		if err != nil {
+			return metadata, err
+		}
+		add(binding.Binding, "dispatch_namespace", map[string]any{"namespace": ns.Name})
+	}
 	for _, binding := range d.Databases {
-		add(binding.Binding, "d1", map[string]any{"id": binding.DatabaseID})
+		add(binding.Binding, "d1", map[string]any{"database_id": binding.DatabaseID})
 	}
 	for _, binding := range d.ObjectStorageBuckets {
 		bucket, err := s.store.GetObjectStorageBucket(binding.BucketID)
@@ -171,6 +182,9 @@ func (s *Service) mutateManagedSecretLocked(worker, name string, value *string) 
 		secretNames[secret.Name] = ""
 	}
 	for _, source := range sources {
+		if err := validateDispatchNameCollisions(source.DispatchNamespaces, source.Vars, secretNames); err != nil {
+			return true, err
+		}
 		if err := validateBindingCollisions(source.Vars, secretNames, source.KVNamespaces, source.Databases, source.ObjectStorageBuckets, source.Services, source.AssetConfig); err != nil {
 			return true, err
 		}

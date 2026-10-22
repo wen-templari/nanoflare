@@ -111,8 +111,11 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org, err := auth.CreateOrganization(session.User.ID, nanoflare.CreateOrganizationInput{Name: "Dispatch"})
-	if err != nil {
+	org := nanoflare.Organization{ID: "dispatch-org", Name: "Dispatch", UsageLevel: nanoflare.UsageLevelPaid}
+	if err := repo.CreateOrganization(org); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertOrganizationMembership(nanoflare.OrganizationMembership{UserID: session.User.ID, OrgID: org.ID, Role: nanoflare.RoleOwner, Scopes: nanoflare.RoleScopes(nanoflare.RoleOwner)}); err != nil {
 		t.Fatal(err)
 	}
 	outboundCanceled := make(chan struct{}, 1)
@@ -312,10 +315,16 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool) {
 	if launcher.count.Load() != 0 {
 		t.Fatal("dynamic customer created a static runtime pool")
 	}
-	var platform nanoflare.App
-	json.Unmarshal(control("POST", "/workers", nanoflare.CreateAppInput{Name: "platform", Hostname: "platform.example.com"}, 201), &platform)
-	platformInput := nanoflare.DeployInput{IdempotencyKey: "platform", Format: "modules", CompatibilityDate: "2025-12-10", Entrypoint: "platform.js", DispatchNamespaces: []nanoflare.DispatchBinding{{Binding: "DISPATCHER", NamespaceID: ns.ID}}, Files: []nanoflare.WorkerFile{{Path: "platform.js", Content: `import {WorkerEntrypoint} from "cloudflare:workers";
-export class Connector extends WorkerEntrypoint { identify(){return this.ctx.props.marker;} }
+	// The dispatcher capability calls a platform-owned RPC service adapter.
+	var controlWorker nanoflare.App
+	json.Unmarshal(control("POST", "/workers", nanoflare.CreateAppInput{Name: "control", Hostname: "control.example.com"}, 201), &controlWorker)
+	control("POST", "/workers/"+controlWorker.ID+"/deployments", nanoflare.DeployInput{Format: "modules", CompatibilityDate: "2025-12-10", Entrypoint: "worker.js", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import {WorkerEntrypoint} from "cloudflare:workers";
+export default class Control extends WorkerEntrypoint { identify(marker){return marker;} fetch(){return new Response("control");} }`}}}, 201)
+	// Deploy the ordinary dispatcher through the compatible multipart endpoint.
+	// Named RPC exports and namespace props must survive this upload path too.
+	server.SetCloudflareCompatibilityEnabled(true)
+	platformCode := `import {WorkerEntrypoint} from "cloudflare:workers";
+export class Connector extends WorkerEntrypoint { identify(){return this.env.CONTROL.identify(this.ctx.props.marker);} }
 export default { async fetch(request,env,ctx) {
  const script=new URL(request.url).pathname.split("/")[1];
  if(request.headers.get("authorization")!=="Bearer "+script) return new Response("denied",{status:403});
@@ -324,8 +333,22 @@ export default { async fetch(request,env,ctx) {
   const options=new URL(request.url).pathname.endsWith("/unsupported")?{limits:{cpuMs:1}}:{};
   return await env.DISPATCHER.get(script,{props:{marker,CONNECTOR:ctx.exports.Connector({props:{marker}})}},options).fetch(request);
  }catch(error){return Response.json({error:error.message},{status:error.status||500});}
-} };`}}}
-	control("POST", "/workers/"+platform.ID+"/deployments", platformInput, 201)
+} };`
+	kind, body := cfMultipart(t, `{"main_module":"worker.js","compatibility_date":"2025-12-10","bindings":[{"name":"DISPATCHER","type":"dispatch_namespace","namespace":"production"},{"name":"CONTROL","type":"service","service":"control"}]}`, platformCode)
+	request := httptest.NewRequest("PUT", "/client/v4/accounts/"+org.ID+"/workers/scripts/platform", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+session.Token)
+	request.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
+	request.Header.Set("Content-Type", kind)
+	request.Header.Set("Idempotency-Key", "platform")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != 200 {
+		t.Fatalf("ordinary dispatcher upload: %d %s", response.Code, response.Body.String())
+	}
+	platform, err := service.OrdinaryScriptForOrg(org.ID, "platform")
+	if err != nil {
+		t.Fatal(err)
+	}
 	public := httptest.NewServer(server)
 	defer public.Close()
 	invoke := func(marker string) map[string]any {
@@ -614,7 +637,12 @@ export default {async fetch(request,env,ctx){return Response.json({version:"clas
 	// replacement cannot revive credentials or roots from the previous instance.
 	launcher.mu.Lock()
 	oldProcess := launcher.processes[len(launcher.processes)-1]
-	oldSource := launcher.active[len(launcher.active)-1][0]
+	var oldSource nanoflare.ActiveDeployment
+	for _, source := range launcher.active[len(launcher.active)-1] {
+		if source.App.ID == platform.ID {
+			oldSource = source
+		}
+	}
 	launcher.mu.Unlock()
 	oldToken := nanoflare.RuntimeCapability(oldSource, nanoflare.RuntimeDispatch, ns.ID)
 	staleRoot, _, e := service.BeginDispatchRoot(oldSource)
@@ -647,7 +675,12 @@ export default {async fetch(request,env,ctx){return Response.json({version:"clas
 		t.Fatalf("replacement revived old invocation: %v", e)
 	}
 	launcher.mu.Lock()
-	replacement := launcher.active[len(launcher.active)-1][0]
+	var replacement nanoflare.ActiveDeployment
+	for _, source := range launcher.active[len(launcher.active)-1] {
+		if source.App.ID == platform.ID {
+			replacement = source
+		}
+	}
 	launcher.mu.Unlock()
 	replacementToken := nanoflare.RuntimeCapability(replacement, nanoflare.RuntimeDispatch, ns.ID)
 	if _, e = service.AcquireDispatchWithRoot(context.Background(), replacementToken, ns.ID, "alpha", staleRoot); !errors.Is(e, nanoflare.ErrInvocationExpired) {

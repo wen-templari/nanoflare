@@ -104,8 +104,9 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 		}
 		parts[index] = decoded
 	}
+	ordinaryScript := len(parts) >= 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "scripts"
 	assetUpload := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "assets" && parts[4] == "upload"
-	if len(parts) < 5 || parts[0] != "accounts" || parts[1] == "" || parts[2] != "workers" || (!assetUpload && (parts[3] != "dispatch" || parts[4] != "namespaces")) {
+	if len(parts) < 5 || parts[0] != "accounts" || parts[1] == "" || parts[2] != "workers" || (!assetUpload && !ordinaryScript && (parts[3] != "dispatch" || parts[4] != "namespaces")) {
 		cfError(w, 404, "unsupported compatibility route")
 		return
 	}
@@ -146,11 +147,11 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 		return
 	}
 	allowedQuery := map[string]bool{}
-	if len(parts) == 8 && r.Method == "PUT" {
+	if (len(parts) == 8 || (ordinaryScript && len(parts) == 5)) && r.Method == "PUT" {
 		allowedQuery["bindings_inherit"] = true
 		allowedQuery["excludeScript"] = true
 	}
-	if len(parts) == 7 && (r.Method == "GET" || r.Method == "DELETE") {
+	if !ordinaryScript && len(parts) == 7 && (r.Method == "GET" || r.Method == "DELETE") {
 		allowedQuery["tags"] = true
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
@@ -170,6 +171,10 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 	}
 	if values, exists := query["excludeScript"]; exists && values[0] != "true" {
 		cfError(w, 422, "excludeScript supports only true; source is available from the content endpoint")
+		return
+	}
+	if ordinaryScript {
+		s.cfOrdinaryScript(w, r, parts[4:])
 		return
 	}
 	if len(parts) == 5 {
@@ -490,7 +495,15 @@ func (s *Server) cfScriptCollection(w http.ResponseWriter, r *http.Request, ns n
 	cfJSON(w, out)
 }
 func (s *Server) cfScriptResult(app nanoflare.App, snapshot nanoflare.ManagementUpload) map[string]any {
-	return map[string]any{"id": app.Platform.ScriptName, "etag": snapshot.DeploymentID, "created_on": app.CreatedAt, "modified_on": snapshot.State.UpdatedAt, "tags": append([]string{}, snapshot.State.Metadata.Tags...), "nanoflare_runtime_ready_verified": false}
+	name := app.Name
+	if app.Platform != nil {
+		name = app.Platform.ScriptName
+	}
+	result := map[string]any{"id": name, "etag": snapshot.DeploymentID, "created_on": app.CreatedAt, "modified_on": snapshot.State.UpdatedAt, "tags": append([]string{}, snapshot.State.Metadata.Tags...), "nanoflare_runtime_ready_verified": false}
+	if app.Platform == nil {
+		result["nanoflare_worker_id"] = app.ID
+	}
+	return result
 }
 func (s *Server) cfSettings(snapshot nanoflare.ManagementUpload) map[string]any {
 	return map[string]any{"bindings": append([]json.RawMessage{}, snapshot.State.Metadata.Bindings...), "compatibility_date": snapshot.Deployment.CompatibilityDate, "compatibility_flags": append([]string{}, snapshot.Deployment.CompatibilityFlags...), "tags": append([]string{}, snapshot.State.Metadata.Tags...)}
@@ -499,6 +512,9 @@ func (s *Server) cfSettings(snapshot nanoflare.ManagementUpload) map[string]any 
 func (s *Server) cfResolver(org string) cfcompat.Resolver {
 	return func(kind, name string) (string, error) {
 		switch kind {
+		case "dispatch_namespace":
+			ns, err := s.cfNamespaceByName(org, name)
+			return ns.ID, err
 		case "r2_bucket":
 			items, err := s.service.ListObjectStorageBucketsForOrg(org)
 			if err != nil {
@@ -571,7 +587,14 @@ func (s *Server) cfReplayUpload(w http.ResponseWriter, r *http.Request, app nano
 	return true
 }
 func (s *Server) cfUploadScript(w http.ResponseWriter, r *http.Request, ns nanoflare.DispatchNamespace, name string) {
+	s.cfUploadWorker(w, r, ns, name, false)
+}
+
+func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanoflare.DispatchNamespace, name string, ordinary bool) {
 	if !s.cfScopes(w, r, "workers:write", "deployments:write", "secrets:write") {
+		return
+	}
+	if ordinary && !s.cfScopes(w, r, "namespaces:dispatch") {
 		return
 	}
 	if len(r.Header.Values("If-Match")) > 0 {
@@ -610,17 +633,22 @@ func (s *Server) cfUploadScript(w http.ResponseWriter, r *http.Request, ns nanof
 		cfError(w, 422, "invalid upload identity")
 		return
 	}
-	app, err := s.service.NamespaceScript(controlOrgID(r), ns.ID, name)
+	var app nanoflare.App
+	if ordinary {
+		app, err = s.service.OrdinaryScriptForOrg(controlOrgID(r), name)
+	} else {
+		app, err = s.service.NamespaceScript(controlOrgID(r), ns.ID, name)
+	}
 	newScript := errors.Is(err, nanoflare.ErrAppNotFound)
 	if err != nil && !newScript {
 		cfServiceError(w, err)
 		return
 	}
-	if !newScript && app.Platform.Kind != "customer" {
+	if !ordinary && !newScript && app.Platform.Kind != "customer" {
 		cfError(w, 422, "compatibility routes support customer scripts only")
 		return
 	}
-	if !newScript && r.Header.Get("X-Nanoflare-Customer-ID") != "" && r.Header.Get("X-Nanoflare-Customer-ID") != app.Platform.CustomerID {
+	if !ordinary && !newScript && r.Header.Get("X-Nanoflare-Customer-ID") != "" && r.Header.Get("X-Nanoflare-Customer-ID") != app.Platform.CustomerID {
 		cfError(w, 422, "customer identity is immutable")
 		return
 	}
@@ -650,7 +678,11 @@ func (s *Server) cfUploadScript(w http.ResponseWriter, r *http.Request, ns nanof
 			}
 		}
 	}
-	options := cfcompat.Options{StrictInherit: r.URL.Query().Get("bindings_inherit") == "strict"}
+	options := cfcompat.Options{AllowDispatchNamespaces: ordinary, StrictInherit: r.URL.Query().Get("bindings_inherit") == "strict"}
+	if ordinary && upload.Metadata.Assets != nil {
+		cfError(w, 422, "ordinary Worker asset-upload sessions are not supported")
+		return
+	}
 	if upload.Metadata.Assets != nil {
 		customer := r.Header.Get("X-Nanoflare-Customer-ID")
 		if !newScript {
@@ -685,7 +717,11 @@ func (s *Server) cfUploadScript(w http.ResponseWriter, r *http.Request, ns nanof
 		return
 	}
 	if newScript {
-		app, err = s.service.CreateNamespaceScript(controlOrgID(r), ns.ID, nanoflare.CreateNamespaceScriptInput{ScriptName: name, CustomerID: r.Header.Get("X-Nanoflare-Customer-ID"), Execution: "dynamic"})
+		if ordinary {
+			app, err = s.service.EnsureOrdinaryScriptForOrg(controlOrgID(r), name, controlActor(r))
+		} else {
+			app, err = s.service.CreateNamespaceScript(controlOrgID(r), ns.ID, nanoflare.CreateNamespaceScriptInput{ScriptName: name, CustomerID: r.Header.Get("X-Nanoflare-Customer-ID"), Execution: "dynamic"})
+		}
 		if err != nil {
 			cfServiceError(w, err)
 			return

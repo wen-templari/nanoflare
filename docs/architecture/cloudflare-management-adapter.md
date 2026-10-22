@@ -18,7 +18,7 @@ contract. Native API schemas continue to describe native routes.
 
 ## Authentication and identity
 
-The control prefix is:
+The namespace control prefix is:
 
 ```text
 /client/v4/accounts/{Nanoflare organization ID}/workers/dispatch/namespaces
@@ -39,7 +39,7 @@ X-Nanoflare-Execution-Profile: trusted_shared_workerd
 
 This acknowledges the native trusted execution profile. Cloudflare's
 `trusted_workers` input is rejected because its cache/request-context semantics
-are different. Native platform-kind scripts are excluded from these routes.
+are different. Native platform-kind scripts are excluded from the namespace routes.
 Customer scripts remain private and keep immutable namespace/customer identity.
 For new scripts or new-script asset sessions in a platform-mode namespace,
 `X-Nanoflare-Customer-ID` selects the customer. On an existing script the header,
@@ -88,6 +88,66 @@ parameters are rejected. Full script PUT also accepts
 `bindings_inherit=strict` and `excludeScript=true`. Source is always excluded from
 script summaries and can be read through the authenticated content endpoint.
 
+## Ordinary Worker dispatcher uploads
+
+The adapter also supports these account-level routes:
+
+| Method and path                                                            | Required native scopes                                                       | Behavior                                                                             |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| PUT `/client/v4/accounts/{organization}/workers/scripts/{script}`          | `workers:write`, `deployments:write`, `secrets:write`, `namespaces:dispatch` | Multipart module upload/upsert using the same immutable managed publication pipeline |
+| GET `/client/v4/accounts/{organization}/workers/scripts/{script}/settings` | `workers:read`                                                               | Inspect latest uploaded configuration, with secret values omitted                    |
+
+These routes require the same adapter opt-in, account authorization and trusted
+execution acknowledgment. This dispatcher-oriented upload subset conservatively
+requires `namespaces:dispatch` even when an upload omits dispatch bindings, and
+checks it before keyed replay or inheritance. Customer identity headers are rejected.
+
+Upload metadata may include:
+
+```json
+{
+  "main_module": "worker.js",
+  "compatibility_date": "2025-12-10",
+  "bindings": [
+    { "name": "DISPATCHER", "type": "dispatch_namespace", "namespace": "sites" },
+    { "name": "CONTROL", "type": "service", "service": "control-adapter" }
+  ]
+}
+```
+
+Namespace names resolve only within the authenticated organization and become
+immutable native namespace IDs. Namespace-script uploads continue rejecting
+`dispatch_namespace`, including through preservation/inheritance. Dispatch outbound
+options and arbitrary service entrypoint selection remain unsupported and rejected.
+The `CONTROL` target must already be deployed; ordinary static service bindings
+can call the target's default `WorkerEntrypoint` RPC methods.
+
+Ordinary script names use a deterministic, domain-separated account/name Worker
+identity, enforced by the existing Worker primary key and publication lock. They
+must use the same 1–63 character lowercase name subset as namespaces. Existing
+native Workers with matching display names are not adopted. Successful uploads
+return a `nanoflare_worker_id` extension for native administration. New identities
+have no hostname; configure ingress/TLS separately using the native routing setup.
+No shared namespace is created or deleted by ordinary upload. Failed publication
+can leave an undeployed ordinary identity for inspection/native cleanup.
+
+Full uploads preserve only explicitly selected binding types, for example
+`keep_bindings: ["dispatch_namespace", "service", "secret_text"]`, or explicit
+`inherit` entries. Secrets remain provider-owned and redacted. The ordinary route
+supports the same optional `Idempotency-Key`, strict inheritance and
+`excludeScript=true` query as namespace upload; full-upload `If-Match` remains
+rejected. Replaying a completed upload cannot undo native traffic rollback.
+Retained namespace bindings must resolve to their original immutable IDs; a
+namespace rename/replacement requires an explicit binding on the next upload.
+Native deploy/vars/secret edits retain namespace binding metadata; native secret
+edits cannot collide with dispatch binding names.
+
+Other ordinary Worker API operations, including code download, settings PATCH,
+secret endpoints and ordinary asset-upload sessions, remain unsupported. Namespace
+asset-upload completion tokens cannot be attached through the ordinary route.
+Native APIs remain available for those administration tasks. These additions do
+not claim general Wrangler compatibility or live Cloudflare equivalence.
+
 ## Revision selection and retries
 
 Full uploads and configuration/secret/content mutations produce complete
@@ -135,6 +195,13 @@ are plain text, JSON, secret text, KV, D1, R2, fetch services and assets. Native
 ownership/grants are checked after translation. Type preservation and renamed
 inheritance resolve against the latest upload; strict missing inheritance fails.
 Unsupported fields/types and ambiguous duplicate JSON/parts are rejected.
+
+D1 uploads and settings edits accept the current `database_id` field and the
+deprecated `id` alias. When both are nonempty they must agree. New translated
+snapshots and native update projections emit `database_id`; retained legacy
+snapshots remain readable and are normalized when used in a new publication.
+Identifiers still pass native organization ownership and namespace/customer
+resource-grant checks.
 
 Code uploads are bounded to 10 MiB, 256 parts, 1 MiB metadata and 128 effective
 bindings. Secret patch bodies are bounded to 1 MiB and 128 entries. Tags are

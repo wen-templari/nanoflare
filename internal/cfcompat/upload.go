@@ -30,7 +30,9 @@ type Binding struct {
 	Text        *string         `json:"text,omitempty"`
 	JSON        json.RawMessage `json:"json,omitempty"`
 	NamespaceID string          `json:"namespace_id,omitempty"`
-	ID          string          `json:"id,omitempty"`
+	Namespace   string          `json:"namespace,omitempty"`
+	ID          string          `json:"id,omitempty"` // Deprecated D1 identifier.
+	DatabaseID  string          `json:"database_id,omitempty"`
 	BucketName  string          `json:"bucket_name,omitempty"`
 	Service     string          `json:"service,omitempty"`
 	Environment string          `json:"environment,omitempty"`
@@ -70,9 +72,11 @@ type Candidate struct {
 type Resolver func(kind, name string) (string, error)
 
 type Options struct {
-	LoadCompletedAssets func() ([]nanoflare.AssetFile, error)
-	StrictInherit       bool
-	LoadRetainedAssets  func() ([]nanoflare.AssetFile, error)
+	// Only the ordinary Worker upload route may grant namespace-wide dispatch.
+	AllowDispatchNamespaces bool
+	LoadCompletedAssets     func() ([]nanoflare.AssetFile, error)
+	StrictInherit           bool
+	LoadRetainedAssets      func() ([]nanoflare.AssetFile, error)
 }
 
 // DecodeObject shares the upload decoder's duplicate/unknown-field checks with
@@ -204,7 +208,7 @@ func DecodeMetadata(data []byte) (Metadata, error) {
 	var bindings []map[string]json.RawMessage
 	_ = json.Unmarshal(fields["bindings"], &bindings)
 	for _, binding := range bindings {
-		if err := exactFields(binding, "name", "type", "text", "json", "namespace_id", "id", "bucket_name", "service", "environment", "old_name", "version_id"); err != nil {
+		if err := exactFields(binding, "name", "type", "text", "json", "namespace_id", "namespace", "id", "database_id", "bucket_name", "service", "environment", "old_name", "version_id"); err != nil {
 			return metadata, err
 		}
 	}
@@ -391,7 +395,7 @@ func CompleteUpload(upload DecodedUpload, previous *Previous, resolve Resolver, 
 		copy.Deployment.Assets = assets
 		previous = &copy
 	}
-	result, err := Translate(metadata, previous, resolve)
+	result, err := translate(metadata, previous, resolve, options.AllowDispatchNamespaces)
 	if err != nil {
 		return Candidate{}, err
 	}
@@ -418,6 +422,10 @@ func supportedBinding(kind string) bool {
 // replace retained bindings by name; inherit requires an existing exact name.
 // It does not mutate the previous snapshot or expose secret values in errors.
 func Translate(metadata Metadata, previous *Previous, resolve Resolver) (Candidate, error) {
+	return translate(metadata, previous, resolve, false)
+}
+
+func translate(metadata Metadata, previous *Previous, resolve Resolver, allowDispatch bool) (Candidate, error) {
 	result := Candidate{Secrets: map[string]string{}, KeepSecrets: map[string]string{}, Tags: []string{}}
 	result.Deployment = nanoflare.DeployInput{Format: "modules", Entrypoint: metadata.MainModule, CompatibilityDate: metadata.CompatibilityDate, CompatibilityFlags: append([]string(nil), metadata.CompatibilityFlags...), Vars: map[string]json.RawMessage{}}
 	prior := map[string]Binding{}
@@ -438,7 +446,7 @@ func Translate(metadata Metadata, previous *Previous, resolve Resolver) (Candida
 	bindings := map[string]Binding{}
 	retained := map[string]string{}
 	for _, kind := range metadata.KeepBindings {
-		if !supportedBinding(kind) {
+		if !supportedBinding(kind) && !(allowDispatch && kind == "dispatch_namespace") {
 			return Candidate{}, errors.New("unsupported keep_bindings type")
 		}
 		for name, binding := range prior {
@@ -498,7 +506,7 @@ func Translate(metadata Metadata, previous *Previous, resolve Resolver) (Candida
 	sort.Strings(names)
 	for _, name := range names {
 		binding := bindings[name]
-		if !supportedBinding(binding.Type) {
+		if !supportedBinding(binding.Type) && !(allowDispatch && binding.Type == "dispatch_namespace") {
 			return Candidate{}, errors.New("unsupported binding type")
 		}
 		if err := binding.validate(); err != nil {
@@ -523,7 +531,31 @@ func Translate(metadata Metadata, previous *Previous, resolve Resolver) (Candida
 		case "kv_namespace":
 			result.Deployment.KVNamespaces = append(result.Deployment.KVNamespaces, nanoflare.KVBinding{Binding: name, ID: binding.NamespaceID})
 		case "d1":
-			result.Deployment.Databases = append(result.Deployment.Databases, nanoflare.DatabaseBinding{Binding: name, DatabaseID: binding.ID})
+			// Persist the current wire spelling, including inherited legacy bindings.
+			binding.DatabaseID = binding.databaseID()
+			binding.ID = ""
+			result.Deployment.Databases = append(result.Deployment.Databases, nanoflare.DatabaseBinding{Binding: name, DatabaseID: binding.databaseID()})
+		case "dispatch_namespace":
+			if resolve == nil {
+				return Candidate{}, errors.New("scoped namespace resolution is required")
+			}
+			id, err := resolve(binding.Type, binding.Namespace)
+			if err != nil || id == "" {
+				return Candidate{}, errors.New("dispatch namespace was not found or is not authorized")
+			}
+			if source, inherited := retained[name]; inherited {
+				// A renamed/recreated namespace must not redirect retained authority.
+				pinned := ""
+				for _, old := range previous.Deployment.DispatchNamespaces {
+					if old.Binding == source {
+						pinned = old.NamespaceID
+					}
+				}
+				if pinned == "" || pinned != id {
+					return Candidate{}, errors.New("retained dispatch namespace identity changed; supply an explicit binding")
+				}
+			}
+			result.Deployment.DispatchNamespaces = append(result.Deployment.DispatchNamespaces, nanoflare.DispatchBinding{Binding: name, NamespaceID: id})
 		case "r2_bucket", "service":
 			if resolve == nil {
 				return Candidate{}, errors.New("scoped resource resolution is required")
@@ -591,7 +623,11 @@ func (binding Binding) validate() error {
 		required = binding.NamespaceID
 	case "d1":
 		allowed["id"] = true
-		required = binding.ID
+		allowed["database_id"] = true
+		if binding.ID != "" && binding.DatabaseID != "" && binding.ID != binding.DatabaseID {
+			return errors.New("conflicting D1 database identifiers")
+		}
+		required = binding.databaseID()
 	case "r2_bucket":
 		allowed["bucket_name"] = true
 		required = binding.BucketName
@@ -602,11 +638,14 @@ func (binding Binding) validate() error {
 		if binding.Environment != "" && binding.Environment != "production" {
 			return errors.New("service environments are unsupported")
 		}
+	case "dispatch_namespace":
+		allowed["namespace"] = true
+		required = binding.Namespace
 	case "assets":
 	default:
 		return errors.New("unsupported binding type")
 	}
-	if (binding.Type == "kv_namespace" || binding.Type == "d1" || binding.Type == "r2_bucket" || binding.Type == "service") && required == "" {
+	if (binding.Type == "kv_namespace" || binding.Type == "d1" || binding.Type == "r2_bucket" || binding.Type == "service" || binding.Type == "dispatch_namespace") && required == "" {
 		return errors.New("binding resource identifier is required")
 	}
 	encoded, _ := json.Marshal(binding)
@@ -618,4 +657,12 @@ func (binding Binding) validate() error {
 		}
 	}
 	return nil
+}
+
+// databaseID accepts retained snapshots and clients using the deprecated id field.
+func (binding Binding) databaseID() string {
+	if binding.DatabaseID != "" {
+		return binding.DatabaseID
+	}
+	return binding.ID
 }
