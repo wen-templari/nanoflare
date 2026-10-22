@@ -57,7 +57,6 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 				}
 				r.Header.Set("Content-Type", contentType)
 				r.Header.Set("Idempotency-Key", key)
-				r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 				for k, v := range headers {
 					r.Header.Set(k, v)
 				}
@@ -86,7 +85,6 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			check(request("PUT", base, kind, body, session.Token, "first", nil), 404)
 			handler.SetCloudflareCompatibilityEnabled(true)
 			check(request("PUT", base, kind, body, "", "first", nil), 401)
-			check(request("PUT", base, kind, body, session.Token, "first", map[string]string{"X-Nanoflare-Execution-Profile": ""}), 422)
 			check(request("PUT", base, kind, body, session.Token, "first", map[string]string{"X-Nanoflare-Customer-ID": "site"}), 422)
 			limited, err := auth.CreatePersonalAccessToken(session.User.ID, nanoflare.CreatePersonalAccessTokenInput{Name: "upload-only", ScopeType: "org", OrgID: org.ID, Scopes: []string{"workers:write", "deployments:write", "secrets:write"}})
 			must(err)

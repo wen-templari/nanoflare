@@ -98,7 +98,6 @@ func TestCloudflareTagDeletionAtomicScopeAndReconciliation(t *testing.T) {
 				t.Helper()
 				r := httptest.NewRequest(method, path, nil)
 				r.Header.Set("Authorization", "Bearer "+token)
-				r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 				if header != "" {
 					r.Header.Set(header, "test")
 				}

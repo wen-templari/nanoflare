@@ -48,10 +48,13 @@ session/OAuth token. The example needs `namespaces:read`, `namespaces:write`,
 Keep this control credential in your platform backend. Authenticate users and
 authorize target scripts in the dispatcher before dispatching their requests.
 
-Every adapter control mutation requires
-`X-Nanoflare-Execution-Profile: trusted_shared_workerd`. This is explicit consent
-to the trusted execution profile; Cloudflare's `trusted_workers` field is not a
-substitute. The delegated asset-file upload uses its own upload JWT instead.
+Enabling native dispatch is the administrator's consent to the only supported
+profile, `trusted_shared_workerd`. Namespaces share a runtime failure boundary;
+there is no per-namespace runtime isolation or CPU interruption. Applications do
+not send execution consent headers. The legacy `X-Nanoflare-Execution-Profile`
+request header is ignored; responses report the effective profile in that header.
+Cloudflare's `trusted_workers` field remains unsupported. The delegated asset-file
+upload uses its own upload JWT.
 
 ## Deploy and invoke a minimal application
 
@@ -72,7 +75,6 @@ export NANOFLARE_ACCOUNT_API="$NANOFLARE_ORIGIN/client/v4/accounts/$NANOFLARE_OR
 ```sh
 curl --fail-with-body "$NANOFLARE_ACCOUNT_API/workers/dispatch/namespaces" \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H 'X-Nanoflare-Execution-Profile: trusted_shared_workerd' \
   -H 'Content-Type: application/json' \
   --data '{"name":"integration-demo"}'
 ```
@@ -100,7 +102,6 @@ JSON
 curl --fail-with-body -X PUT \
   "$NANOFLARE_ACCOUNT_API/workers/dispatch/namespaces/integration-demo/scripts/hello" \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H 'X-Nanoflare-Execution-Profile: trusted_shared_workerd' \
   -F 'metadata=@customer-metadata.json;type=application/json' \
   -F 'customer.js=@customer.js;type=application/javascript+module'
 ```
@@ -126,7 +127,6 @@ JSON
 curl --fail-with-body -X PUT \
   "$NANOFLARE_ACCOUNT_API/workers/scripts/integration-dispatcher" \
   -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H 'X-Nanoflare-Execution-Profile: trusted_shared_workerd' \
   -F 'metadata=@dispatcher-metadata.json;type=application/json' \
   -F 'dispatcher.js=@dispatcher.js;type=application/javascript+module' \
   -o dispatcher-upload.json
@@ -175,12 +175,10 @@ curl --fail-with-body -X DELETE \
   -H "Authorization: Bearer $NANOFLARE_TOKEN"
 curl --fail-with-body -X DELETE \
   "$NANOFLARE_ACCOUNT_API/workers/dispatch/namespaces/integration-demo/scripts/hello" \
-  -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H 'X-Nanoflare-Execution-Profile: trusted_shared_workerd'
+  -H "Authorization: Bearer $NANOFLARE_TOKEN"
 curl --fail-with-body -X DELETE \
   "$NANOFLARE_ACCOUNT_API/workers/dispatch/namespaces/integration-demo" \
-  -H "Authorization: Bearer $NANOFLARE_TOKEN" \
-  -H 'X-Nanoflare-Execution-Profile: trusted_shared_workerd'
+  -H "Authorization: Bearer $NANOFLARE_TOKEN"
 ```
 
 ## Resources, assets and client libraries
@@ -196,12 +194,12 @@ JWT as `assets.jwt` in script metadata. Implicit asset serving is supported;
 ordinary dispatcher asset sessions are not. See the
 [asset protocol and bounds](../reference/cloudflare-management-api.md#upload-and-asset-limits).
 
-| Client               | Locally qualified behavior                                 | Required adaptation / boundary                                                                                 |
-| -------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Direct HTTP          | Documented routes and JSON-part multipart uploads          | Nanoflare credentials, IDs and profile header                                                                  |
-| Cloudflare SDK 5.2.0 | Publisher's filename-keyed multipart uploads               | Official example fixture supplies configuration and a private API gateway                                      |
-| Cloudflare SDK 7.3.0 | Selected management/assets flows                           | Construct JSON multipart explicitly; default bracketed upload/settings serialization is rejected               |
-| Wrangler 4.54.0      | Selected namespace and plain-module upload/update requests | Fixture proxy adds profile header; broad secrets/assets/provisioning and unmodified CLI use remain unqualified |
+| Client               | Locally qualified behavior                                 | Required adaptation / boundary                                                                   |
+| -------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Direct HTTP          | Documented routes and JSON-part multipart uploads          | Nanoflare credentials and IDs                                                                    |
+| Cloudflare SDK 5.2.0 | Publisher's filename-keyed multipart uploads               | Official example fixture supplies configuration and a private API gateway                        |
+| Cloudflare SDK 7.3.0 | Selected management/assets flows                           | Construct JSON multipart explicitly; default bracketed upload/settings serialization is rejected |
+| Wrangler 4.54.0      | Selected namespace and plain-module upload/update requests | Direct fixture requests; broad secrets/assets/provisioning remain unqualified                    |
 
 The [client fixtures](../../scripts/wfp-client-flows/README.md) record exact
 versions and request limitations. The [official example workflow](../../scripts/wfp-examples/README.md)

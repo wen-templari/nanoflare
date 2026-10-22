@@ -53,9 +53,11 @@ The override sets `NANOFLARE_PLATFORM_DISPATCH_ENABLED=true` and
 take precedence. The experimental management adapter needs its own explicit
 `--enable-cloudflare-compatibility` or
 `NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED=true`; enabling it without native
-platform dispatch fails before startup. It retains the required
-`X-Nanoflare-Execution-Profile: trusted_shared_workerd` acknowledgment for control
-mutations. See the [adapter reference](../reference/cloudflare-management-api.md).
+platform dispatch fails before startup. Enabling native dispatch is the
+administrator's consent to `trusted_shared_workerd`, the only supported profile.
+Namespaces share a runtime; no namespace can select a separate runtime.
+Applications do not send consent headers; legacy profile request headers are
+ignored and cannot enable dispatch. See the [adapter reference](../reference/cloudflare-management-api.md).
 
 If outbound traffic must use a corporate proxy, the base Compose configuration
 forwards the explicit proxy, CA and no-proxy settings to both services. Mount

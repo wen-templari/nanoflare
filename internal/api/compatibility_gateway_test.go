@@ -10,8 +10,8 @@ func TestCloudflareCompatibilityGatewayScope(t *testing.T) {
 	calls := 0
 	gateway := NewCloudflareCompatibilityGateway(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Header.Get("Authorization") != "Bearer test" || r.Header.Get("X-Nanoflare-Execution-Profile") != "trusted_shared_workerd" {
-			t.Fatal("credentials or consent changed")
+		if r.Header.Get("Authorization") != "Bearer test" || r.Header.Get("X-Nanoflare-Execution-Profile") != "" {
+			t.Fatal("credentials changed or request consent injected")
 		}
 		w.WriteHeader(204)
 	}), "org")

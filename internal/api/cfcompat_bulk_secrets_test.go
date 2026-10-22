@@ -55,7 +55,6 @@ func TestCloudflareBulkSecretsAtomicLatestSnapshotAndRetry(t *testing.T) {
 				r := httptest.NewRequest("PATCH", base, strings.NewReader(body))
 				r.Header.Set("Authorization", "Bearer "+token)
 				r.Header.Set("Content-Type", "application/json")
-				r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 				r.Header.Set("Idempotency-Key", key)
 				if match != "" {
 					r.Header.Set("If-Match", match)

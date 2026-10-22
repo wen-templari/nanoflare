@@ -339,7 +339,6 @@ export default { async fetch(request,env,ctx) {
 	kind, body := cfMultipart(t, `{"main_module":"worker.js","compatibility_date":"2025-12-10","bindings":[{"name":"DISPATCHER","type":"dispatch_namespace","namespace":"production"},{"name":"CONTROL","type":"service","service":"control"}]}`, platformCode)
 	request := httptest.NewRequest("PUT", "/client/v4/accounts/"+org.ID+"/workers/scripts/platform", bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+session.Token)
-	request.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 	request.Header.Set("Content-Type", kind)
 	request.Header.Set("Idempotency-Key", "platform")
 	response := httptest.NewRecorder()
@@ -752,7 +751,6 @@ export default {async fetch(request,env,ctx){return Response.json({version:"clas
 		r := httptest.NewRequest("PUT", "/client/v4/accounts/"+org.ID+"/workers/dispatch/namespaces/"+ns.Name+"/scripts/alpha", bytes.NewReader(body))
 		r.Header.Set("Content-Type", kind)
 		r.Header.Set("Authorization", "Bearer "+session.Token)
-		r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 		r.Header.Set("Idempotency-Key", "wire-native")
 		w := httptest.NewRecorder()
 		server.ServeHTTP(w, r)
@@ -776,7 +774,6 @@ export default {async fetch(request,env,ctx){return Response.json({version:"clas
 		r := httptest.NewRequest(method, "/client/v4/accounts/"+org.ID+"/workers/dispatch/namespaces/"+ns.Name+"/scripts/alpha"+suffix, bytes.NewReader(body))
 		r.Header.Set("Content-Type", kind)
 		r.Header.Set("Authorization", "Bearer "+session.Token)
-		r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 		r.Header.Set("Idempotency-Key", key)
 		w := httptest.NewRecorder()
 		server.ServeHTTP(w, r)
@@ -815,7 +812,6 @@ export default {async fetch(request,env,ctx){return Response.json({version:"clas
 		r := httptest.NewRequest("POST", path, bytes.NewReader(body))
 		r.Header.Set("Content-Type", kind)
 		r.Header.Set("Authorization", "Bearer "+token)
-		r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 		out := httptest.NewRecorder()
 		server.ServeHTTP(out, r)
 		if out.Code != want {
@@ -869,7 +865,6 @@ export default {async fetch(request,env,ctx){return Response.json({version:"clas
 	}
 	deleteRequest := httptest.NewRequest("DELETE", assetBase+"/dispatch/namespaces/"+ns.Name+"/scripts?tags=tagged:yes", nil)
 	deleteRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	deleteRequest.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 	deleted := httptest.NewRecorder()
 	server.ServeHTTP(deleted, deleteRequest)
 	if deleted.Code != 200 {

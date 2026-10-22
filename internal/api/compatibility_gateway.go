@@ -6,9 +6,9 @@ import (
 )
 
 // NewCloudflareCompatibilityGateway redirects the Cloudflare API origin into an
-// explicitly selected local account. Its operator opts into trusted shared
-// execution by installing this handler; ordinary bearer authentication and
-// native authorization are still performed by the underlying adapter. Install
+// explicitly selected local account. Execution consent is configured on the
+// server; ordinary bearer authentication and native authorization are still
+// performed by the underlying adapter. Install
 // on a private egress listener (or an explicitly selected CLI base URL), never
 // as a general forwarding proxy. No request is sent to the public Internet.
 func NewCloudflareCompatibilityGateway(adapter http.Handler, organization string) http.Handler {
@@ -32,9 +32,6 @@ func NewCloudflareCompatibilityGateway(adapter http.Handler, organization string
 			cfError(w, 403, "destination is outside the configured account")
 			return
 		}
-		request := r.Clone(r.Context())
-		request.Header = r.Header.Clone()
-		request.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
-		adapter.ServeHTTP(w, request)
+		adapter.ServeHTTP(w, r)
 	})
 }

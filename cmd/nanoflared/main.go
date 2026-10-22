@@ -40,7 +40,7 @@ func main() {
 	}
 
 	var (
-		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", envBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "enable the trusted private dynamic dispatch pilot")
+		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", envBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "administrator opt-in to trusted_shared_workerd dispatch; namespaces share a runtime without CPU interruption or hardened untrusted isolation")
 		cloudflareCompatibilityEnabled = flag.Bool("enable-cloudflare-compatibility", envBoolOrDefault("NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED", false), "enable the experimental trusted Cloudflare management adapter; requires platform dispatch")
 		addr                           = flag.String("addr", ":8080", "HTTP listen address")
 		runtimeAddr                    = flag.String("runtime-addr", "127.0.0.1:8081", "private runtime KV API listen address")
@@ -92,6 +92,10 @@ func main() {
 	flag.Parse()
 	if *cloudflareCompatibilityEnabled && !*platformDispatchEnabled {
 		log.Fatal("Cloudflare compatibility requires --enable-platform-dispatch (or NANOFLARE_PLATFORM_DISPATCH_ENABLED=true)")
+	}
+
+	if *platformDispatchEnabled {
+		log.Print("Workers for Platforms enabled: trusted_shared_workerd; namespaces share a runtime failure boundary, with no CPU interruption or hardened untrusted isolation")
 	}
 
 	if *traefikFile == "" && *traefikToken == "" {

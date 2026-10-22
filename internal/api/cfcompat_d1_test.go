@@ -45,7 +45,6 @@ func TestCloudflareD1DatabaseIDLifecycle(t *testing.T) {
 				t.Helper()
 				request := httptest.NewRequest(method, base+suffix, bytes.NewReader(body))
 				request.Header.Set("Authorization", "Bearer "+session.Token)
-				request.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 				request.Header.Set("Content-Type", kind)
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)

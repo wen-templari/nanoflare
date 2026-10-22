@@ -68,6 +68,11 @@ type DispatchArtifact struct {
 	Deadline   time.Time      `json:"deadline"`
 }
 
+// PlatformDispatchEnabled reports the administrator opt-in to shared trusted execution.
+func (s *Service) PlatformDispatchEnabled() bool {
+	return s.dispatch.enabled.Load()
+}
+
 func (s *Service) SetPlatformDispatchEnabled(enabled bool) {
 	s.dispatch.enabled.Store(enabled)
 	if enabled {

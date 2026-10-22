@@ -87,7 +87,7 @@ func (s *Server) cfScopes(w http.ResponseWriter, r *http.Request, scopes ...stri
 }
 
 func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Request) {
-	if !s.cloudflareCompatibility.Load() {
+	if !s.cloudflareCompatibility.Load() || !s.service.PlatformDispatchEnabled() {
 		cfError(w, 404, "compatibility adapter is disabled")
 		return
 	}
@@ -142,10 +142,8 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
-	if r.Method != "GET" && r.Method != "HEAD" && r.Header.Get("X-Nanoflare-Execution-Profile") != "trusted_shared_workerd" {
-		cfError(w, 422, "mutations require X-Nanoflare-Execution-Profile: trusted_shared_workerd")
-		return
-	}
+	// Consent is configured by the administrator. Legacy request profile headers
+	// are ignored; this response reports the only supported execution profile.
 	allowedQuery := map[string]bool{}
 	if (len(parts) == 8 || (ordinaryScript && len(parts) == 5)) && r.Method == "PUT" {
 		allowedQuery["bindings_inherit"] = true

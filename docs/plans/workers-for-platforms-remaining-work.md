@@ -21,7 +21,7 @@ See the [prerequisite record](../archive/workers-for-platforms/workers-for-platf
 
 SDK 7.3.0 default bracketed upload/settings serialization remains unsupported;
 manual multipart construction is required. Wrangler 4.54.0 qualification covers
-selected management requests with profile-header adaptation. Full provisioning,
+selected management requests directly, with administrator-configured execution consent. Full provisioning,
 secrets/assets CLI flows and other versions need implementation/verification.
 The ordinary Worker adapter currently supports upload and settings GET only.
 Pagination, compound filters and further module/binding formats are explicit

@@ -76,7 +76,6 @@ func TestCloudflareSettingsSecretsAndTagsMutations(t *testing.T) {
 				t.Helper()
 				request := httptest.NewRequest(method, base+suffix, bytes.NewReader(body))
 				request.Header.Set("Authorization", "Bearer "+token)
-				request.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 				if kind != "" {
 					request.Header.Set("Content-Type", kind)
 				}

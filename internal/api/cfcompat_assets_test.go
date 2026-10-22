@@ -76,9 +76,6 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 				r.Header.Set("Authorization", "Bearer "+token)
 				r.Header.Set("Content-Type", kind)
 				r.Header.Set("Idempotency-Key", key)
-				if !strings.Contains(path, "/assets/upload?") {
-					r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
-				}
 				if customer != "" {
 					r.Header.Set("X-Nanoflare-Customer-ID", customer)
 				}

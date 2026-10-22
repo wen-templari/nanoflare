@@ -57,7 +57,6 @@ func TestCloudflareContentPreservesSnapshot(t *testing.T) {
 				}
 				r := httptest.NewRequest(method, base, bytes.NewReader(body))
 				r.Header.Set("Authorization", "Bearer "+token)
-				r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 				r.Header.Set("Content-Type", kind)
 				r.Header.Set("Idempotency-Key", key)
 				if main != "" {

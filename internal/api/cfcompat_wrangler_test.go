@@ -72,7 +72,7 @@ func TestWranglerLocalRequestQualification(t *testing.T) {
 			paths := []string{}
 			metadataKeys := []string{}
 			metadataType := ""
-			wrap := func(ack bool) http.Handler {
+			wrap := func() http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					mu.Lock()
 					paths = append(paths, r.Method+" "+r.URL.Path)
@@ -106,16 +106,11 @@ func TestWranglerLocalRequestQualification(t *testing.T) {
 							}
 						}
 					}
-					if ack {
-						r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
-					}
 					handler.ServeHTTP(w, r)
 				})
 			}
-			direct := httptest.NewServer(wrap(false))
+			direct := httptest.NewServer(wrap())
 			defer direct.Close()
-			adapted := httptest.NewServer(wrap(true))
-			defer adapted.Close()
 			directory := t.TempDir()
 			must(os.WriteFile(filepath.Join(directory, "worker.js"), []byte(`export default {fetch(){return new Response("wrangler-fixture")}}`), 0600))
 			config, _ := json.Marshal(map[string]any{"name": "alpha", "main": "worker.js", "account_id": org.ID, "compatibility_date": "2025-12-10", "workers_dev": false, "send_metrics": false, "no_bundle": true})
@@ -134,13 +129,9 @@ func TestWranglerLocalRequestQualification(t *testing.T) {
 				return string(out)
 			}
 			run(direct.URL, true, "dispatch-namespace", "list")
-			denied := run(direct.URL, false, "dispatch-namespace", "create", "staging")
-			if !strings.Contains(denied, "X-Nanoflare-Execution-Profile") {
-				t.Fatalf("unexpected unadapted CLI failure: %s", denied)
-			}
-			run(adapted.URL, true, "dispatch-namespace", "create", "staging")
-			run(adapted.URL, true, "dispatch-namespace", "get", "staging")
-			run(adapted.URL, true, "deploy", "--dispatch-namespace", "staging")
+			run(direct.URL, true, "dispatch-namespace", "create", "staging")
+			run(direct.URL, true, "dispatch-namespace", "get", "staging")
+			run(direct.URL, true, "deploy", "--dispatch-namespace", "staging")
 			ns, err := service.DispatchNamespacesForOrg(org.ID)
 			must(err)
 			if len(ns) != 1 {
@@ -155,14 +146,14 @@ func TestWranglerLocalRequestQualification(t *testing.T) {
 			}
 			first := upload.DeploymentID
 			must(os.WriteFile(filepath.Join(directory, "worker.js"), []byte(`export default {fetch(){return new Response("wrangler-updated")}}`), 0600))
-			run(adapted.URL, true, "deploy", "--dispatch-namespace", "staging", "--var", "MESSAGE:updated")
+			run(direct.URL, true, "deploy", "--dispatch-namespace", "staging", "--var", "MESSAGE:updated")
 			upload, found, err = service.ManagementUploadForOrg(org.ID, app.ID, false)
 			must(err)
 			if !found || upload.DeploymentID == first || !strings.Contains(upload.Deployment.Files[0].Content, "wrangler-updated") || string(upload.Deployment.Vars["MESSAGE"]) != `"updated"` {
 				t.Fatal("Wrangler update did not preserve native code/variable pairing")
 			}
 			must(service.DeleteAppForOrg(org.ID, app.ID))
-			run(adapted.URL, true, "dispatch-namespace", "delete", "staging")
+			run(direct.URL, true, "dispatch-namespace", "delete", "staging")
 			remaining, err := service.DispatchNamespacesForOrg(org.ID)
 			must(err)
 			if len(remaining) != 0 {

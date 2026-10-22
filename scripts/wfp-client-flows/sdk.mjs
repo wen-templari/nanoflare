@@ -20,7 +20,6 @@ const client = new Cloudflare({
   apiKey: null,
   baseURL: `${origin}/client/v4`,
   maxRetries: 0,
-  defaultHeaders: { "X-Nanoflare-Execution-Profile": "trusted_shared_workerd" },
   fetch: async (input, init) => {
     if (String(input) === "data:,") return new Response("");
     const request = new Request(input, init);

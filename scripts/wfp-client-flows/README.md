@@ -62,11 +62,10 @@ upload with updated source and a plain-text variable. The Go fixture inspects th
 actual native snapshots. This is management-request qualification; the fixture
 does not execute Wrangler-uploaded code in workerd.
 
-Direct mutation fails because Wrangler does not supply Nanoflare's required
-`X-Nanoflare-Execution-Profile` header. The successful path uses a test-only local
-proxy that adds this acknowledgment; this adaptation is not implemented as a
-production proxy. Wrangler's plain JSON metadata fields and `excludeScript=true`
-projection are now accepted by the adapter, with exact JSON validation intact.
+Mutations run directly against the fixture API without a consent-injecting proxy.
+The fixture administrator enables shared trusted dispatch and the compatibility
+adapter. Wrangler's plain JSON metadata fields and `excludeScript=true`
+projection are accepted by the adapter, with exact JSON validation intact.
 
 Wrangler also probes ordinary `/workers/scripts/{name}/settings` and, on errors,
 `/user/tokens/verify`. The ordinary settings GET route is now implemented for
@@ -74,7 +73,7 @@ uploaded ordinary Workers; an absent Worker still returns 404. Token verificatio
 remains unsupported and returns 404.
 No fake account/token state is returned. Secrets/assets, preservation of existing
 configuration, forced script deletion, namespace rename, other Wrangler versions
-and unmodified direct CLI deployment remain unqualified. The test uses the native
+and broader CLI deployment workflows remain unqualified. The test uses the native
 API for script cleanup before exercising Wrangler's empty-namespace deletion.
 
 ## Upstream example acceptance

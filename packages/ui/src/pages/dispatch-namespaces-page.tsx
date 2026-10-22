@@ -221,7 +221,7 @@ export function DispatchNamespacesPage() {
       <PageHeading
         eyebrow="Workers"
         title={selected?.name ?? "Dispatch namespaces"}
-        copy="Organize private customer Workers by platform environment. Only trusted code in a shared runtime is supported."
+        copy="Organize private customer Workers by platform environment. The administrator enables shared trusted execution. Namespaces do not have isolated runtimes."
         actions={
           canNamespace && <Button onClick={() => open("namespace")}>Create namespace</Button>
         }

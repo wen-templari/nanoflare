@@ -68,9 +68,9 @@ publication pipeline. This example does not claim that the full upstream
 `npm run deploy` provisioning sequence is already supported by Nanoflare.
 
 An explicitly installed private egress gateway routes only the Cloudflare API
-origin and selected Nanoflare account to the local adapter. It adds the trusted
-execution acknowledgment; normal Nanoflare authentication/scopes remain in
-force. It never connects to the Internet and rejects CONNECT tunneling.
+origin and selected Nanoflare account to the local adapter. The runner enables
+shared trusted execution as administrator configuration; no request consent
+header is added. Normal Nanoflare authentication/scopes remain in force. It never connects to the Internet and rejects CONNECT tunneling.
 The separate loopback CLI endpoint is `http://127.0.0.1:54339/client/v4`.
 
 For Internal Sites, the local ingress verifies a signed Nanoflare session and

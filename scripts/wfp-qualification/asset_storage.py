@@ -32,8 +32,7 @@ class AssetDrill(Drill):
     control_flags = ('-enable-cloudflare-compatibility',)
 
     def cf(self, method, path, body=None, token=None, parts=None, key=None, want=200, customer=None):
-        headers = {'Authorization': 'Bearer ' + (token or self.token),
-                   'X-Nanoflare-Execution-Profile': 'trusted_shared_workerd'}
+        headers = {'Authorization': 'Bearer ' + (token or self.token)}
         if parts is not None:
             headers['Content-Type'], data = multipart(parts)
         else:

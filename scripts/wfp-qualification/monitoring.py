@@ -189,7 +189,7 @@ class Monitoring(Drill):
         base = '/v1/organizations/'+org
         preview='/client/v4/accounts/'+org+'/workers/dispatch/namespaces'
         assert self.request('POST',preview,{'name':'preview-fixture'})['status']==422
-        preview_headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json','X-Nanoflare-Execution-Profile':'trusted_shared_workerd'}
+        preview_headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json'}
         request=urllib.request.Request(self.base+preview,method='POST',data=json.dumps({'name':'preview-fixture'}).encode(),headers=preview_headers)
         with self.opener.open(request,timeout=3) as response:
             assert response.status==200 and json.loads(response.read())['success']

@@ -7,8 +7,10 @@ adapter disabled. Opt in with `--enable-cloudflare-compatibility` or
 dispatch (`--enable-platform-dispatch` or its environment setting). Conflicting
 flags fail before startup. The trusted-pilot Compose override enables native
 dispatch only; the experimental adapter needs its own explicit opt-in.
-Embeddings may use `Server.SetCloudflareCompatibilityEnabled(true)`. None of these options removes the
-mandatory trusted execution acknowledgment on control mutations. Live Cloudflare comparison is
+Embeddings must enable both `Service.SetPlatformDispatchEnabled(true)` and
+`Server.SetCloudflareCompatibilityEnabled(true)`. Native dispatch enablement is
+the administrator consent to shared trusted execution; request headers cannot
+enable either feature. Live Cloudflare comparison is
 [blocked by account entitlement](../archive/workers-for-platforms/workers-for-platforms-live-comparison.md).
 
 The adapter is served separately from the generated native OpenAPI document.
@@ -34,13 +36,12 @@ another account's URL. Cloudflare credentials are not Nanoflare credentials.
 The adapter requires configured control authentication even in embeddings that
 permit legacy unauthenticated native control routes.
 
-Every control mutation also requires:
-
-```text
-X-Nanoflare-Execution-Profile: trusted_shared_workerd
-```
-
-This acknowledges the native trusted execution profile. Cloudflare's
+No per-request execution consent is required. The administrator opts into the
+only supported profile, `trusted_shared_workerd`, by enabling native dispatch.
+Namespaces share the runtime failure boundary; no per-namespace isolated runtime
+is available. Legacy `X-Nanoflare-Execution-Profile` request headers are ignored,
+including unknown values. Authenticated control responses report the effective
+profile in `X-Nanoflare-Execution-Profile: trusted_shared_workerd`. Cloudflare's
 `trusted_workers` input is rejected because its cache/request-context semantics
 are different. Native platform-kind scripts are excluded from the namespace routes.
 Customer scripts remain private and keep immutable namespace/customer identity.
@@ -100,8 +101,8 @@ The adapter also supports these account-level routes:
 | PUT `/client/v4/accounts/{organization}/workers/scripts/{script}`          | `workers:write`, `deployments:write`, `secrets:write`, `namespaces:dispatch` | Multipart module upload/upsert using the same immutable managed publication pipeline |
 | GET `/client/v4/accounts/{organization}/workers/scripts/{script}/settings` | `workers:read`                                                               | Inspect latest uploaded configuration, with secret values omitted                    |
 
-These routes require the same adapter opt-in, account authorization and trusted
-execution acknowledgment. This dispatcher-oriented upload subset conservatively
+These routes require the same administrator dispatch/adapter opt-in and account
+authorization. This dispatcher-oriented upload subset conservatively
 requires `namespaces:dispatch` even when an upload omits dispatch bindings, and
 checks it before keyed replay or inheritance. Customer identity headers are rejected.
 
@@ -268,9 +269,8 @@ The [upstream example runner](../../scripts/wfp-examples/README.md) deploys the
 pinned Worker Publisher and Internal Sites bundles through native publication.
 SDK 5.2.0 filename-keyed `files` multipart parts are accepted; named module
 parts retain their own identity. SDK 7 bracketed metadata serialization is still
-outside the qualified wire contract. The private account-scoped gateway adds
-explicit trusted execution consent and routes API requests locally without
-external forwarding. It does not enable broad Wrangler provisioning support.
+outside the qualified wire contract. The private account-scoped gateway routes
+API requests locally without external forwarding or adding consent headers. It does not enable broad Wrangler provisioning support.
 
 Internal Sites' script/path-salted truncated SHA-256 wire hashes are accepted
 in addition to the existing conventions. Full internal content digests still

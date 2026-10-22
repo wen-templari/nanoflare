@@ -107,9 +107,8 @@ func TestCloudflareCompatibilityUploadHTTPContract(t *testing.T) {
 			call("GET", base, "", nil, session.Token, "", false, 404)
 			handler.SetCloudflareCompatibilityEnabled(true)
 			call("GET", base, "", nil, "", "", false, 401)
-			call("POST", base, "application/json", []byte(`{"name":"staging"}`), session.Token, "", false, 422)
 			call("POST", base, "application/json", []byte(`{"name":"staging","trusted_workers":true}`), session.Token, "", true, 422)
-			created := call("POST", base, "application/json", []byte(`{"name":"staging"}`), session.Token, "", true, 200)
+			created := call("POST", base, "application/json", []byte(`{"name":"staging"}`), session.Token, "", false, 200)
 			var namespace struct {
 				ID   string `json:"namespace_id"`
 				Name string `json:"namespace_name"`
@@ -131,7 +130,6 @@ func TestCloudflareCompatibilityUploadHTTPContract(t *testing.T) {
 			conditional := httptest.NewRequest("PUT", path, bytes.NewReader(body))
 			conditional.Header.Set("Authorization", "Bearer "+session.Token)
 			conditional.Header.Set("Content-Type", kind)
-			conditional.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 			conditional.Header.Set("If-Match", `"must-not-be-ignored"`)
 			conditionalResponse := httptest.NewRecorder()
 			handler.ServeHTTP(conditionalResponse, conditional)
@@ -314,7 +312,6 @@ func TestCloudflareCompatibilityAuthorizationAndUnsupportedInputs(t *testing.T) 
 		t.Helper()
 		r := httptest.NewRequest(method, path, bytes.NewReader(body))
 		r.Header.Set("Authorization", "Bearer "+token)
-		r.Header.Set("X-Nanoflare-Execution-Profile", "trusted_shared_workerd")
 		r.Header.Set("Content-Type", kind)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
