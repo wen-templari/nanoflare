@@ -5,9 +5,9 @@
 
 This is an opt-in local experiment, not a production feature. It implements a namespace facade on workerd's experimental Worker Loader and exercises Nanoflare handlers. The initial reports reproduce the baseline blockers; the updated telemetry probe requires the step 2 authorization fix. Production source is now changed for that fix; nothing is deployed, and package versions and lockfiles are unchanged.
 
-See the [overall implementation plan](../../../docs/plans/workers-for-platforms-implementation.md) for the ordered work after this PoC.
+See the [overall implementation plan](../../../docs/archive/workers-for-platforms/workers-for-platforms-implementation.md) for the ordered work after this PoC.
 
-**Current status, 2026-10-18:** [step 2](../../../docs/plans/workers-for-platforms-step-2-status.md) is implemented and verified locally. Native telemetry forgery and unbound KV access are denied on both tested runtime versions. The original reports/table below are historical baseline observations. New evidence is in [results-step2.json](results-step2.json) and [results-step2-current.json](results-step2-current.json); these do not overwrite the original reports. CPU/subrequest enforcement, peer isolation and corporate egress remain blockers.
+**Current status, 2026-10-18:** [step 2](../../../docs/archive/workers-for-platforms/workers-for-platforms-step-2-status.md) is implemented and verified locally. Native telemetry forgery and unbound KV access are denied on both tested runtime versions. The original reports/table below are historical baseline observations. New evidence is in [results-step2.json](results-step2.json) and [results-step2-current.json](results-step2-current.json); these do not overwrite the original reports. CPU/subrequest enforcement, peer isolation and corporate egress remain blockers.
 
 ## Run
 

@@ -1,6 +1,10 @@
 # Workers for Platforms execution decision
 
-Date: 2026-10-18. Status: selected architecture and initial supported subset for implementation. Step 3's design/feasibility gate is complete; production untrusted execution is unavailable. This decision does not implement a new production runner or certify Docker as a secure tenant sandbox. [CPU enforcement](../plans/workers-for-platforms-cpu-enforcement.md) remains a separate workstream.
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
+Date: 2026-10-18. Status: selected architecture and initial supported subset for implementation. Step 3's design/feasibility gate is complete; production untrusted execution is unavailable. This decision does not implement a new production runner or certify Docker as a secure tenant sandbox. [CPU enforcement](../../plans/workers-for-platforms-cpu-enforcement.md) remains a separate workstream.
 
 ## Execution and authority boundaries
 
@@ -63,4 +67,4 @@ The future native API must report an unavailable execution profile/capability ex
 
 Step 3 is complete as an architecture and bounded-feasibility decision for this restricted subset. Step 4 can implement the trusted-only organization/namespace/script/resource model using these invocation and revision seams. Untrusted execution remains blocked by real CPU enforcement, a qualified hardened sandbox, production cell/broker integration, complete resource/egress policy, lifecycle/operational recovery tests and capacity qualification. WebSockets, general cross-process RPC and request-scoped warm global outbound are explicitly deferred features, not hidden prerequisites for the restricted subset.
 
-Evidence: [failure-domain and counter results](../../scripts/archive/wfp-isolation-poc/results-step3-final-linux.json), [warm bridge/lifecycle results](../../scripts/archive/wfp-isolation-poc/results-step3-bridge.json), and the [step 3 status record](../plans/workers-for-platforms-step-3-status.md). No production deployment is represented by this decision.
+Evidence: [failure-domain and counter results](../../../scripts/archive/wfp-isolation-poc/results-step3-final-linux.json), [warm bridge/lifecycle results](../../../scripts/archive/wfp-isolation-poc/results-step3-bridge.json), and the [step 3 status record](workers-for-platforms-step-3-status.md). No production deployment is represented by this decision.

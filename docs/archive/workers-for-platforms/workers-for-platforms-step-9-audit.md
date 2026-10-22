@@ -1,5 +1,9 @@
 # Step 9 acceptance audit
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated 2026-10-22. **The documented local trusted subset is implemented and
 qualified by local fixtures. Step 9's complete acceptance criterion remains
 unmet because the required live Cloudflare comparison cannot run.** This audit
@@ -47,11 +51,11 @@ Remaining acceptance work is explicit:
 
 Real CPU enforcement remains the user's separate workstream. Hardened untrusted
 execution remains unavailable. Expanding beyond the
-[supported adapter contract](../architecture/cloudflare-management-adapter.md)
+[supported adapter contract](../../reference/cloudflare-management-api.md)
 requires explicit implementation and evidence, not inference from these passing
 local fixtures.
 
-The later [combined asset drill](../../scripts/wfp-qualification/results-asset-storage.json)
+The later [combined asset drill](../../../scripts/wfp-qualification/results-asset-storage.json)
 adds concurrent adapter publication into real PostgreSQL/MinIO, native content
 checks, restart recovery and independence of published artifacts from staging.
 The [step 9 addendum](workers-for-platforms-step-9-status.md)

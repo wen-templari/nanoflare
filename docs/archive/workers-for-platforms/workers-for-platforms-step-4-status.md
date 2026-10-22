@@ -1,5 +1,9 @@
 # Step 4 — Namespace, script and grant model
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated: 2026-10-18. Status: implemented and verified locally in the working tree. Not committed or deployed. This is the native control-plane/resource model for trusted execution; dynamic dispatch and a customer-cell runner are not implemented by this step.
 
 ## Resource contract

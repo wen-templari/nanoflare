@@ -1,6 +1,10 @@
 # Step 3 — Execution budgets and failure boundaries
 
-Updated: 2026-10-18. **Status: step 3 design and bounded feasibility complete for the selected restricted subset.** The [execution decision](../architecture/workers-for-platforms-execution.md) defines boundaries, supported bridge methods, warm reuse, invocation lifecycle and accounting. Real CPU enforcement remains a separate pending workstream at the user's request. Untrusted execution stays blocked; no new production runner or runtime protections are claimed.
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
+Updated: 2026-10-18. **Status: step 3 design and bounded feasibility complete for the selected restricted subset.** The [execution decision](workers-for-platforms-execution.md) defines boundaries, supported bridge methods, warm reuse, invocation lifecycle and accounting. Real CPU enforcement remains a separate pending workstream at the user's request. Untrusted execution stays blocked; no new production runner or runtime protections are claimed.
 
 ## Decision and scope
 
@@ -8,15 +12,15 @@ Keep the current shared runner restricted to trusted platform code. Separate cus
 
 Do not integrate a new customer-cell production runner merely because this PoC passes. Secure sandbox qualification, per-invocation CPU handling, capability transport, admission and operational recovery still require implementation. The new bridge experiment establishes a typed local RPC facade backed by an external HTTP effect broker. Arbitrary native capability transfer between independent processes is explicitly outside the initial subset.
 
-[Real CPU enforcement](workers-for-platforms-cpu-enforcement.md) is explicitly split into its own workstream. Other WFP work can progress behind a trusted-only boundary; untrusted release and claims of CPU-limit support depend on that task passing its acceptance tests.
+[Real CPU enforcement](../../plans/workers-for-platforms-cpu-enforcement.md) is explicitly split into its own workstream. Other WFP work can progress behind a trusted-only boundary; untrusted release and claims of CPU-limit support depend on that task passing its acceptance tests.
 
 ## New bounded experiment
 
-The [Linux fixture](../../scripts/archive/wfp-isolation-poc/README.md) uses the existing local runner image's workerd **2026-09-11**, matching the repository Dockerfile's `WORKERD_VERSION=1.20260911.1`. It resolves images to immutable image IDs, records the native binary SHA-256 and fixture hashes, and runs only disposable containers. The earlier loader PoC's macOS 2025-12-10 and 2026-10-18 reports remain unchanged.
+The [Linux fixture](../../../scripts/archive/wfp-isolation-poc/README.md) uses the existing local runner image's workerd **2026-09-11**, matching the repository Dockerfile's `WORKERD_VERSION=1.20260911.1`. It resolves images to immutable image IDs, records the native binary SHA-256 and fixture hashes, and runs only disposable containers. The earlier loader PoC's macOS 2025-12-10 and 2026-10-18 reports remain unchanged.
 
 Each customer container has a 192 MiB RAM+swap ceiling, a 0.5-core CPU rate quota, non-root UID, read-only root, no capabilities, no-new-privileges, limited PIDs, no Docker socket and only an internal Docker network. A separate fixture relay has the localhost-only host listener. This is a Docker Desktop Linux experiment on arm64, not evidence of an independently hardened VM per tenant. A process escape could read files mounted into its own container; the API-level filesystem test does not prove native escape resistance.
 
-[Recorded results](../../scripts/archive/wfp-isolation-poc/results-step3-linux.json):
+[Recorded results](../../../scripts/archive/wfp-isolation-poc/results-step3-linux.json):
 
 | Probe                      | Observation                                                                                                                                       | What it establishes                                                                                              |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -34,7 +38,7 @@ The original counter fixture keys a budgeted loaded worker by request lease to a
 
 ## Final capability-transport and reuse experiment
 
-The [bridge harness](../../scripts/archive/wfp-isolation-poc/bridge.py) and [results](../../scripts/archive/wfp-isolation-poc/results-step3-bridge.json) complete the remaining bounded investigation on the same pinned Linux runtime:
+The [bridge harness](../../../scripts/archive/wfp-isolation-poc/bridge.py) and [results](../../../scripts/archive/wfp-isolation-poc/results-step3-bridge.json) complete the remaining bounded investigation on the same pinned Linux runtime:
 
 - 36 sequential/concurrent invocations with two synthetic authenticated subjects shared exactly one revision-cached Worker instance. Fresh native props carried the correct facade/identity into every request. Forged incoming lease/revision headers were replaced; no raw lease appeared in the customer request.
 - A saved facade was rejected in a later request context. Raw global fetch, unknown RPC methods and undeclared resource targets were denied. This proves the typed facade subset, not arbitrary cross-process native RPC transport.
@@ -45,7 +49,7 @@ The [bridge harness](../../scripts/archive/wfp-isolation-poc/bridge.py) and [res
 
 The bridge uses global outbound null and passes request-scoped capabilities in entrypoint props, avoiding the prior request-unique loader key. It verifies one warm instance within a revision and two instances across an update; it does not establish eviction/capacity under unlimited revisions. The shim uses one narrow transport credential for the one customer cell in this fixture. Native escapes, production key distribution and isolation between different cells are not certified by this test.
 
-The main isolation/counter suite also passed again after adding the reusable relay-source hook; [final results](../../scripts/archive/wfp-isolation-poc/results-step3-final-linux.json) preserve the earlier report as historical evidence. All fixture containers and networks were cleaned up.
+The main isolation/counter suite also passed again after adding the reusable relay-source hook; [final results](../../../scripts/archive/wfp-isolation-poc/results-step3-final-linux.json) preserve the earlier report as historical evidence. All fixture containers and networks were cleaned up.
 
 ## Accounting policy for subsequent integration
 
@@ -57,7 +61,7 @@ Keep infrastructure authentication, authorization lookup, telemetry delivery and
 
 ## Capability record and integration gates
 
-The [machine-readable record](../../scripts/archive/wfp-isolation-poc/capabilities.json) is an explicit assessment of the experiments, not a production endpoint or automatic admission control.
+The [machine-readable record](../../../scripts/archive/wfp-isolation-poc/capabilities.json) is an explicit assessment of the experiments, not a production endpoint or automatic admission control.
 
 - CPU runtime task: enforce and measure actual invocation CPU; see the separate acceptance specification.
 - Sandbox task: choose and qualify the Linux/VM boundary against native escape and management/filesystem/network access; Docker controls alone do not qualify the untrusted profile. Upstream explicitly requires an additional secure sandbox for potentially malicious code ([security guidance](https://github.com/cloudflare/workerd/blob/v1.20260911.1/README.md#warning-workerd-is-not-a-hardened-sandbox)).

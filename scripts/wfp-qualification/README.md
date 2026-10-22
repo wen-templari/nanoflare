@@ -252,7 +252,7 @@ from older recovery and capacity reports.
 ## Selected Linux pool and sustained load
 
 The current trusted pilot is described in the
-[pilot runbook](../../docs/plans/workers-for-platforms-trusted-pilot-runbook.md).
+[pilot runbook](../../docs/guides/workers-for-platforms-operator.md).
 Build the pinned runtime base with its architecture-independent native alias,
 compile the Linux API test binary, and supply the already-installed isolated
 `cloudflare@7.3.0` package directory. The driver never installs a package, pulls

@@ -1,5 +1,9 @@
 # Step 5 — Immutable artifacts and recoverable publication
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated: 2026-10-19. Status: implemented and verified locally for the trusted runtime path. Not committed or deployed. Private loader dispatch and invocation leases remain step 6; CPU enforcement remains a separate workstream.
 
 ## Artifact contract

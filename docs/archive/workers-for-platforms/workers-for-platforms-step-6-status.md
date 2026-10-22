@@ -1,5 +1,9 @@
 # Step 6 — Private dynamic dispatch
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated: 2026-10-19. Status: implemented and verified locally for the documented trusted fetch subset, through local and authenticated remote runners. Nothing is committed or deployed.
 
 ## Implemented path

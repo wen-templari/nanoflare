@@ -1,5 +1,9 @@
 # Workers for Platforms implementation plan
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated: 2026-10-22. The first supported native contract is frozen. Steps 2–8 are implemented for the documented disabled-by-default trusted subset, with step 3 production protection gates still open. Step 9 has local adapter evidence but remains incomplete without live Cloudflare comparison; no entitled account is available. Step 10 bounded local trusted-pilot qualification and the requested independent review are complete, including fixes for all three review findings. CPU enforcement is a separate pending workstream. Production expansion remains unqualified. This document does not authorize or represent production deployment.
 
 ## Outcome and release boundaries
@@ -15,15 +19,15 @@ Cloudflare API compatibility is an additional adapter over this model. It is not
 
 ## Current position
 
-The [PoC](../../scripts/archive/wfp-poc/README.md) and [research](../research/workers-for-platforms-alignment.md) established local feasibility. Step 2 is now implemented in the working tree and verified against in-memory and real PostgreSQL repositories. See the [step 2 implementation and verification record](workers-for-platforms-step-2-status.md), including rollout requirements. Step 4 adds organization-scoped namespaces, immutable private script membership, customer/resource grants and policy history in both repositories; see its [status record](workers-for-platforms-step-4-status.md). Step 5 adds immutable revision artifacts, authorized manifest resolution, staged publication/recovery and pinned secret rollback; see its [status record](workers-for-platforms-step-5-status.md). Steps 6–7 add native loader-backed private dispatch, invocation scopes and the documented outbound/cache/resource policy. Nothing has been committed or deployed.
+The [PoC](../../../scripts/archive/wfp-poc/README.md) and [research](workers-for-platforms-alignment.md) established local feasibility. Step 2 is now implemented in the working tree and verified against in-memory and real PostgreSQL repositories. See the [step 2 implementation and verification record](workers-for-platforms-step-2-status.md), including rollout requirements. Step 4 adds organization-scoped namespaces, immutable private script membership, customer/resource grants and policy history in both repositories; see its [status record](workers-for-platforms-step-4-status.md). Step 5 adds immutable revision artifacts, authorized manifest resolution, staged publication/recovery and pinned secret rollback; see its [status record](workers-for-platforms-step-5-status.md). Steps 6–7 add native loader-backed private dispatch, invocation scopes and the documented outbound/cache/resource policy. Nothing has been committed or deployed.
 
 Verified on workerd 2025-12-10 and 2026-10-18: namespace lookup, private user Workers, native props and request-scoped RPC, explicit capability attachment, and customer source/revision updates without dispatcher restart. The experimental Worker Loader is a viable implementation candidate. After the authorization fix, the native telemetry forgery and cross-handler KV probes are rejected on both versions.
 
-Remaining release gates: real CPU interruption and hardened untrusted cells are unavailable; an infinite loop can affect peers in the trusted shared pool. Capacity, production-like storage/recovery and rollout qualification remain. Subrequest budgets and proxy-independent destination authorization now exist in the native path; they are no longer outstanding PoC gaps. Live Cloudflare comparison is blocked by the user's account entitlement. At the user's request, [real CPU enforcement](workers-for-platforms-cpu-enforcement.md) remains separate; untrusted execution is unavailable.
+Remaining release gates: real CPU interruption and hardened untrusted cells are unavailable; an infinite loop can affect peers in the trusted shared pool. Capacity, production-like storage/recovery and rollout qualification remain. Subrequest budgets and proxy-independent destination authorization now exist in the native path; they are no longer outstanding PoC gaps. Live Cloudflare comparison is blocked by the user's account entitlement. At the user's request, [real CPU enforcement](../../plans/workers-for-platforms-cpu-enforcement.md) remains separate; untrusted execution is unavailable.
 
 ## Step 1 — Freeze the first supported contract
 
-**Status: native contract frozen.** See the [supported contract and capability matrix](../architecture/workers-for-platforms-supported-contract.md). Step 8 exposes these effective capabilities through supported tools. The checklist below defines this adopted scope.
+**Status: native contract frozen.** See the [supported contract and capability matrix](../../reference/workers-for-platforms-runtime.md). Step 8 exposes these effective capabilities through supported tools. The checklist below defines this adopted scope.
 
 Write a short architecture decision covering:
 
@@ -54,7 +58,7 @@ Address the existing boundary gaps before introducing more runtime capabilities:
 
 ## Step 3 — Resolve execution budgets and sandbox architecture
 
-**Status: design and bounded feasibility complete for the restricted subset; production protection gates remain open.** See the [step 3 evidence and decisions](workers-for-platforms-step-3-status.md). The [execution decision](../architecture/workers-for-platforms-execution.md) fixes cell boundaries, typed capability transport, warm reuse and invocation lifecycle. Next is step 4 for the trusted-only model. Real CPU enforcement is split into a [separate workstream](workers-for-platforms-cpu-enforcement.md), per the user's request. Continue independent trusted-only model/dispatch work without advertising CPU guarantees.
+**Status: design and bounded feasibility complete for the restricted subset; production protection gates remain open.** See the [step 3 evidence and decisions](workers-for-platforms-step-3-status.md). The [execution decision](workers-for-platforms-execution.md) fixes cell boundaries, typed capability transport, warm reuse and invocation lifecycle. Next is step 4 for the trusted-only model. Real CPU enforcement is split into a [separate workstream](../../plans/workers-for-platforms-cpu-enforcement.md), per the user's request. Continue independent trusted-only model/dispatch work without advertising CPU guarantees.
 
 Run a bounded runtime/runner experiment before investing in the full untrusted product surface:
 
@@ -128,7 +132,7 @@ Integrate the loader-backed namespace facade with the real authorization and art
 
 ## Step 8 — Add operational visibility and developer tooling
 
-**Status: implemented and verified locally for the trusted subset.** CLI and console deploy/update/rollback workflows, attributed bounded logs, capability/publication APIs and elapsed metrics pass native, PostgreSQL, browser and race checks. See the [step 8 record](workers-for-platforms-step-8-status.md), [official upstream examples](../../scripts/wfp-examples/README.md) and [operator notes](workers-for-platforms-operations.md). Production-like telemetry/storage qualification remains step 10.
+**Status: implemented and verified locally for the trusted subset.** CLI and console deploy/update/rollback workflows, attributed bounded logs, capability/publication APIs and elapsed metrics pass native, PostgreSQL, browser and race checks. See the [step 8 record](workers-for-platforms-step-8-status.md), [official upstream examples](../../../scripts/wfp-examples/README.md) and [operator notes](../../guides/workers-for-platforms-operator.md). Production-like telemetry/storage qualification remains step 10.
 
 - Correct the existing elapsed-duration metric currently presented as CPU time. Only expose CPU accounting when measured by trusted infrastructure.
 - Scope log and metric queries server-side; add quotas, redaction/sampling controls and request-chain correlation.
@@ -186,7 +190,7 @@ Linux authorization, real backend/process recovery, sustained 1/2 GiB load,
 physical OOM/namespace failure-domain checks and the real monitoring/alert pipeline
 pass. The explicit pilot override selects native execution and physical bounds;
 the normal daemon and experimental adapter remain disabled by default. The
-[pilot runbook](workers-for-platforms-trusted-pilot-runbook.md) and
+[pilot runbook](../../guides/workers-for-platforms-operator.md) and
 [step 10 record](workers-for-platforms-step-10-status.md) retain measured limits,
 limitations, recovery and rollout checks. Production expansion and live Cloudflare
 acceptance remain unverified; no release/deployment has occurred.

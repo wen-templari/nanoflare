@@ -1,5 +1,9 @@
 # Step 7 — Outbound, cache and resource policy status
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Status: **implemented and verified locally for the disabled-by-default trusted fetch subset**. This record does not qualify untrusted execution, real CPU interruption or a production rollout. Capacity and production-like storage qualification remain step 10 work.
 
 ## Database policy implemented

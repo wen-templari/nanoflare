@@ -1,4 +1,4 @@
-# Cloudflare-shaped management adapter: supported local contract
+# Cloudflare-shaped management API reference
 
 Updated 2026-10-22. This reference describes the implemented trusted-profile
 prototype, including its local differences. The normal daemon leaves the
@@ -7,14 +7,17 @@ adapter disabled. Opt in with `--enable-cloudflare-compatibility` or
 dispatch (`--enable-platform-dispatch` or its environment setting). Conflicting
 flags fail before startup. The trusted-pilot Compose override enables native
 dispatch only; the experimental adapter needs its own explicit opt-in.
-Embeddings may use `Server.SetCloudflareCompatibilityEnabled(true)` and the
-disposable demo also exposes the flag. None of these options removes the
+Embeddings may use `Server.SetCloudflareCompatibilityEnabled(true)`. None of these options removes the
 mandatory trusted execution acknowledgment on control mutations. Live Cloudflare comparison is
-[blocked by account entitlement](../plans/workers-for-platforms-live-comparison.md).
+[blocked by account entitlement](../archive/workers-for-platforms/workers-for-platforms-live-comparison.md).
 
 The adapter is served separately from the generated native OpenAPI document.
 This reference and the authenticated adapter/client fixtures describe its wire
 contract. Native API schemas continue to describe native routes.
+
+Start with the [integration guide](../guides/workers-for-platforms.md) for a complete
+upload/dispatch example. The [runtime contract](workers-for-platforms-runtime.md)
+defines execution restrictions.
 
 ## Authentication and identity
 
@@ -185,7 +188,8 @@ reports `nanoflare_deletion_state: unverified` and omits the count. A retry sele
 whatever currently matches the filter, including scripts created/tagged since
 the earlier request. Configuration refresh acknowledgment is not runtime
 readiness telemetry. Object cleanup is best effort, as in native deletion;
-orphan storage qualification remains step 10 work.
+bounded orphan/staging-storage checks are recorded in the archived step 10
+evidence; production retention and soak remain open.
 
 ## Upload and asset limits
 
@@ -253,9 +257,10 @@ is a separate workstream.
 
 The [client fixtures](../../scripts/wfp-client-flows/README.md) qualify pinned
 SDK and Wrangler subsets with explicit adaptations, not drop-in compatibility.
-The [step 9 record](../plans/workers-for-platforms-step-9-status.md) holds the
-current test evidence and unresolved live comparison gate. Step 10 qualification
-and independent review still precede any pilot deployment decision.
+The [step 9 record](../archive/workers-for-platforms/workers-for-platforms-step-9-status.md) holds the
+implementation evidence. Bounded local step 10 qualification and independent
+review are complete for their recorded scope. Live comparison and production
+expansion remain open; see [remaining work](../plans/workers-for-platforms-remaining-work.md).
 
 ## Unchanged upstream examples
 

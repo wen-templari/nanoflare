@@ -69,7 +69,9 @@ production proxy. Wrangler's plain JSON metadata fields and `excludeScript=true`
 projection are now accepted by the adapter, with exact JSON validation intact.
 
 Wrangler also probes ordinary `/workers/scripts/{name}/settings` and, on errors,
-`/user/tokens/verify`. Those unsupported endpoints remain 404 in the fixture.
+`/user/tokens/verify`. The ordinary settings GET route is now implemented for
+uploaded ordinary Workers; an absent Worker still returns 404. Token verification
+remains unsupported and returns 404.
 No fake account/token state is returned. Secrets/assets, preservation of existing
 configuration, forced script deletion, namespace rename, other Wrangler versions
 and unmodified direct CLI deployment remain unqualified. The test uses the native
@@ -83,3 +85,6 @@ locks Cloudflare SDK 5.2.0, whose filename-keyed multipart `files` encoding is
 now supported. This does not change the SDK 7 bracketed-metadata limitation
 described above. The example runner exercises actual deployment, dispatch,
 identity and static assets against persistent local storage.
+
+See the maintained [integration guide](../../docs/guides/workers-for-platforms.md)
+and [API reference](../../docs/reference/cloudflare-management-api.md).

@@ -1,5 +1,9 @@
 # Step 10 — capacity, recovery and rollout qualification
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated 2026-10-22. Status: **bounded local trusted-pilot qualification passes;
 independent review completed with all three findings resolved; live/production-expansion gates remain open**.
 This record separates bounded local observations from production-like release
@@ -11,7 +15,7 @@ untrusted execution remains unavailable. No release or deployment has occurred.
 `TestPrivateDispatchCapacityQualification` exercises the integrated native
 dispatcher/runtime manager, private dynamic Workers, revision artifacts,
 request-bound props, revision churn and rollback. It has explicit opt-in and
-native-binary checks. The [fixture instructions](../../scripts/wfp-qualification/README.md)
+native-binary checks. The [fixture instructions](../../../scripts/wfp-qualification/README.md)
 define workload, timing, client pooling/backoff and report limitations.
 
 The baseline run uses native workerd 2025-12-10 on one macOS arm64 host with 12
@@ -69,14 +73,14 @@ Crossing the 64-entry code-descriptor LRU therefore does **not** establish a
 64-isolate resident-memory bound. A code-descriptor cache bound is not a native
 isolate eviction or process RSS guarantee.
 
-Evidence: [baseline report](../../scripts/wfp-qualification/results-step10-baseline.json)
-and [current report](../../scripts/wfp-qualification/results-step10-current.json),
+Evidence: [baseline report](../../../scripts/wfp-qualification/results-step10-baseline.json)
+and [current report](../../../scripts/wfp-qualification/results-step10-current.json),
 plus `/tmp/nf-step10-capacity-baseline.log` and
 `/tmp/nf-step10-capacity-current.log`. Each report includes binary SHA-256,
 host/runtime identity, successful latency quantiles, attempted/rejected counts,
 point-in-time native RSS and correctness outcome. It passes its bounded fixture;
 it is not a production soak, peak-RSS measurement or maximum tenant capacity.
-The [provenance record](../../scripts/wfp-qualification/provenance-step10.json)
+The [provenance record](../../../scripts/wfp-qualification/provenance-step10.json)
 binds these reports to their backend source snapshot and probe checksum.
 
 An initial post-probe full-suite run hit the existing 30-second Wrangler fixture
@@ -117,8 +121,8 @@ publication guard, preventing stale snapshots from undoing concurrent deletion
 or traffic changes. Unchanged runner identity does not cause periodic writes.
 Native child failure continues to use the manager's existing restart loop.
 
-Evidence: [Linux report](../../scripts/wfp-qualification/results-step10-linux-recovery.json),
-its [provenance](../../scripts/wfp-qualification/provenance-step10-linux-recovery.json),
+Evidence: [Linux report](../../../scripts/wfp-qualification/results-step10-linux-recovery.json),
+its [provenance](../../../scripts/wfp-qualification/provenance-step10-linux-recovery.json),
 `/tmp/nf-step10-linux-recovery-race.log` and
 `/tmp/nf-step10-reconciliation-race.log`. The latter covers memory/PostgreSQL
 publication/deletion serialization plus authenticated boot status, retry and
@@ -134,14 +138,14 @@ and the schema cleaned after qualification. No production deployment changed.
 
 ## Actual control-process and storage-server failures
 
-The new opt-in [process drill](../../scripts/wfp-qualification/process_recovery.py)
+The new opt-in [process drill](../../../scripts/wfp-qualification/process_recovery.py)
 uses the current host-native daemon executable, a separate Linux runner and its
 own PostgreSQL/MinIO containers. It manages Workers through actual authenticated
 HTTP, not an in-process service replacement. The runner has verified cgroup v2
 bounds of 512 MiB RAM, no additional swap and 128 PIDs; this small recovery
 fixture does not establish capacity or a recommended pilot limit.
 
-The [process report](../../scripts/wfp-qualification/results-step10-process-recovery.json)
+The [process report](../../../scripts/wfp-qualification/results-step10-process-recovery.json)
 records successful assertions for:
 
 - SIGKILL of the actual daemon and restart from durable metadata/artifacts,
@@ -180,9 +184,9 @@ bounded object-store initialization. The external process drill alone does not
 prove these backend cancellation guarantees.
 
 Evidence also includes `/tmp/nf-step10-process-recovery-final.log`, the
-[process provenance](../../scripts/wfp-qualification/provenance-step10-process-recovery.json)
-and a post-change [Linux OOM/recovery rerun](../../scripts/wfp-qualification/results-step10-linux-storage-context.json)
-with its own [provenance](../../scripts/wfp-qualification/provenance-step10-linux-storage-context.json).
+[process provenance](../../../scripts/wfp-qualification/provenance-step10-process-recovery.json)
+and a post-change [Linux OOM/recovery rerun](../../../scripts/wfp-qualification/results-step10-linux-storage-context.json)
+with its own [provenance](../../../scripts/wfp-qualification/provenance-step10-linux-storage-context.json).
 Historical macOS and initial Linux report provenance is preserved. The fixture
 confirms cleanup of its own processes/containers and temporary data. It does not
 qualify real multi-host partitions, packet loss, every publication crash boundary,
@@ -195,12 +199,12 @@ from historical capacity/recovery evidence.
 
 ## Linux monitoring and collector permissions
 
-The opt-in [monitoring fixture](../../scripts/wfp-qualification/monitoring.py)
+The opt-in [monitoring fixture](../../../scripts/wfp-qualification/monitoring.py)
 runs actual Linux daemon/runner processes with PostgreSQL, MinIO, Vector 0.46.1,
 Loki 3.5.0, Prometheus 3.5.0 and Grafana 12.0.2. Its
-[report](../../scripts/wfp-qualification/results-step10-monitoring.json) records
+[report](../../../scripts/wfp-qualification/results-step10-monitoring.json) records
 passing assertions, immutable image/binary identities and successful cleanup.
-Its [provenance](../../scripts/wfp-qualification/provenance-step10-monitoring.json)
+Its [provenance](../../../scripts/wfp-qualification/provenance-step10-monitoring.json)
 binds the fixture and runtime/configuration snapshot; older report provenance
 is preserved.
 
@@ -248,14 +252,14 @@ remain open; passing this bounded pipeline fixture does not settle those items.
 
 ## Selected Linux pilot: limits, sustained load and alerts
 
-The current [pilot override](../../docker/compose.trusted-pilot.yml) explicitly
+The current [pilot override](../../../docker/compose.trusted-pilot.yml) explicitly
 selects native workerd and enables trusted native dispatch. The ordinary daemon
 remains disabled by default; the experimental compatibility adapter needs its own
 opt-in and trusted-mutation acknowledgment. Current images bundle a stable
 `/usr/local/bin/workerd-native` path, with the package's arm64/64 architecture
 naming handled at build time. Only Linux arm64 is qualified by these runs.
 
-The [Linux authorization report](../../scripts/wfp-qualification/results-step10-linux-authorization-final.json)
+The [Linux authorization report](../../../scripts/wfp-qualification/results-step10-linux-authorization-final.json)
 passes 89 tests/subtests without skips under the selected native runtime,
 PostgreSQL and actual SDK 7.3.0 on Node 22. It includes local/remote native dispatch,
 resource sharing/revocation, root/instance capability isolation, atomic managed
@@ -276,13 +280,13 @@ not production soak or a maximum engine-throughput measurement.
 | 64      | 735.5                         | 10.90                  | 6.22            | 68.2                                |
 | 128     | 928.7                         | 11.60                  | 6.24            | 68.2–68.3                           |
 
-The initial [1 GiB comparison](../../scripts/wfp-qualification/results-step10-linux-pool.json)
+The initial [1 GiB comparison](../../../scripts/wfp-qualification/results-step10-linux-pool.json)
 completed without errors/OOMs but reached its bound: 71,973 `memory.events max`
 events and about 54.8 requests/s in its last high-concurrency slice. That leaves
-inadequate headroom. The selected [2 GiB run](../../scripts/wfp-qualification/results-step10-linux-pool-2g.json)
+inadequate headroom. The selected [2 GiB run](../../../scripts/wfp-qualification/results-step10-linux-pool-2g.json)
 peaks at about 1,103.1 MiB for the **whole probe** (Go fixture plus native engine),
 with zero memory-limit events, zero OOMs and zero incorrect/error responses.
-Its [capacity detail](../../scripts/wfp-qualification/results-step10-linux-capacity-2g.json)
+Its [capacity detail](../../../scripts/wfp-qualification/results-step10-linux-capacity-2g.json)
 records revision churn p95 4.855 ms and roughly 972.9 MiB native RSS after churn.
 The original isolate survives the scan/rollback and the dispatcher launches once.
 Native memory eviction therefore remains a process-lifecycle concern, not a
@@ -296,7 +300,7 @@ selects 2 GiB/128 tasks for the runner, no additional swap, with a separate
 512 MiB/128-task control container. Counts/bytes are physical failure bounds;
 there is no safe maximum customer/Worker count established for arbitrary code.
 
-The [2 GiB OOM report](../../scripts/wfp-qualification/results-step10-pilot-oom-recovery.json)
+The [2 GiB OOM report](../../../scripts/wfp-qualification/results-step10-pilot-oom-recovery.json)
 forces an actual native cgroup kill with retained 32 MiB arrays (59 Worker
 attempts in this run). Control metadata remains available. A peer in a different
 logical namespace loses its native isolate with the same physical process,
@@ -314,7 +318,7 @@ is fabricated. Rules flag unavailable/stale data, missing bounds, sustained 80%
 pressure, observed OOMs and log loss. Promtool tests cover healthy thresholds,
 pressure, missing/unavailable data and counter reset.
 
-The [selected-profile monitoring report](../../scripts/wfp-qualification/results-step10-pilot-monitoring.json)
+The [selected-profile monitoring report](../../../scripts/wfp-qualification/results-step10-pilot-monitoring.json)
 uses actual Compose pilot bounds/environment/native selection, protected
 Prometheus credentials and loaded alert rules. It verifies a real log-loss alert
 and a paused runner becoming unavailable in the exporter while control metadata
@@ -346,7 +350,7 @@ volumes are left untouched rather than globally pruned.
 | Operator visibility and documented limits/recovery                                                  | Actual Unix permissions, scoped/redacted logs, protected Prometheus/Grafana, physical pool/staleness metrics, tested alert rules and real collection-loss alert                           | Local pipeline passes; deployment-specific credentials, retention and notification routing remain operator setup               |
 | Disabled-by-default pilot and exercised rollback                                                    | Native/adapter flags remain explicit; packaged trusted override, actual environment/native-path checks, durable publication/rollback/restart drills and pilot runbook                     | Local candidate is implemented; no public release/deployment occurred or is implied by these tests                             |
 
-The [pilot runbook](workers-for-platforms-trusted-pilot-runbook.md) records the
+The [pilot runbook](../../guides/workers-for-platforms-operator.md) records the
 selected limits, admission/backpressure, capability checks, recovery and rollback.
 These results do not promote the prototype into a production-safe untrusted
 platform or establish hosted Cloudflare equivalence. Live comparison remains the
@@ -357,4 +361,4 @@ and re-reviewed, then verified with the full suite and the Linux authorization
 matrix (89 passes/subtests, no skips, no OOM; approximately 160.6 MiB whole-probe
 peak). This later matrix covers the fixes; earlier capacity/recovery/monitoring
 reports retain their original source identities and were not rerun as production
-soak tests. See the [post-review evidence](../../scripts/wfp-qualification/evidence-step10-reviewed.json).
+soak tests. See the [post-review evidence](../../../scripts/wfp-qualification/evidence-step10-reviewed.json).

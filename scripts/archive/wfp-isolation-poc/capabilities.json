@@ -50,7 +50,7 @@
   },
   "step3": {
     "status": "design_and_bounded_feasibility_complete",
-    "decision": "../../../docs/architecture/workers-for-platforms-execution.md",
+    "decision": "../../../docs/archive/workers-for-platforms/workers-for-platforms-execution.md",
     "bridge_evidence": "results-step3-bridge.json",
     "failure_domain_evidence": "results-step3-final-linux.json"
   }

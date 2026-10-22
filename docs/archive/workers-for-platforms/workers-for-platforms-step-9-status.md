@@ -1,5 +1,9 @@
 # Step 9 — Cloudflare management compatibility adapter
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated 2026-10-22. Status: **local supported subset implemented; live acceptance gate open**.
 The [step 9 audit](workers-for-platforms-step-9-audit.md) records requirement-level
 evidence and the blocked live comparison. Upload translation, persistent management state and atomic managed
@@ -18,7 +22,7 @@ disabled by default and requiring native trusted dispatch. A real Linux daemon
 fixture verifies its mutation trust acknowledgment. The Linux SDK 7.3.0 check
 also found and fixed Node 22 rejecting unquoted multipart content parameters;
 responses now quote them, and SDK flows pass on Node 22 as well as the earlier
-Node 24 host fixture. See the [pilot runbook](workers-for-platforms-trusted-pilot-runbook.md)
+Node 24 host fixture. See the [pilot runbook](../../guides/workers-for-platforms-operator.md)
 and [step 10 evidence](workers-for-platforms-step-10-status.md). Live validation
 remains blocked; no account entitlement, billing or deployment changed.
 
@@ -426,7 +430,7 @@ installed in an isolated temporary directory. `TestCloudflareSDKClientFlows`
 starts a disposable loopback API with fixture credentials and runs the real SDK
 against both memory and PostgreSQL. The script rejects non-fixture network
 requests and supplies explicit local credentials, ignoring any Cloudflare login.
-See [reproduction instructions](../../scripts/wfp-client-flows/README.md).
+See [reproduction instructions](../../../scripts/wfp-client-flows/README.md).
 
 Verified operations: namespace create/list/get/delete, script details and raw
 multipart content read, secret put/get/list, tag put/list/delete, explicit JSON
@@ -482,7 +486,7 @@ after a rejected request, `/user/tokens/verify`. Unsupported probes stay 404;
 the fixture does not fabricate Cloudflare account/token information. Secret/asset
 CLI flows, preservation of an existing configuration, forced script deletion,
 namespace rename, other Wrangler versions and direct unadapted writes remain
-unqualified. See the [client fixture instructions](../../scripts/wfp-client-flows/README.md).
+unqualified. See the [client fixture instructions](../../../scripts/wfp-client-flows/README.md).
 
 Evidence: `/tmp/nf-step9-wrangler-flows.log` passes with the race detector on
 memory/PostgreSQL, including exact JSON validation for plain metadata fields.
@@ -582,7 +586,7 @@ Evidence:
   restarting the platform dispatcher. Current-runtime results are recorded in
   `/tmp/nf-step9-delete-native-current.log`.
 
-The [supported endpoint reference](../architecture/cloudflare-management-adapter.md)
+The [supported endpoint reference](../../reference/cloudflare-management-api.md)
 now records routes, scopes, wire forms, retry semantics, limits, errors and
 explicit differences. Compatibility routes remain outside native generated
 OpenAPI; that document continues to describe the native control API.
@@ -623,7 +627,7 @@ Live comparison remains blocked. No release or deployment has been performed.
 
 ## Asset storage/load qualification addendum — 2026-10-22
 
-The [combined asset drill](../../scripts/wfp-qualification/asset_storage.py) closes
+The [combined asset drill](../../../scripts/wfp-qualification/asset_storage.py) closes
 the earlier gap between adapter upload tests and independent native MinIO recovery
 tests. Four customer sessions upload concurrently through the real daemon's
 compatibility HTTP routes and persist metadata in PostgreSQL. Each uploads 1 MiB
@@ -634,7 +638,7 @@ paths from MinIO and report exact SHA-256/length/type, with four reads in flight
 
 The same reads pass after killing/restarting the daemon and restarting MinIO.
 Deleting exactly four staging sessions in the fixture's own database leaves
-published immutable assets readable. The [report](../../scripts/wfp-qualification/results-asset-storage.json)
+published immutable assets readable. The [report](../../../scripts/wfp-qualification/results-asset-storage.json)
 records observations, binary/image/native identities, physical runner limits and
 verified fixture cleanup. This is a bounded 4 MiB distinct / 8 MiB manifest-byte
 correctness/load check, not production capacity or extended soak. Earlier

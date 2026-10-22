@@ -1,5 +1,9 @@
 # Cloudflare live comparison prerequisite
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Status: **blocked by account entitlement**, verified 2026-10-19. Local native implementation and compatibility contract tests may continue, but cannot satisfy the live comparison acceptance criterion in step 9.
 
 The user supplied a local staging account profile. Its account identity and credential values are intentionally omitted from this repository.

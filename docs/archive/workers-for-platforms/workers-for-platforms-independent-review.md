@@ -1,5 +1,9 @@
 # Workers for Platforms independent review
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated 2026-10-22. The requested independent subagent reviewed the uncommitted
 trusted-pilot implementation after local qualification. It reported three P2
 integration defects and no higher-priority findings. All three were fixed, and
@@ -19,8 +23,8 @@ The full Go suite passes with PostgreSQL, native workerd, pinned JavaScript SDK
 the selected native image passes 89 checks/subtests with zero skips and no OOM.
 Its whole-probe peak is 168,353,792 bytes, within the configured 2 GiB bound.
 
-Evidence: [Linux report](../../scripts/wfp-qualification/results-step10-linux-reviewed.json),
-[source/evidence manifest](../../scripts/wfp-qualification/evidence-step10-reviewed.json),
+Evidence: [Linux report](../../../scripts/wfp-qualification/results-step10-linux-reviewed.json),
+[source/evidence manifest](../../../scripts/wfp-qualification/evidence-step10-reviewed.json),
 `/tmp/nf-step10-review-regressions.log`, `/tmp/nf-step10-post-review-full.log`
 and `/tmp/nf-step10-linux-reviewed.log`. Earlier capacity, OOM/recovery and
 monitoring reports retain their original source/binary identities; the later
@@ -39,5 +43,5 @@ check in step 9. The new `asset_storage.py` fixture and shared recovery setup
 refactor were independently reviewed after the drill passed. The reviewer found
 no actionable correctness, cleanup or assertion issues. No production Go/JS code
 changed after the earlier full-suite and Linux verification. The later
-[asset report](../../scripts/wfp-qualification/results-asset-storage.json) establishes
+[asset report](../../../scripts/wfp-qualification/results-asset-storage.json) establishes
 only its documented bounded concurrent upload/read/restart/staging-removal scope.

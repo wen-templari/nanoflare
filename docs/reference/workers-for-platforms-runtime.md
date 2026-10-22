@@ -1,6 +1,12 @@
-# Workers for Platforms — first supported contract
+# Workers for Platforms runtime contract
 
-Date: 2026-10-19. Status: frozen native implementation contract for the disabled-by-default trusted pilot. This does not qualify a production rollout, untrusted customer code or Cloudflare client portability. The [execution decision](workers-for-platforms-execution.md) defines future untrusted boundaries; [steps 6](../plans/workers-for-platforms-step-6-status.md) and [7](../plans/workers-for-platforms-step-7-status.md) record the implemented subset and evidence.
+Updated 2026-10-22. Current native contract for the disabled-by-default
+`trusted_shared_workerd` pilot. Bounded local qualification and independent
+review are complete for their recorded scope; production rollout, untrusted
+execution and live Cloudflare portability remain unqualified. See the
+[current architecture](../architecture/workers-for-platforms.md),
+[integration guide](../guides/workers-for-platforms.md) and
+[remaining work](../plans/workers-for-platforms-remaining-work.md).
 
 ## Identity and deployment
 
@@ -38,4 +44,4 @@ Untrusted execution profiles, custom WFP CPU/outbound/limit options, classic scr
 
 Real CPU accounting/interruption is the user's [separate workstream](../plans/workers-for-platforms-cpu-enforcement.md). The wall/effect deadline cannot stop a JavaScript infinite loop. Customer cells, hardened OS/VM containment and independent security qualification remain gates before an untrusted release.
 
-Developer tools, effective-capability reporting and customer telemetry are step 8. Cloudflare-shaped management operations are a separate step 9 adapter over this native contract. Its controlled live comparison is [blocked by account entitlement](../plans/workers-for-platforms-live-comparison.md); no drop-in Wrangler/SDK or full Cloudflare runtime/security equivalence is claimed. Step 10 must qualify capacity, storage/recovery and rollback before any pilot deployment. The user-requested independent code review follows implementation.
+Developer tools, effective-capability reporting and customer telemetry are implemented. The [management adapter](cloudflare-management-api.md) provides a separate Cloudflare-shaped subset over this native contract. Bounded local capacity, storage/recovery and rollback qualification and independent review are recorded in the [archive](../archive/workers-for-platforms/README.md). Live comparison remains blocked by account entitlement; broad Wrangler/SDK, runtime/security equivalence and production expansion remain unqualified.

@@ -1,5 +1,9 @@
 # Step 2 — Runtime capability authorization
 
+> Historical record. Status statements and proposed designs below describe the work at the time.
+> See the [documentation index](../../README.md) for the maintained contract and
+> [remaining work](../../plans/workers-for-platforms-remaining-work.md) for current gates.
+
 Updated: 2026-10-18. Status: implemented and verified locally in the working tree. Not committed or deployed. This closes the two reproduced authorization defects; it does not qualify untrusted customer execution or implement dispatch namespaces.
 
 ## Implemented contract
@@ -33,7 +37,7 @@ Passed locally on macOS arm64:
 - Native workerd KV, assets, objects and duration integration tests.
 - Updated opt-in PoC on workerd 2025-12-10 and 2026-10-18: real native tail delivery attributes the forged victim marker to the attacker; victim telemetry remains empty; telemetry-to-unbound-KV access returns 403.
 
-Evidence: [installed runtime results](../../scripts/archive/wfp-poc/results-step2.json), [candidate runtime results](../../scripts/archive/wfp-poc/results-step2-current.json). The original `results.json` and `results-current.json` remain historical baseline evidence. A passing full PoC still reports CPU/subrequest and egress defects as blockers.
+Evidence: [installed runtime results](../../../scripts/archive/wfp-poc/results-step2.json), [candidate runtime results](../../../scripts/archive/wfp-poc/results-step2-current.json). The original `results.json` and `results-current.json` remain historical baseline evidence. A passing full PoC still reports CPU/subrequest and egress defects as blockers.
 
 To repeat repository security checks, set `NANOFLARE_TEST_POSTGRES_URL` to a disposable PostgreSQL database; the tests create and remove a dedicated schema. Without that environment variable the PostgreSQL portion skips. Use the native workerd executable on PATH for native integration tests.
 

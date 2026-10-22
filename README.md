@@ -1,5 +1,7 @@
 # nanoflare
 
+[Documentation](docs/README.md) · [Workers for Platforms integration](docs/guides/workers-for-platforms.md)
+
 `nanoflare` is a lightweight self-hosted runtime for trusted business apps generated
 with AI. The design keeps the custom control plane small and uses existing
 infrastructure directly:
@@ -181,7 +183,7 @@ the corporate proxy. The adapter pins an authorized IP while preserving the
 original HTTP Host and TLS identity, including when tunneling through the proxy.
 Private dynamic dispatch uses the same policy through an invocation-scoped HTTP
 adapter; its native raw TCP and Cache API remain unavailable. See the
-[policy implementation record](docs/plans/workers-for-platforms-step-7-status.md)
+[runtime contract](docs/reference/workers-for-platforms-runtime.md)
 for supported operations and initial bounds.
 
 ### Updating worker variables without uploading files
@@ -912,7 +914,7 @@ Production Compose mounts a restricted Unix collector socket into the daemon
 and runner automatically. Only trusted UID 0/GID 65532 producers should receive
 that mount. Prometheus uses a separate operator token and the container daemon
 target; host-run development uses its own scrape configuration. See the
-[operator notes](docs/plans/workers-for-platforms-operations.md) for credential
+[operator notes](docs/guides/workers-for-platforms-operator.md) for credential
 file ownership, collector permissions and collection-loss monitoring.
 
 Worker drill-down data is served by `nanoflared`:
