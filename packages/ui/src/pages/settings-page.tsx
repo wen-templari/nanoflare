@@ -63,6 +63,9 @@ const oauthScopes = [
   "objects:write",
 ];
 const controlScopes = [
+  "namespaces:read",
+  "namespaces:write",
+  "namespaces:dispatch",
   "workers:read",
   "workers:write",
   "deployments:write",
