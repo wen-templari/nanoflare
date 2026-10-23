@@ -43,3 +43,27 @@ func (m *Manager) ValidatePublication(active []nanoflare.ActiveDeployment) error
 	}
 	return m.abort(generation)
 }
+
+// PrepareRestore restores persisted routing while isolating invalid revisions.
+func (m *DynamicManager) PrepareRestore(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	return m.prepareDynamic(active, true, "")
+}
+
+// PrepareWorkerPublication strictly validates the target Worker while retaining
+// unavailable, unchanged revisions belonging to other Workers.
+func (m *DynamicManager) PrepareWorkerPublication(active []nanoflare.ActiveDeployment, appID string) (nanoflare.PublicationPreparation, error) {
+	m.publication.Lock()
+	defer m.publication.Unlock()
+	id, routed, err := m.prepareDynamic(active, false, appID)
+	if err != nil {
+		m.collectSnapshots()
+	}
+	return nanoflare.PublicationPreparation{Generation: id, Deployments: routed}, err
+}
+
+// PrepareRestore preserves the legacy manager's strict startup behavior.
+func (m *Manager) PrepareRestore(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+	return m.Prepare(active)
+}

@@ -41,6 +41,20 @@ func NewServer(manager RuntimeManager, token string) *Server {
 			Resources *nanoflare.RunnerResources `json:"resources,omitempty"`
 		}{server.bootID, readRunnerResources()})
 	})
+	server.mux.HandleFunc("GET /v1/runtime-status", func(w http.ResponseWriter, r *http.Request) {
+		reader, ok := server.manager.(runtime.RuntimeStatusReader)
+		if !ok {
+			writeJSON(w, http.StatusOK, []nanoflare.RuntimeRevisionStatus{})
+			return
+		}
+		statuses, err := reader.RuntimeStatuses(r.Context(), r.URL.Query().Get("app_id"))
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, statuses)
+	})
 	server.mux.HandleFunc("POST /v1/generations/prepare", server.prepare)
 	server.mux.HandleFunc("POST /v1/publications/validate", server.validatePublication)
 	server.mux.HandleFunc("POST /v1/generations/{generation}/commit", server.commit)
@@ -153,7 +167,15 @@ func (s *Server) validatePublication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := validator.ValidatePublication(input.activeDeployments()); err != nil {
+	var err error
+	if targeted, ok := s.manager.(nanoflare.WorkerPublicationValidator); ok && input.StrictAppID != "" {
+		err = targeted.ValidateWorkerPublication(input.activeDeployments(), input.StrictAppID)
+	} else {
+		// Manager.ValidatePublication knows whether prepare reused the active
+		// generation and aborts only when it actually created pending state.
+		err = validator.ValidatePublication(input.activeDeployments())
+	}
+	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
@@ -170,7 +192,31 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, errors.New("runner artifact protocol mismatch; upgrade control plane and runner together"))
 		return
 	}
-	generation, deployments, err := s.manager.Prepare(input.activeDeployments())
+	var generation string
+	var deployments []nanoflare.ActiveDeployment
+	var err error
+	if input.Restore {
+		restorer, ok := s.manager.(interface {
+			PrepareRestore([]nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error)
+		})
+		if ok {
+			generation, deployments, err = restorer.PrepareRestore(input.activeDeployments())
+		} else {
+			generation, deployments, err = s.manager.Prepare(input.activeDeployments())
+		}
+	} else if input.StrictAppID != "" {
+		if targeted, ok := s.manager.(interface {
+			PrepareWorkerPublication([]nanoflare.ActiveDeployment, string) (nanoflare.PublicationPreparation, error)
+		}); ok {
+			var p nanoflare.PublicationPreparation
+			p, err = targeted.PrepareWorkerPublication(input.activeDeployments(), input.StrictAppID)
+			generation, deployments = p.Generation, p.Deployments
+		} else {
+			generation, deployments, err = s.manager.Prepare(input.activeDeployments())
+		}
+	} else {
+		generation, deployments, err = s.manager.Prepare(input.activeDeployments())
+	}
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return

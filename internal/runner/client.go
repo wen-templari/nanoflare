@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -83,7 +84,9 @@ func (c *Client) ValidatePublication(active []nanoflare.ActiveDeployment) error 
 
 func (c *Client) Write(active []nanoflare.ActiveDeployment) error {
 	var prepared PrepareResponse
-	if err := c.request(http.MethodPost, "/v1/generations/prepare", prepareRequest(active), &prepared); err != nil {
+	input := prepareRequest(active)
+	input.Restore = true
+	if err := c.request(http.MethodPost, "/v1/generations/prepare", input, &prepared); err != nil {
 		return fmt.Errorf("prepare runner generation: %w", err)
 	}
 	if err := c.traefik.WriteTraefik(prepared.Deployments); err != nil {
@@ -126,4 +129,29 @@ func (c *Client) request(method, path string, input, output any) error {
 		return nil
 	}
 	return json.NewDecoder(response.Body).Decode(output)
+}
+
+func (c *Client) RuntimeStatuses(ctx context.Context, appID string) ([]nanoflare.RuntimeRevisionStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/runtime-status?app_id="+url.QueryEscape(appID), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("runner runtime status: HTTP %d", response.StatusCode)
+	}
+	var statuses []nanoflare.RuntimeRevisionStatus
+	err = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&statuses)
+	return statuses, err
+}
+
+func (c *Client) ValidateWorkerPublication(active []nanoflare.ActiveDeployment, appID string) error {
+	input := prepareRequest(active)
+	input.StrictAppID = appID
+	return c.request(http.MethodPost, "/v1/publications/validate", input, nil)
 }

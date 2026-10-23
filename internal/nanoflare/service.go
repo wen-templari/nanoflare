@@ -1054,6 +1054,13 @@ func (s *Service) SetDeploymentTraffic(appID string, traffic []DeploymentTraffic
 		s.invalidateRuntimeDeployments(appID)
 		return nil, err
 	}
+	if err := s.validatePreparedPublication(appID, active); err != nil {
+		if rollbackErr := s.store.SetActiveTraffic(appID, previousTraffic); rollbackErr != nil {
+			return nil, fmt.Errorf("validate traffic: %w; restore traffic: %v", err, rollbackErr)
+		}
+		s.invalidateRuntimeDeployments(appID)
+		return nil, fmt.Errorf("validate traffic: %w", err)
+	}
 	if err := s.writePublication(active); err != nil {
 		if rollbackErr := s.store.SetActiveTraffic(appID, previousTraffic); rollbackErr != nil {
 			return nil, fmt.Errorf("publish: %w; restore traffic: %v", err, rollbackErr)

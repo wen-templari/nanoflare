@@ -3,6 +3,8 @@ package runner
 import "github.com/clas/nanoflare/internal/nanoflare"
 
 type PrepareRequest struct {
+	Restore          bool                `json:"restore,omitempty"`
+	StrictAppID      string              `json:"strict_app_id,omitempty"`
 	ArtifactProtocol int                 `json:"artifact_protocol"`
 	Deployments      []runtimeDeployment `json:"deployments"`
 }

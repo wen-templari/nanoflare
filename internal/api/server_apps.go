@@ -90,6 +90,16 @@ func (s *Server) workerDetail(w http.ResponseWriter, r *http.Request) {
 		writeWorkerError(w, err)
 		return
 	}
+	if reader, ok := s.runtime.(runtime.RuntimeStatusReader); ok {
+		// Runtime observations must not hide persisted management data if the
+		// runner itself is unreachable.
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		statuses, statusErr := reader.RuntimeStatuses(ctx, detail.App.ID)
+		if statusErr == nil {
+			detail.Runtime = statuses
+		}
+	}
 	writeJSON(w, http.StatusOK, detail)
 }
 
@@ -422,7 +432,12 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		endpoint, err := s.ensureWorkerTraced(r, active, runtimePort)
 		if err != nil {
 			gatewaySpan.SetStatus(codes.Error, err.Error())
-			writeError(w, http.StatusBadGateway, err)
+			status := http.StatusBadGateway
+			var unavailable *runtime.WorkerUnavailableError
+			if errors.As(err, &unavailable) {
+				status = http.StatusServiceUnavailable
+			}
+			writeError(w, status, err)
 			return
 		}
 		if rootID != "" {
@@ -449,7 +464,12 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 	endpoint, err := s.ensureWorkerTraced(r, active, runtimePort)
 	if err != nil {
 		gatewaySpan.SetStatus(codes.Error, err.Error())
-		writeError(w, http.StatusBadGateway, err)
+		status := http.StatusBadGateway
+		var unavailable *runtime.WorkerUnavailableError
+		if errors.As(err, &unavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, err)
 		return
 	}
 	if rootID != "" {

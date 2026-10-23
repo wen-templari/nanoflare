@@ -19,3 +19,11 @@ func (c *Client) CommitPublication(p nanoflare.PublicationPreparation) error {
 func (c *Client) AbortPublication(p nanoflare.PublicationPreparation) error {
 	return c.request(http.MethodPost, "/v1/generations/"+p.Generation+"/abort", nil, nil)
 }
+
+func (c *Client) PrepareWorkerPublication(active []nanoflare.ActiveDeployment, appID string) (nanoflare.PublicationPreparation, error) {
+	input := prepareRequest(active)
+	input.StrictAppID = appID
+	var p PrepareResponse
+	err := c.request(http.MethodPost, "/v1/generations/prepare", input, &p)
+	return nanoflare.PublicationPreparation{Generation: p.Generation, Deployments: p.Deployments}, err
+}

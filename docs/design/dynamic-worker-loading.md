@@ -106,6 +106,30 @@ validates candidates before activation. It includes DNS-profile validation and
 actual runtime compilation. Invalid candidates leave persisted active traffic
 and the prior running revisions intact.
 
+Startup and dispatcher/session recovery restore persisted routing in a separate
+mode. A revision that fails compilation or module initialization remains in its
+configured traffic allocation with an unavailable observation; healthy revisions
+are still published. Failed revisions cannot admit invocations or run cron jobs.
+Requests requiring their execution return HTTP 503 with
+`worker_initialization_failed`. Static asset handling retains its existing order.
+Recovery does not silently move traffic to another revision.
+
+The authenticated dispatcher marks initialization failures explicitly after
+successfully fetching the revision's source. Source-broker, authentication,
+transport and other infrastructure errors still fail reconciliation. Public
+errors and runtime observations omit exception text, source and binding values.
+Worker detail responses expose observed revisions in `runtime`; the protected
+operator exporter exposes `nanoflare_worker_revision_unavailable` with Worker,
+deployment and reason labels. Logs identify the affected Worker and revision.
+
+Deployment and traffic changes validate the target Worker's selected revisions
+strictly before publishing them. They may retain an unchanged unavailable
+snapshot belonging to another Worker. A valid redeployment or rollback replaces
+the unavailable observation without restarting the daemon. Remote runners use
+explicit restoration and target-Worker fields on generation preparation, with
+the same validation and admission rules as local mode. The legacy static manager
+retains strict restoration behavior.
+
 Each Worker has a monotonic publication generation, desired weighted traffic and
 a published-generation acknowledgment. In-memory storage updates them under its
 repository mutex; PostgreSQL commits them in the same transaction as deployment
@@ -235,7 +259,7 @@ client also requires Node.js 22 or later.
 export NANOFLARE_TEST_WORKERD=/absolute/path/to/workerd
 export PATH="$(dirname "$NANOFLARE_TEST_WORKERD"):$PATH"
 
-go test ./internal/api -run 'TestWorkerdDynamic(PublicationEndToEnd|LoaderContracts)' -count=1 -v
+go test ./internal/api -run 'TestWorkerdDynamic(PublicationEndToEnd|LoaderContracts)|TestWorkerdStartupIsolatesInvalidRevisions' -count=1 -v
 go test -race ./internal/api -run 'TestWorkerdDynamicPublicationEndToEnd|TestStableRuntimePrivateDynamicDispatch' -count=1
 go test ./...
 ```
