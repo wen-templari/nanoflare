@@ -149,3 +149,9 @@ func (c *Client) RuntimeStatuses(ctx context.Context, appID string) ([]nanoflare
 	err = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&statuses)
 	return statuses, err
 }
+
+func (c *Client) ValidateWorkerPublication(active []nanoflare.ActiveDeployment, appID string) error {
+	input := prepareRequest(active)
+	input.StrictAppID = appID
+	return c.request(http.MethodPost, "/v1/publications/validate", input, nil)
+}

@@ -167,7 +167,15 @@ func (s *Server) validatePublication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := validator.ValidatePublication(input.activeDeployments()); err != nil {
+	var err error
+	if targeted, ok := s.manager.(nanoflare.WorkerPublicationValidator); ok && input.StrictAppID != "" {
+		err = targeted.ValidateWorkerPublication(input.activeDeployments(), input.StrictAppID)
+	} else {
+		// Manager.ValidatePublication knows whether prepare reused the active
+		// generation and aborts only when it actually created pending state.
+		err = validator.ValidatePublication(input.activeDeployments())
+	}
+	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}

@@ -206,3 +206,10 @@ func TestWorkerdStartupIsolatesInvalidRevisions(t *testing.T) {
 		})
 	}
 }
+
+func (w *dynamicPublicationWriter) ValidateWorkerPublication(active []nanoflare.ActiveDeployment, appID string) error {
+	if w.remote != nil {
+		return w.remote.ValidateWorkerPublication(active, appID)
+	}
+	return w.manager.ValidateWorkerPublication(active, appID)
+}

@@ -459,6 +459,10 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment, restore bool
 	return keys, nil
 }
 func (m *DynamicManager) ValidatePublication(active []nanoflare.ActiveDeployment) error {
+	return m.ValidateWorkerPublication(active, "")
+}
+
+func (m *DynamicManager) ValidateWorkerPublication(active []nanoflare.ActiveDeployment, appID string) error {
 	m.publication.Lock()
 	defer m.publication.Unlock()
 	active = staticRuntimeWorkers(active)
@@ -471,7 +475,7 @@ func (m *DynamicManager) ValidatePublication(active []nanoflare.ActiveDeployment
 	if err := m.boot(); err != nil {
 		return err
 	}
-	_, err := m.build(active, false, "")
+	_, err := m.build(active, false, appID)
 	if err != nil {
 		m.collectSnapshots()
 	}

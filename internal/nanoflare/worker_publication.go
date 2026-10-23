@@ -19,6 +19,12 @@ type PublicationValidator interface {
 	ValidatePublication([]ActiveDeployment) error
 }
 
+// WorkerPublicationValidator validates a target without assuming preparation
+// created a pending generation. Compatibility runtimes may reuse active state.
+type WorkerPublicationValidator interface {
+	ValidateWorkerPublication([]ActiveDeployment, string) error
+}
+
 func (s *Store) advancePublication(appID string) {
 	state := s.workerPublications[appID]
 	state.AppID = appID
@@ -120,7 +126,7 @@ func (s *Service) recoverPendingVarsLocked() error {
 // selected deployments include hydrated code and resolved secrets.
 func (s *Service) validatePublication(appID string, previous []ActiveDeployment, selected []ActiveDeployment) error {
 	_, validates := s.writer.(PublicationValidator)
-	_, targets := s.writer.(WorkerPublicationWriter)
+	_, targets := s.writer.(WorkerPublicationValidator)
 	if !validates && !targets {
 		return nil
 	}
@@ -146,12 +152,8 @@ func (s *Service) validatePublication(appID string, previous []ActiveDeployment,
 
 // candidate already contains hydrated artifacts and their pinned secret values.
 func (s *Service) validatePreparedPublication(appID string, candidate []ActiveDeployment) error {
-	if publisher, ok := s.writer.(WorkerPublicationWriter); ok {
-		prepared, err := publisher.PrepareWorkerPublication(candidate, appID)
-		if err != nil {
-			return err
-		}
-		return publisher.AbortPublication(prepared)
+	if validator, ok := s.writer.(WorkerPublicationValidator); ok {
+		return validator.ValidateWorkerPublication(candidate, appID)
 	}
 	if validator, ok := s.writer.(PublicationValidator); ok {
 		return validator.ValidatePublication(candidate)
