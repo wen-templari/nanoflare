@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.6.0](https://github.com/wen-templari/nanoflare/compare/v0.5.0...v0.6.0) (2026-10-23)
+
+
+### Features
+
+* add trusted Workers for Platforms support ([e195970](https://github.com/wen-templari/nanoflare/commit/e19597055cfa72c9dd6974b910efb353aa345cf4))
+* isolate Worker revision publication across the platform ([02c65a8](https://github.com/wen-templari/nanoflare/commit/02c65a80624c78693a6599c78212c36f215cfcb5))
+* publish worker revisions without restarting the shared runtime ([3de3642](https://github.com/wen-templari/nanoflare/commit/3de364261dedea19ea5a917d080ee873eb2d2344))
+* support Cloudflare-compatible dispatcher uploads ([543fbaa](https://github.com/wen-templari/nanoflare/commit/543fbaae7cd3831cbd9fd23fbac43e80dbcf2482))
+* support configuration-only worker variable updates ([55d304e](https://github.com/wen-templari/nanoflare/commit/55d304e880b1cddfb4c2432afb20c1b29a9dc401)), closes [#50](https://github.com/wen-templari/nanoflare/issues/50)
+* support custom DNS for Node.js workers ([8c94576](https://github.com/wen-templari/nanoflare/commit/8c945768c8a17ef51b2d7990885c13aed3b17694))
+* support updating worker hostnames ([6b3321a](https://github.com/wen-templari/nanoflare/commit/6b3321a48ca392d27ce204e0f1fd867f3a7fdc7e)), closes [#48](https://github.com/wen-templari/nanoflare/issues/48)
+* unify Worker configuration with Cloudflare format ([7407b14](https://github.com/wen-templari/nanoflare/commit/7407b1435236e17ae2b388f2deedbda5a41b4b65))
+* unify worker execution with shared workerd and Unix sockets ([3a4adde](https://github.com/wen-templari/nanoflare/commit/3a4adde363228667875d0eb002884998a8d9c8fd))
+* verify WFP with official Cloudflare examples ([8495c74](https://github.com/wen-templari/nanoflare/commit/8495c74cf5a7f23b3193cd9fa046847725375b99))
+
+
+### Bug Fixes
+
+* cap worker compatibility dates ([6d6fafd](https://github.com/wen-templari/nanoflare/commit/6d6fafd697c788d7ef8d50314b5c08b704dfdae9))
+* cap worker compatibility dates ([2fd0a3d](https://github.com/wen-templari/nanoflare/commit/2fd0a3d16ed5617ddff65a7a7c77c78a9796ce86))
+* clarify invite authentication errors ([265bb36](https://github.com/wen-templari/nanoflare/commit/265bb36a9a0def38d4d0f41221f07fe0375c560c))
+* include namespace permissions in UI token scope selector ([6c4d818](https://github.com/wen-templari/nanoflare/commit/6c4d818252b6e478db8e5d89b0f04616c721cf8f))
+* include namespace permissions in UI token scope selector ([86468d7](https://github.com/wen-templari/nanoflare/commit/86468d7a49e9a8f51fdb7dbe0031406c1f744bbb))
+* isolate invalid Worker revisions during runtime restoration ([3dba893](https://github.com/wen-templari/nanoflare/commit/3dba893cfe1009be4d9b8b8119bfa06b5700c978))
+* isolate invalid Worker revisions during runtime restoration ([a104485](https://github.com/wen-templari/nanoflare/commit/a1044853c27072732edeadefa472f5d32cb144b9))
+* move WFP execution consent to administrator configuration ([bdb36d3](https://github.com/wen-templari/nanoflare/commit/bdb36d378b6a56ecc42dbf32f81e7330c52ddbee))
+* preserve public worker request URLs ([5baf7de](https://github.com/wen-templari/nanoflare/commit/5baf7de834dd12cbdecf6f3b213c8b88ab2b083d))
+* proxy Cloudflare compatibility API through UI nginx ([fe723f1](https://github.com/wen-templari/nanoflare/commit/fe723f1f84c8d77ad63cf223534f9910f42c80f9))
+* proxy Cloudflare compatibility API through UI nginx ([d585e19](https://github.com/wen-templari/nanoflare/commit/d585e1902239bb522441b6de0d790bdee4cb3340))
+* reserve runtime ports during startup ([2b848fe](https://github.com/wen-templari/nanoflare/commit/2b848fedcc3d0ea32b78542b0290902ec71b9f32))
+* resolve DNS promises shim dependency ([b712927](https://github.com/wen-templari/nanoflare/commit/b712927fd020e03b47223f5e238ccc0e6ca04cd2))
+* resolve DNS shims from nested worker modules ([28aa202](https://github.com/wen-templari/nanoflare/commit/28aa2025fab39240f2b5939bf748cde568061376))
+* resolve DNS shims from nested worker modules ([26d6ab4](https://github.com/wen-templari/nanoflare/commit/26d6ab47247059ed376625c0a149ff3faad2303f))
+* reuse runtime ports after allocator wraps ([feea252](https://github.com/wen-templari/nanoflare/commit/feea2523b780de431e67ee4cbc0f79ca055a82bd))
+* reuse runtime ports after allocator wraps ([96deaaf](https://github.com/wen-templari/nanoflare/commit/96deaafaede4db7d40369d2367f720247cf48c27))
+* scope dynamic resource authority to revision grants ([c6d7af3](https://github.com/wen-templari/nanoflare/commit/c6d7af306f783ad321b5d308632c98535a992479))
+* sign in existing users from invite links ([75d0fc0](https://github.com/wen-templari/nanoflare/commit/75d0fc001303a679a6410d2fe095aca9df909ec1))
+* sign in existing users from invite links ([ba2c57d](https://github.com/wen-templari/nanoflare/commit/ba2c57d936d8334778f5dc969543f8e2f3c5dd6d))
+* tolerate null deployment storage bindings during deletion ([a7de4be](https://github.com/wen-templari/nanoflare/commit/a7de4be68053e49bb442d5936012b63f3210cb62))
+* tolerate null deployment storage bindings during deletion ([4b1c935](https://github.com/wen-templari/nanoflare/commit/4b1c935dcfafb49e484c0dabae9e2afb03a53bd9))
+* use SSO for organization invites ([1caa3b2](https://github.com/wen-templari/nanoflare/commit/1caa3b28c556bca570b0d3e2715145ff33221db8))
+* validate compatibility publications without aborting active generations ([34eb3ac](https://github.com/wen-templari/nanoflare/commit/34eb3ac7b41a7f63f52ef92143bbf4e224f3f476))
+
 ## [0.5.0](https://github.com/wen-templari/nanoflare/compare/v0.4.0...v0.5.0) (2026-08-29)
 
 
