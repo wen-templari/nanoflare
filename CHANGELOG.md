@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.1](https://github.com/wen-templari/nanoflare/compare/v0.6.0...v0.6.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* preserve HTTP origin identity through pinned proxy tunnels ([bd6a1a7](https://github.com/wen-templari/nanoflare/commit/bd6a1a7dbbe4c88cc996b9a0debbeaff60b93a1c))
+* preserve Worker access identity headers ([e87c6c7](https://github.com/wen-templari/nanoflare/commit/e87c6c7f8f9e652476a14b7681d356a85031567f))
+* preserve Worker access identity headers ([f382448](https://github.com/wen-templari/nanoflare/commit/f382448cb6385e480ab08f8107a249990c7b441e))
+* support trusted proxy DNS resolution for Worker egress ([fc0f791](https://github.com/wen-templari/nanoflare/commit/fc0f791d11c5101b85d55f85b2f545656dc3e6f4))
+* support trusted proxy DNS resolution for Worker egress ([67d9669](https://github.com/wen-templari/nanoflare/commit/67d96692852689ada77fac22c121f113aa964570))
+
 ## [0.6.0](https://github.com/wen-templari/nanoflare/compare/v0.5.0...v0.6.0) (2026-10-23)
 
 
