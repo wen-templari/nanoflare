@@ -1725,7 +1725,9 @@ func (p *Postgres) DeleteDatabase(databaseID string) error {
 	if err := tx.QueryRow(`
 SELECT EXISTS (
 	SELECT 1
-	FROM deployments d, jsonb_array_elements(d.db) AS binding
+	FROM deployments d, jsonb_array_elements(
+		CASE WHEN jsonb_typeof(d.db) = 'array' THEN d.db ELSE '[]'::jsonb END
+	) AS binding
 	WHERE binding->>'database_id' = $1
 )`, databaseID).Scan(&inUse); err != nil {
 		return err
@@ -2067,7 +2069,9 @@ func (p *Postgres) DeleteKVNamespace(namespaceID string) error {
 	err := p.db.QueryRow(`
 SELECT EXISTS (
 	SELECT 1
-	FROM deployments d, jsonb_array_elements(d.kv_namespaces) AS binding
+	FROM deployments d, jsonb_array_elements(
+		CASE WHEN jsonb_typeof(d.kv_namespaces) = 'array' THEN d.kv_namespaces ELSE '[]'::jsonb END
+	) AS binding
 	WHERE binding->>'id' = $1
 )`, namespaceID).Scan(&inUse)
 	if err != nil {
@@ -2103,7 +2107,9 @@ func (p *Postgres) DeleteObjectStorageBucket(bucketID string) error {
 	err := p.db.QueryRow(`
 SELECT EXISTS (
 	SELECT 1
-	FROM deployments d, jsonb_array_elements(d.object_storage_bucket) AS binding
+	FROM deployments d, jsonb_array_elements(
+		CASE WHEN jsonb_typeof(d.object_storage_bucket) = 'array' THEN d.object_storage_bucket ELSE '[]'::jsonb END
+	) AS binding
 	WHERE binding->>'bucket_id' = $1
 )`, bucketID).Scan(&inUse)
 	if err != nil {
@@ -2139,6 +2145,15 @@ func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
 }
 
 func storeDeploymentTx(tx *sql.Tx, deployment nanoflare.Deployment) error {
+	if deployment.KVNamespaces == nil {
+		deployment.KVNamespaces = []nanoflare.KVBinding{}
+	}
+	if deployment.Databases == nil {
+		deployment.Databases = []nanoflare.DatabaseBinding{}
+	}
+	if deployment.ObjectStorageBuckets == nil {
+		deployment.ObjectStorageBuckets = []nanoflare.ObjectStorageBucketBinding{}
+	}
 	files := []byte(`[]`)
 	assets, err := json.Marshal(deployment.Assets)
 	if err != nil {
