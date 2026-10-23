@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.1.0...vite-plugin-v0.2.0) (2026-10-23)
+
+
+### Features
+
+* isolate Worker revision publication across the platform ([02c65a8](https://github.com/wen-templari/nanoflare/commit/02c65a80624c78693a6599c78212c36f215cfcb5))
+* support custom DNS for Node.js workers ([8c94576](https://github.com/wen-templari/nanoflare/commit/8c945768c8a17ef51b2d7990885c13aed3b17694))
+* unify Worker configuration with Cloudflare format ([7407b14](https://github.com/wen-templari/nanoflare/commit/7407b1435236e17ae2b388f2deedbda5a41b4b65))
+
 ## [0.1.0](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.0.4...vite-plugin-v0.1.0) (2026-08-08)
 
 
