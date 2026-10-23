@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +135,11 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 	}
 	outboundCanceled := make(chan struct{}, 1)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "8.8.8.8" {
+			t.Errorf("origin identity changed: %s", r.Host)
+			http.Error(w, "wrong origin identity", 421)
+			return
+		}
 		if r.Header.Get("X-Nanoflare-Invocation") != "" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer nfc1.") {
 			t.Error("runtime authority leaked to origin")
 		}
@@ -158,31 +164,32 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 	// All authorized outbound traffic must reach this recording corporate proxy.
 	// It forwards only the synthetic pinned destination to our local origin.
 	var proxied atomic.Int32
-	proxyBase := http.DefaultTransport.(*http.Transport).Clone()
-	proxyBase.Proxy = nil
-	defer proxyBase.CloseIdleConnections()
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Hostname() != "8.8.8.8" || (r.URL.Port() != "" && r.URL.Port() != "80") || r.Host != "8.8.8.8" {
-			t.Errorf("unexpected proxy destination: %s host=%s", r.URL, r.Host)
+		if r.Method != "CONNECT" || r.Host != "8.8.8.8:80" {
+			t.Errorf("unexpected proxy destination: %s %s", r.Method, r.Host)
 			http.Error(w, "unexpected destination", 502)
 			return
 		}
 		proxied.Add(1)
-		forward := r.Clone(r.Context())
-		forward.RequestURI = ""
-		forward.URL.Host = origin.Listener.Addr().String()
-		response, e := proxyBase.RoundTrip(forward)
-		if e != nil {
+		upstream, err := net.Dial("tcp", origin.Listener.Addr().String())
+		if err != nil {
+			t.Error(err)
 			http.Error(w, "origin unavailable", 502)
 			return
 		}
-		defer response.Body.Close()
-		for key, values := range response.Header {
-			w.Header()[key] = values
+		defer upstream.Close()
+		client, reader, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
 		}
-		w.WriteHeader(response.StatusCode)
-		w.(http.Flusher).Flush()
-		io.Copy(dispatchProxyWriter{w}, response.Body)
+		defer client.Close()
+		fmt.Fprint(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		done := make(chan struct{})
+		go func() { io.Copy(upstream, reader); upstream.Close(); close(done) }()
+		io.Copy(client, upstream)
+		client.Close()
+		<-done
 	}))
 	defer proxy.Close()
 	outbound, err := egress.NewHTTPTransport(egress.Config{NetworkAllow: []string{"public"}, ProxyURL: proxy.URL})

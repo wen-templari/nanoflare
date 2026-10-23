@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -49,14 +50,27 @@ func TestProxyResolutionRoutes(t *testing.T) {
 				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 				defer slog.SetDefault(old)
 				var calls atomic.Int32
+				origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Host != "example.com" {
+						t.Errorf("origin Host: %s", r.Host)
+					}
+					fmt.Fprint(w, "proxy-response")
+				}))
+				defer origin.Close()
 				proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					calls.Add(1)
 					if raw {
 						if r.Method != "CONNECT" || r.Host != tc.want {
 							t.Errorf("CONNECT target: %s %s", r.Method, r.Host)
 						}
+					} else if r.Method == "CONNECT" {
+						if r.Host != "8.8.8.8:80" || tc.name != "pinned" {
+							t.Errorf("unexpected HTTP tunnel: %s", r.Host)
+						}
+						tunnelTestHTTP(t, w, r, origin.Listener.Addr().String())
+						return
 					} else {
-						want := strings.TrimSuffix(tc.want, ":443") + ":80"
+						want := strings.TrimSuffix(tc.want, ":443")
 						if r.URL.Host != want {
 							t.Errorf("absolute URL/Host: %s / %s, want %s", r.URL.Host, r.Host, want)
 						}
@@ -191,56 +205,191 @@ func TestDenialDiagnosticsDoNotLeakRequestData(t *testing.T) {
 	}
 }
 
-// Read the wire directly: net/http's server parser replaces Host with the
-// absolute URL's authority and would hide an accidental Host-header rewrite.
-func TestPolicyHTTPProxyPreservesWireIdentity(t *testing.T) {
-	proxy, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer proxy.Close()
-	wire := make(chan string, 1)
-	go func() {
-		conn, err := proxy.Accept()
-		if err != nil {
-			wire <- "accept failed"
-			return
-		}
-		defer conn.Close()
-		conn.SetDeadline(time.Now().Add(3 * time.Second))
-		reader := bufio.NewReader(conn)
-		var head strings.Builder
-		for {
-			line, err := reader.ReadString('\n')
+// A forwarding proxy may derive Host from the absolute URL. Verify identity
+// at the origin after proxy parsing, for both pinned tunnels and delegated URLs.
+func TestPolicyHTTPProxyPreservesOriginIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		enabled, resolved bool
+	}{
+		{"default_pinned", false, true}, {"opt_in_pinned", true, true}, {"delegated", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var originCalls, proxyCalls atomic.Int32
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				originCalls.Add(1)
+				if r.Host != "customer.example:8080" {
+					http.Error(w, "wrong virtual host", 421)
+					return
+				}
+				if r.RequestURI != "/a%2Fb?q=one%20two" || r.Header.Get("Proxy-Authorization") != "" {
+					t.Errorf("origin request: %s, headers %v", r.RequestURI, r.Header)
+				}
+				fmt.Fprint(w, "virtual-host-ok")
+			}))
+			defer origin.Close()
+			base := http.DefaultTransport.(*http.Transport).Clone()
+			base.Proxy = nil
+			defer base.CloseIdleConnections()
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				proxyCalls.Add(1)
+				if r.Header.Get("Proxy-Authorization") == "" {
+					t.Error("missing proxy authentication")
+				}
+				if tc.resolved {
+					if r.Method != "CONNECT" || r.Host != "8.8.8.8:8080" {
+						t.Errorf("unpinned tunnel: %s %s", r.Method, r.Host)
+						http.Error(w, "bad target", 400)
+						return
+					}
+					tunnelTestHTTP(t, w, r, origin.Listener.Addr().String())
+					return
+				}
+				if r.Method != "GET" || r.URL.Host != "customer.example:8080" {
+					t.Errorf("delegated absolute URL: %s %s", r.Method, r.URL)
+				}
+				out := r.Clone(r.Context())
+				out.RequestURI = ""
+				out.URL.Host = origin.Listener.Addr().String()
+				out.Header.Del("Proxy-Authorization")
+				response, err := base.RoundTrip(out)
+				if err != nil {
+					t.Error(err)
+					http.Error(w, "forward failed", 502)
+					return
+				}
+				defer response.Body.Close()
+				w.WriteHeader(response.StatusCode)
+				io.Copy(w, response.Body)
+			}))
+			defer proxy.Close()
+			proxyURL, _ := url.Parse(proxy.URL)
+			proxyURL.User = url.UserPassword("operator", "proxy-secret")
+			rt, err := NewHTTPTransport(Config{ProxyURL: proxyURL.String(), ProxyResolves: tc.enabled})
 			if err != nil {
-				wire <- "read failed"
-				return
+				t.Fatal(err)
 			}
-			head.WriteString(line)
-			if line == "\r\n" {
-				break
+			rt.(*policyTransport).policy.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+				if !tc.resolved {
+					return nil, &net.DNSError{Err: "offline", IsNotFound: true}
+				}
+				return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
 			}
+			request, _ := http.NewRequest("GET", "http://customer.example:8080/a%2Fb?q=one%20two", nil)
+			response, err := rt.RoundTrip(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, _ := io.ReadAll(response.Body)
+			if response.StatusCode != 200 || string(body) != "virtual-host-ok" || proxyCalls.Load() != 1 || originCalls.Load() != 1 {
+				t.Fatalf("status %d body %q proxy=%d origin=%d", response.StatusCode, body, proxyCalls.Load(), originCalls.Load())
+			}
+		})
+	}
+}
+
+func tunnelTestHTTP(t *testing.T, w http.ResponseWriter, r *http.Request, target string) {
+	t.Helper()
+	upstream, err := net.Dial("tcp", target)
+	if err != nil {
+		t.Error(err)
+		http.Error(w, "dial failed", 502)
+		return
+	}
+	defer upstream.Close()
+	client, reader, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer client.Close()
+	fmt.Fprint(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
+	done := make(chan struct{})
+	go func() { io.Copy(upstream, reader); upstream.Close(); close(done) }()
+	io.Copy(client, upstream)
+	client.Close()
+	<-done
+}
+
+func TestPinnedHTTPProxyRefusalDoesNotFallback(t *testing.T) {
+	var calls atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Method != "CONNECT" || r.Host != "8.8.8.8:80" {
+			t.Errorf("unexpected fallback: %s %s", r.Method, r.Host)
 		}
-		wire <- head.String()
-		fmt.Fprint(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
-	}()
-	rt, err := NewHTTPTransport(Config{ProxyURL: "http://" + proxy.Addr().String(), ProxyResolves: true})
+		http.Error(w, "CONNECT disallowed", 403)
+	}))
+	defer proxy.Close()
+	rt, err := NewHTTPTransport(Config{ProxyURL: proxy.URL, ProxyResolves: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rt.(*policyTransport).policy.lookup = func(context.Context, string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
 	}
-	request, _ := http.NewRequest("GET", "http://example.com/a%2Fb?q=one%20two", nil)
-	response, err := rt.RoundTrip(request)
+	request, _ := http.NewRequest("GET", "http://customer.example/", nil)
+	if response, err := rt.RoundTrip(request); err == nil {
+		response.Body.Close()
+		t.Fatal("proxy refusal succeeded")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("proxy requests: %d", calls.Load())
+	}
+}
+
+func TestPinnedHTTPProxyHandshakeCancellation(t *testing.T) {
+	accepted := make(chan struct{})
+	disconnected := make(chan struct{})
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, reader, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		close(accepted)
+		_, _ = reader.ReadByte() // no CONNECT response; wait for client cancellation
+		close(disconnected)
+	}))
+	defer proxy.Close()
+	rt, err := NewHTTPTransport(Config{ProxyURL: proxy.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
-	head := <-wire
-	for _, want := range []string{"GET http://8.8.8.8:80/a%2Fb?q=one%20two HTTP/1.1\r\n", "Host: example.com\r\n"} {
-		if !strings.Contains(head, want) {
-			t.Errorf("missing %q in %q", want, head)
+	rt.(*policyTransport).policy.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, "GET", "http://customer.example/", nil)
+	done := make(chan error, 1)
+	go func() {
+		response, err := rt.RoundTrip(request)
+		if response != nil {
+			response.Body.Close()
 		}
+		done <- err
+	}()
+	select {
+	case <-accepted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("proxy never received CONNECT")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request stuck in CONNECT handshake")
+	}
+	select {
+	case <-disconnected:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation left CONNECT connection open")
 	}
 }

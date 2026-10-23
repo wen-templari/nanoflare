@@ -168,7 +168,13 @@ trusted proxy. This applies to Worker HTTP(S), raw CONNECT, and WFP outbound.
 Direct and `NO_PROXY` routes still require successful local resolution; denied IP
 literals, rejected or mixed DNS answers, malformed names, and cancellations never
 trigger delegation. Successful local resolution still authorizes every returned
-address and pins the destination IP, including on proxy routes.
+address and pins the destination IP, including on proxy routes. Plain HTTP to a
+locally resolved destination uses CONNECT to the authorized IP, then sends HTTP
+with the original origin Host header inside that tunnel. The proxy must support
+CONNECT to the destination port (including port 80 for ordinary HTTP); refusal
+fails the request without falling back to a hostname or an IP absolute URL.
+Unresolved names explicitly delegated to the proxy continue to use ordinary
+hostname absolute URLs for HTTP.
 
 For unresolved names, destination-address restrictions are delegated to the proxy.
 The trusted proxy must enforce restrictions after resolving the name itself,

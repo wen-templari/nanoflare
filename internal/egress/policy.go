@@ -185,7 +185,7 @@ func (p *NetworkPolicy) resolve(ctx context.Context, host, port string) (string,
 }
 
 // policyTransport resolves each request once, validates every answer, and sends
-// the authorized literal IP to both direct dials and proxy CONNECT/absolute URLs.
+// the authorized literal IP to direct dials and proxy CONNECT tunnels.
 // Explicit proxy resolution delegation applies only after a failed DNS lookup.
 // Original Host and TLS server name are preserved. Connections are not pooled
 // across requests; the pilot's latency/capacity qualification must include this.
@@ -260,15 +260,18 @@ func (p *policyTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	out := request.Clone(request.Context())
 	out.URL.Host = pinned
 	if proxy != nil && out.URL.Scheme == "http" {
-		// WriteProxy otherwise builds its absolute URL from Request.Host, undoing
-		// IP pinning. Opaque supplies the authorized absolute target independently
-		// of the original Host header; RawQuery remains encoded by net/url.
-		path := out.URL.EscapedPath()
-		if path == "" {
-			path = "/"
+		host, _, _ := net.SplitHostPort(pinned)
+		if net.ParseIP(host) != nil {
+			// Absolute URLs with a pinned IP let proxies replace the origin Host.
+			// Tunnel to that IP and send origin-form HTTP with the original Host.
+			// A proxy which refuses CONNECT must fail closed; never re-resolve.
+			transport.Proxy = nil
+			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialProxyTunnel(ctx, proxy, pinned, p.base.DialContext, proxyConnectTimeout)
+			}
 		}
-		out.URL.Opaque = "//" + pinned + path
 	}
+
 	out.Host = request.URL.Host
 	out.RequestURI = ""
 	out.Header = out.Header.Clone()

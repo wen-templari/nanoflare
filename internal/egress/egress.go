@@ -480,13 +480,39 @@ func (s *Server) isDirectIP(ip net.IP) bool {
 // dialProxyConnect opens a CONNECT tunnel to target through the corporate proxy
 // and returns the tunneled connection.
 func (s *Server) dialProxyConnect(ctx context.Context, proxyURL *url.URL, target string) (net.Conn, error) {
-	conn, err := s.dialer.DialContext(ctx, "tcp", proxyURL.Host)
+	return dialProxyTunnel(ctx, proxyURL, target, s.dialer.DialContext, s.connectTO)
+}
+
+// dialProxyTunnel bounds the CONNECT handshake and closes it on cancellation.
+// Both raw TCP and pinned plain HTTP use the same authenticated tunnel path.
+func dialProxyTunnel(ctx context.Context, proxyURL *url.URL, target string, dial func(context.Context, string, string) (net.Conn, error), timeout time.Duration) (net.Conn, error) {
+	if proxyURL.Scheme != "http" {
+		return nil, errors.New("CONNECT requires an HTTP egress proxy")
+	}
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
+	}
+	proxyAddress := proxyURL.Host
+	if proxyURL.Port() == "" {
+		proxyAddress = net.JoinHostPort(proxyURL.Hostname(), "80")
+	}
+	conn, err := dial(ctx, "tcp", proxyAddress)
 	if err != nil {
 		return nil, err
 	}
-	// Fail fast if the proxy never completes the CONNECT handshake; cleared
-	// below once established so the splice runs without a deadline.
-	_ = conn.SetDeadline(time.Now().Add(s.connectTO))
+	success := false
+	defer func() {
+		if !success {
+			_ = conn.Close()
+		}
+	}()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	deadline := time.Now().Add(timeout)
+	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
+		deadline = callerDeadline
+	}
+	_ = conn.SetDeadline(deadline)
 	var head strings.Builder
 	fmt.Fprintf(&head, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n", target, target)
 	if proxyURL.User != nil {
@@ -511,7 +537,11 @@ func (s *Server) dialProxyConnect(ctx context.Context, proxyURL *url.URL, target
 		_ = conn.Close()
 		return nil, fmt.Errorf("proxy CONNECT to %s: %s", target, response.Status)
 	}
-	_ = conn.SetDeadline(time.Time{}) // hand a clean connection to the splice
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	_ = conn.SetDeadline(time.Time{}) // hand a clean connection to the caller
+	success = true
 	if reader.Buffered() > 0 {
 		return &bufferedConn{Conn: conn, reader: io.MultiReader(reader, conn)}, nil
 	}
