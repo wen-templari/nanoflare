@@ -65,6 +65,7 @@ type dynamicSnapshot struct {
 	frozen            *nanoflare.ExecutionSnapshot
 	code              config.WorkerCodeSnapshot
 	validated         bool
+	validationFailed  bool
 }
 type dynamicPublication struct {
 	done   chan struct{}
@@ -332,7 +333,7 @@ func (m *DynamicManager) recoverSession(observed *dynamicRecoveryState) (err err
 	m.snapshots = map[string]*dynamicSnapshot{}
 	m.committed = map[string]string{}
 	m.mu.Unlock()
-	id, routed, err := m.prepareDynamic(active)
+	id, routed, err := m.prepareDynamic(active, true, "")
 	if err != nil {
 		return err
 	}
@@ -363,7 +364,7 @@ func (m *DynamicManager) register(snapshot *dynamicSnapshot) error {
 	}
 	return nil
 }
-func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]string, error) {
+func (m *DynamicManager) build(active []nanoflare.ActiveDeployment, restore bool, strictAppID string) (map[string]string, error) {
 	active = staticRuntimeWorkers(active)
 	m.mu.Lock()
 	m.staging++
@@ -415,6 +416,8 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]
 		}
 		m.mu.Lock()
 		validated := existing.validated
+		previous := m.snapshots[m.committed[dynamicIdentity(item)]]
+		allowFailure := restore || (strictAppID != "" && item.App.ID != strictAppID && previous != nil && previous.validationFailed && previous.frozen.ID() == snapshot.ID())
 		m.mu.Unlock()
 		if !validated {
 			request, _ := http.NewRequest(http.MethodPost, "http://"+SocketHost(m.socketPath)+"/__nanoflare_validate", nil)
@@ -428,15 +431,28 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment) (map[string]
 				cancel()
 				return nil, fmt.Errorf("validate Worker: %w", err)
 			}
-			body, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
+			io.Copy(io.Discard, io.LimitReader(response.Body, 8192))
 			response.Body.Close()
 			cancel()
-			if response.StatusCode != 204 {
-				return nil, fmt.Errorf("validate Worker %s: HTTP %d: %s", item.App.Name, response.StatusCode, body)
+			if response.StatusCode != http.StatusNoContent {
+				if response.StatusCode != http.StatusUnprocessableEntity || response.Header.Get("X-Nanoflare-Validation-Failure") != "worker_initialization" {
+					return nil, fmt.Errorf("validate Worker %s: HTTP %d", item.App.Name, response.StatusCode)
+				}
+				if !allowFailure {
+					return nil, &WorkerUnavailableError{AppID: item.App.ID, DeploymentID: item.Deployment.ID}
+				}
+				log.Printf("Worker unavailable: app=%s revision=%s reason=worker_initialization", item.App.ID, item.Deployment.ID)
 			}
 			m.mu.Lock()
+			existing.validationFailed = response.StatusCode != http.StatusNoContent
 			existing.validated = true
 			m.mu.Unlock()
+		}
+		m.mu.Lock()
+		failed := existing.validationFailed
+		m.mu.Unlock()
+		if failed && !allowFailure {
+			return nil, &WorkerUnavailableError{AppID: item.App.ID, DeploymentID: item.Deployment.ID}
 		}
 		keys[dynamicIdentity(item)] = key
 	}
@@ -455,15 +471,22 @@ func (m *DynamicManager) ValidatePublication(active []nanoflare.ActiveDeployment
 	if err := m.boot(); err != nil {
 		return err
 	}
-	_, err := m.build(active)
+	_, err := m.build(active, false, "")
+	if err != nil {
+		m.collectSnapshots()
+	}
 	return err
 }
 func (m *DynamicManager) Prepare(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
 	m.publication.Lock()
 	defer m.publication.Unlock()
-	return m.prepareDynamic(active)
+	id, routed, err := m.prepareDynamic(active, false, "")
+	if err != nil {
+		m.collectSnapshots()
+	}
+	return id, routed, err
 }
-func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment, restore bool, strictAppID string) (string, []nanoflare.ActiveDeployment, error) {
 	active = staticRuntimeWorkers(active)
 	m.mu.Lock()
 	// Retain candidates until pending owns them, including the detached routing
@@ -488,7 +511,7 @@ func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment) (st
 	if err := m.boot(); err != nil {
 		return "", nil, err
 	}
-	keys, err := m.build(active)
+	keys, err := m.build(active, restore, strictAppID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -523,6 +546,12 @@ func (m *DynamicManager) commitDynamic(id string) error {
 	session := m.session
 	m.mu.Unlock()
 	for _, key := range publication.keys {
+		m.mu.Lock()
+		failed := m.snapshots[key].validationFailed
+		m.mu.Unlock()
+		if failed {
+			continue
+		}
 		if err := m.control(context.Background(), "publish", map[string]string{"execution_id": key, "session_id": session}, nil); err != nil {
 			m.mu.Lock()
 			m.clearPendingLocked()
@@ -538,10 +567,18 @@ func (m *DynamicManager) commitDynamic(id string) error {
 	m.active = publication.active
 	scheduler := m.scheduler
 	m.mu.Unlock()
+	runnable := make([]nanoflare.ActiveDeployment, 0, len(publication.active))
+	m.mu.Lock()
+	for _, item := range publication.active {
+		if snapshot := m.snapshots[publication.keys[dynamicIdentity(item)]]; snapshot != nil && !snapshot.validationFailed {
+			runnable = append(runnable, item)
+		}
+	}
+	m.mu.Unlock()
 	if scheduler != nil {
-		scheduler.Update(publication.active)
+		scheduler.Update(runnable)
 	} else {
-		scheduler = startCronRunner(publication.active, m.output, m.Ensure)
+		scheduler = startCronRunner(runnable, m.output, m.Ensure)
 		m.mu.Lock()
 		m.scheduler = scheduler
 		m.mu.Unlock()
@@ -582,7 +619,7 @@ func (m *DynamicManager) Abort(id string) error {
 func (m *DynamicManager) Write(active []nanoflare.ActiveDeployment) error {
 	m.publication.Lock()
 	defer m.publication.Unlock()
-	id, routed, err := m.prepareDynamic(active)
+	id, routed, err := m.prepareDynamic(active, true, "")
 	if err != nil {
 		return err
 	}
@@ -597,6 +634,10 @@ func (m *DynamicManager) Write(active []nanoflare.ActiveDeployment) error {
 func (m *DynamicManager) admitLocked(ctx context.Context, key string, root *dynamicLifetime) (*dynamicInvocation, error) {
 	if m.closed || m.process == nil || m.session == "" {
 		return nil, errors.New("runtime unavailable")
+	}
+	if snapshot := m.snapshots[key]; snapshot != nil && snapshot.validationFailed {
+		active := snapshot.frozen.ActiveDeployment()
+		return nil, &WorkerUnavailableError{AppID: active.App.ID, DeploymentID: active.Deployment.ID}
 	}
 	var admission struct {
 		Token string `json:"token"`
@@ -1270,7 +1311,7 @@ func (m *DynamicManager) RuntimeInstanceLive(ctx context.Context, appID, deploym
 	}
 	for key, s := range m.snapshots {
 		a := s.frozen.ActiveDeployment()
-		if a.App.ID == appID && a.Deployment.ID == deploymentID && (instanceID == "" || key == instanceID) && s.registeredSession == m.session {
+		if a.App.ID == appID && a.Deployment.ID == deploymentID && (instanceID == "" || key == instanceID) && s.registeredSession == m.session && !s.validationFailed {
 			for _, live := range m.committed {
 				if live == key {
 					return true, nil

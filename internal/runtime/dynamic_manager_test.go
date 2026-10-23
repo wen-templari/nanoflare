@@ -377,7 +377,7 @@ func TestDynamicSnapshotRetirementPrecedesConcurrentRepublication(t *testing.T) 
 	built := make(chan error, 1)
 	var newKey string
 	go func() {
-		keys, err := m.build([]nanoflare.ActiveDeployment{active})
+		keys, err := m.build([]nanoflare.ActiveDeployment{active}, false, "")
 		newKey = keys[dynamicIdentity(active)]
 		built <- err
 	}()
@@ -712,13 +712,13 @@ func TestDynamicRetiredSnapshotGetsFreshGrantWithoutResettingPublishedSnapshot(t
 	m.client.Transport = dynamicUnitTransport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 204, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})
-	keys, err := m.build([]nanoflare.ActiveDeployment{active})
+	keys, err := m.build([]nanoflare.ActiveDeployment{active}, false, "")
 	if err != nil || keys[dynamicIdentity(active)] != oldKey {
 		t.Fatal("unchanged publication discarded warm revision", keys, err)
 	}
 	// Keep the old snapshot resident, as when a retired WebSocket is draining.
 	m.snapshots[oldKey].retired = true
-	keys, err = m.build([]nanoflare.ActiveDeployment{active})
+	keys, err = m.build([]nanoflare.ActiveDeployment{active}, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -224,10 +224,19 @@ type WorkerDeployment struct {
 	CreatedAt            time.Time                    `json:"created_at"`
 }
 
+// RuntimeRevisionStatus describes observed runtime state, independently of stored traffic.
+type RuntimeRevisionStatus struct {
+	AppID        string `json:"worker_id"`
+	DeploymentID string `json:"deployment_id"`
+	State        string `json:"state"`
+	Reason       string `json:"reason,omitempty"`
+}
+
 type WorkerDetail struct {
-	App        App               `json:"app"`
-	Deployment *WorkerDeployment `json:"deployment,omitempty"`
-	Secrets    []Secret          `json:"secrets,omitempty"`
+	Runtime    []RuntimeRevisionStatus `json:"runtime,omitempty"`
+	App        App                     `json:"app"`
+	Deployment *WorkerDeployment       `json:"deployment,omitempty"`
+	Secrets    []Secret                `json:"secrets,omitempty"`
 }
 
 type ConsoleDeployment struct {

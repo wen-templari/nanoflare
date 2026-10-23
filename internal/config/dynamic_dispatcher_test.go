@@ -33,6 +33,8 @@ func TestWorkerdDynamicDispatcherContracts(t *testing.T) {
 	}
 	programs := map[string]map[string]any{}
 	for key, source := range map[string]string{
+		"invalid": `export default {fetch(request: Request){}}`,
+		"throws":  `throw new Error("private-initialization-detail"); export default {fetch(){}}`,
 		"a": `import { env as importedEnv } from "cloudflare:workers";
 const { KV, SERVICE } = importedEnv;
 const get = KV.get;
@@ -230,11 +232,15 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 			t.Fatalf("dispatcher socket unavailable: %s", logs.String())
 		}
 	}
-	call := func(path, auth, token string) *http.Response {
+	call := func(path, auth, token string, executions ...string) *http.Response {
 		t.Helper()
 		request, _ := http.NewRequest("GET", "http://worker.test"+path, nil)
 		request.Header.Set("X-Nanoflare-Dispatcher-Token", auth)
-		request.Header.Set("X-Nanoflare-Execution", "a")
+		execution := "a"
+		if len(executions) > 0 {
+			execution = executions[0]
+		}
+		request.Header.Set("X-Nanoflare-Execution", execution)
 		request.Header.Set("X-Nanoflare-Invocation", token)
 		request.Header.Set("X-Nanoflare-Forged", "must-strip")
 		if token == "" {
@@ -250,6 +256,19 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 	unauthorized.Body.Close()
 	if unauthorized.StatusCode != 401 {
 		t.Fatalf("unauthorized status=%d", unauthorized.StatusCode)
+	}
+	for _, execution := range []string{"invalid", "throws", "invalid", "throws", "missing"} {
+		response := call("/__nanoflare_validate", "dispatcher-secret", "", execution)
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		failure := response.Header.Get("X-Nanoflare-Validation-Failure")
+		if execution == "missing" {
+			if response.StatusCode == 204 || failure != "" {
+				t.Fatalf("broker failure classified as Worker failure: %d %s", response.StatusCode, body)
+			}
+		} else if response.StatusCode != 422 || failure != "worker_initialization" || strings.Contains(string(body), "private-initialization-detail") {
+			t.Fatalf("Worker validation %s: %d %s %s", execution, response.StatusCode, failure, body)
+		}
 	}
 	validation := call("/__nanoflare_validate", "dispatcher-secret", "")
 	body, _ := io.ReadAll(validation.Body)

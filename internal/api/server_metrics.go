@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtime"
 	"github.com/prometheus/client_golang/prometheus"
 	"net/http"
+	"time"
 )
 
 type serverMetricsCollector struct {
@@ -24,6 +27,7 @@ func (c serverMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	collectRepositoryPoolMetrics(ch, s)
 	collectOrganizationMetrics(ch, s)
 	collectRunnerResources(ch, s)
+	collectWorkerRuntimeMetrics(ch, s)
 	if s.logForwarderStats != nil {
 		dropped := metricDesc("nanoflare_log_forwarder_dropped_total", "Attributed log events dropped by the local collector forwarder.", nil)
 		ch <- prometheus.MustNewConstMetric(dropped, prometheus.CounterValue, float64(s.logForwarderStats.Dropped()))
@@ -319,4 +323,25 @@ func (s *Server) serveMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.metricsHandler.ServeHTTP(w, r)
+}
+
+func collectWorkerRuntimeMetrics(ch chan<- prometheus.Metric, s *Server) {
+	reader, ok := s.runtime.(runtime.RuntimeStatusReader)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	statuses, err := reader.RuntimeStatuses(ctx, "")
+	if err != nil {
+		return
+	}
+	desc := metricDesc("nanoflare_worker_revision_unavailable", "Whether an active Worker revision is unavailable in the runtime.", []string{"worker_id", "deployment_id", "reason"})
+	for _, status := range statuses {
+		value := float64(0)
+		if status.State == "unavailable" {
+			value = 1
+		}
+		ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, value, status.AppID, status.DeploymentID, status.Reason)
+	}
 }

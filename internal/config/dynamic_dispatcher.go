@@ -72,11 +72,18 @@ export class WFPBridge extends WorkerEntrypoint {
 
 function brokerURL(path) { return "http://nanoflare.broker" + path; }
 
-async function load(env, ctx, key, validation = false) {
-  return env.LOADER.get((validation ? "validation:" : "execution:") + key, async () => {
+async function load(env, ctx, key, validation = false, state = {}) {
+  const source = async () => {
     const response = await env.BROKER.fetch(brokerURL("/source/" + encodeURIComponent(key)));
     if (!response.ok) throw new Error("Worker source unavailable: " + response.status);
-    const code = await response.json();
+    return await response.json();
+  };
+  // Fetch before entering the loader so even a cached initialization exception
+  // can be distinguished from an unavailable source broker.
+  const validationCode = validation ? await source() : null;
+  state.sourceReady = validation;
+  return env.LOADER.get((validation ? "validation:" : "execution:") + key, async () => {
+    const code = validationCode || await source();
     const childEnv = {
       ...code.env,
       __NANOFLARE_RESOURCE_BROKER: parentExports.ResourceBridge({ props: { key } }),
@@ -166,6 +173,18 @@ export default {
     const validation = request.headers.get("X-Nanoflare-Validate") === "true";
     const token = request.headers.get("X-Nanoflare-Invocation");
     if (!validation && !token) return new Response("Missing invocation admission", { status: 400 });
+    // Only initialization failures after fetching a valid source response are
+    // revision failures. Broker/transport/authentication failures stay fatal.
+    if (validation) {
+      const state = {};
+      try {
+        const worker = await load(env, ctx, key, true, state);
+        return await worker.getEntrypoint().fetch(request);
+      } catch (error) {
+        if (!state.sourceReady) throw error;
+        return new Response("Worker initialization failed", {status:422, headers:{"X-Nanoflare-Validation-Failure":"worker_initialization"}});
+      }
+    }
     let loaded;
     try { loaded = await load(env, ctx, key, validation); }
     catch (error) {

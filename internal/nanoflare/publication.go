@@ -47,6 +47,13 @@ type PublicationWriter interface {
 	AbortPublication(PublicationPreparation) error
 }
 
+// WorkerPublicationWriter validates the Worker being changed strictly while
+// allowing unchanged unavailable revisions belonging to other Workers.
+type WorkerPublicationWriter interface {
+	PublicationWriter
+	PrepareWorkerPublication([]ActiveDeployment, string) (PublicationPreparation, error)
+}
+
 func (s *Service) PublicationForOrg(org, app, key string) (PublicationResult, error) {
 	if _, err := s.appForOrg(org, app); err != nil {
 		return PublicationResult{}, err
@@ -188,7 +195,11 @@ func (s *Service) publishStoredArtifact(p *Publication, a DeploymentArtifact) (D
 	var prepared PublicationPreparation
 	publisher, twoPhase := s.writer.(PublicationWriter)
 	if twoPhase {
-		prepared, err = publisher.PreparePublication(candidate)
+		if targeted, ok := publisher.(WorkerPublicationWriter); ok {
+			prepared, err = targeted.PrepareWorkerPublication(candidate, p.AppID)
+		} else {
+			prepared, err = publisher.PreparePublication(candidate)
+		}
 		if err != nil {
 			_ = s.savePublication(p, "failed")
 			return Deployment{}, fmt.Errorf("prepare runtime: %w", err)
