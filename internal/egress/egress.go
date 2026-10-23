@@ -24,11 +24,12 @@ import (
 )
 
 type Config struct {
-	NetworkAllow []string
-	ProxyURL     string
-	CAFiles      []string
-	NoProxy      []string
-	Addr         string
+	ProxyResolves bool
+	NetworkAllow  []string
+	ProxyURL      string
+	CAFiles       []string
+	NoProxy       []string
+	Addr          string
 }
 
 type Server struct {
@@ -110,7 +111,7 @@ func New(config Config) (*Server, error) {
 	}
 	return &Server{
 		policy:       policy,
-		httpPolicy:   &policyTransport{policy: policy, base: transport, slots: make(chan struct{}, 64)},
+		httpPolicy:   &policyTransport{policy: policy, base: transport, proxyResolves: config.ProxyResolves, slots: make(chan struct{}, 64)},
 		addr:         addr,
 		transport:    transport,
 		proxy:        proxy,
@@ -365,25 +366,35 @@ func (s *Server) handleConnect(conn net.Conn, reader *bufio.Reader, request *htt
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
 	if !s.setActive(conn, cancel) {
 		return
 	}
 
 	dialTarget := target
+	delegated := false
 	if s.policy != nil {
 		host, port, e := net.SplitHostPort(target)
-		if e == nil {
-			dialTarget, e = s.policy.resolve(ctx, host, port)
+		if e != nil {
+			e = denied("malformed_destination")
+		} else {
+			dialTarget, e = s.policy.resolveRoute(ctx, host, port, proxyURL, s.httpPolicy.proxyResolves)
+			resolvedHost, _, _ := net.SplitHostPort(dialTarget)
+			delegated = e == nil && net.ParseIP(resolvedHost) == nil
 		}
 		if e != nil {
+			route := "connect_direct"
+			if proxyURL != nil {
+				route = "connect_proxy"
+			}
+			logDenial(host, port, route, e)
 			_, _ = io.WriteString(conn, "HTTP/1.1 403 Forbidden\r\n\r\n")
 			return
 		}
 	}
 	var upstream net.Conn
-	if proxyURL == nil || s.resolvesDirect(ctx, dialTarget) {
+	if proxyURL == nil || !delegated && s.resolvesDirect(ctx, dialTarget) {
 		upstream, err = s.dialer.DialContext(ctx, "tcp", dialTarget)
 	} else {
 		upstream, err = s.dialProxyConnect(ctx, proxyURL, dialTarget)

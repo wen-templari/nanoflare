@@ -59,6 +59,7 @@ func main() {
 		workerd                        = flag.String("workerd", envOrDefault("NANOFLARE_WORKERD_EXECUTABLE", "workerd"), "path to the workerd executable")
 		workerdNetworkAllow            = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
 		egressProxyURL                 = flag.String("workerd-egress-proxy-url", os.Getenv("NANOFLARE_WORKERD_EGRESS_PROXY_URL"), "explicit HTTP proxy URL for Worker outbound traffic")
+		egressProxyResolves            = flag.Bool("workerd-egress-proxy-resolves", strings.EqualFold(os.Getenv("NANOFLARE_WORKERD_EGRESS_PROXY_RESOLVES"), "true"), "trust selected egress proxy to resolve names when local DNS fails")
 		egressCAFiles                  = flag.String("workerd-egress-ca-files", os.Getenv("NANOFLARE_WORKERD_EGRESS_CA_FILES"), "comma-separated corporate CA PEM files")
 		egressNoProxy                  = flag.String("workerd-egress-no-proxy", os.Getenv("NANOFLARE_WORKERD_EGRESS_NO_PROXY"), "comma-separated Worker destinations that bypass the egress proxy")
 		egressAddr                     = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
@@ -230,7 +231,7 @@ func main() {
 			_ = dnsServer.Close(ctx)
 		}()
 		if strings.TrimSpace(*egressProxyURL) != "" {
-			adapter, err := egress.New(egress.Config{NetworkAllow: config.ParseNetworkAllow(*workerdNetworkAllow), ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy), Addr: *egressAddr})
+			adapter, err := egress.New(egress.Config{ProxyResolves: *egressProxyResolves, NetworkAllow: config.ParseNetworkAllow(*workerdNetworkAllow), ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy), Addr: *egressAddr})
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -367,7 +368,7 @@ func main() {
 		server.SetControlOIDC(controlVerifier)
 		server.SetControlOIDCDirectLogin(*controlOIDCDirect)
 	}
-	dispatchTransport, err := egress.NewHTTPTransport(egress.Config{NetworkAllow: config.ParseNetworkAllow(*workerdNetworkAllow), ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy)})
+	dispatchTransport, err := egress.NewHTTPTransport(egress.Config{ProxyResolves: *egressProxyResolves, NetworkAllow: config.ParseNetworkAllow(*workerdNetworkAllow), ProxyURL: *egressProxyURL, CAFiles: egress.ParseCAFiles(*egressCAFiles), NoProxy: egress.ParseNoProxy(*egressNoProxy)})
 	if err != nil {
 		log.Fatal(err)
 	}
