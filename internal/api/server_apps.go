@@ -632,10 +632,21 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 	request.Header = r.Header.Clone()
 	for name := range request.Header {
 		if strings.HasPrefix(strings.ToLower(name), "x-nanoflare-") &&
-			!strings.EqualFold(name, "X-Nanoflare-Dispatch-Root") &&
-			!strings.EqualFold(name, "X-Nanoflare-User-JWT") &&
-			!strings.EqualFold(name, "X-Nanoflare-User-Email") {
+			!strings.EqualFold(name, "X-Nanoflare-Dispatch-Root") {
 			delete(request.Header, name)
+		}
+	}
+	// Identity headers are caller-controlled, even when requests bypass Traefik.
+	// Rebuild them only from credentials accepted by the authenticator.
+	if token := strings.TrimSpace(bearerToken(r)); token != "" {
+		if identity, _, err := s.userInfoForRequest(r.Context(), token); err == nil && identity.Valid {
+			request.Header.Set("X-Nanoflare-User-JWT", token)
+			request.Header.Set("X-Nanoflare-User-Email", identity.Email)
+		}
+	} else if browser, ok := s.auth.(BrowserAuthenticator); ok {
+		if identity, token, valid := browser.Session(r); valid {
+			request.Header.Set("X-Nanoflare-User-JWT", token)
+			request.Header.Set("X-Nanoflare-User-Email", identity.Email)
 		}
 	}
 	for name, values := range endpoint.Headers {

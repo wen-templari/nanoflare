@@ -460,6 +460,8 @@ func TestTraefikGeneratesForwardAuthRouter(t *testing.T) {
 		`- X-Nanoflare-User-Email`,
 		`nanoflare-public-url:`,
 		`X-Forwarded-Proto: "https"`,
+		`X-Nanoflare-User-JWT: ""`,
+		`X-Nanoflare-User-Email: ""`,
 		`rule: "Host(` + "`" + `hello.example.com` + "`" + `)"`,
 		`- web`,
 		`- websecure`,
