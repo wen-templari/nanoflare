@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -54,5 +55,59 @@ func TestDynamicResourceStreamFlushesAndCancelsUpstream(t *testing.T) {
 	case <-canceled:
 	case <-time.After(time.Second):
 		t.Fatal("resource bridge retained upstream after client disconnected")
+	}
+}
+
+func TestDynamicResourceIdentityOnlyReachesAccessVerifier(t *testing.T) {
+	m, _, active, key := newDynamicControlFixture(t)
+	endpoint, err := m.Ensure(context.Background(), active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Release()
+	token := endpoint.Headers.Get("X-Nanoflare-Invocation")
+	for _, binding := range []string{"__NANOFLARE_ACCESS", "KV", "__NANOFLARE_LOG_COLLECTOR"} {
+		t.Run(binding, func(t *testing.T) {
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				wantAssertion := ""
+				wantToken := key
+				if binding != "KV" {
+					wantToken = token
+				}
+				if binding == "__NANOFLARE_ACCESS" {
+					wantAssertion = "signed-assertion"
+					if r.URL.Path != "/internal/runtime/access" {
+						t.Errorf("access path = %s", r.URL.Path)
+					}
+				}
+				if r.Header.Get("X-Nanoflare-User-JWT") != wantAssertion {
+					t.Error("incorrect assertion forwarding")
+				}
+				if r.Header.Get("Authorization") != "Bearer "+wantToken {
+					t.Error("resource authority not reconstructed")
+				}
+				for _, name := range []string{"X-Nanoflare-User-Email", "X-Nanoflare-Runner-Token", "X-Nanoflare-Broker-Token", "X-Nanoflare-Binding-Name", "X-Nanoflare-Invocation"} {
+					if r.Header.Get(name) != "" {
+						t.Errorf("unexpected forwarded header %s", name)
+					}
+				}
+				w.WriteHeader(204)
+			}))
+			defer backend.Close()
+			m.options.RuntimeAddr = backend.URL
+			r := httptest.NewRequest("GET", "/resource/"+key+"/identity", nil)
+			r.Header.Set("X-Nanoflare-Broker-Token", m.brokerToken)
+			r.Header.Set("X-Nanoflare-Invocation", token)
+			r.Header.Set("X-Nanoflare-Binding-Name", binding)
+			r.Header.Set("X-Nanoflare-User-JWT", "signed-assertion")
+			r.Header.Set("X-Nanoflare-User-Email", "user@example.com")
+			r.Header.Set("X-Nanoflare-Runner-Token", "forged")
+			r.Header.Set("Authorization", "Bearer forged")
+			w := httptest.NewRecorder()
+			m.serveBroker(w, r)
+			if w.Code != 204 {
+				t.Fatalf("resource status = %d: %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }

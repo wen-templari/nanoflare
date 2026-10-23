@@ -1148,6 +1148,11 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 		allowed = true
 	}
 	if binding == "__NANOFLARE_ACCESS" {
+		// Only the access verifier receives the user assertion. Other resource
+		// services must never inherit Worker identity headers.
+		if assertion := r.Header.Get("X-Nanoflare-User-JWT"); assertion != "" {
+			headers.Set("X-Nanoflare-User-JWT", assertion)
+		}
 		path = "/internal/runtime/access"
 		query = ""
 		allowed = true

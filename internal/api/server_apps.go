@@ -631,7 +631,10 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
 	request.Header = r.Header.Clone()
 	for name := range request.Header {
-		if strings.HasPrefix(strings.ToLower(name), "x-nanoflare-") && !strings.EqualFold(name, "X-Nanoflare-Dispatch-Root") {
+		if strings.HasPrefix(strings.ToLower(name), "x-nanoflare-") &&
+			!strings.EqualFold(name, "X-Nanoflare-Dispatch-Root") &&
+			!strings.EqualFold(name, "X-Nanoflare-User-JWT") &&
+			!strings.EqualFold(name, "X-Nanoflare-User-Email") {
 			delete(request.Header, name)
 		}
 	}

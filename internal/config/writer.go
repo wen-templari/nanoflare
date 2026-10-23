@@ -699,9 +699,6 @@ export default {
           });
         }
       }) });
-      const headers = new Headers(request.headers);
-      headers.delete("X-Nanoflare-User-JWT");
-      request = new Request(request, { headers });
     }
     return withOutputIdentity(env, async () => {
       const startedAt = Date.now();
