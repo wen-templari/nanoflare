@@ -46,7 +46,8 @@ export default { async fetch(request, env, ctx) {
  await new Promise(resolve => setTimeout(resolve, 30));
  const rpc = await session.read("ada");
  ctx.waitUntil(KV.put("background", "done"));
- return Response.json({ value, rpc, headers: [...request.headers.keys()].filter(name => name.startsWith("x-nanoflare-")) });
+ const identity = await ctx.access.getIdentity();
+ return Response.json({ value, rpc, identity, jwt: request.headers.get("X-Nanoflare-User-JWT"), email: request.headers.get("X-Nanoflare-User-Email"), headers: [...request.headers.keys()].filter(name => name.startsWith("x-nanoflare-")) });
 } };`,
 		"b": `import { WorkerEntrypoint, RpcTarget, env as importedEnv } from "cloudflare:workers";
 const { KV } = importedEnv;
@@ -142,6 +143,14 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"key": "b", "token": childToken})
 		case strings.HasPrefix(r.URL.Path, "/resource/"):
+			if r.Header.Get("X-Nanoflare-Binding-Name") == "__NANOFLARE_ACCESS" {
+				if r.Header.Get("X-Nanoflare-User-JWT") != "signed-assertion" {
+					http.Error(w, "missing assertion", 401)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]string{"email": "user@example.com"})
+				return
+			}
 			if r.Header.Get("X-Nanoflare-Binding-Name") == "__NANOFLARE_DURATION_COLLECTOR" {
 				w.WriteHeader(204)
 				return
@@ -243,6 +252,8 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 		request.Header.Set("X-Nanoflare-Execution", execution)
 		request.Header.Set("X-Nanoflare-Invocation", token)
 		request.Header.Set("X-Nanoflare-Forged", "must-strip")
+		request.Header.Set("X-Nanoflare-User-JWT", "signed-assertion")
+		request.Header.Set("X-Nanoflare-User-Email", "user@example.com")
 		if token == "" {
 			request.Header.Set("X-Nanoflare-Validate", "true")
 		}
@@ -300,12 +311,14 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 			ID, Version, Value string
 			Hidden             bool
 		}
-		Headers []string
+		JWT, Email string
+		Identity   struct{ Email string }
+		Headers    []string
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Value != "private-value" || result.RPC.ID != "ada" || result.RPC.Version != "b" || result.RPC.Value != "capability-value" || !result.RPC.Hidden || len(result.Headers) != 0 {
+	if result.Value != "private-value" || result.RPC.ID != "ada" || result.RPC.Version != "b" || result.RPC.Value != "capability-value" || !result.RPC.Hidden || strings.Join(result.Headers, ",") != "x-nanoflare-user-email,x-nanoflare-user-jwt" || result.JWT != "signed-assertion" || result.Email != "user@example.com" || result.Identity.Email != "user@example.com" {
 		t.Fatalf("unexpected child result %s", body)
 	}
 	for deadline := time.Now().Add(4 * time.Second); ; time.Sleep(10 * time.Millisecond) {

@@ -193,7 +193,7 @@ export default {
     }
     const root = request.headers.get("X-Nanoflare-Dispatch-Root");
     const headers = new Headers(request.headers);
-    for (const name of [...headers.keys()]) if (name.toLowerCase().startsWith("x-nanoflare-")) headers.delete(name);
+    for (const name of [...headers.keys()]) if (name.toLowerCase().startsWith("x-nanoflare-") && !["x-nanoflare-user-jwt", "x-nanoflare-user-email"].includes(name.toLowerCase())) headers.delete(name);
     return loaded.getEntrypoint(undefined, { props: { __nanoflare_invocation: { key, token }, __nanoflare_dispatch_root:root } }).fetch(new Request(request, { headers }));
   },
 };

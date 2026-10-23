@@ -23,6 +23,9 @@ func TestWorkerGatewayUsesOnlyTrustedRuntimeHeaders(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer user" {
 			t.Error("user authorization changed")
 		}
+		if r.Header.Get("X-Nanoflare-User-JWT") != "signed-assertion" || r.Header.Get("X-Nanoflare-User-Email") != "user@example.com" {
+			t.Error("ForwardAuth identity headers lost")
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
@@ -32,6 +35,8 @@ func TestWorkerGatewayUsesOnlyTrustedRuntimeHeaders(t *testing.T) {
 	request.Header.Set("X-Nanoflare-Execution", "attacker")
 	request.Header.Set("X-Nanoflare-Runner-Token", "attacker")
 	request.Header.Set("Authorization", "Bearer user")
+	request.Header.Set("X-Nanoflare-User-JWT", "signed-assertion")
+	request.Header.Set("X-Nanoflare-User-Email", "user@example.com")
 	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL, Token: "trusted-runner", Headers: http.Header{"X-Nanoflare-Execution": []string{"trusted-execution"}}}, "/hello", "")
 	if err != nil {
 		t.Fatal(err)
