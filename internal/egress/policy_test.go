@@ -110,58 +110,70 @@ func TestNetworkPolicyChecksRedirectAndNoProxy(t *testing.T) {
 	}
 }
 func TestPolicyProxyUsesPinnedIPAndPreservesTLSIdentity(t *testing.T) {
-	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != "example.com" || r.Header.Get("Proxy-Authorization") != "" {
-			t.Errorf("origin identity or proxy credential leak: %s", r.Host)
-		}
-		fmt.Fprint(w, "verified-tls")
-	}))
-	defer target.Close()
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "CONNECT" || r.Host != "8.8.8.8:443" || !strings.HasPrefix(r.Header.Get("Proxy-Authorization"), "Basic ") {
-			t.Errorf("un-pinned proxy request: %s %s", r.Method, r.Host)
-			http.Error(w, "invalid", 400)
-			return
-		}
-		upstream, err := net.Dial("tcp", target.Listener.Addr().String())
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer upstream.Close()
-		client, reader, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer client.Close()
-		fmt.Fprint(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
-		done := make(chan struct{})
-		go func() { io.Copy(upstream, reader); upstream.Close(); close(done) }()
-		io.Copy(client, upstream)
-		client.Close()
-		<-done
-	}))
-	defer proxy.Close()
-	proxyURL, _ := url.Parse(proxy.URL)
-	proxyURL.User = url.UserPassword("operator", "secret")
-	roots := x509.NewCertPool()
-	roots.AddCert(target.Certificate())
-	base := http.DefaultTransport.(*http.Transport).Clone()
-	base.Proxy = http.ProxyURL(proxyURL)
-	base.TLSClientConfig = &tls.Config{RootCAs: roots}
-	rt, _ := NewPolicyTransport([]string{"public"}, base)
-	rt.(*policyTransport).policy.lookup = func(context.Context, string) ([]net.IPAddr, error) {
-		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
-	}
-	response, err := (&http.Client{Transport: rt}).Get("https://example.com/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(response.Body)
-	response.Body.Close()
-	if string(body) != "verified-tls" {
-		t.Fatal(string(body))
+	for _, delegated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delegated=%t", delegated), func(t *testing.T) {
+			expected := "8.8.8.8:443"
+			if delegated {
+				expected = "example.com:443"
+			}
+			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Host != "example.com" || r.Header.Get("Proxy-Authorization") != "" {
+					t.Errorf("origin identity or proxy credential leak: %s", r.Host)
+				}
+				fmt.Fprint(w, "verified-tls")
+			}))
+			defer target.Close()
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "CONNECT" || r.Host != expected || !strings.HasPrefix(r.Header.Get("Proxy-Authorization"), "Basic ") {
+					t.Errorf("un-pinned proxy request: %s %s", r.Method, r.Host)
+					http.Error(w, "invalid", 400)
+					return
+				}
+				upstream, err := net.Dial("tcp", target.Listener.Addr().String())
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer upstream.Close()
+				client, reader, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer client.Close()
+				fmt.Fprint(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
+				done := make(chan struct{})
+				go func() { io.Copy(upstream, reader); upstream.Close(); close(done) }()
+				io.Copy(client, upstream)
+				client.Close()
+				<-done
+			}))
+			defer proxy.Close()
+			proxyURL, _ := url.Parse(proxy.URL)
+			proxyURL.User = url.UserPassword("operator", "secret")
+			roots := x509.NewCertPool()
+			roots.AddCert(target.Certificate())
+			base := http.DefaultTransport.(*http.Transport).Clone()
+			base.Proxy = http.ProxyURL(proxyURL)
+			base.TLSClientConfig = &tls.Config{RootCAs: roots}
+			rt, _ := NewPolicyTransport([]string{"public"}, base)
+			rt.(*policyTransport).proxyResolves = delegated
+			rt.(*policyTransport).policy.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+				if delegated {
+					return nil, &net.DNSError{Err: "offline", IsNotFound: true}
+				}
+				return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+			}
+			response, err := (&http.Client{Transport: rt}).Get("https://example.com/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			if string(body) != "verified-tls" {
+				t.Fatal(string(body))
+			}
+		})
 	}
 }
 func TestConfiguredAdapterDeniesUnapprovedRawTCPEvenNoProxy(t *testing.T) {

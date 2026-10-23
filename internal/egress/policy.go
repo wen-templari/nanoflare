@@ -5,9 +5,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +17,62 @@ import (
 )
 
 var ErrDestinationDenied = errors.New("outbound destination is unavailable under the network policy")
+
+// destinationDenial keeps diagnostics bounded and never includes resolver errors.
+type destinationDenial struct{ reason string }
+
+func (e *destinationDenial) Error() string { return ErrDestinationDenied.Error() }
+func (e *destinationDenial) Unwrap() error { return ErrDestinationDenied }
+func denied(reason string) error           { return &destinationDenial{reason: reason} }
+
+func logDenial(host, port, route string, err error) {
+	var denial *destinationDenial
+	if !validHostname(host) && net.ParseIP(host) == nil {
+		host = ""
+	}
+	if len(port) > 5 || strings.IndexFunc(port, func(c rune) bool { return c < '0' || c > '9' }) >= 0 {
+		port = ""
+	}
+	if errors.As(err, &denial) {
+		slog.Warn("outbound destination denied", "hostname", host, "port", port, "route", route, "reason", denial.reason)
+	}
+}
+
+// validHostname excludes malformed authorities and ambiguous IP spellings.
+func validHostname(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	numeric := true
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+				return false
+			}
+			if c < '0' || c > '9' {
+				numeric = false
+			}
+		}
+	}
+	return !numeric
+}
+
+// resolveRoute delegates only failed DNS lookups to an explicitly trusted proxy.
+func (p *NetworkPolicy) resolveRoute(ctx context.Context, host, port string, proxy *url.URL, proxyResolves bool) (string, error) {
+	target, err := p.resolve(ctx, host, port)
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	var denial *destinationDenial
+	if proxyResolves && proxy != nil && p.public && errors.As(err, &denial) && denial.reason == "dns_lookup_failed" {
+		return net.JoinHostPort(host, port), nil
+	}
+	return target, err
+}
 
 // NetworkPolicy authorizes resolved addresses independently of proxy routing.
 // Explicit administrator CIDRs may permit private destinations; NO_PROXY cannot.
@@ -85,42 +143,57 @@ func (p *NetworkPolicy) allows(addr netip.Addr) bool {
 }
 func (p *NetworkPolicy) resolve(ctx context.Context, host, port string) (string, error) {
 	number, err := strconv.Atoi(port)
-	if err != nil || number < 1 || number > 65535 || host == "" || strings.Contains(host, "%") {
-		return "", ErrDestinationDenied
+	if err != nil || strings.IndexFunc(port, func(c rune) bool { return c < '0' || c > '9' }) >= 0 || number < 1 || number > 65535 || host == "" || strings.Contains(host, "%") {
+		return "", denied("malformed_destination")
 	}
 	var addresses []net.IPAddr
 	if addr, err := netip.ParseAddr(host); err == nil {
 		addresses = []net.IPAddr{{IP: net.IP(addr.AsSlice())}}
 	} else {
+		if !validHostname(host) {
+			return "", denied("malformed_destination")
+		}
 		lookupContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		addresses, err = p.lookup(lookupContext, host)
 		if err != nil {
-			return "", ErrDestinationDenied
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			// A resolver timeout is a DNS failure when the caller is still
+			// active. Caller cancellation/deadlines never delegate resolution.
+			var dnsError *net.DNSError
+			dnsTimeout := errors.As(err, &dnsError) && dnsError.IsTimeout
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && !dnsTimeout {
+				return "", err
+			}
+			return "", denied("dns_lookup_failed")
 		}
 	}
 	if len(addresses) == 0 || len(addresses) > 512 {
-		return "", ErrDestinationDenied
+		return "", denied("invalid_dns_answer")
 	}
 	// Reject mixed public/private answers rather than letting a later resolver or
 	// retry choose an address which was never authorized.
 	for _, address := range addresses {
 		addr, ok := netip.AddrFromSlice(address.IP)
 		if !ok || address.Zone != "" || !p.allows(addr) {
-			return "", ErrDestinationDenied
+			return "", denied("address_not_allowed")
 		}
 	}
 	return net.JoinHostPort(addresses[0].IP.String(), port), nil
 }
 
 // policyTransport resolves each request once, validates every answer, and sends
-// the authorized literal IP to both direct dials and proxy CONNECT/absolute URLs.
+// the authorized literal IP to direct dials and proxy CONNECT tunnels.
+// Explicit proxy resolution delegation applies only after a failed DNS lookup.
 // Original Host and TLS server name are preserved. Connections are not pooled
 // across requests; the pilot's latency/capacity qualification must include this.
 type policyTransport struct {
-	policy *NetworkPolicy
-	base   *http.Transport
-	slots  chan struct{}
+	policy        *NetworkPolicy
+	base          *http.Transport
+	slots         chan struct{}
+	proxyResolves bool
 }
 
 func NewPolicyTransport(allow []string, base *http.Transport) (http.RoundTripper, error) {
@@ -135,8 +208,10 @@ func NewPolicyTransport(allow []string, base *http.Transport) (http.RoundTripper
 	return &policyTransport{policy: policy, base: base, slots: make(chan struct{}, 64)}, nil
 }
 func (p *policyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.URL == nil || request.URL.User != nil || request.URL.Fragment != "" || (request.URL.Scheme != "http" && request.URL.Scheme != "https") || request.Method == http.MethodConnect {
-		return nil, ErrDestinationDenied
+	if request.URL == nil || request.URL.User != nil || request.URL.Opaque != "" || request.URL.Fragment != "" || (request.URL.Scheme != "http" && request.URL.Scheme != "https") || request.Method == http.MethodConnect {
+		err := denied("malformed_destination")
+		logDenial("", "", "http", err)
+		return nil, err
 	}
 	select {
 	case p.slots <- struct{}{}:
@@ -157,18 +232,25 @@ func (p *policyTransport) RoundTrip(request *http.Request) (*http.Response, erro
 			port = "443"
 		}
 	}
-	pinned, err := p.policy.resolve(request.Context(), request.URL.Hostname(), port)
-	if err != nil {
-		return nil, err
-	}
-	transport := p.base.Clone()
+	var proxy *url.URL
+	var err error
 	if p.base.Proxy != nil {
-		proxy, err := p.base.Proxy(request)
+		proxy, err = p.base.Proxy(request)
 		if err != nil {
 			return nil, err
 		}
-		transport.Proxy = http.ProxyURL(proxy)
 	}
+	pinned, err := p.policy.resolveRoute(request.Context(), request.URL.Hostname(), port, proxy, p.proxyResolves)
+	if err != nil {
+		route := "http_direct"
+		if proxy != nil {
+			route = "http_proxy"
+		}
+		logDenial(request.URL.Hostname(), port, route, err)
+		return nil, err
+	}
+	transport := p.base.Clone()
+	transport.Proxy = http.ProxyURL(proxy)
 	transport.DisableKeepAlives = true
 	transport.TLSClientConfig = p.base.TLSClientConfig.Clone()
 	if transport.TLSClientConfig == nil {
@@ -177,6 +259,19 @@ func (p *policyTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	transport.TLSClientConfig.ServerName = request.URL.Hostname()
 	out := request.Clone(request.Context())
 	out.URL.Host = pinned
+	if proxy != nil && out.URL.Scheme == "http" {
+		host, _, _ := net.SplitHostPort(pinned)
+		if net.ParseIP(host) != nil {
+			// Absolute URLs with a pinned IP let proxies replace the origin Host.
+			// Tunnel to that IP and send origin-form HTTP with the original Host.
+			// A proxy which refuses CONNECT must fail closed; never re-resolve.
+			transport.Proxy = nil
+			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialProxyTunnel(ctx, proxy, pinned, p.base.DialContext, proxyConnectTimeout)
+			}
+		}
+	}
+
 	out.Host = request.URL.Host
 	out.RequestURI = ""
 	out.Header = out.Header.Clone()
@@ -216,7 +311,12 @@ func NewHTTPTransport(config Config) (http.RoundTripper, error) {
 	if allow == nil {
 		allow = []string{"public"}
 	}
-	return NewPolicyTransport(allow, base)
+	rt, err := NewPolicyTransport(allow, base)
+	if err != nil {
+		return nil, err
+	}
+	rt.(*policyTransport).proxyResolves = config.ProxyResolves
+	return rt, nil
 }
 
 type policyResponseBody struct {

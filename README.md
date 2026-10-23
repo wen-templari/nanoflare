@@ -159,6 +159,30 @@ NANOFLARE_WORKERD_EGRESS_CA_FILES=/run/secrets/corp-root.pem
 NANOFLARE_WORKERD_EGRESS_NO_PROXY=10.0.0.0/8,.corp.example
 ```
 
+On proxy-only networks without local public DNS, explicitly set
+`NANOFLARE_WORKERD_EGRESS_PROXY_RESOLVES=true` (or
+`--workerd-egress-proxy-resolves=true` on nanoflared/nanoflare-runner).
+This defaults to false. When a proxy is selected, the network allow list includes
+`public`, and local DNS fails, a valid hostname is forwarded unchanged to the
+trusted proxy. This applies to Worker HTTP(S), raw CONNECT, and WFP outbound.
+Direct and `NO_PROXY` routes still require successful local resolution; denied IP
+literals, rejected or mixed DNS answers, malformed names, and cancellations never
+trigger delegation. Successful local resolution still authorizes every returned
+address and pins the destination IP, including on proxy routes. Plain HTTP to a
+locally resolved destination uses CONNECT to the authorized IP, then sends HTTP
+with the original origin Host header inside that tunnel. The proxy must support
+CONNECT to the destination port (including port 80 for ordinary HTTP); refusal
+fails the request without falling back to a hostname or an IP absolute URL.
+Unresolved names explicitly delegated to the proxy continue to use ordinary
+hostname absolute URLs for HTTP.
+
+For unresolved names, destination-address restrictions are delegated to the proxy.
+The trusted proxy must enforce restrictions after resolving the name itself,
+including private, loopback, link-local/metadata, and other prohibited ranges.
+Configuring a proxy alone does not enable this trust delegation. Policy denials
+emit structured hostname, port, route, and bounded reason fields; request URLs,
+headers, bodies, and proxy credentials are excluded.
+
 Compose forwards these settings to both the runner and daemon. Mount each CA
 file read-only at its configured path in **both** services through a Compose
 override: the runner handles static outbound and the daemon handles dynamic
