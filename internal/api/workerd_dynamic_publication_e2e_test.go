@@ -512,6 +512,35 @@ export default {async fetch(request,env,ctx) {
 	if launcher.launches.Load() != 3 {
 		t.Fatalf("session recovery launches = %d", launcher.launches.Load())
 	}
+	// Startup restoration must recover immediately, before a periodic heartbeat
+	// can repair the retained runner. Exercise the real remote protocol too.
+	beforeRestore := grantFor(alpha)
+	controlMu.Lock()
+	previousControl = control
+	control = api.NewRuntimeExecutionServer(service, "dynamic-control")
+	controlMu.Unlock()
+	if err := previousControl.Close(); err != nil {
+		t.Fatal(err)
+	}
+	active, err = service.ActiveDeployments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publication.Write(active); err != nil {
+		t.Fatalf("restore after control restart: %v", err)
+	}
+	if got := request(alpha, "/"); got.Label != "alpha-vars" || got.Secret == nil || *got.Secret != "frozen-secret" {
+		t.Fatalf("restore lost immutable snapshot: %#v", got)
+	}
+	if got := request(beta, "/"); got.Label != "beta" {
+		t.Fatalf("restore lost peer: %#v", got)
+	}
+	if grantFor(alpha) == beforeRestore {
+		t.Fatal("restore reused expired resource grant")
+	}
+	if launcher.launches.Load() != 4 {
+		t.Fatalf("restore recovery launches = %d", launcher.launches.Load())
+	}
 }
 
 func dynamicPublicationWebSocket(t *testing.T, gateway, appID string) (net.Conn, *bufio.Reader) {

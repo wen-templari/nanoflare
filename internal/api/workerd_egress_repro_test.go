@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -42,6 +43,11 @@ func startWorker(t *testing.T, workerd, source string, opts config.WorkerdOption
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	command := exec.CommandContext(ctx, workerd, "serve", configPath)
+	// npm-installed workerd may fork the native binary. Cancel its dedicated
+	// group so inherited output pipes cannot leave cleanup waiting indefinitely.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
+	command.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {

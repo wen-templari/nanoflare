@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -10,6 +11,44 @@ import (
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
+
+type cancelPrepareManager struct {
+	*fakeManager
+	cancel context.CancelFunc
+}
+
+func (m *cancelPrepareManager) Prepare(active []nanoflare.ActiveDeployment) (string, []nanoflare.ActiveDeployment, error) {
+	id, routed, err := m.fakeManager.Prepare(active)
+	m.cancel()
+	return id, routed, err
+}
+
+func TestPrepareAbortsGenerationWhenCallerDies(t *testing.T) {
+	for _, before := range []bool{true, false} {
+		t.Run(map[bool]string{true: "before-prepare", false: "during-prepare"}[before], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			base := &fakeManager{generation: "orphan", routed: deployments(10001)}
+			manager := &cancelPrepareManager{fakeManager: base, cancel: cancel}
+			input, err := json.Marshal(prepareRequest(deployments(9001)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest("POST", "/v1/generations/prepare", strings.NewReader(string(input))).WithContext(ctx)
+			if before {
+				cancel()
+			}
+			NewServer(manager, "secret").prepare(httptest.NewRecorder(), request)
+			want := []string{"prepare", "abort:orphan"}
+			if before {
+				want = nil
+			}
+			if !reflect.DeepEqual(base.events, want) {
+				t.Fatalf("events=%v want=%v", base.events, want)
+			}
+		})
+	}
+}
 
 func TestClientPreparesRoutesAndCommitsGeneration(t *testing.T) {
 	manager := &fakeManager{generation: "workerd-000001.capnp", routed: deployments(10001)}

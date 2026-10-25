@@ -119,6 +119,16 @@ func (m *DynamicManager) SetAutoRestart(enabled bool) {
 	m.mu.Unlock()
 }
 func dynamicIdentity(a nanoflare.ActiveDeployment) string { return a.App.ID + "/" + a.Deployment.ID }
+
+type executionControlError struct {
+	operation string
+	status    int
+	message   string
+}
+
+func (e *executionControlError) Error() string {
+	return fmt.Sprintf("execution %s: HTTP %d: %s", e.operation, e.status, e.message)
+}
 func (m *DynamicManager) control(ctx context.Context, operation string, body any, result any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -141,7 +151,7 @@ func (m *DynamicManager) control(ctx context.Context, operation string, body any
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("execution %s: HTTP %d: %s", operation, response.StatusCode, message)
+		return &executionControlError{operation: operation, status: response.StatusCode, message: string(message)}
 	}
 	if result != nil {
 		return json.NewDecoder(response.Body).Decode(result)
@@ -279,6 +289,12 @@ func (m *DynamicManager) heartbeat() {
 func (m *DynamicManager) recoverSession(observed *dynamicRecoveryState) (err error) {
 	m.publication.Lock()
 	defer m.publication.Unlock()
+	return m.recoverSessionLocked(observed)
+}
+
+// Caller holds publication so restore and heartbeat cannot rebuild competing
+// sessions or publish candidates against a session being replaced.
+func (m *DynamicManager) recoverSessionLocked(observed *dynamicRecoveryState) (err error) {
 	m.mu.Lock()
 	if m.closed || m.process != observed.process || m.session != observed.session {
 		m.mu.Unlock()
@@ -491,6 +507,31 @@ func (m *DynamicManager) Prepare(active []nanoflare.ActiveDeployment) (string, [
 	return id, routed, err
 }
 func (m *DynamicManager) prepareDynamic(active []nanoflare.ActiveDeployment, restore bool, strictAppID string) (string, []nanoflare.ActiveDeployment, error) {
+	m.mu.Lock()
+	observed := dynamicRecoveryState{process: m.process, session: m.session}
+	m.mu.Unlock()
+	if observed.session == "" && m.broker != nil {
+		// A failed reconnect can retain the broker after clearing admission.
+		// boot only opens a session when creating a broker, so retry recovery
+		// here before any snapshot can register under an empty session.
+		if err := m.recoverSessionLocked(&observed); err != nil {
+			return "", nil, fmt.Errorf("reopen runtime session: %w", err)
+		}
+	}
+	if observed.session != "" {
+		// A restarted control process has no record of the retained runner's
+		// session. Recover synchronously before cached snapshots can reach
+		// commit; waiting for the periodic heartbeat can make recovery fail.
+		if err := m.control(context.Background(), "heartbeat", map[string]string{"session_id": observed.session}, nil); err != nil {
+			var responseError *executionControlError
+			if !errors.As(err, &responseError) || responseError.status != http.StatusForbidden {
+				return "", nil, err
+			}
+			if err := m.recoverSessionLocked(&observed); err != nil {
+				return "", nil, fmt.Errorf("restore runtime session: %w", err)
+			}
+		}
+	}
 	active = staticRuntimeWorkers(active)
 	m.mu.Lock()
 	// Retain candidates until pending owns them, including the detached routing
