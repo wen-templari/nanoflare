@@ -400,7 +400,12 @@ func activeServiceBinding(active []nanoflare.ActiveDeployment, source nanoflare.
 func writeWorkerSource(out *strings.Builder, code WorkerCodeSnapshot) {
 	out.WriteString("  modules = [\n")
 	for _, name := range code.moduleOrder {
-		fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(name), quote(code.Modules[name].JS))
+		module := code.Modules[name]
+		if module.Wasm != nil {
+			fmt.Fprintf(out, "    (name = %s, wasm = 0x\"%x\"),\n", quote(name), module.Wasm)
+		} else {
+			fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(name), quote(code.Modules[name].JS))
+		}
 	}
 	out.WriteString("  ],\n")
 }
@@ -547,9 +552,9 @@ export const lookup = promises.lookup;
 export default promises;`
 }
 
-// workerd recognizes a WorkerEntrypoint only when it remains the module's
-// default export. RPC modules therefore use an instrumentation module which
-// leaves that export intact while wrapping its public prototype methods.
+// Keep a WorkerEntrypoint class as the default export so native RPC remains
+// available. The subclass passes adapted bindings into user construction, while
+// prototype instrumentation preserves method receivers and private fields.
 func workerEntrypointModule(deployment nanoflare.Deployment) bool {
 	if deploymentFormat(deployment) != "modules" {
 		return false
@@ -562,8 +567,13 @@ func workerEntrypointModule(deployment nanoflare.Deployment) bool {
 	return false
 }
 
-func workerEntrypointInstrumentationWrapper(entrypoint string) string {
+func workerEntrypointInstrumentationWrapper(entrypoint, assetBinding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
 	return fmt.Sprintf(`import userWorker from %s;
+export * from %s;
+import { wrapEnv } from "nanoflare-internal:runtime-bindings";
+const assetBindingName = %s;
+const dbBindingNames = %s;
+const objectBindingNames = %s;
 
 function withOutputIdentity(_env, callback) { return callback(); }
 
@@ -583,7 +593,7 @@ function recordRuntimeDuration(env, ctx, startedAt, outcome) {
 
 for (const name of Object.getOwnPropertyNames(userWorker.prototype)) {
   if (name === "constructor") continue;
-  const original = userWorker.prototype[name];
+  const original = Object.getOwnPropertyDescriptor(userWorker.prototype, name).value;
   if (typeof original !== "function") continue;
   Object.defineProperty(userWorker.prototype, name, {
     configurable: true,
@@ -618,7 +628,13 @@ for (const name of Object.getOwnPropertyNames(userWorker.prototype)) {
   });
 }
 
-export default userWorker;`, quote("./"+strings.TrimPrefix(entrypoint, "./")))
+// Pass adapters through the constructor too; replacing this.env after super()
+// would be too late for statements captured in user instance fields/constructors.
+export default class extends userWorker {
+  constructor(ctx, env) {
+    super(ctx, wrapEnv(env, assetBindingName, dbBindingNames, objectBindingNames));
+  }
+}`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(assetBinding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
 }
 
 // workerd rejects U+00A0 in module text before it evaluates the Worker. JSX

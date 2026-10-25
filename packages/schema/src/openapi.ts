@@ -2675,6 +2675,12 @@ export interface components {
       /** Format: int64 */
       wall_ms?: number;
     };
+    RuntimeRevisionStatus: {
+      deployment_id: string;
+      reason?: string;
+      state: string;
+      worker_id: string;
+    };
     Secret: {
       /**
        * Format: uri
@@ -2846,6 +2852,7 @@ export interface components {
       readonly $schema?: string;
       app: components["schemas"]["App"];
       deployment?: components["schemas"]["WorkerDeployment"];
+      runtime?: components["schemas"]["RuntimeRevisionStatus"][] | null;
       secrets?: components["schemas"]["Secret"][] | null;
     };
     WorkerFile: {
@@ -2854,6 +2861,7 @@ export interface components {
       path: string;
       /** Format: int64 */
       size: number;
+      wasm?: string;
     };
     WorkerKVKey: {
       key: string;

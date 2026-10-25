@@ -3,16 +3,17 @@ module github.com/clas/nanoflare
 go 1.25.0
 
 require (
-	github.com/evanw/esbuild v0.25.12
-	github.com/pelletier/go-toml/v2 v2.2.4
-	github.com/tidwall/jsonc v0.3.2
 	github.com/danielgtaylor/huma/v2 v2.34.1
+	github.com/evanw/esbuild v0.25.12
 	github.com/lib/pq v1.10.9
 	github.com/minio/minio-go/v7 v7.0.95
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/common v0.70.1
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
+	github.com/tidwall/jsonc v0.3.2
+	github.com/zeebo/blake3 v0.2.4
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0

@@ -28,19 +28,25 @@ func (s *Server) cfScriptContent(w http.ResponseWriter, snapshot nanoflare.Manag
 			cfError(w, 422, "unsupported native module path")
 			return
 		}
-		found = found || file.Path == d.Entrypoint
+		found = found || (file.Path == d.Entrypoint && file.Wasm == nil)
 		header := textproto.MIMEHeader{}
 		// Quote even token-safe names. Node 22's FormData parser rejects the
 		// otherwise valid unquoted parameters produced by mime.FormatMediaType.
 		name := quote.Replace(file.Path)
 		header.Set("Content-Disposition", `form-data; name="`+name+`"; filename="`+name+`"`)
-		header.Set("Content-Type", "application/javascript+module")
+		data := []byte(file.Content)
+		contentType := "application/javascript+module"
+		if file.Wasm != nil {
+			data = file.Wasm
+			contentType = "application/wasm"
+		}
+		header.Set("Content-Type", contentType)
 		part, err := writer.CreatePart(header)
 		if err != nil {
 			cfError(w, 422, "could not encode module content")
 			return
 		}
-		_, _ = part.Write([]byte(file.Content))
+		_, _ = part.Write(data)
 		if body.Len() > cfcompat.MaxUploadBytes {
 			cfError(w, 422, "content exceeds 10 MiB")
 			return

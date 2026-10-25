@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -12,7 +13,24 @@ import (
 // WorkerCodeModule uses an explicit type because internal module names need
 // not have a .js suffix. Both static workerd and WorkerLoader support ES modules.
 type WorkerCodeModule struct {
-	JS string `json:"js"`
+	JS   string `json:"js"`
+	Wasm []byte `json:"wasm,omitempty"`
+}
+
+// MarshalJSON preserves the typed module union, including empty JavaScript.
+// Binary Wasm uses JSON base64 for transport; the loader restores ArrayBuffer.
+func (module WorkerCodeModule) MarshalJSON() ([]byte, error) {
+	if module.Wasm != nil {
+		if module.JS != "" {
+			return nil, fmt.Errorf("compiled module mixes JavaScript and Wasm")
+		}
+		return json.Marshal(struct {
+			Wasm []byte `json:"wasm"`
+		}{module.Wasm})
+	}
+	return json.Marshal(struct {
+		JS string `json:"js"`
+	}{module.JS})
 }
 
 // MarshalJSON must not turn a statically invalid duplicate module list into a
@@ -59,6 +77,14 @@ func SnapshotWorkerCode(item nanoflare.ActiveDeployment, options WorkerdOptions)
 		snapshot.moduleOrder = append(snapshot.moduleOrder, name)
 		snapshot.Modules[name] = WorkerCodeModule{JS: source}
 	}
+	addWasm := func(file nanoflare.WorkerFile) bool {
+		if file.Wasm == nil {
+			return false
+		}
+		snapshot.moduleOrder = append(snapshot.moduleOrder, file.Path)
+		snapshot.Modules[file.Path] = WorkerCodeModule{Wasm: bytes.Clone(file.Wasm)}
+		return true
+	}
 	if len(deployment.DispatchNamespaces) > 0 {
 		source := entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)
 		source = `import { wrapDispatchEnv, DispatchBroker } from "nanoflare-internal:dispatch";
@@ -69,6 +95,9 @@ export { DispatchBroker };
 		add("nanoflare-internal:dispatch", runtimeassets.DispatchModule)
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 		for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
+			if addWasm(file) {
+				continue
+			}
 			add(file.Path, workerdSafeSource(file.Content))
 		}
 	} else if deploymentFormat(deployment) == "service-worker" {
@@ -80,12 +109,15 @@ export { DispatchBroker };
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 	} else {
 		if workerEntrypointModule(deployment) {
-			add(mainModule, workerEntrypointInstrumentationWrapper(deployment.Entrypoint))
+			add(mainModule, workerEntrypointInstrumentationWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets))
 		} else {
 			add(mainModule, entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets))
 		}
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 		for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
+			if addWasm(file) {
+				continue
+			}
 			source := file.Content
 			if dnsEnabled {
 				source = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)

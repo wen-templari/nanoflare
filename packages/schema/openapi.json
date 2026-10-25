@@ -3052,6 +3052,25 @@
         },
         "type": "object"
       },
+      "RuntimeRevisionStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "deployment_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "worker_id": {
+            "type": "string"
+          }
+        },
+        "required": ["worker_id", "deployment_id", "state"],
+        "type": "object"
+      },
       "Secret": {
         "additionalProperties": false,
         "properties": {
@@ -3462,6 +3481,12 @@
           "deployment": {
             "$ref": "#/components/schemas/WorkerDeployment"
           },
+          "runtime": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeRevisionStatus"
+            },
+            "type": ["array", "null"]
+          },
           "secrets": {
             "items": {
               "$ref": "#/components/schemas/Secret"
@@ -3487,6 +3512,10 @@
           "size": {
             "format": "int64",
             "type": "integer"
+          },
+          "wasm": {
+            "contentEncoding": "base64",
+            "type": "string"
           }
         },
         "required": ["name", "path", "size", "content"],

@@ -104,9 +104,11 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 		}
 		parts[index] = decoded
 	}
+	kvCollection := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "storage" && parts[3] == "kv" && parts[4] == "namespaces"
+	ordinaryService := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "services"
 	ordinaryScript := len(parts) >= 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "scripts"
 	assetUpload := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "assets" && parts[4] == "upload"
-	if len(parts) < 5 || parts[0] != "accounts" || parts[1] == "" || parts[2] != "workers" || (!assetUpload && !ordinaryScript && (parts[3] != "dispatch" || parts[4] != "namespaces")) {
+	if len(parts) < 5 || parts[0] != "accounts" || parts[1] == "" || (parts[2] != "workers" && !kvCollection) || (!kvCollection && !assetUpload && !ordinaryScript && !ordinaryService && (parts[3] != "dispatch" || parts[4] != "namespaces")) {
 		cfError(w, 404, "unsupported compatibility route")
 		return
 	}
@@ -145,6 +147,17 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 	// Consent is configured by the administrator. Legacy request profile headers
 	// are ignored; this response reports the only supported execution profile.
 	allowedQuery := map[string]bool{}
+	if kvCollection {
+		for _, key := range []string{"per_page", "page", "order", "direction"} {
+			allowedQuery[key] = true
+		}
+	}
+	if ordinaryService && r.Method == "DELETE" {
+		allowedQuery["force"] = true
+	}
+	if ordinaryScript && len(parts) == 7 && parts[5] == "secrets" && r.Method == "DELETE" {
+		allowedQuery["url_encoded"] = true
+	}
 	if (len(parts) == 8 || (ordinaryScript && len(parts) == 5)) && r.Method == "PUT" {
 		allowedQuery["bindings_inherit"] = true
 		allowedQuery["excludeScript"] = true
@@ -163,12 +176,24 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	if value, exists := query["url_encoded"]; exists && value[0] != "true" {
+		cfError(w, 422, "url_encoded supports only true")
+		return
+	}
 	if value := r.URL.Query().Get("bindings_inherit"); value != "" && value != "strict" {
 		cfError(w, 422, "bindings_inherit supports only strict")
 		return
 	}
 	if values, exists := query["excludeScript"]; exists && values[0] != "true" {
 		cfError(w, 422, "excludeScript supports only true; source is available from the content endpoint")
+		return
+	}
+	if kvCollection {
+		s.cfKVCollection(w, r)
+		return
+	}
+	if ordinaryService {
+		s.cfOrdinaryService(w, r, parts[4])
 		return
 	}
 	if ordinaryScript {

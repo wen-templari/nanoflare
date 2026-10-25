@@ -104,7 +104,8 @@ func TestWorkerdPreservesWorkerEntrypointDefaultExportForRPC(t *testing.T) {
 		`value: function (...args)`,
 		`typeof result.then === \"function\"`,
 		`recordRuntimeDuration(env, ctx, startedAt, \"ok\")`,
-		`export default userWorker`,
+		`export default class extends userWorker`,
+		`super(ctx, wrapEnv(env, assetBindingName, dbBindingNames, objectBindingNames))`,
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("RPC instrumentation is missing %q:\n%s", expected, generated)

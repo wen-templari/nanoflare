@@ -151,7 +151,7 @@ func TestResourceResolutionFailureDoesNotLeakCredentialOrResource(t *testing.T) 
 func TestMultipartBoundariesAndPartIdentity(t *testing.T) {
 	meta := uploadPart{"metadata", "application/json", `{"main_module":"worker.js"}`}
 	code := uploadPart{"worker.js", "application/javascript+module", "export default {}"}
-	for name, parts := range map[string][]uploadPart{"duplicate module": {meta, code, code}, "duplicate metadata": {meta, meta, code}, "missing main": {meta}, "wrong content type": {meta, {"worker.js", "application/wasm", "binary"}}, "invalid path": {meta, code, {"../escape.js", "application/javascript+module", "x"}}, "invalid utf8": {meta, {"worker.js", "application/javascript+module", string([]byte{0xff})}}} {
+	for name, parts := range map[string][]uploadPart{"duplicate module": {meta, code, code}, "duplicate metadata": {meta, meta, code}, "missing main": {meta}, "wrong content type": {meta, {"worker.js", "application/python", "pass"}}, "invalid Wasm header": {meta, {"worker.js", "application/wasm", "binary"}}, "invalid path": {meta, code, {"../escape.js", "application/javascript+module", "x"}}, "invalid utf8": {meta, {"worker.js", "application/javascript+module", string([]byte{0xff})}}} {
 		t.Run(name, func(t *testing.T) {
 			kind, body := uploadFixture(t, parts...)
 			if _, err := ParseUpload(kind, bytes.NewReader(body), nil, nil, Options{}); err == nil {
@@ -309,35 +309,58 @@ func TestOrdinaryDispatchNamespaceBinding(t *testing.T) {
 	}
 }
 
-// SDK 5.2.0 (the upstream publisher's locked version) uses filename-keyed files.
-func TestSDK5FilenameModules(t *testing.T) {
-	for _, tc := range []struct {
-		name, filename string
-		wantError      bool
-	}{
-		{"valid", "worker.js", false}, {"traversal", "../worker.js", true},
-		{"metadata", "metadata", true}, {"duplicate", "worker.js", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var body bytes.Buffer
-			writer := multipart.NewWriter(&body)
-			field, _ := writer.CreateFormField("metadata")
-			field.Write([]byte(`{"main_module":"worker.js"}`))
-			for i := 0; i < 1+map[bool]int{true: 1}[tc.name == "duplicate"]; i++ {
-				h := textproto.MIMEHeader{}
-				h.Set("Content-Disposition", `form-data; name="files"; filename="`+tc.filename+`"`)
-				h.Set("Content-Type", "application/javascript+module")
-				part, _ := writer.CreatePart(h)
-				part.Write([]byte("export default {}"))
-			}
-			writer.Close()
-			upload, err := DecodeUpload(writer.FormDataContentType(), &body)
-			if (err != nil) != tc.wantError {
-				t.Fatalf("error = %v", err)
-			}
-			if err == nil && (len(upload.Files) != 1 || upload.Files[0].Path != "worker.js") {
-				t.Fatal(upload)
-			}
-		})
+// SDK 5 uses files and SDK 7 uses files[]; both carry module filenames.
+func TestSDKFilenameModules(t *testing.T) {
+	for _, formName := range []string{"files", "files[]"} {
+		for _, tc := range []struct {
+			name, filename string
+			wantError      bool
+		}{
+			{"valid", "worker.js", false}, {"traversal", "../worker.js", true},
+			{"metadata", "metadata", true}, {"duplicate", "worker.js", true},
+			{"mixed-duplicate", "worker.js", true},
+		} {
+			t.Run(formName+"/"+tc.name, func(t *testing.T) {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				field, _ := writer.CreateFormField("metadata")
+				field.Write([]byte(`{"main_module":"worker.js"}`))
+				for i := 0; i < 1+map[bool]int{true: 1}[tc.name == "duplicate" || tc.name == "mixed-duplicate"]; i++ {
+					h := textproto.MIMEHeader{}
+					partName := formName
+					if tc.name == "mixed-duplicate" && i == 1 {
+						partName = "worker.js"
+					}
+					h.Set("Content-Disposition", `form-data; name="`+partName+`"; filename="`+tc.filename+`"`)
+					h.Set("Content-Type", "application/javascript+module")
+					part, _ := writer.CreatePart(h)
+					part.Write([]byte("export default {}"))
+				}
+				writer.Close()
+				upload, err := DecodeUpload(writer.FormDataContentType(), &body)
+				if (err != nil) != tc.wantError {
+					t.Fatalf("error = %v", err)
+				}
+				if err == nil && (len(upload.Files) != 1 || upload.Files[0].Path != "worker.js") {
+					t.Fatal(upload)
+				}
+			})
+		}
+	}
+}
+
+func TestBinaryWasmMultipartModule(t *testing.T) {
+	wasm := []byte{0, 97, 115, 109, 1, 0, 0, 0, 0, 4, 1, 'x', 255, 254}
+	kind, body := uploadFixture(t, uploadPart{"metadata", "application/json", `{"main_module":"worker.js","compatibility_date":"2025-12-10"}`}, uploadPart{"worker.js", "application/javascript+module", `export default {}`}, uploadPart{"lib.wasm", "application/wasm", string(wasm)})
+	upload, err := DecodeUpload(kind, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(upload.Files) != 2 || upload.Files[0].Path != "lib.wasm" || !bytes.Equal(upload.Files[0].Wasm, wasm) || upload.Files[0].Content != "" {
+		t.Fatal("binary module corrupted", upload.Files)
+	}
+	kind, body = uploadFixture(t, uploadPart{"metadata", "application/json", `{"main_module":"lib.wasm","compatibility_date":"2025-12-10"}`}, uploadPart{"lib.wasm", "application/wasm", string(wasm)})
+	if _, err := DecodeUpload(kind, bytes.NewReader(body)); err == nil {
+		t.Fatal("binary main module accepted")
 	}
 }

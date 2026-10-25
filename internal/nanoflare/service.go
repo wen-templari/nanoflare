@@ -1089,7 +1089,7 @@ func (s *Service) WorkerFiles(appID string) ([]WorkerFile, error) {
 	if active == nil {
 		return []WorkerFile{}, nil
 	}
-	return append([]WorkerFile(nil), active.Deployment.Files...), nil
+	return CloneWorkerFiles(active.Deployment.Files), nil
 }
 
 func (s *Service) WorkerFilesForOrg(orgID, appID string) ([]WorkerFile, error) {
@@ -1257,6 +1257,13 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 	format, err := workerFormat(input.Format, len(files))
 	if err != nil {
 		return Deployment{}, err
+	}
+	if format == "service-worker" {
+		for _, file := range files {
+			if file.Wasm != nil {
+				return Deployment{}, errors.New("Wasm modules require modules format")
+			}
+		}
 	}
 	compatibilityDate, err := time.Parse("2006-01-02", input.CompatibilityDate)
 	if err != nil {
@@ -1455,8 +1462,16 @@ func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, strin
 		}
 		seen[file.Path] = true
 		file.Name = path.Base(file.Path)
-		file.Size = int64(len(file.Content))
-		totalSize += len(file.Content)
+		size := len(file.Content)
+		if file.Wasm != nil {
+			if err := validateWorkerWasm(file); err != nil {
+				return nil, "", err
+			}
+			file.Wasm = bytes.Clone(file.Wasm)
+			size = len(file.Wasm)
+		}
+		file.Size = int64(size)
+		totalSize += size
 		if totalSize > maxWorkerBundleSize {
 			return nil, "", fmt.Errorf("worker files exceed %d byte limit", maxWorkerBundleSize)
 		}
@@ -1468,6 +1483,11 @@ func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, strin
 	}
 	if !seen[entrypoint] {
 		return nil, "", errors.New("entrypoint must name a deployed worker file")
+	}
+	for _, file := range result {
+		if file.Path == entrypoint && file.Wasm != nil {
+			return nil, "", errors.New("entrypoint must be JavaScript")
+		}
 	}
 	return result, entrypoint, nil
 }
