@@ -1,0 +1,41 @@
+{
+  "at": "2026-10-23T14:46:41.845334+00:00",
+  "host_os": "Darwin",
+  "host_arch": "arm64",
+  "python": "3.14.3",
+  "passed": false,
+  "observations": [
+    {
+      "name": "four_concurrent_adapter_sessions_group_duplicate_hashes_and_publish_verified_assets",
+      "elapsed_ms": 807
+    },
+    {
+      "name": "native_dispatch_reads_exact_bytes_and_content_types_from_both_manifest_paths",
+      "reads": 8,
+      "distinct_bytes": 4194304,
+      "manifest_bytes": 8388608
+    }
+  ],
+  "limitations": [
+    "four concurrent customer sessions, 1 MiB distinct content each and two paths per manifest; bounded correctness/load fixture, not production soak",
+    "512 MiB native runner with 128 task limit; host control process has no cgroup memory bound",
+    "real PostgreSQL, MinIO and native workerd; no Cloudflare account, hosted portability or untrusted/CPU claims",
+    "same-session duplicate hash grouping only; cross-session deduplication remains unsupported"
+  ],
+  "fixture_sources": {
+    "asset_storage.py": "b53c3ca6c870906c2ea781b87c6db748f3951363e5b21756d76e16a1d4032f57",
+    "process_recovery.py": "99c48e9594b2b4330a5ba4be8a7b97e6fcd9600fc70baa3b6815afd6ec431470"
+  },
+  "runner_image_id": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "object_store_image_id": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d",
+  "control_sha256": "4dfbbcb0ebc30340f5013944ef398ecb0e545d622e854e8782ee5dd236a1459e",
+  "runner_sha256": "299e918a8771e2f4875c2fb4cc835c52caae09d9a17bd9ec9c7c26d461dfa6e7",
+  "verified_runner_cgroup_limits": "536870912\n0\n128",
+  "workerd": "workerd 2026-09-11",
+  "workerd_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "failure": "disposable control process exited: 2026/10/23 14:46:46 Workers for Platforms enabled: trusted_shared_workerd; namespaces share a runtime failure boundary, with no CPU interruption or hardened untrusted isolation\n2026/10/23 14:46:46 using MinIO object store\n2026/10/23 14:46:46 using PostgreSQL repository\n2026/10/23 14:46:46 workerd compatibility date: 2025-12-10\n2026/10/23 14:46:46 nanoflared runtime API listening on 0.0.0.0:56886\n2026/10/23 14:46:46 commit runner generation: {\"error\":\"execution publish: HTTP 403: {\\\"detail\\\":\\\"runner session expired\\\",\\\"instance\\\":\\\"ec9da32aa07374eb55ee1508\\\",\\\"status\\\":403,\\\"title\\\":\\\"Forbidden\\\",\\\"type\\\":\\\"about:blank\\\"}\\n\"}\n",
+  "cleanup_verified": true,
+  "source_commit": "3c9ed2d",
+  "source_worktree_clean_at_build": true
+}

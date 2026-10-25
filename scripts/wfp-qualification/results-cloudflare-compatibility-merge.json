@@ -1,0 +1,86 @@
+{
+  "passed": true,
+  "branch": "codex/cloudflare-compatibility",
+  "base_commit": "a1be0ee9b5df87deb7d84bd2e30b547d87be3c9b",
+  "base_verified_via": "GitHub connected commit API; Git transport refresh failed",
+  "original_work_branch": "codex/cloudflare-api-stages",
+  "original_work_tip": "8383c0bc17e15941f25f62d22f1e9abc2ab20280",
+  "scope": "Cloudflare compatibility and trusted shared-runtime/pilot work; stage 6 deferred",
+  "source_scope": "sorted cmd/internal Go+JS, client fixture JS, dependency files, generated schema and tracked public pilot files; path NUL SHA-256 newline",
+  "source_files": 304,
+  "source_tree_sha256": "41083eb5e458b575a82e6d0c5dc595cab749b485179c471f120c5ee37228caf3",
+  "checks": {
+    "full_go_suite": true,
+    "pinned_sdk": "7.3.0",
+    "pinned_wrangler": "4.54.0",
+    "native_workerd_version": "2026-09-11",
+    "native_workerd_sha256": "3c3b245b344ea4b71b8f8e72fa9ae40eab25faae45b8daa55a06f358ad07ceaf",
+    "race_packages": [
+      "internal/cfcompat",
+      "internal/config",
+      "internal/nanoflare",
+      "internal/runner",
+      "internal/runtime"
+    ],
+    "postgres_race_checks": {
+      "passed": true,
+      "scope": "fresh extracted compatibility branch; disposable PostgreSQL only",
+      "container": "nf-cfcompat-split-728729e4d9",
+      "tests": [
+        {
+          "package": "./internal/database",
+          "expression": "^TestPostgresWasmArtifactsSurviveReopenAndTrafficRollback$",
+          "exit": 0,
+          "log": "/tmp/nanoflare-compatibility-split-postgres-database.txt",
+          "selected_skips": false
+        },
+        {
+          "package": "./internal/api",
+          "expression": "^Test(CloudflareSDKClientFlows|CloudflareSDKRuntimePostgresWorkflow|WranglerRuntimePostgresWorkflow|WranglerLocalRequestQualification)$",
+          "exit": 0,
+          "log": "/tmp/nanoflare-compatibility-split-postgres-clients.txt",
+          "selected_skips": false
+        }
+      ],
+      "image": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+      "container_removed": true
+    },
+    "generated_schema_typecheck": true,
+    "pilot_python_json_shell_syntax": true,
+    "client_runtime_js_syntax": true,
+    "linux_arm64_release_binaries": {
+      "nanoflared": "c74bd02ba5f339a3a9aab912541418f0afcd38bc0f1ea533260d208c3470bac2",
+      "nanoflare-runner": "bd81721f58c9c8c2c1805a4be456461b803544f503a468f37974cdbc8e278eaa"
+    },
+    "stage_6_exclusion_audit": true,
+    "private_credential_and_tracked_file_audit": true
+  },
+  "logs": {
+    "full_go": {
+      "path": "scripts/wfp-qualification/results-cloudflare-compatibility-merge-full_go.txt",
+      "sha256": "49b0e9ee5a20cb78c3bb0676f864d2b09d5c70ae1123eed0eeb58c26bbc75c72"
+    },
+    "race": {
+      "path": "scripts/wfp-qualification/results-cloudflare-compatibility-merge-race.txt",
+      "sha256": "1c00f2741eeb18c341e584f7b7bc2f183c18afb1f71ad428f46f30a612d3d061"
+    },
+    "postgres_database": {
+      "path": "scripts/wfp-qualification/results-cloudflare-compatibility-merge-postgres_database.txt",
+      "sha256": "0a9921890b75b48f0a95b35f7f04b3b76c954ee1e3a9ac3a19d1deb5dcb344b8"
+    },
+    "postgres_clients": {
+      "path": "scripts/wfp-qualification/results-cloudflare-compatibility-merge-postgres_clients.txt",
+      "sha256": "7f1ade4da8b6731f03ed18733764a2e15831a1d94c44aebfecf28c4ca559ea65"
+    }
+  },
+  "initial_test_setup_failure": {
+    "reason": "SDK fixture project directory supplied instead of installed cloudflare package directory; corrected and full suite rerun passed",
+    "log_sha256": "b1aafc852af802b19ad65b91030b92839df23af873e595f9b80eca21c30005f4"
+  },
+  "limitations": [
+    "hosted parity blocked: no WFP-enabled Cloudflare account",
+    "pilot lifecycle reports retained from their recorded development source; persistent pilot was not redeployed for this extraction",
+    "optional integration tests outside the explicitly selected workflows may skip in the full suite",
+    "no untrusted execution or per-invocation CPU guarantee for shared workerd"
+  ]
+}

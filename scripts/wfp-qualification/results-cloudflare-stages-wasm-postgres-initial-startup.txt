@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/tmp/run-nanoflare-wasm-postgres.py", line 12, in <module>
+    state=json.loads(call(['docker','inspect',name]))[0];report['image']=state['Image'];report['postgres_version']=call(['docker','exec',name,'psql','-U','postgres','-Atc','SHOW server_version'])
+                                                                                                                   ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/run-nanoflare-wasm-postgres.py", line 5, in call
+    def call(args,**kwargs):return subprocess.run(args,check=True,capture_output=True,text=True,**kwargs).stdout.strip()
+                                   ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['docker', 'exec', 'nf-wasm-pg-0baea58125', 'psql', '-U', 'postgres', '-Atc', 'SHOW server_version']' returned non-zero exit status 2.

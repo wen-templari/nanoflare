@@ -1,0 +1,29 @@
+{
+  "route": "real pilot scrape failure -> Prometheus rule -> Alertmanager -> network-local webhook",
+  "firing_delivery_seconds": 30.19,
+  "total_recovery_delivery_seconds": 150.5,
+  "firing": {
+    "received_at": "2026-10-24T02:00:49.221Z",
+    "status": "firing",
+    "alerts": [
+      {
+        "status": "firing",
+        "alertname": "NanoflarePilotControlUnavailable"
+      }
+    ]
+  },
+  "resolved": {
+    "received_at": "2026-10-24T02:02:49.240Z",
+    "status": "resolved",
+    "alerts": [
+      {
+        "status": "resolved",
+        "alertname": "NanoflarePilotControlUnavailable"
+      }
+    ]
+  },
+  "limitations": "Local durable receiver only; no external operator notification or on-call acknowledgement qualified.",
+  "alert_delivery_passed": true,
+  "daemon_only_recovery_passed": false,
+  "intervention": "Daemon failed startup with execution register HTTP 403 runner session expired; runner and daemon were manually restarted before resolved delivery."
+}

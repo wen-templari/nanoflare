@@ -1,0 +1,5 @@
+ok  	github.com/clas/nanoflare/internal/cfcompat	1.512s
+ok  	github.com/clas/nanoflare/internal/config	2.360s
+ok  	github.com/clas/nanoflare/internal/nanoflare	1.472s
+ok  	github.com/clas/nanoflare/internal/runner	1.402s
+ok  	github.com/clas/nanoflare/internal/runtime	4.827s

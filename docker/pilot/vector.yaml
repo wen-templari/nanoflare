@@ -1,0 +1,38 @@
+data_dir: /var/lib/vector
+
+sources:
+  host_runtime_unix:
+    type: socket
+    mode: unix
+    path: /var/run/nanoflare/vector.sock
+    # Decimal 432 is mode 0660; Vector runs as UID 0 / GID 65532.
+    socket_file_mode: 432
+    decoding:
+      codec: json
+
+transforms:
+  normalize:
+    type: remap
+    inputs: [host_runtime_unix]
+    source: |
+      if !exists(.container_name) { .container_name = "host-runtime" }
+      .service = .container_name
+      if !exists(.level) { .level = "info" }
+      .worker_id = ""
+      if .source_type == "socket" && exists(.app_id) { .worker_id = .app_id }
+      if exists(.deployment_id) { .deployment_id = .deployment_id }
+      if !exists(.worker_id) { .worker_id = "" }
+      if !exists(.deployment_id) { .deployment_id = "" }
+
+sinks:
+  loki:
+    type: loki
+    inputs: [normalize]
+    endpoint: http://loki:3100
+    encoding:
+      codec: json
+    labels:
+      service: "{{ service }}"
+      worker_id: "{{ worker_id }}"
+      deployment_id: "{{ deployment_id }}"
+      level: "{{ level }}"

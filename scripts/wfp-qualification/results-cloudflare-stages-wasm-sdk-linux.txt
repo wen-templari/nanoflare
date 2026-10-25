@@ -1,0 +1,6 @@
+=== RUN   TestCloudflareSDKRuntimeWorkflow
+2026/10/25 01:56:58 started workerd pid=30 config=/tmp/TestCloudflareSDKRuntimeWorkflow1857796907/001/dynamic-dispatcher.capnp
+    cfcompat_sdk_test.go:39: {"sdk":"7.3.0","runtime_dispatch":"passed","wasm_upload_execute_download":"passed","wasm_content_update":"passed","wasm_secret_asset_retention":"passed","source_update":"passed","secret_update":"passed","assets":"passed","namespace_cleanup":"passed","dispatcher_metadata":"JSON File adaptation"}
+        
+--- PASS: TestCloudflareSDKRuntimeWorkflow (5.63s)
+PASS

@@ -1,0 +1,11 @@
+route:
+  receiver: local-pilot
+  group_by: [alertname]
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 1h
+receivers:
+  - name: local-pilot
+    webhook_configs:
+      - url: http://alert-receiver:8080/alerts
+        send_resolved: true

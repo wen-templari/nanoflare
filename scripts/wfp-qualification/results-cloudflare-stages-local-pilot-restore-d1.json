@@ -1,0 +1,28 @@
+{
+  "populated_d1_restored": true,
+  "passed": true,
+  "backup_type": "cold physical snapshot, same pinned images and signing/encryption keys",
+  "stores": {
+    "postgres-data": {
+      "sha256": "8224cbc29b1b83d57fc267946d419ea26d0f78964eb32d7841e63651d23c1109",
+      "bytes": 50526208
+    },
+    "minio-data": {
+      "sha256": "c30eeb36ca49c6cb5517aa5d6698a59d5bd18c2865fa5f230c93d7014029199d",
+      "bytes": 93696
+    },
+    "nanoflared-data": {
+      "sha256": "e14ac1bfd82cb0c2ad67fc4cec715ae024d088cca53a26c6bcad3ce12e861d34",
+      "bytes": 54784
+    },
+    "nanoflare-runner-data": {
+      "sha256": "63e5e805d00a8cc97b776e395a9ee64522fcc4c00fff0568fe2dcc3cdf69335c",
+      "bytes": 23552
+    }
+  },
+  "restored_project": "nanoflare-pilot-restore-d1",
+  "restored_dispatch_and_secret": true,
+  "restored_login_token": true,
+  "original_pilot_recovered": true,
+  "limitations": "No point-in-time recovery, cross-version migration or off-host/disaster recovery qualification. Restore stack retained for inspection."
+}

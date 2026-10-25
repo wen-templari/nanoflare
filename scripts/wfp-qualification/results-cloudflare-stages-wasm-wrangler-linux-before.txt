@@ -1,0 +1,25 @@
+=== RUN   TestWranglerRuntimeWorkflow
+    cfcompat_wrangler_runtime_test.go:101: Wrangler [dispatch-namespace create wrangler-runtime]: exit status 1
+        /wrangler/node_modules/workerd/lib/main.js:118
+                throw new Error(`The package "${pkg}" could not be found, and is needed by workerd.
+                ^
+        
+        Error: The package "@cloudflare/workerd-linux-arm64" could not be found, and is needed by workerd.
+        
+        If you are installing workerd with npm, make sure that you don't specify the
+        "--no-optional" flag. The "optionalDependencies" package.json feature is used
+        by workerd to install the correct binary executable for your current platform.
+            at generateBinPath (/wrangler/node_modules/workerd/lib/main.js:118:15)
+            at Object.<anonymous> (/wrangler/node_modules/workerd/lib/main.js:152:19)
+            at Module._compile (node:internal/modules/cjs/loader:1781:14)
+            at Object..js (node:internal/modules/cjs/loader:1913:10)
+            at Module.load (node:internal/modules/cjs/loader:1505:32)
+            at Function._load (node:internal/modules/cjs/loader:1309:12)
+            at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+            at Module.require (node:internal/modules/cjs/loader:1527:12)
+            at require (node:internal/modules/helpers:147:16)
+            at Object.<anonymous> (/wrangler/node_modules/miniflare/dist/src/index.js:42378:31)
+        
+        Node.js v22.23.1
+--- FAIL: TestWranglerRuntimeWorkflow (0.23s)
+FAIL

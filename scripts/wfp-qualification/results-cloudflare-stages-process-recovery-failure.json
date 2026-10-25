@@ -1,0 +1,61 @@
+{
+  "at": "2026-10-23T14:51:57.797715+00:00",
+  "host_os": "Darwin",
+  "host_arch": "arm64",
+  "python": "3.14.3",
+  "passed": false,
+  "observations": [
+    {
+      "name": "initial_real_process_pg_kv_minio_asset_secret_snapshot_verified"
+    },
+    {
+      "name": "sigkill_control_restart_recovers_durable_active_revision"
+    },
+    {
+      "name": "postgres_server_outage_fails_closed",
+      "status": 500,
+      "client_error": null,
+      "elapsed_ms": 1
+    },
+    {
+      "name": "postgres_server_restart_recovers_existing_pool"
+    },
+    {
+      "name": "object_server_outage_fails_closed_at_client",
+      "status": null,
+      "client_error": "TimeoutError",
+      "elapsed_ms": 2002
+    },
+    {
+      "name": "object_server_restart_preserves_pinned_assets"
+    },
+    {
+      "name": "paused_object_transport_does_not_return_success",
+      "status": null,
+      "client_error": "TimeoutError",
+      "elapsed_ms": 2001
+    },
+    {
+      "name": "sigkill_during_durable_building_recovers_old_revision_and_conflict_retry",
+      "recovered_stage": "failed",
+      "retry_status": 409
+    }
+  ],
+  "limitations": [
+    "single-host trusted fixture, not production sizing or an untrusted sandbox",
+    "client deadlines do not prove backend work is cancelled",
+    "brief server pauses exercise transport stalls; no packet loss or multi-host partition",
+    "no monitoring pipeline or per-invocation CPU qualification"
+  ],
+  "runner_image_id": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "object_store_image_id": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d",
+  "control_sha256": "f17df656b70fee5075295fe8f7cd89134a570d902e92d77acb14ebe349ca6ac7",
+  "runner_sha256": "7ddd3a494c2276d9a8fa4ca02ae7faa7fa42f9238c9f3af62ea4cc043a70ab5e",
+  "verified_runner_cgroup_limits": "536870912\n0\n128",
+  "workerd": "workerd 2026-09-11",
+  "workerd_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "failure": "disposable control process exited: 2026/10/23 14:52:05 Workers for Platforms enabled: trusted_shared_workerd; namespaces share a runtime failure boundary, with no CPU interruption or hardened untrusted isolation\n2026/10/23 14:52:05 using MinIO object store\n2026/10/23 14:52:05 using PostgreSQL repository\n2026/10/23 14:52:05 workerd compatibility date: 2026-09-11\n2026/10/23 14:52:05 nanoflared runtime API listening on 0.0.0.0:59609\n2026/10/23 14:52:05 prepare runtime: {\"error\":\"runtime publication already pending\"}\n",
+  "cleanup_verified": true,
+  "source_base_commit": "026ba8e"
+}

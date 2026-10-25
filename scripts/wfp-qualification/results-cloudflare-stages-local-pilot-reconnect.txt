@@ -1,0 +1,7 @@
+nanoflare-runner-1  | 2026/10/24 02:05:47 nanoflare-runner listening on :8090
+nanoflare-runner-1  | 2026/10/24 02:05:48 started workerd pid=16 config=/var/lib/nanoflare/runner/dynamic-dispatcher.capnp
+nanoflare-runner-1  | 2026/10/24 02:06:03 runtime session heartbeat: Post "http://nanoflared:8081/internal/runtime/executions/heartbeat": dial tcp: lookup nanoflared on 127.0.0.11:53: no such host
+nanoflare-runner-1  | 2026/10/24 02:06:03 recover runtime session: Post "http://nanoflared:8081/internal/runtime/executions/open-session": dial tcp: lookup nanoflared on 127.0.0.11:53: no such host
+nanoflare-runner-1  | 2026/10/24 02:06:18 runtime session heartbeat: Post "http://nanoflared:8081/internal/runtime/executions/heartbeat": dial tcp: lookup nanoflared on 127.0.0.11:53: no such host
+nanoflare-runner-1  | 2026/10/24 02:06:18 recover runtime session: Post "http://nanoflared:8081/internal/runtime/executions/open-session": dial tcp: lookup nanoflared on 127.0.0.11:53: no such host
+nanoflare-runner-1  | 2026/10/24 02:06:21 started workerd pid=32 config=/var/lib/nanoflare/runner/dynamic-dispatcher.capnp

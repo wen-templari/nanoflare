@@ -1,0 +1,13 @@
+=== RUN   TestCloudflareSDKRuntimePostgresWorkflow
+    dispatch_e2e_test.go:131: runtime_backend=postgres private_schema=true
+2026/10/25 10:13:11 started workerd pid=44449 config=/var/folders/s5/0j54kh_95rggcyv_3pq2jp6m0000gn/T/TestCloudflareSDKRuntimePostgresWorkflow4261299532/001/dynamic-dispatcher.capnp
+    cfcompat_sdk_test.go:51: {"sdk":"7.3.0","runtime_dispatch":"passed","wasm_upload_execute_download":"passed","wasm_content_update":"passed","wasm_secret_asset_retention":"passed","source_update":"passed","secret_update":"passed","assets":"passed","namespace_cleanup":"passed","dispatcher_metadata":"JSON File adaptation"}
+        
+--- PASS: TestCloudflareSDKRuntimePostgresWorkflow (6.05s)
+=== RUN   TestWranglerRuntimePostgresWorkflow
+    dispatch_e2e_test.go:131: runtime_backend=postgres private_schema=true
+2026/10/25 10:13:17 started workerd pid=44491 config=/var/folders/s5/0j54kh_95rggcyv_3pq2jp6m0000gn/T/TestWranglerRuntimePostgresWorkflow901977294/001/dynamic-dispatcher.capnp
+    cfcompat_wrangler_runtime_test.go:244: Wrangler 4.54.0 runtime dispatch, Wasm upload/execution/binary update, compatible-API binary download, code/secret updates, assets and cleanup passed
+--- PASS: TestWranglerRuntimePostgresWorkflow (9.43s)
+PASS
+ok  	github.com/clas/nanoflare/internal/api	17.179s

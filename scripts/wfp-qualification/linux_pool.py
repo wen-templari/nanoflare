@@ -18,9 +18,9 @@ MATRIX='^Test(RuntimeCapabilityBoundaries|RuntimeStorageCancellationReachesBacke
 
 
 def source_snapshot():
-    files=sorted(set(list(ROOT.glob('cmd/**/*.go'))+list(ROOT.glob('internal/**/*.go'))+list(ROOT.glob('internal/**/*.js'))+[ROOT/'go.mod',ROOT/'go.sum']))
+    files=sorted(set(list(ROOT.glob('cmd/**/*.go'))+list(ROOT.glob('internal/**/*.go'))+list(ROOT.glob('internal/**/*.js'))+list((ROOT/'scripts/wfp-client-flows').glob('*.mjs'))+list((ROOT/'scripts/wfp-client-flows').glob('*.cjs'))+[pathlib.Path(__file__).resolve(),ROOT/'go.mod',ROOT/'go.sum']))
     entries=[(p.relative_to(ROOT).as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()) for p in files]
-    return {'source_scope':'cmd/**/*.go, internal/**/*.go, internal/**/*.js, go.mod, go.sum; sorted relative path NUL SHA-256 newline',
+    return {'source_scope':'cmd/**/*.go, internal/**/*.go, internal/**/*.js, scripts/wfp-client-flows/*.{mjs,cjs}, linux_pool.py, go.mod, go.sum; sorted relative path NUL SHA-256 newline',
             'source_files':len(entries),'source_tree_sha256':hashlib.sha256(''.join(f'{p}\0{digest}\n' for p,digest in entries).encode()).hexdigest()}
 
 
@@ -67,6 +67,7 @@ class Qualification:
                 '-e','NANOFLARE_RUN_CAPACITY='+('1' if stage=='capacity' else '0'),
                 '-e','NANOFLARE_CAPACITY_PHASE_SECONDS='+str(seconds),
                 '-e','NANOFLARE_CAPACITY_REPORT=/results/capacity.json',
+                '-e','NANOFLARE_TEST_WORKERD='+self.args.workerd,
                 *sdk_mount,'--entrypoint','/bin/sh',self.image,'-c',script)
         logfile=self.directory/(stage+'.log')
         with logfile.open('wb') as output:
@@ -81,21 +82,22 @@ class Qualification:
         target=self.args.report.with_name(self.args.report.stem+'-'+stage+'.log')
         target.write_text(text)
         self.report['stages'].append(result)
-        assert status=='0',text[-6000:]
         for metric in ['memory.max','memory.swap.max','memory.current','memory.peak','memory.events','pids.max','pids.current']:
             destination=self.directory/(stage+'-'+metric)
             command('docker','cp',name+':/results/cgroup-'+metric,str(destination))
             result[metric]=destination.read_text().strip()
+        if stage=='capacity':
+            command('docker','cp',name+':/results/capacity.json',str(self.args.capacity_report))
+            result['capacity_report_sha256']=hashlib.sha256(self.args.capacity_report.read_bytes()).hexdigest()
         assert result['memory.max']==str(int(self.args.memory[0])*(1<<30)) and result['memory.swap.max']=='0' and result['pids.max']=='128',result
         events=dict(line.split() for line in result['memory.events'].splitlines())
         assert events.get('oom_kill')=='0',result
+        assert status=='0',text[-6000:]
         if stage=='authorization':
             assert '--- PASS: TestPrivateDynamicDispatchEndToEnd ' in text, 'native end-to-end test did not pass'
             assert '--- PASS: TestRuntimeCapabilityBoundaries ' in text, 'capability matrix did not pass'
             assert not result['skips'],'selected Linux matrix skipped required checks'
         else:
-            command('docker','cp',name+':/results/capacity.json',str(self.args.capacity_report))
-            result['capacity_report_sha256']=hashlib.sha256(self.args.capacity_report.read_bytes()).hexdigest()
             assert json.loads(self.args.capacity_report.read_text())['passed']
         print(stage+' passed; peak whole-probe MiB='+str(round(int(result['memory.peak'])/(1<<20),1)),flush=True)
         # Retain only this fixture's test output at the requested operator path.

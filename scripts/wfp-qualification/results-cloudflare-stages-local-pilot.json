@@ -1,0 +1,60 @@
+{
+  "deployment": "nanoflare-pilot",
+  "source_commit": "cb469e0951e8d5426ff4c66a39b971ea8825b785",
+  "health_after_restart": {
+    "status": "ok"
+  },
+  "postgres_probe_rows_after_restart": 1,
+  "services": {
+    "alloy": {
+      "state": "running",
+      "image": "sha256:28d50fd1328ab66ef854380e9d3858752aaf64c5014f05370e0fed6fa0363c49"
+    },
+    "grafana": {
+      "state": "running",
+      "image": "sha256:8c161ed7e7d04dbbe374789311bbc394d366af9a47b8b7b7b228700f3242526f"
+    },
+    "loki": {
+      "state": "running",
+      "image": "sha256:c8f7864de9ad688bb9219730b06c8941b86997dd2122f7066a6289e63c6f87e7"
+    },
+    "minio": {
+      "state": "running",
+      "image": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d"
+    },
+    "nanoflare-runner": {
+      "state": "running",
+      "image": "sha256:ffb0c998beee153732ee64d63abf6cf2b2aa790d3022eda882c2034b28265724"
+    },
+    "nanoflared": {
+      "state": "running",
+      "image": "sha256:0b4a9beb9442ef74b3a4bdd5944263178a05e9133336cea34c0755df8a69bf83"
+    },
+    "postgres": {
+      "state": "running",
+      "image": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459"
+    },
+    "prometheus": {
+      "state": "running",
+      "image": "sha256:5a1d4a6d0adfd8f785bb0f1243f2a90457e508eaf5eb7e958aa5ea1463020fcb"
+    },
+    "tempo": {
+      "state": "running",
+      "image": "sha256:80c37cc829c6de75042ac7e49e20d27dd08a2534e764eb6d02d1f3840a65290a"
+    },
+    "traefik": {
+      "state": "running",
+      "image": "sha256:a565cefb9209e60e4c9e63e0c54f85db26ed094418e1d905d58eeeba8751c79e"
+    },
+    "vector": {
+      "state": "running",
+      "image": "sha256:7f9d7b0043c6270f46f1990f1620b350f6a74824ddb48a07093b4651715ad028"
+    }
+  },
+  "monitoring_targets": {
+    "nanoflared": "up",
+    "traefik": "up"
+  },
+  "build": "Linux arm64 current Go binaries layered on existing native qualification runtime; Litestream disabled",
+  "remaining": "Worker recovery, backup restore, alert delivery, load, retention, production qualification"
+}

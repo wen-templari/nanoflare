@@ -1,0 +1,21 @@
+?   	github.com/clas/nanoflare/cmd/nanoflare	[no test files]
+?   	github.com/clas/nanoflare/cmd/nanoflare-openapi	[no test files]
+?   	github.com/clas/nanoflare/cmd/nanoflare-runner	[no test files]
+ok  	github.com/clas/nanoflare/cmd/nanoflared	0.475s
+ok  	github.com/clas/nanoflare/internal/api	116.014s
+ok  	github.com/clas/nanoflare/internal/cfcompat	0.414s
+ok  	github.com/clas/nanoflare/internal/cli	0.975s
+ok  	github.com/clas/nanoflare/internal/config	0.868s
+ok  	github.com/clas/nanoflare/internal/database	1.054s
+ok  	github.com/clas/nanoflare/internal/dnsresolver	0.268s
+ok  	github.com/clas/nanoflare/internal/egress	1.197s
+ok  	github.com/clas/nanoflare/internal/logs	0.245s
+ok  	github.com/clas/nanoflare/internal/metrics	0.281s
+ok  	github.com/clas/nanoflare/internal/nanoflare	0.432s
+ok  	github.com/clas/nanoflare/internal/objects	0.375s
+ok  	github.com/clas/nanoflare/internal/oidc	0.301s
+ok  	github.com/clas/nanoflare/internal/runner	0.167s
+ok  	github.com/clas/nanoflare/internal/runtime	2.369s
+?   	github.com/clas/nanoflare/internal/runtimeassets	[no test files]
+ok  	github.com/clas/nanoflare/internal/telemetry	0.149s
+?   	github.com/clas/nanoflare/scripts/wfp-examples	[no test files]

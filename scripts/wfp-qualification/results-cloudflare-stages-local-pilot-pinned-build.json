@@ -1,0 +1,29 @@
+{
+  "scope": "offline current Go binaries over existing immutable pilot runtime layers",
+  "source_commit": "74ed924780de2c9daf207f98c392e39e3401dc49",
+  "builder_image": "sha256:2c1c2e13b22e77aff582e8a17b82feeef04dc72f17d71ca1c827d82f301546c4",
+  "base_images": {
+    "nanoflared": "sha256:0b4a9beb9442ef74b3a4bdd5944263178a05e9133336cea34c0755df8a69bf83",
+    "nanoflare-runner": "sha256:21bfa109fa0465c1b184deabc4216ecb3d95f21f57c462f2073d699f78ac2303"
+  },
+  "architecture": "arm64",
+  "new_images": {
+    "daemon": "sha256:514f162d54ab40b7c3de82a77ec75c783e0e9ee5801c011fcff74dc04a8e9c32",
+    "runner": "sha256:e9fba41f883e0f79cdb554223a890d6cdb01a56b3a386464541786a876dd0c58"
+  },
+  "binary_sha256": {
+    "nanoflared": "553e416a136d39f787f581fb8f263787b58b82b59a0a3b7d2c7fad45c810f959",
+    "nanoflare-runner": "e4b3242049fcbafe67fcb970b69c5125f0c280e6a9362dc283cfe2ceab6449fd"
+  },
+  "go_version": "go version go1.25.12 linux/arm64",
+  "running_binary_sha256_verified": {
+    "nanoflared": "553e416a136d39f787f581fb8f263787b58b82b59a0a3b7d2c7fad45c810f959",
+    "nanoflare-runner": "e4b3242049fcbafe67fcb970b69c5125f0c280e6a9362dc283cfe2ceab6449fd"
+  },
+  "helper_source_sha256": {
+    ".dockerignore": "c07e8e68c24d6190e4c4154729b039b23f7b82fa6698219cef888b3ea26dc2d8",
+    "docker/pilot/build-pinned.py": "2d86cda5ed932a1e833dce82ba41ce43002991330106b04793ad2468b1642ec5",
+    "docker/pilot/upgrade.py": "b5a6a8e92a3d39a5b402662400d0eaef5462eec3e000fe04c2ec5cba17a1f4b4",
+    "docker/pilot/wasm.py": "9a26638fb38f1fcad7554efbfc3ccdbda666bbbbfac7a000d5fdf2d88b34ceff"
+  }
+}

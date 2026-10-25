@@ -1,0 +1,5 @@
+=== RUN   TestPostgresWasmArtifactsSurviveReopenAndTrafficRollback
+    postgres_wasm_artifacts_test.go:129: postgres_binary_bytes=true non_utf8_custom_section=true pool_reopened_three_times=true binary_update=true traffic_rollback=true management_head_preserved=true inherited_secret=true
+--- PASS: TestPostgresWasmArtifactsSurviveReopenAndTrafficRollback (0.35s)
+PASS
+ok  	github.com/clas/nanoflare/internal/database	1.764s

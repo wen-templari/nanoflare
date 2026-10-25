@@ -1,0 +1,5 @@
+=== RUN   TestWranglerRuntimeWorkflow
+2026/10/25 02:01:39 started workerd pid=66 config=/tmp/TestWranglerRuntimeWorkflow397914193/001/dynamic-dispatcher.capnp
+    cfcompat_wrangler_runtime_test.go:232: Wrangler 4.54.0 runtime dispatch, Wasm upload/execution/binary update, compatible-API binary download, code/secret updates, assets and cleanup passed
+--- PASS: TestWranglerRuntimeWorkflow (9.38s)
+PASS

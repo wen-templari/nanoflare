@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 5s
+
+rule_files:
+  - /etc/prometheus/nanoflare-alerts.yml
+  - /etc/prometheus/pilot-alerts.yml
+
+scrape_configs:
+  - job_name: traefik
+    static_configs:
+      - targets:
+          - traefik:8080
+  - job_name: nanoflared
+    bearer_token_file: /run/secrets/nanoflare-metrics-token
+    static_configs:
+      - targets:
+          - nanoflared:8080
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]

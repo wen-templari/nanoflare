@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "dispatch_and_encrypted_secret_survived_restart": true,
+  "existing_login_token_survived_restart": true,
+  "recovery_seconds": 1.38,
+  "scope": "persistent local trusted pilot; daemon and runner restart; not backup restore or production qualification"
+}

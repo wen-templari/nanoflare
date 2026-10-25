@@ -1,0 +1,78 @@
+{
+  "scope": "Wrangler 4.54.0 trusted runtime Wasm module deployment lifecycle",
+  "wrangler": "4.54.0",
+  "workerd_serving_runtime": "2026-09-11",
+  "qualified_platforms": [
+    {
+      "os": "darwin",
+      "arch": "arm64",
+      "node": "24.22.1",
+      "go_race": true
+    },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "node": "22.23.1",
+      "go_race": false
+    }
+  ],
+  "wasm_workflow_passed": true,
+  "assertions": [
+    "no_bundle plus find_additional_modules discovers the Wasm import",
+    "CLI deploy uploads binary module and execution returns 42",
+    "CLI redeploy changes only the binary and execution returns 7",
+    "compatible API content download preserves exact non-UTF-8 bytes and application/wasm MIME after both deploys",
+    "namespace secret mutation preserves Wasm and assets",
+    "ordinary dispatcher secret lifecycle and serving remain valid",
+    "customer/namespace/dispatcher cleanup succeeds"
+  ],
+  "adaptations": [
+    "Namespace secrets use the compatible API: Wrangler 4.54.0 lacks namespace secret options.",
+    "Binary content download is verified by the compatible API, not a Wrangler download command.",
+    "Customer deletion uses native administration; namespace and ordinary dispatcher deletion use Wrangler."
+  ],
+  "linux_image": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "linux_workerd_serving_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "linux_platform_packages": [
+    {
+      "name": "@cloudflare/workerd-linux-arm64",
+      "version": "1.20251210.0",
+      "integrity": "sha512-2IB37nXi7PZVQLa1OCuO7/6pNxqisRSO8DmCQ5x/3sezI5op1vwOxAcb1osAnuVsVN9bbvpw70HJvhKruFJTuA=="
+    },
+    {
+      "name": "@esbuild/linux-arm64",
+      "version": "0.27.0",
+      "integrity": "sha512-AS18v0V+vZiLJyi/4LphvBE+OIX682Pu7ZYNsdUHyUKSoRwdnOsMf6FDekwoAFKej14WAkOef3zAORJgAtXnlQ=="
+    },
+    {
+      "name": "@img/sharp-linux-arm64",
+      "version": "0.33.5",
+      "integrity": "sha512-JMVv+AMRyGOHtO1RFBiJy/MBsgz0x4AWrT6QoEVVTyh1E39TrCUpTRI7mx9VksGX4awWASxqCYLCV4wBZHAYxA=="
+    },
+    {
+      "name": "@img/sharp-libvips-linux-arm64",
+      "version": "1.0.4",
+      "integrity": "sha512-9B+taZ8DlyyqzZQnoeIvDVR/2F4EbMepXMc/NdVbkzsJbzkUjhXv/70GQJ7tdLA4YJgNP25zukcxpX2/SueNrA=="
+    }
+  ],
+  "source_and_artifact_sha256": {
+    "internal/api/cfcompat_wrangler_runtime_test.go": "25fe4e622dcebaa613cd09643ffe8c9e737f5a3420086411dd9e1ba64bc1bb3d",
+    "scripts/wfp-client-flows/wrangler-loopback.cjs": "f97cd055fffac0c1ed7ec4c7fe75f15de66a084c2d26ed3b0a026ff221b8f35d",
+    "/tmp/nanoflare-wasm-clients.test": "4269f2bf0991367f6ec906369e0f3793fb03e4cb1a26f314f7f807bc6e8e0b98",
+    "/tmp/nf-wfp-wrangler-4540/node_modules/wrangler/package.json": "cc87709917d7e65b6e686604f34fa8471a5045c4d72cb386f568afc9779fa5da",
+    "/tmp/nanoflare-wasm-linux-wrangler/node_modules/wrangler/package.json": "cc87709917d7e65b6e686604f34fa8471a5045c4d72cb386f568afc9779fa5da",
+    "/tmp/nanoflare-wasm-linux-wrangler/package-lock.json": "6214c127a00d1ead75b38290330aa7f823c37cee27b5dac2e3412df1c6caae11",
+    "/tmp/nf-workerd-20260911/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd": "3c3b245b344ea4b71b8f8e72fa9ae40eab25faae45b8daa55a06f358ad07ceaf"
+  },
+  "postgres_binary_workflow_qualified": false,
+  "hosted_parity_qualified": false,
+  "production_qualified": false,
+  "untrusted_execution_qualified": false,
+  "notes": [
+    "Memory repository, local object storage and loopback-only fixture.",
+    "The retained first Linux failure occurred before API calls because copied Darwin dependencies lacked Linux platform packages.",
+    "An isolated temporary Linux dependency tree retains the pinned lock versions; four platform package tarballs were checked against locked SHA-512 integrity before extraction. No repository dependency/version changes.",
+    "Wrangler eagerly resolves its bundled workerd 1.20251210.0 platform package; the serving runtime is separately pinned to workerd 2026-09-11.",
+    "Container uses no network, non-root, read-only package/root mounts, 1 GiB memory and 128-task bounds. These do not qualify per-invocation isolation."
+  ]
+}
