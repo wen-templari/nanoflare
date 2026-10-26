@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtimeassets"
 )
 
 // This tests the generated production dispatcher rather than the exploratory
@@ -31,8 +32,35 @@ func TestWorkerdDynamicDispatcherContracts(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(version)) != "workerd 2026-09-11" {
 		t.Fatalf("requires pinned runtime: %s (%v)", version, err)
 	}
+	customer := nanoflare.Deployment{AppID: "customer", ID: "customer-v1", Entrypoint: "worker.js", Format: "modules", CompatibilityDate: "2026-07-30", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `
+export default { async fetch(request,env,ctx) {
+ const cap=ctx.props.nested[0].capability;
+ const path=new URL(request.url).pathname;
+ try {
+  let result;
+  switch(path) {
+   case "/method": result=await cap.ping(); break;
+   case "/getter": result=await cap.kind; break;
+   case "/props": result=await cap.readOther(); break;
+   case "/nested": result=await cap.ai.run("test"); break;
+   case "/nested-awaited": { const ai=await cap.ai; result=await ai.run("test"); break; }
+   case "/nested-method": { const ai=await cap.getAI(); result=await ai.run("test"); break; }
+   case "/throws": result=await cap.broken.run(); break;
+  }
+  return Response.json({result});
+ } catch(error) {return Response.json({error:error.message},{status:502});}
+} };`}}}
 	programs := map[string]map[string]any{}
 	for key, source := range map[string]string{
+		"dispatcher": `import {RpcTarget,WorkerEntrypoint} from "cloudflare:workers";
+class AI extends RpcTarget {run(value){return {response:"AI_OK",value};}}
+export class Other extends WorkerEntrypoint {ping(){return "OTHER_OK";}}
+export class Capability extends WorkerEntrypoint {
+ ping(){return this.ctx.props.prefix+"ONG";} get kind(){return "capability";} get ai(){return new AI();}
+ readOther(){return this.ctx.props.other.ping();}
+ getAI(){return new AI();} get broken(){throw new Error("getter failed");}
+}
+export default {fetch(request,env,ctx){return env.DISPATCHER.get(new URL(request.url).searchParams.has("class")?"class":"customer",{props:{nested:[{capability:ctx.exports.Capability({props:{prefix:"P",other:ctx.exports.Other({props:{}})}})}]}}).fetch(request);}};`,
 		"invalid": `export default {fetch(request: Request){}}`,
 		"throws":  `throw new Error("private-initialization-detail"); export default {fetch(){}}`,
 		"a": `import { env as importedEnv } from "cloudflare:workers";
@@ -62,6 +90,9 @@ class Session extends RpcTarget {
 export default class extends WorkerEntrypoint { session() { return new Session(KV,this.env.VERSION,!this.ctx.props.__nanoflare_invocation,this.ctx); } }`,
 	} {
 		active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{Format: "modules", Entrypoint: "worker.js", CompatibilityDate: "2026-09-08", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: source}}}}
+		if key == "dispatcher" {
+			active.Deployment.DispatchNamespaces = []nanoflare.DispatchBinding{{Binding: "DISPATCHER", NamespaceID: "test"}}
+		}
 		if key == "a" {
 			active.Deployment.KVNamespaces = []nanoflare.KVBinding{{Binding: "KV", ID: "kv"}}
 			active.Deployment.Services = []nanoflare.ServiceBinding{{Binding: "SERVICE", Service: "b"}}
@@ -142,6 +173,28 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 				childToken = "invocation-missing-b"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"key": "b", "token": childToken})
+		case r.URL.Path == "/export/dispatcher":
+			if r.Header.Get("X-Nanoflare-Invocation") != "invocation-dispatcher" {
+				http.Error(w, "bad export token", 403)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": "invocation-export"})
+		case r.URL.Path == "/resource/dispatcher/internal/runtime/dispatch/acquire":
+			deployment := customer
+			var input struct {
+				Script string `json:"script"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			if input.Script == "class" {
+				deployment.ID = "class-v1"
+				deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: strings.Replace(customer.Files[0].Content, `export default { async fetch(request,env,ctx) {`, `import {WorkerEntrypoint} from "cloudflare:workers"; export default class extends WorkerEntrypoint { async fetch(request) { const env=this.env,ctx=this.ctx;`, 1)}}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "customer-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
+		case r.URL.Path == "/resource/dispatcher/internal/runtime/dispatch/finish":
+			w.WriteHeader(204)
 		case strings.HasPrefix(r.URL.Path, "/resource/"):
 			if r.Header.Get("X-Nanoflare-Binding-Name") == "__NANOFLARE_ACCESS" {
 				if r.Header.Get("X-Nanoflare-User-JWT") != "signed-assertion" {
@@ -330,6 +383,32 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("missing invocation completions/background")
+		}
+	}
+	// Exercise real WFP dispatch, export admission, and native RPC, including warm calls.
+	for round := 0; round < 4; round++ {
+		for _, probe := range []struct {
+			path, want string
+			status     int
+		}{
+			{"/method", `{"result":"PONG"}`, 200},
+			{"/getter", `{"result":"capability"}`, 200},
+			{"/props", `{"result":"OTHER_OK"}`, 200},
+			{"/nested", `{"result":{"response":"AI_OK","value":"test"}}`, 200},
+			{"/nested-awaited", `{"result":{"response":"AI_OK","value":"test"}}`, 200},
+			{"/nested-method", `{"result":{"response":"AI_OK","value":"test"}}`, 200},
+			{"/throws", `{"error":"getter failed"}`, 502},
+		} {
+			path := probe.path
+			if round%2 == 1 {
+				path += "?class=1"
+			}
+			response := call(path, "dispatcher-secret", "invocation-dispatcher", "dispatcher")
+			body, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			if response.StatusCode != probe.status || string(body) != probe.want {
+				t.Fatalf("round %d probe %s: status=%d body=%s", round, probe.path, response.StatusCode, body)
+			}
 		}
 	}
 	denied := call("/", "dispatcher-secret", "invocation-denied")

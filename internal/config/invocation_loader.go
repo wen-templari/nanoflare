@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/clas/nanoflare/internal/runtimeassets"
 )
 
 const loaderInvocationContextModule = "nanoflare-internal:invocation-context"
@@ -60,11 +61,11 @@ export class NanoflareExportDispatcher extends WorkerEntrypoint {
   const state=this._state??=invocationState(this.env,this.ctx);
   const Type=UserModule[name];
   if(typeof Type!=="function" || typeof method!=="string" || method.startsWith("_") || ["constructor","ctx","env","prototype","__proto__"].includes(method)) throw new Error("Invalid named export call");
-  return runInvocation(state,()=>{const instance=this._instance??=new Type({...state.ctx,props},state.env);return read?instance[method]:instance[method](...args);});
+  return runInvocation(state,()=>{const instance=this._instance??=new Type({...state.ctx,props:restoreRpcProps(props)},state.env);return read?instance[method]:instance[method](...args);});
  }
 }
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { makeInvocation, runInvocation, wrapInvocationExports } from "` + loaderInvocationContextModule + `";
+import { makeInvocation, runInvocation, wrapInvocationExports, restoreRpcProps } from "` + loaderInvocationContextModule + `";
 const declarations = ` + string(declarationJSON) + `;
 function invocationState(env, ctx) {
   const state = makeInvocation(env, ctx, declarations);
@@ -127,7 +128,7 @@ export default WrappedWorker;
 	return code
 }
 
-const loaderInvocationContextSource = `import { AsyncLocalStorage } from "node:async_hooks";
+var loaderInvocationContextSource = runtimeassets.ExportPropsModule + "\n" + `import { AsyncLocalStorage } from "node:async_hooks";
 import { env as nativeEnv, RpcTarget } from "cloudflare:workers";
 const storage = new AsyncLocalStorage();
 function recordLog(state,level,args) {

@@ -25,7 +25,7 @@ func TestDynamicAssetRouting(t *testing.T) {
 				worker = `const userWorker={};`
 			}
 			script := `import assert from "node:assert/strict";
-const dynamicEnv=env=>env, withInvocation=(ctx,run)=>run();
+const restoreRpcProps=value=>value, dynamicEnv=env=>env, withInvocation=(ctx,run)=>run();
 ` + worker + "\n" + source + `
 const env={ASSETS:{fetch:async request=>new Response("asset",{status:new URL(request.url).pathname==="/missing"?404:200})}};
 const instance=typeof userWorker==="function"?new handler({},env):{fetch:r=>handler.fetch(r,env,{})};
