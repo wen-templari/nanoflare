@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.1](https://github.com/wen-templari/nanoflare/compare/v0.6.0...v0.6.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* preserve HTTP origin identity through pinned proxy tunnels ([bd6a1a7](https://github.com/wen-templari/nanoflare/commit/bd6a1a7dbbe4c88cc996b9a0debbeaff60b93a1c))
+* preserve pipelined named export getters across dispatch ([320c222](https://github.com/wen-templari/nanoflare/commit/320c2227b7eeac1ab74b8f15dce87be24e6bff6a))
+* preserve pipelined named export getters across dispatch ([17902a6](https://github.com/wen-templari/nanoflare/commit/17902a635f2662f18379daf2cae9a3b4e6ef4ce4))
+* preserve public HTTPS URLs in dynamic dispatcher ([47cc43e](https://github.com/wen-templari/nanoflare/commit/47cc43eaa2043e767be486fc2d781cf906d3bf4a))
+* preserve public URL scheme in dynamic dispatcher ([5bc4994](https://github.com/wen-templari/nanoflare/commit/5bc4994d2ec826274e36c98237fc97b9c70aaf39))
+* preserve Worker access identity headers ([e87c6c7](https://github.com/wen-templari/nanoflare/commit/e87c6c7f8f9e652476a14b7681d356a85031567f))
+* preserve Worker access identity headers ([f382448](https://github.com/wen-templari/nanoflare/commit/f382448cb6385e480ab08f8107a249990c7b441e))
+* prevent forged Worker identity headers ([ac897e8](https://github.com/wen-templari/nanoflare/commit/ac897e85b662293b68e5bcea78572604e08f20e1))
+* scope dispatch namespace requests to the active organization ([f5862fa](https://github.com/wen-templari/nanoflare/commit/f5862fa7fbafeed1e70fb6ba4d5f477fb9ce2fcb))
+* scope dispatch namespace requests to the active organization ([2ddcdef](https://github.com/wen-templari/nanoflare/commit/2ddcdef8d0a5d625dfc60deb690d4c099e2562b6))
+* support trusted proxy DNS resolution for Worker egress ([fc0f791](https://github.com/wen-templari/nanoflare/commit/fc0f791d11c5101b85d55f85b2f545656dc3e6f4))
+* support trusted proxy DNS resolution for Worker egress ([67d9669](https://github.com/wen-templari/nanoflare/commit/67d96692852689ada77fac22c121f113aa964570))
+
 ## [0.6.0](https://github.com/wen-templari/nanoflare/compare/v0.5.0...v0.6.0) (2026-10-23)
 
 
