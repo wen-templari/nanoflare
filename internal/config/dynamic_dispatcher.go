@@ -43,21 +43,15 @@ function restoreExportProps(value,key,token) {
  if(!value||typeof value!=="object")return value;
  if(Array.isArray(value))return value.map(item=>restoreExportProps(item,key,token));
  if(Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)return value;
- if(Object.hasOwn(value,"__nanoflare_export")){const ref=value.__nanoflare_export;return parentExports.NamedExportBridge({props:{key,token,name:ref.name,props:restoreExportProps(ref.props,key,token),methods:ref.methods,properties:ref.properties}});}
+ if(Object.hasOwn(value,"__nanoflare_export")){const ref=value.__nanoflare_export;return {__nanoflare_export_bridge:{target:parentExports.NamedExportBridge({props:{key,token,name:ref.name,props:restoreExportProps(ref.props,key,token),methods:ref.methods,properties:ref.properties}}),methods:ref.methods,properties:ref.properties}};}
  return Object.fromEntries(Object.entries(value).map(([name,item])=>[name,restoreExportProps(item,key,token)]));
 }
 export class NamedExportBridge extends WorkerEntrypoint {
- constructor(ctx,env){
-  super(ctx,env);const proto=Object.create(NamedExportBridge.prototype);
-  const invoke=async function(method,args,read){
-   const {key,token,name,props}=this.ctx.props;
-   this._target??=(async()=>{const response=await this.env.BROKER.fetch(brokerURL("/export/"+key),{method:"POST",headers:{"X-Nanoflare-Invocation":token}});if(!response.ok)throw new Error("Export admission rejected: "+response.status);const child=await response.json();const worker=await load(this.env,this.ctx,key);return worker.getEntrypoint("NanoflareExportDispatcher",{props:{__nanoflare_invocation:{key,token:child.token}}});})();
-   return (await this._target).invoke(name,props,method,args,read);
-  };
-  const seen=new Set(["constructor","ctx","env","then","prototype"]);
-  for(const [names,read]of [[ctx.props.methods||[],false],[ctx.props.properties||[],true]])for(const method of names){if(typeof method!=="string"||method.startsWith("_")||seen.has(method))continue;seen.add(method);
-   Object.defineProperty(proto,method,read?{get(){return invoke.call(this,method,[],true);}}:{value:function(...args){return invoke.call(this,method,args,false);}});
-  }Object.setPrototypeOf(this,proto);
+ async invoke(method,args,read) {
+  const {key,token,name,props,methods=[],properties=[]}=this.ctx.props;
+  if(typeof method!=="string" || method.startsWith("_") || ["constructor","ctx","env","then","__proto__","prototype"].includes(method) || !(read?properties:methods).includes(method) || !Array.isArray(args)) throw new TypeError("Invalid named export call");
+  this._target??=(async()=>{const response=await this.env.BROKER.fetch(brokerURL("/export/"+key),{method:"POST",headers:{"X-Nanoflare-Invocation":token}});if(!response.ok)throw new Error("Export admission rejected: "+response.status);const child=await response.json();const worker=await load(this.env,this.ctx,key);return worker.getEntrypoint("NanoflareExportDispatcher",{props:{__nanoflare_invocation:{key,token:child.token}}});})();
+  return (await this._target).invoke(name,props,method,args,read);
  }
 }
 export class WFPBridge extends WorkerEntrypoint {

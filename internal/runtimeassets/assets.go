@@ -13,4 +13,11 @@ var BindingsModule string
 var DispatchModule string
 
 //go:embed assets/dynamic-env.js
-var DynamicEnvModule string
+var dynamicEnvModule string
+
+//go:embed assets/export-props.js
+var ExportPropsModule string
+
+// Include the shared props facade in both dynamic customers and invocation loaders.
+// Each generated module remains self-contained.
+var DynamicEnvModule = ExportPropsModule + "\n" + dynamicEnvModule
