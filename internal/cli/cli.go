@@ -1006,7 +1006,7 @@ func organizationScopedURL(target, orgID string) (string, error) {
 	if err != nil || strings.TrimSpace(orgID) == "" || strings.HasPrefix(parsed.Path, "/v1/organizations/") {
 		return target, err
 	}
-	for _, prefix := range []string{"/v1/workers", "/v1/kv/namespaces", "/v1/db", "/v1/object-storage-buckets"} {
+	for _, prefix := range []string{"/v1/workers", "/v1/kv/namespaces", "/v1/db", "/v1/object-storage-buckets", "/v1/dispatch-namespaces"} {
 		if strings.HasPrefix(parsed.Path, prefix) {
 			rest := strings.TrimPrefix(parsed.Path, prefix)
 			resource := strings.TrimPrefix(prefix, "/v1/")
