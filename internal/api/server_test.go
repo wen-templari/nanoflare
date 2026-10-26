@@ -1917,3 +1917,23 @@ func runtimeGrantToken(t testing.TB, repo nanoflare.Repository, appID, kind, res
 	}
 	return nanoflare.RuntimeCapability(active[0], kind, resource)
 }
+
+func TestActiveBindingsEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	service := nanoflare.NewService(nanoflare.NewStore(), config.NewWriter(filepath.Join(dir, "workerd.capnp"), filepath.Join(dir, "traefik.yml"), "http://nanoflared/internal/auth/verify", "127.0.0.1"))
+	server := newTestServer(service)
+	app := createApp(t, server, "Bindings", "bindings.example.com")
+	var active []nanoflare.WorkerDeployment
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/active-bindings", http.StatusOK, &active)
+	if len(active) != 0 {
+		t.Fatalf("new worker active bindings = %#v", active)
+	}
+	deployContent(t, server, app.ID, []nanoflare.WorkerFile{{Path: "worker.js", Content: "export default {}"}}, "")
+	requestJSON(t, server, http.MethodGet, "/v1/workers/"+app.ID+"/active-bindings", http.StatusOK, &active)
+	if len(active) != 1 || active[0].ID == "" || active[0].TrafficPercent != 100 {
+		t.Fatalf("active bindings = %#v", active)
+	}
+	if _, err := service.ActiveWorkerBindingsForOrg("other-org", app.ID); err == nil {
+		t.Fatal("cross-organization binding lookup succeeded")
+	}
+}

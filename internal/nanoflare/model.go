@@ -177,25 +177,26 @@ type VarsUpdateOperation struct {
 }
 
 type DeployInput struct {
-	IdempotencyKey       string                       `json:"idempotency_key,omitempty"`
-	CommitHash           string                       `json:"commit_hash,omitempty"`
-	CommitMessage        string                       `json:"commit_message,omitempty"`
-	CreatedBy            string                       `json:"-"`
-	Files                []WorkerFile                 `json:"files"`
-	Assets               []AssetFile                  `json:"assets,omitempty"`
-	Entrypoint           string                       `json:"entrypoint,omitempty"`
-	Format               string                       `json:"format,omitempty"`
-	CompatibilityDate    string                       `json:"compatibility_date"`
-	CompatibilityFlags   []string                     `json:"compatibility_flags,omitempty"`
-	DNS                  DNSSelection                 `json:"dns,omitempty"`
-	Triggers             TriggerConfig                `json:"triggers,omitempty"`
-	Vars                 map[string]json.RawMessage   `json:"vars,omitempty"`
-	KVNamespaces         []KVBinding                  `json:"kv_namespaces,omitempty"`
-	Databases            []DatabaseBinding            `json:"db,omitempty"`
-	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
-	DispatchNamespaces   []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
-	Services             []ServiceBinding             `json:"services,omitempty"`
-	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
+	ExpectedActiveTraffic *[]DeploymentTraffic         `json:"expected_active_traffic,omitempty"`
+	IdempotencyKey        string                       `json:"idempotency_key,omitempty"`
+	CommitHash            string                       `json:"commit_hash,omitempty"`
+	CommitMessage         string                       `json:"commit_message,omitempty"`
+	CreatedBy             string                       `json:"-"`
+	Files                 []WorkerFile                 `json:"files"`
+	Assets                []AssetFile                  `json:"assets,omitempty"`
+	Entrypoint            string                       `json:"entrypoint,omitempty"`
+	Format                string                       `json:"format,omitempty"`
+	CompatibilityDate     string                       `json:"compatibility_date"`
+	CompatibilityFlags    []string                     `json:"compatibility_flags,omitempty"`
+	DNS                   DNSSelection                 `json:"dns,omitempty"`
+	Triggers              TriggerConfig                `json:"triggers,omitempty"`
+	Vars                  map[string]json.RawMessage   `json:"vars,omitempty"`
+	KVNamespaces          []KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases             []DatabaseBinding            `json:"db,omitempty"`
+	ObjectStorageBuckets  []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	DispatchNamespaces    []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	Services              []ServiceBinding             `json:"services,omitempty"`
+	AssetConfig           AssetConfig                  `json:"asset_config,omitempty"`
 }
 
 type WorkerDeployment struct {

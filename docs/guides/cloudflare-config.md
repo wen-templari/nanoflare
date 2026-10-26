@@ -41,9 +41,34 @@ triggers, and Workers assets alongside a Worker entrypoint.
 configs. Dispatch types use Nanoflare's existing dispatch runtime interface.
 
 Cloudflare resource IDs remain in portable source files for Cloudflare. Nanoflare
-resolves independent KV, D1, and R2 resources using project-and-binding names
-(for example `portable-worker-cache`). Deployment provisions missing resources;
+uses independent resources. On first deployment, omitted KV and D1 IDs resolve
+using project-and-binding names (for example `portable-worker-cache`). R2 bindings select a Nanoflare bucket by
+`bucket_name`, matching Wrangler's name-based selection. If `bucket_name` is
+omitted on first deployment, R2 uses the generated project-and-binding name too.
+Deployment provisions missing resources;
 `--provision=false` requires them to exist. Data is not copied from Cloudflare.
+If an older deployment used a generated R2 bucket despite a configured
+`bucket_name`, deployment stops with migration instructions. Pin the existing
+bucket ID in `nanoflare.resource_ids` to preserve its data, or rename that bucket
+to the configured name. An explicit Nanoflare ID always takes precedence.
+
+When KV/D1 Nanoflare IDs or an R2 bucket name are omitted, deployment first
+reuses the same resource type and binding name from the selected Worker's active
+deployments. This association lives on the server and works across machines and
+CI. Explicit Nanoflare IDs and explicit R2 names take precedence. With no previous
+matching binding, generated-name lookup and automatic provisioning apply.
+Renaming a resource does not break its stored ID association; renaming a binding
+requires an explicit Nanoflare ID to preserve that association. Removing a binding
+does not delete the resource. Rollbacks restore the active revision's associations.
+
+Split-traffic deployments must agree on each reused binding's resource ID.
+Conflicts, missing resources, and failed API reads stop deployment rather than
+creating replacement storage. A traffic precondition rejects deployment if active
+revisions or their weights change after resolution; retry to read fresh bindings.
+The server must support the active-bindings endpoint; older servers fail explicitly.
+Nanoflare does not write provisioned identifiers into the source config.
+Moving to Wrangler requires provisioning Cloudflare resources and migrating data;
+KV/D1 Cloudflare IDs remain separate from Nanoflare IDs in the shared source config.
 Dispatch namespaces must already exist: create one with
 `nanoflare platform namespace create customers`. Deployment resolves that name
 in the current Nanoflare organization. It does not create a namespace implicitly.

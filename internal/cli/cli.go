@@ -53,27 +53,29 @@ type Runner struct {
 // Project is the internal deployment representation; source aliases are normalized
 // before decoding it. Its JSON tags also preserve existing build manifests.
 type Project struct {
-	bundledFiles           []nanoflare.WorkerFile
-	dispatchNamespaceNames map[string]string
-	Schema                 string                                 `json:"$schema,omitempty"`
-	Name                   string                                 `json:"name"`
-	WorkerID               string                                 `json:"worker_id,omitempty"`
-	DispatchNamespaces     []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
-	Main                   string                                 `json:"main"`
-	Format                 string                                 `json:"format,omitempty"`
-	CompatibilityDate      string                                 `json:"compatibility_date"`
-	CompatibilityFlags     []string                               `json:"compatibility_flags,omitempty"`
-	DNS                    nanoflare.DNSSelection                 `json:"dns,omitempty"`
-	Triggers               nanoflare.TriggerConfig                `json:"triggers,omitempty"`
-	Vars                   map[string]json.RawMessage             `json:"vars,omitempty"`
-	Files                  []string                               `json:"files"`
-	KVNamespaces           []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
-	Databases              []nanoflare.DatabaseBinding            `json:"db,omitempty"`
-	ObjectStorageBuckets   []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
-	Services               []nanoflare.ServiceBinding             `json:"services,omitempty"`
-	Assets                 ProjectAssets                          `json:"assets,omitempty"`
-	Auth                   ProjectAuth                            `json:"auth,omitempty"`
-	Secrets                ProjectSecrets                         `json:"secrets,omitempty"`
+	expectedActiveTraffic    *[]nanoflare.DeploymentTraffic
+	bundledFiles             []nanoflare.WorkerFile
+	dispatchNamespaceNames   map[string]string
+	objectStorageBucketNames map[string]string
+	Schema                   string                                 `json:"$schema,omitempty"`
+	Name                     string                                 `json:"name"`
+	WorkerID                 string                                 `json:"worker_id,omitempty"`
+	DispatchNamespaces       []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	Main                     string                                 `json:"main"`
+	Format                   string                                 `json:"format,omitempty"`
+	CompatibilityDate        string                                 `json:"compatibility_date"`
+	CompatibilityFlags       []string                               `json:"compatibility_flags,omitempty"`
+	DNS                      nanoflare.DNSSelection                 `json:"dns,omitempty"`
+	Triggers                 nanoflare.TriggerConfig                `json:"triggers,omitempty"`
+	Vars                     map[string]json.RawMessage             `json:"vars,omitempty"`
+	Files                    []string                               `json:"files"`
+	KVNamespaces             []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases                []nanoflare.DatabaseBinding            `json:"db,omitempty"`
+	ObjectStorageBuckets     []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Services                 []nanoflare.ServiceBinding             `json:"services,omitempty"`
+	Assets                   ProjectAssets                          `json:"assets,omitempty"`
+	Auth                     ProjectAuth                            `json:"auth,omitempty"`
+	Secrets                  ProjectSecrets                         `json:"secrets,omitempty"`
 }
 
 type projectAlias struct {
@@ -274,6 +276,9 @@ func (r *Runner) deploy(args []string) error {
 	if err := r.validateRequiredSecrets(baseURL, app.ID, project.Secrets.Required); err != nil {
 		return err
 	}
+	if err := r.reuseProjectBindings(baseURL, app.ID, &project); err != nil {
+		return err
+	}
 	if err := r.resolveProjectBindings(baseURL, &project, *provision); err != nil {
 		return err
 	}
@@ -295,22 +300,23 @@ func (r *Runner) deploy(args []string) error {
 	commitHash, commitMessage := deploymentGitMetadata(filepath.Dir(projectPath))
 	var deployment nanoflare.Deployment
 	if err := r.request(http.MethodPost, baseURL+"/v1/workers/"+app.ID+"/deployments", nanoflare.DeployInput{
-		CommitHash:           commitHash,
-		CommitMessage:        commitMessage,
-		Files:                files,
-		Assets:               assets,
-		Entrypoint:           project.Main,
-		Format:               project.Format,
-		CompatibilityDate:    date,
-		CompatibilityFlags:   append([]string(nil), project.CompatibilityFlags...),
-		DNS:                  project.DNS,
-		Triggers:             project.Triggers,
-		Vars:                 cloneProjectVars(project.Vars),
-		KVNamespaces:         append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
-		Databases:            append([]nanoflare.DatabaseBinding(nil), project.Databases...),
-		ObjectStorageBuckets: append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
-		Services:             append([]nanoflare.ServiceBinding(nil), project.Services...),
-		DispatchNamespaces:   append([]nanoflare.DispatchBinding(nil), project.DispatchNamespaces...),
+		ExpectedActiveTraffic: project.expectedActiveTraffic,
+		CommitHash:            commitHash,
+		CommitMessage:         commitMessage,
+		Files:                 files,
+		Assets:                assets,
+		Entrypoint:            project.Main,
+		Format:                project.Format,
+		CompatibilityDate:     date,
+		CompatibilityFlags:    append([]string(nil), project.CompatibilityFlags...),
+		DNS:                   project.DNS,
+		Triggers:              project.Triggers,
+		Vars:                  cloneProjectVars(project.Vars),
+		KVNamespaces:          append([]nanoflare.KVBinding(nil), project.KVNamespaces...),
+		Databases:             append([]nanoflare.DatabaseBinding(nil), project.Databases...),
+		ObjectStorageBuckets:  append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
+		Services:              append([]nanoflare.ServiceBinding(nil), project.Services...),
+		DispatchNamespaces:    append([]nanoflare.DispatchBinding(nil), project.DispatchNamespaces...),
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,
@@ -1135,6 +1141,21 @@ func parseProjectConfig(path string, content []byte, migrateAliases bool) (Proje
 		return Project{}, fmt.Errorf("decode %s: %w", path, err)
 	}
 	project.dispatchNamespaceNames = namespaceNames
+	var portable struct {
+		Buckets []struct {
+			Binding string `json:"binding"`
+			Name    string `json:"bucket_name"`
+		} `json:"r2_buckets"`
+	}
+	if err := json.Unmarshal(content, &portable); err != nil {
+		return Project{}, fmt.Errorf("decode %s R2 bindings: %w", path, err)
+	}
+	project.objectStorageBucketNames = make(map[string]string)
+	for _, bucket := range portable.Buckets {
+		if bucket.Name != "" {
+			project.objectStorageBucketNames[bucket.Binding] = bucket.Name
+		}
+	}
 	var alias projectAlias
 	if err := json.Unmarshal(content, &alias); err != nil {
 		return Project{}, fmt.Errorf("decode %s aliases: %w", path, err)
@@ -1438,9 +1459,9 @@ func (r *Runner) ensureProjectApp(baseURL string, project Project) (nanoflare.Ap
 }
 
 // resolveProjectBindings implements Wrangler-style automatic provisioning. A
-// binding with an explicit ID remains pinned; an ID-less binding is resolved by
-// its deterministic project-and-binding name or created when provisioning is
-// enabled. Resolved IDs live in the deployment record, not nanoflare.json.
+// binding with an explicit or reused ID remains pinned. Remaining bindings use
+// configured R2 names or deterministic project-and-binding names, provisioning
+// when enabled. Resolved IDs live in deployment records, not source config.
 func (r *Runner) resolveProjectBindings(baseURL string, project *Project, provision bool) error {
 	if len(project.dispatchNamespaceNames) > 0 {
 		var namespaces []nanoflare.DispatchNamespace
@@ -1494,7 +1515,14 @@ func (r *Runner) resolveProjectBindings(baseURL string, project *Project, provis
 		if strings.TrimSpace(binding.BucketID) != "" {
 			continue
 		}
-		id, err := r.resolveObjectStorageBucket(baseURL, autoProvisionedResourceName(project.Name, binding.Binding), provision)
+		name := autoProvisionedResourceName(project.Name, binding.Binding)
+		var id string
+		var err error
+		if configured := project.objectStorageBucketNames[binding.Binding]; configured != "" {
+			id, err = r.resolveNamedObjectStorageBucket(baseURL, binding.Binding, configured, name, provision)
+		} else {
+			id, err = r.resolveObjectStorageBucket(baseURL, name, provision)
+		}
 		if err != nil {
 			return fmt.Errorf("resolve object_storage_buckets binding %q: %w", binding.Binding, err)
 		}
@@ -1559,6 +1587,42 @@ func (r *Runner) resolveDatabase(baseURL, name string, provision bool) (string, 
 	}
 	fmt.Fprintf(r.Stdout, "Provisioned database %s\t%s\n", database.ID, database.Name)
 	return database.ID, nil
+}
+
+// Explicit portable names select the bucket. Refuse to silently replace storage
+// created by earlier CLI versions that ignored bucket_name.
+func (r *Runner) resolveNamedObjectStorageBucket(baseURL, binding, name, legacyName string, provision bool) (string, error) {
+	var buckets []nanoflare.ObjectStorageBucket
+	if err := r.request(http.MethodGet, baseURL+"/v1/object-storage-buckets", nil, &buckets); err != nil {
+		return "", err
+	}
+	var selected, legacy string
+	for _, bucket := range buckets {
+		if bucket.Name == name {
+			if selected != "" {
+				return "", fmt.Errorf("bucket name %q is ambiguous", name)
+			}
+			selected = bucket.ID
+		}
+		if bucket.Name == legacyName && legacyName != name {
+			legacy = bucket.ID
+		}
+	}
+	if legacy != "" {
+		return "", fmt.Errorf("binding %q has a legacy generated bucket %q (%s); pin it with nanoflare.resource_ids.%s or rename it to %q before deploying", binding, legacyName, legacy, binding, name)
+	}
+	if selected != "" {
+		return selected, nil
+	}
+	if !provision {
+		return "", fmt.Errorf("bucket %q was not found; create it or enable --provision", name)
+	}
+	var bucket nanoflare.ObjectStorageBucket
+	if err := r.request(http.MethodPost, baseURL+"/v1/object-storage-buckets", nanoflare.CreateObjectStorageBucketInput{Name: name}, &bucket); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(r.Stdout, "Provisioned object storage bucket %s\t%s\n", bucket.ID, bucket.Name)
+	return bucket.ID, nil
 }
 
 func (r *Runner) resolveObjectStorageBucket(baseURL, name string, provision bool) (string, error) {

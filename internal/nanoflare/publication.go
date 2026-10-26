@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var ErrActiveBindingsChanged = errors.New("active deployment bindings changed; retry deployment")
+
 type Publication struct {
 	RequestIdentity   string              `json:"request_identity,omitempty"`
 	AppID             string              `json:"worker_id"`
@@ -294,6 +296,21 @@ func (s *Service) deployPublication(app string, in DeployInput) (Deployment, err
 			return Deployment{}, ErrIdempotencyConflict
 		}
 		return s.replayPublication(prior)
+	}
+	if in.ExpectedActiveTraffic != nil {
+		active, err := s.store.ActiveDeploymentsForApp(app)
+		if err != nil {
+			return Deployment{}, err
+		}
+		traffic := make([]DeploymentTraffic, 0, len(active))
+		for _, item := range active {
+			if item.TrafficPercent > 0 {
+				traffic = append(traffic, DeploymentTraffic{ID: item.Deployment.ID, TrafficPercent: item.TrafficPercent})
+			}
+		}
+		if !sameTraffic(traffic, *in.ExpectedActiveTraffic) {
+			return Deployment{}, ErrActiveBindingsChanged
+		}
 	}
 	return s.buildAndPublishDeployment(app, in, fingerprint, nil)
 }

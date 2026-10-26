@@ -1661,6 +1661,8 @@ func TestDeployAutomaticallyProvisionsMissingBindingResources(t *testing.T) {
 	var deployed nanoflare.DeployInput
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers/app-123/active-bindings":
+			writeJSON(t, w, http.StatusOK, []nanoflare.WorkerDeployment{})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workers":
 			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "app-123", Name: "Hello"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/kv/namespaces":
@@ -1703,6 +1705,9 @@ func TestDeployAutomaticallyProvisionsMissingBindingResources(t *testing.T) {
 
 	if err := NewRunner(io.Discard, io.Discard).Run([]string{"deploy"}); err != nil {
 		t.Fatal(err)
+	}
+	if deployed.ExpectedActiveTraffic == nil || len(*deployed.ExpectedActiveTraffic) != 0 {
+		t.Fatalf("first deploy must carry an empty active traffic precondition: %#v", deployed.ExpectedActiveTraffic)
 	}
 	if got := deployed.KVNamespaces[0].ID; got != "kv-123" {
 		t.Fatalf("KV binding id = %q", got)

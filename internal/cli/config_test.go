@@ -55,6 +55,9 @@ bucket_name = "bucket"
 			if filepath.Base(path) != name || len(project.KVNamespaces) != 1 || project.KVNamespaces[0].ID != "" || len(project.Databases) != 1 || project.Databases[0].DatabaseID != "" || len(project.ObjectStorageBuckets) != 1 {
 				t.Fatalf("project: %#v", project)
 			}
+			if project.objectStorageBucketNames["BUCKET"] != "bucket" {
+				t.Fatalf("portable R2 name lost: %#v", project.objectStorageBucketNames)
+			}
 			files, err := projectWorkerFiles(project)
 			if err != nil || len(files) != 1 || !strings.Contains(files[0].Content, "portable worker") || strings.Contains(files[0].Content, ": Response") {
 				t.Fatalf("bundle: %#v, %v", files, err)
@@ -276,5 +279,76 @@ func TestViteManifestRetainsSourceResourceResolution(t *testing.T) {
 	}
 	if project.KVNamespaces[0].ID != "" || project.dispatchNamespaceNames["DISPATCHER"] != "customers" || project.Main != "dist/router/worker.mjs" {
 		t.Fatalf("project: %#v", project)
+	}
+}
+
+func TestPortableR2NameResolution(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		buckets     []nanoflare.ObjectStorageBucket
+		provision   bool
+		pin         string
+		want        string
+		wantError   string
+		wantCreates int
+	}{
+		{name: "existing", buckets: []nanoflare.ObjectStorageBucket{{ID: "shared-id", Name: "uploads"}}, want: "shared-id"},
+		{name: "create configured name", provision: true, want: "created", wantCreates: 1},
+		{name: "missing without provisioning", wantError: `bucket "uploads" was not found`},
+		{name: "legacy protection", buckets: []nanoflare.ObjectStorageBucket{{ID: "old-id", Name: "app-files"}}, provision: true, wantError: "nanoflare.resource_ids.FILES"},
+		{name: "both names require migration", buckets: []nanoflare.ObjectStorageBucket{{ID: "old-id", Name: "app-files"}, {ID: "shared-id", Name: "uploads"}}, wantError: "legacy generated bucket"},
+		{name: "explicit override", pin: "pinned", want: "pinned"},
+		{name: "ambiguous", buckets: []nanoflare.ObjectStorageBucket{{ID: "one", Name: "uploads"}, {ID: "two", Name: "uploads"}}, wantError: "ambiguous"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := `{"name":"app","main":"worker.js","compatibility_date":"2026-08-01","r2_buckets":[{"binding":"FILES","bucket_name":"uploads"}]`
+			if test.pin != "" {
+				config += `,"nanoflare":{"resource_ids":{"FILES":"` + test.pin + `"}}`
+			}
+			config += `}`
+			project, err := parseProjectConfig("wrangler.jsonc", []byte(config), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			creates, requests := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.URL.Path != "/v1/object-storage-buckets" {
+					t.Errorf("unexpected path %s", r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				if r.Method == http.MethodGet {
+					writeJSON(t, w, http.StatusOK, test.buckets)
+					return
+				}
+				if r.Method != http.MethodPost {
+					t.Errorf("unexpected method %s", r.Method)
+					return
+				}
+				creates++
+				var input nanoflare.CreateObjectStorageBucketInput
+				decodeRequest(t, r, &input)
+				if input.Name != "uploads" {
+					t.Errorf("created bucket name = %q", input.Name)
+				}
+				writeJSON(t, w, http.StatusCreated, nanoflare.ObjectStorageBucket{ID: "created", Name: input.Name})
+			}))
+			defer server.Close()
+			err = NewRunner(io.Discard, io.Discard).resolveProjectBindings(server.URL, &project, test.provision)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("error = %v, want %q", err, test.wantError)
+				}
+			} else if err != nil || project.ObjectStorageBuckets[0].BucketID != test.want {
+				t.Fatalf("binding = %#v, error = %v", project.ObjectStorageBuckets, err)
+			}
+			if creates != test.wantCreates {
+				t.Fatalf("creates = %d, want %d", creates, test.wantCreates)
+			}
+			if test.pin != "" && requests != 0 {
+				t.Fatalf("pinned binding made %d requests", requests)
+			}
+		})
 	}
 }

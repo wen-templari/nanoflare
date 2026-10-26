@@ -32,6 +32,7 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("DELETE "+base+"/{workerID}", s.deleteApp)
 	s.mux.HandleFunc("GET "+base+"/{workerID}", s.workerDetail)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/files", s.workerFiles)
+	s.mux.HandleFunc("GET "+base+"/{workerID}/active-bindings", s.activeWorkerBindings)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/output", s.workerOutput)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/analytics", s.workerTraffic)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/deployments", s.workerDeployments)
@@ -296,7 +297,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	deployment, err := s.service.DeployForOrg(controlOrgID(r), r.PathValue("workerID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, nanoflare.ErrIdempotencyConflict) || errors.Is(err, nanoflare.ErrPublicationFailed) {
+		if errors.Is(err, nanoflare.ErrActiveBindingsChanged) || errors.Is(err, nanoflare.ErrIdempotencyConflict) || errors.Is(err, nanoflare.ErrPublicationFailed) {
 			status = http.StatusConflict
 		}
 		if errors.Is(err, nanoflare.ErrAppNotFound) {
@@ -732,4 +733,16 @@ func (w flushingResponseWriter) Write(data []byte) (int, error) {
 func recordSpanError(span trace.Span, err error) {
 	span.RecordError(err)
 	span.SetStatus(codes.Error, err.Error())
+}
+
+func (s *Server) activeWorkerBindings(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "workers:read") {
+		return
+	}
+	bindings, err := s.service.ActiveWorkerBindingsForOrg(controlOrgID(r), r.PathValue("workerID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bindings)
 }
