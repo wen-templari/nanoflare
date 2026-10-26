@@ -157,6 +157,10 @@ func runDynamicPublicationEndToEnd(t *testing.T, workerd string, remote bool) {
 const { KV, SERVICE } = importedEnv;
 let counter = 0;
 export default {async fetch(request,env,ctx) {
+ if (new URL(request.url).pathname === "/origin-check") {
+  if (request.method === "POST" && request.headers.get("Origin") !== new URL(request.url).origin) return new Response("Origin mismatch", {status:403});
+  return Response.json({url:request.url,host:request.headers.get("Host"),body:await request.text()});
+ }
  if (new URL(request.url).pathname === "/ws") {
   const pair = new WebSocketPair(); pair[1].accept();
   const listener = async event => {
@@ -228,6 +232,48 @@ export default {async fetch(request,env,ctx) {
 			t.Fatal(err)
 		}
 		return result
+	}
+	// Exercise the real socket and gateway, including the remote runner hop.
+	for _, test := range []struct {
+		name, proto, origin string
+		status              int
+	}{
+		{"https same origin", "https", "https://alpha.dynamic.test", http.StatusOK},
+		{"https cross origin", "https", "https://other.dynamic.test", http.StatusForbidden},
+		{"https wrong scheme", "https", "http://alpha.dynamic.test", http.StatusForbidden},
+		{"http same origin", "http", "http://alpha.dynamic.test", http.StatusOK},
+		{"no forwarded protocol", "", "http://alpha.dynamic.test", http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const body = "diagnostic=value"
+			req := httptest.NewRequest(http.MethodPost, "/internal/http/workers/"+alpha.ID+"/origin-check?x=1&escaped=%2F", strings.NewReader(body))
+			req.Host = alpha.Hostname
+			req.Header.Set("Origin", test.origin)
+			if test.proto != "" {
+				// This is trusted ingress metadata; the transport itself is HTTP.
+				req.Header.Set("X-Forwarded-Proto", test.proto)
+			}
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, req)
+			if recorder.Code != test.status {
+				t.Fatalf("origin check: HTTP %d %s, want %d", recorder.Code, recorder.Body.String(), test.status)
+			}
+			if test.status != http.StatusOK {
+				return
+			}
+			var result struct{ URL, Host, Body string }
+			if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			proto := test.proto
+			if proto == "" {
+				proto = "http"
+			}
+			wantURL := proto + "://" + alpha.Hostname + "/origin-check?x=1&escaped=%2F"
+			if result.URL != wantURL || result.Host != alpha.Hostname || result.Body != body {
+				t.Fatalf("forwarded request = %#v, want URL %q, host %q, body %q", result, wantURL, alpha.Hostname, body)
+			}
+		})
 	}
 	grantFor := func(app nanoflare.App) string {
 		t.Helper()
