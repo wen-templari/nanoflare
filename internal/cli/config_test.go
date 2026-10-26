@@ -94,45 +94,74 @@ func TestNativeConfigTakesPrecedence(t *testing.T) {
 }
 
 func TestDeployWranglerProject(t *testing.T) {
-	withWorkingDirectory(t, t.TempDir())
-	config := `{"name":"portable","main":"worker.ts","compatibility_date":"2026-08-01","vars":{"GREETING":"hello"},"assets":{"directory":"public","binding":"ASSETS"},"dispatch_namespaces":[{"binding":"DISPATCHER","namespace":"customers"}]}`
-	for path, content := range map[string]string{"wrangler.jsonc": config, "worker.ts": `export default {fetch(): Response {return new Response("hello")}}`} {
-		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.Mkdir("public", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("public/index.html", []byte("hello asset"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	var deployed nanoflare.DeployInput
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/workers":
-			writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "portable-id", Name: "portable"}})
-		case "/v1/dispatch-namespaces":
-			writeJSON(t, w, http.StatusOK, []nanoflare.DispatchNamespace{{ID: "ns-id", Name: "customers"}})
-		case "/v1/workers/portable-id":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/workers/portable-id/deployments":
-			decodeRequest(t, r, &deployed)
-			writeJSON(t, w, http.StatusCreated, nanoflare.Deployment{ID: "deployment", CompatibilityDate: "2026-08-01"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	runner := NewRunner(io.Discard, io.Discard)
-	if err := runner.Run([]string{"deploy", "--api-url", server.URL}); err != nil {
-		t.Fatal(err)
-	}
-	if len(deployed.DispatchNamespaces) != 1 || deployed.DispatchNamespaces[0].NamespaceID != "ns-id" {
-		t.Fatalf("dispatch payload: %#v", deployed.DispatchNamespaces)
-	}
-	if deployed.Entrypoint != "worker.mjs" || deployed.Format != "modules" || len(deployed.Files) != 1 || !strings.Contains(deployed.Files[0].Content, "hello") || len(deployed.Assets) != 1 || deployed.AssetConfig.Binding != "ASSETS" || string(deployed.Vars["GREETING"]) != `"hello"` {
-		t.Fatalf("deployment: %#v", deployed)
+	for _, test := range []struct {
+		name      string
+		bindings  string
+		wantIDs   []string
+		wantLists int
+	}{
+		{"name", `[{"binding":"DISPATCHER","namespace":"customers"}]`, []string{"ns-id"}, 1},
+		{"pinned", `[{"binding":"DISPATCHER","namespace_id":"pinned-id"}]`, []string{"pinned-id"}, 0},
+		{"mixed", `[{"binding":"PINNED","namespace_id":"pinned-id"},{"binding":"DISPATCHER","namespace":"customers"}]`, []string{"pinned-id", "ns-id"}, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(authStorePathEnv, filepath.Join(t.TempDir(), "auth.json"))
+			t.Setenv(authTokenEnv, "test-token")
+			t.Setenv(authOrgIDEnv, "test-org")
+			withWorkingDirectory(t, t.TempDir())
+			config := `{"name":"portable","main":"worker.ts","compatibility_date":"2026-08-01","vars":{"GREETING":"hello"},"assets":{"directory":"public","binding":"ASSETS"},"dispatch_namespaces":` + test.bindings + `}`
+			for path, content := range map[string]string{"wrangler.jsonc": config, "worker.ts": `export default {fetch(): Response {return new Response("hello")}}`} {
+				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Mkdir("public", 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("public/index.html", []byte("hello asset"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var deployed nanoflare.DeployInput
+			listRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer test-token" {
+					t.Errorf("authorization = %q", r.Header.Get("Authorization"))
+				}
+				switch r.URL.Path {
+				case "/v1/organizations/test-org/workers":
+					writeJSON(t, w, http.StatusOK, []nanoflare.App{{ID: "portable-id", Name: "portable"}})
+				case "/v1/organizations/test-org/dispatch-namespaces":
+					listRequests++
+					writeJSON(t, w, http.StatusOK, []nanoflare.DispatchNamespace{{ID: "ns-id", Name: "customers"}})
+				case "/v1/organizations/test-org/workers/portable-id":
+					w.WriteHeader(http.StatusOK)
+				case "/v1/organizations/test-org/workers/portable-id/deployments":
+					decodeRequest(t, r, &deployed)
+					writeJSON(t, w, http.StatusCreated, nanoflare.Deployment{ID: "deployment", CompatibilityDate: "2026-08-01"})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			runner := NewRunner(io.Discard, io.Discard)
+			if err := runner.Run([]string{"deploy", "--api-url", server.URL}); err != nil {
+				t.Fatal(err)
+			}
+			if listRequests != test.wantLists {
+				t.Fatalf("namespace list requests = %d, want %d", listRequests, test.wantLists)
+			}
+			if len(deployed.DispatchNamespaces) != len(test.wantIDs) {
+				t.Fatalf("dispatch payload: %#v", deployed.DispatchNamespaces)
+			}
+			for i, id := range test.wantIDs {
+				if deployed.DispatchNamespaces[i].NamespaceID != id {
+					t.Fatalf("dispatch payload: %#v", deployed.DispatchNamespaces)
+				}
+			}
+			if deployed.Entrypoint != "worker.mjs" || deployed.Format != "modules" || len(deployed.Files) != 1 || !strings.Contains(deployed.Files[0].Content, "hello") || len(deployed.Assets) != 1 || deployed.AssetConfig.Binding != "ASSETS" || string(deployed.Vars["GREETING"]) != `"hello"` {
+				t.Fatalf("deployment: %#v", deployed)
+			}
+		})
 	}
 }
 
