@@ -6,15 +6,20 @@
     "build": "vite build",
     "check": "tsc --noEmit",
     "typegen": "nanoflare types",
-    "deploy": "npm run build && nanoflare deploy"
+    "deploy": "npm run build && nanoflare deploy",
+    "preview": "vite preview"
   },
   "dependencies": {
     "hono": "^4.12.33"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.65.0",
     "@nanoflare/cli": "^0.6.1",
-    "@nanoflare/vite-plugin": "^0.0.4",
     "typescript": "^5.8.3",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "wrangler": "^4.152.0"
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }

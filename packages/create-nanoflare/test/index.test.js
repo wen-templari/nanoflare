@@ -1,3 +1,4 @@
+import { parse as parseJSONC } from "jsonc-parser";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,13 @@ import {
   readStarterTemplate,
   run,
 } from "../dist/index.js";
+
+function parseJSON(text) {
+  const errors = [];
+  const result = parseJSONC(text, errors, { allowTrailingComma: true });
+  assert.deepEqual(errors, []);
+  return result;
+}
 
 const templateIDs = ["starter", "bindings", "pages", "spa", "ssr", "api", "mcp", "oauth-mcp"];
 
@@ -61,9 +69,9 @@ test("creates a starter project with the directory name and UTC date", async () 
   });
   assert.equal(result.template, "starter");
   const destination = resolve(cwd, "hello-worker");
-  const project = JSON.parse(await readFile(resolve(destination, "nanoflare.json"), "utf8"));
+  const project = parseJSON(await readFile(resolve(destination, "wrangler.jsonc"), "utf8"));
   assert.deepEqual(project, {
-    $schema: "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+    $schema: "node_modules/wrangler/config-schema.json",
     name: "hello-worker",
     main: "worker.ts",
     compatibility_date: "2026-06-01",
@@ -73,7 +81,7 @@ test("creates a starter project with the directory name and UTC date", async () 
     await readStarterTemplate(),
   );
   assert.doesNotMatch(
-    await readFile(resolve(destination, "nanoflare.json"), "utf8"),
+    await readFile(resolve(destination, "wrangler.jsonc"), "utf8"),
     /{{projectName}}|{{compatibilityDate}}/,
   );
   assert.match(stdout.text, /nanoflare create/);
@@ -89,8 +97,8 @@ test("warns and uses the latest supported compatibility date when today is newer
     now: new Date("2026-09-30T12:00:00Z"),
   });
 
-  const project = JSON.parse(
-    await readFile(resolve(cwd, "future-worker", "nanoflare.json"), "utf8"),
+  const project = parseJSON(
+    await readFile(resolve(cwd, "future-worker", "wrangler.jsonc"), "utf8"),
   );
   assert.equal(project.compatibility_date, latestCompatibilityDate);
   assert.match(stderr.text, /Warning: compatibility date 2026-09-30 .* using 2026-09-11 instead/);
@@ -129,18 +137,16 @@ test("scaffolds public and OAuth MCP templates with the expected dependencies", 
     stdout: output(),
   });
   const publicDirectory = resolve(cwd, "public-echo");
-  const publicProject = JSON.parse(
-    await readFile(resolve(publicDirectory, "nanoflare.json"), "utf8"),
+  const publicProject = parseJSON(
+    await readFile(resolve(publicDirectory, "wrangler.jsonc"), "utf8"),
   );
-  const publicPackage = JSON.parse(
-    await readFile(resolve(publicDirectory, "package.json"), "utf8"),
-  );
+  const publicPackage = parseJSON(await readFile(resolve(publicDirectory, "package.json"), "utf8"));
   assert.equal(publicProject.name, "public-echo");
   assert.equal(publicProject.compatibility_date, latestCompatibilityDate);
   assert.equal(publicProject.kv_namespaces, undefined);
   assert.equal(publicPackage.dependencies["@modelcontextprotocol/server"], "^2.0.0");
   assert.equal(publicPackage.dependencies["@cloudflare/workers-oauth-provider"], undefined);
-  assert.equal(publicPackage.devDependencies["@nanoflare/vite-plugin"], "^0.1.0");
+  assert.equal(publicPackage.devDependencies["@cloudflare/vite-plugin"], "^1.65.0");
   assert.match(await readFile(resolve(publicDirectory, "src/worker.ts"), "utf8"), /"echo"/);
   assert.match(await readFile(resolve(publicDirectory, "vite.config.ts"), "utf8"), /noExternal/);
 
@@ -150,14 +156,14 @@ test("scaffolds public and OAuth MCP templates with the expected dependencies", 
     stdout: output(),
   });
   const oauthDirectory = resolve(cwd, "private-echo");
-  const oauthProject = JSON.parse(
-    await readFile(resolve(oauthDirectory, "nanoflare.json"), "utf8"),
-  );
-  const oauthPackage = JSON.parse(await readFile(resolve(oauthDirectory, "package.json"), "utf8"));
+  const oauthProject = parseJSON(await readFile(resolve(oauthDirectory, "wrangler.jsonc"), "utf8"));
+  const oauthPackage = parseJSON(await readFile(resolve(oauthDirectory, "package.json"), "utf8"));
   assert.equal(oauthProject.name, "private-echo");
   assert.equal(oauthProject.compatibility_date, latestCompatibilityDate);
   assert.deepEqual(oauthProject.compatibility_flags, ["global_fetch_strictly_public"]);
-  assert.deepEqual(oauthProject.kv_namespaces, [{ binding: "OAUTH_KV" }]);
+  assert.deepEqual(oauthProject.kv_namespaces, [
+    { binding: "OAUTH_KV", id: "00000000000000000000000000000001" },
+  ]);
   assert.equal(oauthPackage.dependencies["@cloudflare/workers-oauth-provider"], "^0.10.3");
   assert.match(
     await readFile(resolve(oauthDirectory, "src/worker-runtime.d.ts"), "utf8"),
@@ -188,10 +194,16 @@ test("scaffolds every documented template", async () => {
   for (const id of templateIDs) {
     const result = await run([id, "--template", id, "--no-interactive"], { cwd, stdout: output() });
     assert.equal(result.template, id);
-    const project = JSON.parse(await readFile(resolve(cwd, id, "nanoflare.json"), "utf8"));
+    const project = parseJSON(await readFile(resolve(cwd, id, "wrangler.jsonc"), "utf8"));
     assert.equal(project.name, id);
+    const pkg = parseJSON(await readFile(resolve(cwd, id, "package.json"), "utf8"));
+    assert.ok(pkg.devDependencies["@cloudflare/vite-plugin"]);
+    assert.ok(pkg.devDependencies.wrangler);
+    assert.equal(pkg.devDependencies["@nanoflare/vite-plugin"], undefined);
+    assert.equal(pkg.scripts.build, "vite build");
+    assert.match(await readFile(resolve(cwd, id, "vite.config.ts"), "utf8"), /cloudflare\(/);
     if (["pages", "spa", "oauth-mcp"].includes(id)) {
-      assert.equal(project.main, "dist/worker.js");
+      assert.equal(project.main, "src/worker.ts");
       assert.equal(project.files, undefined);
     } else {
       assert.equal(project.files, undefined);

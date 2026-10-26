@@ -13,7 +13,7 @@ npm run deploy
 ```
 
 To use an existing Nanoflare namespace instead, set
-`nanoflare.resource_ids.OAUTH_KV` to its namespace ID in `nanoflare.json`.
+`nanoflare.resource_ids.OAUTH_KV` to its namespace ID in `wrangler.jsonc`.
 
 Open the deployed Worker hostname. The root response reports the full MCP URL:
 

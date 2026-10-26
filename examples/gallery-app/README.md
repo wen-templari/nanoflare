@@ -25,7 +25,7 @@ pnpm exec nanoflare db create gallery-metadata
 pnpm exec nanoflare object-storage bucket create gallery-images
 ```
 
-Update [nanoflare.json](nanoflare.json) so the database id and object storage
+Update [wrangler.jsonc](wrangler.jsonc) so the database id and object storage
 bucket id match what the CLI returned, then deploy:
 
 ```sh

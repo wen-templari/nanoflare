@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+  "name": "gallery-app",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-12-10",
+  "assets": {
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "GALLERY_DB",
+      "database_name": "gallery-db",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "OBJECTS",
+      "bucket_name": "gallery-objects",
+    },
+  ],
+  "nanoflare": {
+    "auth": {},
+    "resource_ids": {
+      "GALLERY_DB": "d2926c6ca2e61cc49b6f110664f3ca72275a6798518f2c4c",
+      "OBJECTS": "d125d3ce69fe1ccc2196a8b27cc7871b2275833998c509ab",
+    },
+  },
+}

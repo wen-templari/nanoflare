@@ -1,16 +1,4 @@
+import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig } from "vite";
 
-export default defineConfig({
-  build: {
-    lib: {
-      entry: "src/worker.ts",
-      formats: ["es"],
-      fileName: () => "worker.js",
-    },
-    outDir: "dist",
-    emptyOutDir: true,
-    rollupOptions: {
-      external: ["cloudflare:workers"],
-    },
-  },
-});
+export default defineConfig({ plugins: [cloudflare()] });

@@ -176,7 +176,7 @@ async function writeTemplate(
       force: false,
     });
   }
-  const projectPath = resolve(destination, "nanoflare.json");
+  const projectPath = resolve(destination, "wrangler.jsonc");
   const project = await readFile(projectPath, "utf8");
   await writeFile(
     projectPath,

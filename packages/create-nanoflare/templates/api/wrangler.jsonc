@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "{{projectName}}",
+  "main": "src/worker.ts",
+  "compatibility_date": "{{compatibilityDate}}",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "{{projectName}}-db",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+    },
+  ],
+}

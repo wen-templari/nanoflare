@@ -1,20 +1,21 @@
-import { nanoflare } from "@nanoflare/vite-plugin";
+import { cloudflare } from "@cloudflare/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
+const optionalVendorStub = new URL("./worker/openapi-optional-vendor-stub.ts", import.meta.url)
+  .pathname;
+
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    nanoflare({
-      include: (request) => request.url?.startsWith("/api/") ?? false,
-      d1: { persist: ".nanoflare/d1" },
-      r2: { persist: ".nanoflare/r2" },
-    }),
-  ],
-  build: {
-    outDir: "dist/client",
-    emptyOutDir: true,
+  resolve: {
+    alias: [
+      { find: "effect", replacement: optionalVendorStub },
+      { find: "sury", replacement: optionalVendorStub },
+      { find: "zod/v4/core", replacement: optionalVendorStub },
+      { find: "zod-to-json-schema", replacement: optionalVendorStub },
+      { find: "zod-openapi", replacement: optionalVendorStub },
+    ],
   },
+
+  plugins: [react(), tailwindcss(), cloudflare({ persistState: { path: ".wrangler/state" } })],
 });

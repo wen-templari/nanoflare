@@ -11,8 +11,10 @@ nanoflare types
 nanoflare deploy
 ```
 
-The Nanoflare Vite plugin uses the same discovery order and understands the same
-D1 and R2 field names. Deployment uses an existing Vite build manifest when
+New projects use the official Cloudflare Vite plugin and `wrangler.jsonc`.
+See the [migration guide](cloudflare-vite-migration.md). The CLI discovers its
+build output through `.wrangler/deploy/config.json`. The legacy Nanoflare Vite
+plugin remains supported and uses the same source discovery order and D1/R2 fields. Deployment uses an existing Vite build manifest when
 present, or bundles `main` (including TypeScript and imports) in memory. Source
 configs need no `files` list or `format`. Existing manifests remain supported.
 

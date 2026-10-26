@@ -1,0 +1,6 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "{{projectName}}",
+  "main": "src/worker.tsx",
+  "compatibility_date": "{{compatibilityDate}}",
+}

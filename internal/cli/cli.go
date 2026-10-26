@@ -1079,6 +1079,9 @@ func loadDeploymentProject() (string, Project, error) {
 	if len(source.Files) > 0 {
 		return path, source, nil
 	}
+	if built, found, err := loadCloudflareBuild(path, source); found {
+		return path, built, err
+	}
 	artifactPath := filepath.Join(filepath.Dir(path), "dist", viteOutputName(source.Name), projectFilename)
 	project, err := loadProjectAtPath(artifactPath, false)
 	if err != nil {

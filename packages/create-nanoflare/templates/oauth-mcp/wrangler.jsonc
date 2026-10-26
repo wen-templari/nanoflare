@@ -1,15 +1,16 @@
 {
-  "$schema": "https://raw.githubusercontent.com/wen-templari/nanoflare/main/schemas/nanoflare.json",
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "{{projectName}}",
-  "main": "dist/worker.js",
+  "main": "src/worker.ts",
   "compatibility_date": "{{compatibilityDate}}",
   "compatibility_flags": ["global_fetch_strictly_public"],
   "kv_namespaces": [
     {
-      "binding": "OAUTH_KV"
-    }
+      "binding": "OAUTH_KV",
+      "id": "00000000000000000000000000000001",
+    },
   ],
   "nanoflare": {
-    "auth": {}
-  }
+    "auth": {},
+  },
 }

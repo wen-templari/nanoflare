@@ -270,6 +270,9 @@ importers:
 
   packages/create-nanoflare:
     devDependencies:
+      jsonc-parser:
+        specifier: 'catalog:'
+        version: 3.3.1
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3

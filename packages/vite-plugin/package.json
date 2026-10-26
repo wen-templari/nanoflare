@@ -1,7 +1,7 @@
 {
   "name": "@nanoflare/vite-plugin",
   "version": "0.2.0",
-  "description": "Run a Nanoflare Worker locally during Vite development.",
+  "description": "Deprecated: use @cloudflare/vite-plugin with the Nanoflare CLI.",
   "homepage": "https://github.com/wen-templari/nanoflare#readme",
   "bugs": "https://github.com/wen-templari/nanoflare/issues",
   "license": "MIT",

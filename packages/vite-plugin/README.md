@@ -1,5 +1,12 @@
 # `@nanoflare/vite-plugin`
 
+Deprecated for new projects. Use `@cloudflare/vite-plugin` with a Nanoflare CLI
+release that supports Cloudflare build output. See the
+[migration guide](../../docs/guides/cloudflare-vite-migration.md). Existing
+versions and legacy build manifests remain supported.
+
+The documentation below describes the legacy plugin.
+
 Run a single React SSR or API Worker in a local Workers runtime during `vite dev`
 and build its deploy artifact with `vite build`. Vite continues to serve browser
 modules, static files, and client HMR; matching document and `/api/*` requests
