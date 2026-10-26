@@ -29,7 +29,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
   ],
 )),
  ],
- sockets = [(name = "dispatcher", address = %s, http = (), service = "dispatcher")],
+ sockets = [(name = "dispatcher", address = %s, http = (forwardedProtoHeader = "X-Forwarded-Proto"), service = "dispatcher")],
 );
 `, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(runtimeassets.DispatchModule), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
 	return out.String()
