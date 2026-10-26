@@ -5,3 +5,6 @@ var
 **/node_modules
 **/dist
 *.tsbuildinfo
+
+# Local pilot credentials and cold backups never belong in an image build context.
+docker/pilot/private

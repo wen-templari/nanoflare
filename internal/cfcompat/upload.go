@@ -291,11 +291,26 @@ func decodeUpload(contentType string, body io.Reader, decodeMetadata func([]byte
 		return DecodedUpload{}, errors.New("upload exceeds 10 MiB")
 	}
 	typeName, params, err := mime.ParseMediaType(contentType)
+	// SDK 7 retains application/javascript even though fetch encodes FormData.
+	// Accept only an initial, bounded MIME delimiter, with no preamble or type
+	// parameters. All parts still pass the normal strict upload validation.
+	if err == nil && typeName == "application/javascript" && len(params) == 0 {
+		end := bytes.Index(data, []byte("\r\n"))
+		if end > 2 && end <= 72 && bytes.HasPrefix(data, []byte("--")) {
+			boundary := string(data[2:end])
+			probe := multipart.NewWriter(io.Discard)
+			if probe.SetBoundary(boundary) == nil {
+				typeName, params = "multipart/form-data", map[string]string{"boundary": boundary}
+			}
+		}
+	}
 	if err != nil || typeName != "multipart/form-data" || params["boundary"] == "" {
 		return DecodedUpload{}, errors.New("multipart/form-data with a boundary is required")
 	}
 	reader := multipart.NewReader(bytes.NewReader(data), params["boundary"])
 	parts := map[string][]byte{}
+	wasmParts := map[string]bool{}
+	sdkMetadata := map[string]any{}
 	for count := 0; ; count++ {
 		part, err := reader.NextRawPart()
 		if err == io.EOF {
@@ -308,10 +323,23 @@ func decodeUpload(contentType string, body io.Reader, decodeMetadata func([]byte
 			return DecodedUpload{}, errors.New("too many upload parts")
 		}
 		name := part.FormName()
-		// cloudflare@5.x uses repeated `files` parts with the module identity
+		if strings.HasPrefix(name, "metadata[") {
+			if len(part.Header.Values("Content-Disposition")) != 1 || len(part.Header.Values("Content-Type")) != 0 || part.FileName() != "" || part.Header.Get("Content-Transfer-Encoding") != "" || part.Header.Get("Content-Encoding") != "" {
+				return DecodedUpload{}, errors.New("invalid SDK metadata field")
+			}
+			value, err := io.ReadAll(part)
+			if err != nil || !utf8.Valid(value) || len(value) > 1<<20 {
+				return DecodedUpload{}, errors.New("invalid SDK metadata value")
+			}
+			if err := addSDKMetadata(sdkMetadata, name, string(value)); err != nil {
+				return DecodedUpload{}, err
+			}
+			continue
+		}
+		// Cloudflare SDKs use repeated `files` or `files[]` parts with the module identity
 		// in filename. Other clients use the module name as the form key.
 		// Never let a filename override a named module (or metadata).
-		if name == "files" {
+		if name == "files" || name == "files[]" {
 			_, disposition, parseErr := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
 			if parseErr != nil || !moduleName(disposition["filename"]) {
 				return DecodedUpload{}, errors.New("files parts require a valid module filename")
@@ -344,17 +372,31 @@ func decodeUpload(contentType string, body io.Reader, decodeMetadata func([]byte
 			if partType != "application/json" {
 				return DecodedUpload{}, errors.New("metadata content type must be application/json")
 			}
-		} else if partType != "application/javascript+module" && partType != "text/javascript+module" && partType != "application/javascript" && partType != "text/javascript" {
+		} else if partType != "application/wasm" && partType != "application/javascript+module" && partType != "text/javascript+module" && partType != "application/javascript" && partType != "text/javascript" {
 			return DecodedUpload{}, errors.New("unsupported module content type")
 		}
 		value, err := io.ReadAll(part)
 		if err != nil {
 			return DecodedUpload{}, errors.New("invalid upload part")
 		}
-		if !utf8.Valid(value) {
-			return DecodedUpload{}, errors.New("upload parts must be UTF-8")
+		if partType == "application/wasm" {
+			if len(value) < 8 || !bytes.Equal(value[:8], []byte{0, 97, 115, 109, 1, 0, 0, 0}) {
+				return DecodedUpload{}, errors.New("invalid Wasm module header")
+			}
+			wasmParts[name] = true
+		} else if !utf8.Valid(value) {
+			return DecodedUpload{}, errors.New("JavaScript and metadata parts must be UTF-8")
 		}
 		parts[name] = value
+	}
+	if len(sdkMetadata) > 0 {
+		if _, exists := parts["metadata"]; exists {
+			return DecodedUpload{}, errors.New("mixed JSON and SDK metadata")
+		}
+		parts["metadata"], err = json.Marshal(sdkMetadata)
+		if err != nil || len(parts["metadata"]) > 1<<20 {
+			return DecodedUpload{}, errors.New("metadata exceeds 1 MiB")
+		}
 	}
 	metadata, err := decodeMetadata(parts["metadata"])
 	if err != nil {
@@ -365,9 +407,18 @@ func decodeUpload(contentType string, body io.Reader, decodeMetadata func([]byte
 	if _, exists := parts[metadata.MainModule]; !exists {
 		return DecodedUpload{}, errors.New("main_module part is missing")
 	}
+	if wasmParts[metadata.MainModule] {
+		return DecodedUpload{}, errors.New("main_module must be JavaScript")
+	}
 	upload := DecodedUpload{Metadata: metadata}
 	for name, content := range parts {
-		upload.Files = append(upload.Files, nanoflare.WorkerFile{Name: path.Base(name), Path: name, Size: int64(len(content)), Content: string(content)})
+		file := nanoflare.WorkerFile{Name: path.Base(name), Path: name, Size: int64(len(content))}
+		if wasmParts[name] {
+			file.Wasm = bytes.Clone(content)
+		} else {
+			file.Content = string(content)
+		}
+		upload.Files = append(upload.Files, file)
 	}
 	sort.Slice(upload.Files, func(i, j int) bool { return upload.Files[i].Path < upload.Files[j].Path })
 	return upload, nil
@@ -412,7 +463,7 @@ func CompleteUpload(upload DecodedUpload, previous *Previous, resolve Resolver, 
 	if err != nil {
 		return Candidate{}, err
 	}
-	result.Deployment.Files = append([]nanoflare.WorkerFile(nil), upload.Files...)
+	result.Deployment.Files = nanoflare.CloneWorkerFiles(upload.Files)
 	return result, nil
 }
 func ParseUpload(contentType string, body io.Reader, previous *Previous, resolve Resolver, options Options) (Candidate, error) {
@@ -459,6 +510,17 @@ func translate(metadata Metadata, previous *Previous, resolve Resolver, allowDis
 	bindings := map[string]Binding{}
 	retained := map[string]string{}
 	for _, kind := range metadata.KeepBindings {
+		// Wrangler --keep-vars always requests secret_key retention too. This
+		// profile cannot create secret-key bindings; retaining an empty set is
+		// safe, but never silently discard a binding from a future native profile.
+		if kind == "secret_key" {
+			for _, binding := range prior {
+				if binding.Type == kind {
+					return Candidate{}, errors.New("secret-key retention is unsupported")
+				}
+			}
+			continue
+		}
 		if !supportedBinding(kind) && !(allowDispatch && kind == "dispatch_namespace") {
 			return Candidate{}, errors.New("unsupported keep_bindings type")
 		}

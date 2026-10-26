@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "scope": "trusted persistent local Docker pilot; native deployment API and real dynamic dispatch",
+  "traffic_rollback_to_42": true,
+  "javascript_unchanged": true,
+  "exact_non_utf8_binary_bytes_preserved": true,
+  "encrypted_secret_survived": true,
+  "postgres_minio_daemon_runner_restart_passed": true,
+  "recovery_seconds": 4.67,
+  "wasm_sha256": {
+    "42": "8211d0f565b0bc2fe5fc9039119b73a20785e77baa8b0483f45c93ae641ae278",
+    "7": "ac2fc998df595603d561d58637cd56d78acf5113866f1753809245bb8f064a2e"
+  },
+  "production_qualified": false,
+  "untrusted_execution_qualified": false,
+  "limits": [
+    "Not a cold restore of this Wasm fixture, crash recovery or cross-version database migration test.",
+    "Native deployment API; pinned SDK/Wrangler workflows are qualified separately.",
+    "Retained fixture remains available for subsequent recovery checks."
+  ],
+  "binary_variants_42_and_7_served": true,
+  "new_binary_revision_uploads": 0,
+  "note": "This retained-fixture replay reuses the two revisions uploaded by the separately retained first-deploy run."
+}

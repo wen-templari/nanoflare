@@ -4,9 +4,45 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"mime/multipart"
 	"strings"
 	"testing"
 )
+
+func TestSDKSettingsFields(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fields [][2]string
+		ok     bool
+	}{
+		{"lists", [][2]string{{"settings[tags][]", "one"}, {"settings[tags][]", "two"}, {"settings[compatibility_date]", "2025-12-10"}, {"settings[compatibility_flags][]", "nodejs_compat"}}, true},
+		{"duplicate scalar", [][2]string{{"settings[compatibility_date]", "2025-12-10"}, {"settings[compatibility_date]", "2025-12-11"}}, false},
+		{"mixed JSON", [][2]string{{"settings[tags][]", "one"}, {"settings", `{}`}}, false},
+		{"unknown", [][2]string{{"settings[limits][cpu_ms]", "1"}}, false},
+		{"ambiguous binding", [][2]string{{"settings[bindings][][name]", "A"}}, false},
+		{"invalid UTF8", [][2]string{{"settings[tags][]", string([]byte{255})}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			for _, field := range tc.fields {
+				if err := writer.WriteField(field[0], field[1]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			data, err := DecodeSettings(writer.FormDataContentType(), &body)
+			if (err == nil) != tc.ok {
+				t.Fatalf("data=%s error=%v", data, err)
+			}
+			if tc.ok && string(data) != `{"compatibility_date":"2025-12-10","compatibility_flags":["nodejs_compat"],"tags":["one","two"]}` {
+				t.Fatalf("decoded %s", data)
+			}
+		})
+	}
+}
 
 func TestDecodeSettingsMultipartBoundaries(t *testing.T) {
 	valid := uploadPart{"settings", "application/json", `{"tags":["team/a"]}`}

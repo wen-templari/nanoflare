@@ -326,11 +326,13 @@ type PutSecretInput struct {
 	Value string `json:"value"`
 }
 
+// WorkerFile carries either JavaScript Content or binary Wasm (base64 in JSON).
 type WorkerFile struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
 	Size    int64  `json:"size"`
 	Content string `json:"content"`
+	Wasm    []byte `json:"wasm,omitempty"`
 }
 
 type AssetFile struct {

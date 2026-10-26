@@ -72,3 +72,38 @@ func TestWorkerCodeSnapshotRejectsInternalModuleCollision(t *testing.T) {
 		})
 	}
 }
+
+func TestWasmCodeSnapshotStaticAndWireTypes(t *testing.T) {
+	wasm := []byte{0, 97, 115, 109, 1, 0, 0, 0, 0, 4, 1, 'x', 255, 254}
+	active := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "wasm"}, Deployment: nanoflare.Deployment{ID: "r", Format: "modules", Entrypoint: "worker.js", CompatibilityDate: "2025-12-10", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import module from "./lib.wasm";export default {fetch(){return new Response(String(module instanceof WebAssembly.Module))}}`}, {Path: "lib.wasm", Wasm: wasm}}}}
+	code := SnapshotWorkerCode(active, WorkerdOptions{})
+	wasm[8] = 42
+	if code.Modules["lib.wasm"].Wasm[8] != 0 {
+		t.Fatal("compiled binary aliases deployment")
+	}
+	wire, err := json.Marshal(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Modules map[string]map[string]json.RawMessage `json:"modules"`
+	}
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Modules["lib.wasm"]) != 1 || decoded.Modules["lib.wasm"]["wasm"] == nil {
+		t.Fatal("binary module lost its type", string(wire))
+	}
+	var out strings.Builder
+	writeWorkerSource(&out, code)
+	if !strings.Contains(out.String(), `name = "lib.wasm", wasm = 0x"0061736d0100000000040178fffe"`) {
+		t.Fatal(out.String())
+	}
+	empty, err := json.Marshal(WorkerCodeModule{})
+	if err != nil || string(empty) != `{"js":""}` {
+		t.Fatal("empty JS union changed", string(empty), err)
+	}
+	if _, err := json.Marshal(WorkerCodeModule{JS: "mixed", Wasm: []byte{1}}); err == nil {
+		t.Fatal("mixed module union accepted")
+	}
+}

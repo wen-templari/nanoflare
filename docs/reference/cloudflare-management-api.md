@@ -1,6 +1,6 @@
 # Cloudflare-shaped management API reference
 
-Updated 2026-10-22. This reference describes the implemented trusted-profile
+Updated 2026-10-25. This reference describes the implemented trusted-profile
 prototype, including its local differences. The normal daemon leaves the
 adapter disabled. Opt in with `--enable-cloudflare-compatibility` or
 `NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED=true`, together with native platform
@@ -146,11 +146,63 @@ namespace rename/replacement requires an explicit binding on the next upload.
 Native deploy/vars/secret edits retain namespace binding metadata; native secret
 edits cannot collide with dispatch binding names.
 
-Other ordinary Worker API operations, including code download, settings PATCH,
-secret endpoints and ordinary asset-upload sessions, remain unsupported. Namespace
+Other ordinary Worker API operations, including code download, settings PATCH
+and ordinary asset-upload sessions, remain unsupported. Namespace
 asset-upload completion tokens cannot be attached through the ordinary route.
 Native APIs remain available for those administration tasks. These additions do
 not claim general Wrangler compatibility or live Cloudflare equivalence.
+
+SDK 7 bracketed settings fields are accepted for compatibility date, flags and
+tags. Duplicate scalar fields, mixed JSON/bracketed settings and ambiguous
+binding arrays are rejected. Empty arrays produce no SDK form fields; use a JSON
+settings part to clear lists or change bindings.
+
+## Wrangler deployment probes
+
+Ordinary Workers additionally support GET `/workers/services/{script}` for
+native ordinary identity and its default script summary, GET
+`/workers/scripts/{script}/deployments` for current native traffic, and GET/POST
+`/workers/scripts/{script}/subdomain` for disabled workers.dev/preview state.
+These paths are account-relative and require `workers:read`; subdomain POST
+requires `workers:write`. They retain account authorization and reject unknown
+queries and customer identity headers. Missing service/deployment probes use
+local error code 10007 so the pinned Wrangler can provision a new Worker.
+This client-driven code choice has not been verified against live Cloudflare.
+
+The deployments result contains only a current traffic projection marked
+`nanoflare_current_traffic: true`, with native revision IDs and percentages.
+It does not invent deployment history or Cloudflare deployment IDs. Service
+metadata does not claim migrations or service-environment support. workers.dev
+and previews cannot be enabled; POST accepts only an explicit disabled state.
+Native ingress/TLS remains separate.
+
+Wrangler 4.54.0 assets use truncated BLAKE3 over base64 content plus extension;
+this hash is verified in addition to the earlier SHA-256 wire conventions.
+Internal full content digests remain independent. Wrangler `--keep-vars` sends
+`secret_key` retention as well as `secret_text`: retention of an empty secret-key
+set is accepted, but actual secret-key bindings remain unsupported and rejected.
+
+## Ordinary secrets and CLI cleanup
+
+Ordinary scripts support GET/PUT `/workers/scripts/{script}/secrets` and
+GET/DELETE `/workers/scripts/{script}/secrets/{name}`. Reads require
+`workers:read` and return names/types only. Mutations require `secrets:write`,
+`deployments:write` and conservatively `namespaces:dispatch`, checked before
+idempotent replay. They preserve complete immutable snapshots, including dispatch
+bindings, and use the same ETag/precondition/retry rules as namespace mutations.
+Existing non-secret bindings cannot be replaced by a secret. Secret DELETE
+accepts only `url_encoded=true` when that optional query is supplied.
+
+DELETE `/workers/services/{script}?force=true` requires `workers:write` and
+uses native deletion of the ordinary identity. It rejects Idempotency-Key and
+If-Match rather than ignoring them. It does not delete shared resources.
+Wrangler 4.54.0 additionally lists legacy Workers Sites KV namespaces during
+cleanup. GET `/accounts/{organization}/storage/kv/namespaces` requires `kv:read`
+and returns actual organization-owned native IDs/titles. It accepts page (1 to
+1,000,000), per_page (1 to 1,000, default 100), order=title and direction=asc.
+No legacy Workers Sites KV deletion support is implied. A CLI cleanup can fail
+after script deletion if it finds a matching legacy asset namespace that needs
+unsupported deletion; native administration remains available for that resource.
 
 ## Revision selection and retries
 
@@ -194,8 +246,14 @@ evidence; production retention and soak remain open.
 
 ## Upload and asset limits
 
-Module uploads accept UTF-8 JavaScript module parts plus a JSON `metadata` part,
-including metadata supplied as a plain multipart field. Supported typed bindings
+Module uploads accept UTF-8 JavaScript parts, binary `application/wasm` parts
+and a JSON `metadata` part, including metadata supplied as a plain multipart
+field. The main module must be JavaScript. Wasm bytes are preserved in immutable
+deployments and content downloads; downloads label them `application/wasm`.
+The native JSON API represents binary modules with a base64 `wasm` field and
+empty JavaScript `content`. Mixed source/binary files, invalid Wasm version-1
+headers and binary entrypoints are rejected. Runtime compilation validates the
+remaining binary structure. Supported typed bindings
 are plain text, JSON, secret text, KV, D1, R2, fetch services and assets. Native
 ownership/grants are checked after translation. Type preservation and renamed
 inheritance resolve against the latest upload; strict missing inheritance fails.
@@ -211,7 +269,7 @@ resource-grant checks.
 Code uploads are bounded to 10 MiB, 256 parts, 1 MiB metadata and 128 effective
 bindings. Secret patch bodies are bounded to 1 MiB and 128 entries. Tags are
 limited to eight distinct strings of at most 256 UTF-8 bytes. Secret-key bindings,
-version tags, CPU intent, classic scripts, non-JavaScript module formats and
+version tags, CPU intent, classic scripts, non-JavaScript module formats other than Wasm and
 arbitrary RPC entrypoints are unsupported by this profile.
 
 Asset manifests map canonical absolute paths to hash/size entries. A session
@@ -268,8 +326,10 @@ expansion remain open; see [remaining work](../plans/workers-for-platforms-remai
 The [upstream example runner](../../scripts/wfp-examples/README.md) deploys the
 pinned Worker Publisher and Internal Sites bundles through native publication.
 SDK 5.2.0 filename-keyed `files` multipart parts are accepted; named module
-parts retain their own identity. SDK 7 bracketed metadata serialization is still
-outside the qualified wire contract. The private account-scoped gateway routes
+parts retain their own identity. SDK 7 scalar/list metadata and asset completion tokens are supported, including
+its parameter-free application/javascript outer type with an initial MIME
+boundary. Binding object arrays still require JSON metadata; asset routing configuration
+supports HTML/not-found handling and boolean or route-list worker-first values. The private account-scoped gateway routes
 API requests locally without external forwarding or adding consent headers. It does not enable broad Wrangler provisioning support.
 
 Internal Sites' script/path-salted truncated SHA-256 wire hashes are accepted

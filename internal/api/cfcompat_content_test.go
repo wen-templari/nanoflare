@@ -127,3 +127,40 @@ func TestCloudflareContentPreservesSnapshot(t *testing.T) {
 		})
 	}
 }
+
+func TestCloudflareBinaryContentRoundTrip(t *testing.T) {
+	wasm := []byte{0, 97, 115, 109, 1, 0, 0, 0, 0, 4, 1, 'x', 255, 254}
+	recorder := httptest.NewRecorder()
+	(&Server{}).cfScriptContent(recorder, nanoflare.ManagementUpload{Deployment: nanoflare.DeployInput{Format: "modules", Entrypoint: "worker.js", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: "export default {}"}, {Path: "lib.wasm", Wasm: wasm}}}})
+	if recorder.Code != 200 {
+		t.Fatal(recorder.Code, recorder.Body.String())
+	}
+	_, params, err := mime.ParseMediaType(recorder.Header().Get("Content-Type"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := multipart.NewReader(recorder.Body, params["boundary"])
+	seen := false
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if part.FileName() == "lib.wasm" {
+			seen = true
+			if part.Header.Get("Content-Type") != "application/wasm" || !bytes.Equal(data, wasm) {
+				t.Fatal("binary download corrupted")
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("binary download omitted")
+	}
+}

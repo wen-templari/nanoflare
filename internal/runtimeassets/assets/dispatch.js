@@ -30,9 +30,15 @@ async function requireOK(response, missingWorker = false) {
   });
 }
 let parentExports;
-export function setDispatchExports(value){parentExports=value;}
+export function setDispatchExports(value) {
+  parentExports = value;
+}
 function dispatchControl(entrypoint) {
- return entrypoint.ctx.props.resourceControl ? (parentExports||entrypoint.ctx.exports).ResourceBridge({props:entrypoint.ctx.props.resourceControl}) : entrypoint.env[entrypoint.ctx.props.control];
+  return entrypoint.ctx.props.resourceControl
+    ? (parentExports || entrypoint.ctx.exports).ResourceBridge({
+        props: entrypoint.ctx.props.resourceControl,
+      })
+    : entrypoint.env[entrypoint.ctx.props.control];
 }
 export class DispatchBroker extends WorkerEntrypoint {
   async effect(kind, binding, request) {
@@ -55,17 +61,14 @@ export class DispatchBroker extends WorkerEntrypoint {
     );
   }
   async log(level, message) {
-    return dispatchControl(this).fetch(
-      "http://nanoflare.internal/internal/runtime/dispatch/log",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Nanoflare-Invocation": this.ctx.props.lease,
-        },
-        body: JSON.stringify({ level, message }),
+    return dispatchControl(this).fetch("http://nanoflare.internal/internal/runtime/dispatch/log", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Nanoflare-Invocation": this.ctx.props.lease,
       },
-    );
+      body: JSON.stringify({ level, message }),
+    });
   }
   async outbound(request) {
     const headers = new Headers(request.headers);
@@ -90,7 +93,12 @@ export class DispatchBroker extends WorkerEntrypoint {
       ),
     );
     return invokeArtifact(
-      { ...this.env, __NANOFLARE_WORKER_LOADER:this.env.__NANOFLARE_WORKER_LOADER||this.env.LOADER, __NANOFLARE_RESOURCE_CONTROL:this.ctx.props.resourceControl, [this.ctx.props.control]:dispatchControl(this) },
+      {
+        ...this.env,
+        __NANOFLARE_WORKER_LOADER: this.env.__NANOFLARE_WORKER_LOADER || this.env.LOADER,
+        __NANOFLARE_RESOURCE_CONTROL: this.ctx.props.resourceControl,
+        [this.ctx.props.control]: dispatchControl(this),
+      },
       this.ctx,
       this.ctx.props.control,
       await response.json(),
@@ -154,19 +162,30 @@ function trackResponse(response, broker, ctx) {
   });
 }
 async function invokeArtifact(env, ctx, control, artifact, request, props) {
-  const broker = (parentExports||ctx.exports).DispatchBroker({ props: { control, lease: artifact.lease, resourceControl:env.__NANOFLARE_RESOURCE_CONTROL } });
+  const broker = (parentExports || ctx.exports).DispatchBroker({
+    props: { control, lease: artifact.lease, resourceControl: env.__NANOFLARE_RESOURCE_CONTROL },
+  });
   try {
     if (request.headers.get("upgrade"))
       throw Object.assign(new Error("WebSockets are not supported"), { status: 501 });
     const key = `${artifact.deployment.app_id}:${artifact.deployment.id}:${artifact.digest}`;
     let cached = revisions.get(key);
     let code = cached?.code;
+    let wasmBytes = 0;
     if (cached) {
       revisions.delete(key);
       codeBytes -= cached.bytes;
     } else {
       const modules = Object.create(null);
-      for (const file of artifact.deployment.files) modules[file.path] = { js: file.content };
+      for (const file of artifact.deployment.files) {
+        if (file.wasm !== undefined) {
+          const bytes = Uint8Array.from(atob(file.wasm), (byte) => byte.charCodeAt(0));
+          modules[file.path] = { wasm: bytes.buffer };
+          wasmBytes += bytes.byteLength;
+        } else {
+          modules[file.path] = { js: file.content };
+        }
+      }
       modules["__nanoflare_dynamic_entrypoint__.js"] = { js: artifact.wrapper };
       modules["nanoflare-internal:runtime-bindings.js"] = { js: artifact.runtime_bindings };
       modules["nanoflare-internal:dynamic-env.js"] = { js: artifact.dynamic_env };
@@ -182,7 +201,10 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
       };
     }
     if (!cached)
-      cached = { code, bytes: new TextEncoder().encode(JSON.stringify(code)).byteLength };
+      cached = {
+        code,
+        bytes: new TextEncoder().encode(JSON.stringify(code)).byteLength + wasmBytes,
+      };
     revisions.set(key, cached);
     codeBytes += cached.bytes;
     while (revisions.size > maxRevisions || codeBytes > maxCodeBytes) {
@@ -226,7 +248,15 @@ export function wrapDispatchEnv(env, ctx, root) {
               const request = new Request(input, init);
               if (request.headers.get("upgrade"))
                 throw Object.assign(new Error("WebSockets are not supported"), { status: 501 });
-              if(env.__NANOFLARE_WFP) return env.__NANOFLARE_WFP.invoke(binding,script,options,dispatchOptions,root,request);
+              if (env.__NANOFLARE_WFP)
+                return env.__NANOFLARE_WFP.invoke(
+                  binding,
+                  script,
+                  options,
+                  dispatchOptions,
+                  root,
+                  request,
+                );
               const response = await requireOK(
                 await env[control].fetch(
                   "http://nanoflare.internal/internal/runtime/dispatch/acquire",

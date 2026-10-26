@@ -1,0 +1,45 @@
+{
+  "passed": true,
+  "duration_seconds": 120.29,
+  "configuration": {
+    "lanes": 4,
+    "target_requests_per_second": 10,
+    "retries": 0,
+    "fixture": "two dispatch lanes and two populated D1 read lanes"
+  },
+  "workers": {
+    "dispatch": {
+      "requests": 600,
+      "failures": 0,
+      "latency_ms": {
+        "p50": 22.16,
+        "p95": 28.0,
+        "max": 32.92
+      }
+    },
+    "d1": {
+      "requests": 600,
+      "failures": 0,
+      "latency_ms": {
+        "p50": 26.45,
+        "p95": 33.02,
+        "max": 36.42
+      }
+    }
+  },
+  "failures": [],
+  "services": {
+    "alloy": "running",
+    "grafana": "running",
+    "loki": "running",
+    "minio": "running",
+    "nanoflare-runner": "running",
+    "nanoflared": "running",
+    "postgres": "running",
+    "prometheus": "running",
+    "tempo": "running",
+    "traefik": "running",
+    "vector": "running"
+  },
+  "limitations": "Two-minute local read soak, one customer and one D1 row; not production capacity, write load, large tenant count or long-running soak."
+}

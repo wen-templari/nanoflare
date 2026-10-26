@@ -1,0 +1,49 @@
+{
+  "scope": "pinned SDK 7.3.0 trusted runtime Wasm module lifecycle",
+  "sdk": "7.3.0",
+  "workerd": "2026-09-11",
+  "qualified_platforms": [
+    {
+      "os": "darwin",
+      "arch": "arm64",
+      "node": "24.22.1",
+      "go_race": true
+    },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "node": "22.23.1",
+      "go_race": false
+    }
+  ],
+  "wasm_workflow_passed": true,
+  "assertions": [
+    "default SDK namespace multipart serialization including binary File MIME",
+    "finite Wasm execution returns 42",
+    "downloaded module MIME and exact bytes including invalid-UTF-8 custom section",
+    "SDK content-only binary update returns 7 with identical JavaScript source",
+    "secrets and assets retained through content update",
+    "later secret update retains Wasm binary and assets",
+    "SDK customer and namespace cleanup; native dispatcher cleanup"
+  ],
+  "linux_image": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "linux_workerd_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "source_and_artifact_sha256": {
+    "scripts/wfp-client-flows/sdk-runtime.mjs": "92ad690bd134a809ae1fcda4ed43c06f1f169ee06228e81b0cf374496a927291",
+    "internal/api/cfcompat_sdk_test.go": "fa19d0cf3f2017c0cd2daaf5e0959408e7c9392c15853a51e19ab7010e07608d",
+    "/tmp/nanoflare-wasm-clients.test": "4269f2bf0991367f6ec906369e0f3793fb03e4cb1a26f314f7f807bc6e8e0b98",
+    "/tmp/nf-wfp-sdk-730/node_modules/cloudflare/package.json": "2029188436640911c1768de01707ba2461ff409fc4b5a5c33d530a4563034002",
+    "/tmp/nf-wfp-sdk-730/node_modules/cloudflare/resources/workers-for-platforms/dispatch/namespaces/scripts/content.mjs": "aa64d3eb354bd07399f07c8e679b721af0033500c17924f4b54adef896e2bcfb",
+    "/tmp/nf-workerd-20260911/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd": "3c3b245b344ea4b71b8f8e72fa9ae40eab25faae45b8daa55a06f358ad07ceaf"
+  },
+  "postgres_binary_workflow_qualified": false,
+  "hosted_parity_qualified": false,
+  "production_qualified": false,
+  "untrusted_execution_qualified": false,
+  "notes": [
+    "Memory repository, local object storage and loopback requests only.",
+    "Linux fixture runs without network access, as non-root with read-only root and package/script mounts, 1 GiB memory and 128-task container bounds. These are fixture bounds, not per-invocation isolation qualification.",
+    "Ordinary dispatcher upload retains the existing JSON File metadata adaptation; namespace Wasm and content updates use default SDK serialization.",
+    "The SDK-only Linux run uses the recorded API test binary. Its selected SDK helper is unchanged; that binary also contains contemporaneous Wrangler fixture changes."
+  ]
+}

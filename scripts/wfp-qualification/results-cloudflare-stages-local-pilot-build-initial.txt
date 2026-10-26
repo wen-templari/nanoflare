@@ -1,0 +1,31 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.58kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-bookworm-slim
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/golang:1.25-alpine
+#3 ...
+
+#4 [internal] load metadata for docker.io/litestream/litestream:latest
+#4 ERROR: failed to authorize: DeadlineExceeded: failed to fetch anonymous token: Get "https://auth.docker.io/token?scope=repository%3Alitestream%2Flitestream%3Apull&service=registry.docker.io": dial tcp 199.59.148.202:443: i/o timeout
+
+#3 [internal] load metadata for docker.io/library/golang:1.25-alpine
+#3 CANCELED
+------
+ > [internal] load metadata for docker.io/litestream/litestream:latest:
+------
+Dockerfile:28
+--------------------
+  26 |     RUN node -e 'const fs = require("node:fs"); fs.symlinkSync(require.resolve("@cloudflare/workerd-linux-" + (process.arch === "x64" ? "64" : process.arch) + "/bin/workerd", {paths: ["/usr/local/lib/node_modules/workerd"]}), "/usr/local/bin/workerd-native")'
+  27 |     
+  28 | >>> FROM litestream/litestream:latest AS litestream
+  29 |     
+  30 |     FROM scratch AS packages
+--------------------
+ERROR: failed to solve: DeadlineExceeded: DeadlineExceeded: DeadlineExceeded: litestream/litestream:latest: failed to resolve source metadata for docker.io/litestream/litestream:latest: failed to authorize: DeadlineExceeded: failed to fetch anonymous token: Get "https://auth.docker.io/token?scope=repository%3Alitestream%2Flitestream%3Apull&service=registry.docker.io": dial tcp 199.59.148.202:443: i/o timeout
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/v82f0t7bpvvdgseey0hkgi2vo

@@ -26,6 +26,18 @@ func FreezeExecution(active ActiveDeployment, compileOptions ...string) (*Execut
 	if active.App.ID == "" || active.Deployment.ID == "" || (active.Deployment.AppID != "" && active.Deployment.AppID != active.App.ID) {
 		return nil, errors.New("execution requires matching application and deployment identity")
 	}
+	entrypoint := active.Deployment.Entrypoint
+	if entrypoint == "" && len(active.Deployment.Files) > 0 {
+		entrypoint = active.Deployment.Files[0].Path
+	}
+	for _, file := range active.Deployment.Files {
+		if err := validateWorkerWasm(file); err != nil {
+			return nil, err
+		}
+		if file.Wasm != nil && (file.Path == entrypoint || active.Deployment.Format == "service-worker") {
+			return nil, errors.New("Wasm requires a JavaScript module entrypoint")
+		}
+	}
 	frozen := cloneExecutionActive(active)
 	// Routing metadata and the legacy app-wide credential are not execution state.
 	identity := ActiveDeployment{App: App{ID: frozen.App.ID, OrgID: frozen.App.OrgID, Platform: frozen.App.Platform}, Deployment: frozen.Deployment}
@@ -57,7 +69,7 @@ func cloneExecutionActive(a ActiveDeployment) ActiveDeployment {
 	a.App.SecretValues = maps.Clone(a.App.SecretValues)
 	a.App.Auth.ProtectedRoutes = slices.Clone(a.App.Auth.ProtectedRoutes)
 	d := &a.Deployment
-	d.Files = slices.Clone(d.Files)
+	d.Files = CloneWorkerFiles(d.Files)
 	d.Assets = slices.Clone(d.Assets)
 	for i := range d.Assets {
 		d.Assets[i].Data = slices.Clone(d.Assets[i].Data)

@@ -1,0 +1,46 @@
+{
+  "at": "2026-10-23T15:14:58.923165+00:00",
+  "passed": false,
+  "probe_sha256": "2479b934cdd2967308c6bfb425d22d8c21ad9feaa5414876dc6aeeb5a1f191f8",
+  "matrix_expression": "^Test(RuntimeCapabilityBoundaries|RuntimeStorageCancellationReachesBackend|RuntimeReconciliationSerializesWithDeletion|PoolMetricsKeepUnknownAndStaleUsageUnavailable|DispatchLeaseAuthorization|DynamicServicesInheritAuthorityAndBudget|DispatchResourceSharingRevisionAndRevocationMatrix|DispatchTelemetryScopesPolicyAndTrustedElapsedTime|PrivateDynamicDispatchEndToEnd|ImmutableArtifactsAndPublicationRecovery|ArtifactAPIProtectionAndIdempotency|ManagedPublication.*|ManagedRecovery.*|Cloudflare.*)$",
+  "stages": [
+    {
+      "name": "authorization",
+      "exit_code": 0,
+      "passes": 105,
+      "skips": [],
+      "memory.max": "2147483648",
+      "memory.swap.max": "0",
+      "memory.current": "37163008",
+      "memory.peak": "155672576",
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "pids.max": "128",
+      "pids.current": "3"
+    },
+    {
+      "name": "capacity",
+      "exit_code": 1,
+      "passes": 0,
+      "skips": []
+    }
+  ],
+  "source_scope": "cmd/**/*.go, internal/**/*.go, internal/**/*.js, scripts/wfp-client-flows/*.{mjs,cjs}, linux_pool.py, go.mod, go.sum; sorted relative path NUL SHA-256 newline",
+  "source_files": 279,
+  "source_tree_sha256": "9057eedb6e983553f08430e19d3fb114dc28bb82aac9370103b323d11e339729",
+  "limitations": [
+    "single-host trusted shared profile; no untrusted sandbox or CPU enforcement",
+    "capacity has memory metadata/object fixtures; separate process drills cover real S3/PG recovery",
+    "whole probe cgroup includes the Go control fixture and native engine; production API is outside runner cgroup",
+    "RSS is approximate and point-in-time; cgroup peak is whole-probe memory, not per-isolate RSS",
+    "bounded sustained slices are not production soak or an advertised maximum tenant count"
+  ],
+  "image_id": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "phase_seconds": 15,
+  "memory_bytes": 2147483648,
+  "sdk_version": "7.3.0",
+  "failure": "=== RUN   TestPrivateDispatchCapacityQualification\n2026/10/23 15:15:17 started workerd pid=20 config=/tmp/TestPrivateDispatchCapacityQualification3873433192/001/workerd-000001.capnp\n    dispatch_capacity_test.go:379: status 410: Dispatch failed (410): {\"detail\":\"invocation expired or revoked\",\"instance\":\"6898105fcd5a9b25bd470051\",\"status\":410,\"title\":\"Gone\",\"type\":\"about:blank\"}\n        \n--- FAIL: TestPrivateDispatchCapacityQualification (53.81s)\nFAIL\n",
+  "cleanup_verified": true,
+  "source_base_commit": "23cac7e",
+  "qualification_driver_changed": true
+}

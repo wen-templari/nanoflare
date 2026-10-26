@@ -780,6 +780,46 @@ func TestDynamicRecoverySkipsReplacementAfterWaitingForPublication(t *testing.T)
 	}
 }
 
+func TestDynamicPrepareDoesNotReplaceRuntimeOnControlTransportFailure(t *testing.T) {
+	for _, networkFailure := range []bool{true, false} {
+		t.Run(fmt.Sprint(networkFailure), func(t *testing.T) {
+			m, _, active, key := newDynamicControlFixture(t)
+			process := &dynamicRecoveryTestProcess{}
+			m.process = process
+			session := m.session
+			m.controlClient.Transport = dynamicUnitTransport(func(*http.Request) (*http.Response, error) {
+				if networkFailure {
+					return nil, errors.New("control connection unavailable")
+				}
+				return &http.Response{StatusCode: 503, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("temporarily unavailable"))}, nil
+			})
+			if _, _, err := m.Prepare([]nanoflare.ActiveDeployment{active}); err == nil {
+				t.Fatal("unavailable control accepted publication")
+			}
+			if process.stops != 0 || m.process != process || m.session != session || m.committed[dynamicIdentity(active)] != key {
+				t.Fatal("transient control failure replaced serving runtime")
+			}
+		})
+	}
+}
+
+func TestDynamicPrepareChecksRetainedSessionWithoutProcess(t *testing.T) {
+	m, _, active, _ := newDynamicControlFixture(t)
+	m.process = nil
+	session := m.session
+	operations := []string{}
+	m.controlClient.Transport = dynamicUnitTransport(func(r *http.Request) (*http.Response, error) {
+		operations = append(operations, r.URL.Path)
+		return &http.Response{StatusCode: 503, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})
+	if _, _, err := m.Prepare([]nanoflare.ActiveDeployment{active}); err == nil {
+		t.Fatal("prepare ignored unavailable session verification")
+	}
+	if len(operations) != 1 || !strings.HasSuffix(operations[0], "/heartbeat") || m.session != session {
+		t.Fatalf("prepare reused an unchecked session: %v", operations)
+	}
+}
+
 func TestDynamicRecoveryFailureRetriesOnlyItsOwnPartialState(t *testing.T) {
 	m, _, _, _ := newDynamicControlFixture(t)
 	process := &dynamicRecoveryTestProcess{stopErr: errors.New("stop failed")}
@@ -838,5 +878,28 @@ func TestDynamicCrashWatcherLeavesHealthyReplacementRunning(t *testing.T) {
 	}
 	if replacement.stops != 0 || m.process != replacement || m.session != "replacement-session" {
 		t.Fatal("stale watcher disturbed the healthy replacement")
+	}
+}
+
+func TestDynamicPrepareRetriesMissingSessionAfterFailedReconnect(t *testing.T) {
+	m, _, active, _ := newDynamicControlFixture(t)
+	m.process = nil
+	m.session = ""
+	m.broker = &http.Server{}
+	operations := []string{}
+	m.controlClient.Transport = dynamicUnitTransport(func(r *http.Request) (*http.Response, error) {
+		operations = append(operations, r.URL.Path)
+		return &http.Response{StatusCode: 503, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, _, err := m.Prepare([]nanoflare.ActiveDeployment{active}); err == nil {
+			t.Fatal("accepted preparation without a session")
+		}
+		if len(operations) != attempt || !strings.HasSuffix(operations[attempt-1], "/open-session") {
+			t.Fatalf("did not retry session opening: %v", operations)
+		}
+		if m.session != "" || m.process != nil {
+			t.Fatal("failed reconnect enabled admission")
+		}
 	}
 }

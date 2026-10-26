@@ -50,6 +50,7 @@ type capacityLoad struct {
 	Success     int             `json:"success"`
 	Rejected    int             `json:"admission_429"`
 	Errors      int             `json:"errors"`
+	FirstError  string          `json:"first_error,omitempty"`
 	RPS         float64         `json:"success_per_second"`
 	Latency     capacityLatency `json:"successful_latency"`
 }
@@ -263,19 +264,24 @@ func TestPrivateDispatchCapacityQualification(t *testing.T) {
 		started := time.Now()
 		response, err := client.Do(request)
 		if err != nil {
-			return sample{}, 0, float64(time.Since(started).Microseconds()) / 1000, err
+			completed := time.Now()
+			elapsed := float64(completed.Sub(started).Microseconds()) / 1000
+			wall := float64(completed.UnixNano()-started.UnixNano()) / 1e6
+			return sample{}, 0, elapsed, fmt.Errorf("worker %d request %s: elapsed_ms=%.3f wall_elapsed_ms=%.3f: %w", index, id, elapsed, wall, err)
 		}
 		body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		response.Body.Close()
-		elapsed := float64(time.Since(started).Microseconds()) / 1000
+		completed := time.Now()
+		elapsed := float64(completed.Sub(started).Microseconds()) / 1000
+		wall := float64(completed.UnixNano()-started.UnixNano()) / 1e6
 		if err != nil {
-			return sample{}, response.StatusCode, elapsed, err
+			return sample{}, response.StatusCode, elapsed, fmt.Errorf("worker %d request %s: elapsed_ms=%.3f wall_elapsed_ms=%.3f: %w", index, id, elapsed, wall, err)
 		}
 		if response.StatusCode == 429 {
 			return sample{}, 429, elapsed, nil
 		}
 		if response.StatusCode != 200 {
-			return sample{}, response.StatusCode, elapsed, fmt.Errorf("status %d: %s", response.StatusCode, body)
+			return sample{}, response.StatusCode, elapsed, fmt.Errorf("worker %d request %s: status %d elapsed_ms=%.3f wall_elapsed_ms=%.3f: %s", index, id, response.StatusCode, elapsed, wall, body)
 		}
 		var result sample
 		if err = json.Unmarshal(body, &result); err != nil {
@@ -353,6 +359,7 @@ func TestPrivateDispatchCapacityQualification(t *testing.T) {
 							load.Errors++
 							if firstError == nil {
 								firstError = err
+								load.FirstError = err.Error()
 							}
 						} else if status == 429 {
 							load.Rejected++

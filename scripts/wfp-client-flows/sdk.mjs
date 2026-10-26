@@ -45,39 +45,65 @@ for await (const namespace of namespaces.list({ account_id }))
 assert.ok(listed.includes(name));
 assert.equal((await namespaces.get(name, { account_id })).namespace_name, name);
 const params = { account_id, dispatch_namespace: name };
+// SDK 7 omits array indices. These two valid inherit arrays differ in which
+// binding receives old_name, but serialize to exactly the same scalar fields.
+const { createForm } = await import(pathToFileURL(resolve(packageDir, "internal/uploads.mjs")));
+const ambiguousA = [
+  { name: "A", type: "inherit" },
+  { old_name: "SOURCE", name: "B", type: "inherit" },
+];
+const ambiguousB = [
+  { name: "A", type: "inherit", old_name: "SOURCE" },
+  { name: "B", type: "inherit" },
+];
+assert.notDeepEqual(ambiguousA, ambiguousB);
+assert.deepEqual(
+  [...(await createForm({ metadata: { bindings: ambiguousA } }, fetch)).entries()],
+  [...(await createForm({ metadata: { bindings: ambiguousB } }, fetch)).entries()],
+);
+for (const bindings of [ambiguousA, ambiguousB]) {
+  await assert.rejects(
+    scripts.update("ambiguous", {
+      ...params,
+      metadata: { main_module: "worker.js", bindings },
+      files: [
+        new File(["export default {}"], "worker.js", { type: "application/javascript+module" }),
+      ],
+    }),
+    (error) => error.status === 422,
+  );
+}
+
 const code = "export default {fetch(){return new Response('sdk-code')}}";
 
-// Preserve evidence of the generated default serializer instead of teaching the
-// server to interpret ambiguous bracketed fields as a different wire contract.
-await assert.rejects(
-  scripts.update("alpha", {
-    ...params,
-    metadata: { main_module: "worker.js" },
-    files: [new File([code], "worker.js", { type: "application/javascript+module" })],
-  }),
-  (error) => error.status === 422,
-);
+// Exercise the generated serializer without request-header or body overrides.
+await scripts.update("alpha", {
+  ...params,
+  metadata: {
+    main_module: "worker.js",
+    compatibility_date: "2025-12-10",
+    tags: ["generated"],
+    keep_assets: false,
+  },
+  files: [new File([code], "worker.js", { type: "application/javascript+module" })],
+});
+assert.deepEqual((await scripts.settings.get("alpha", params)).tags, ["generated"]);
 assert.ok(
   wireParts.some((parts) => parts.includes("metadata[main_module]") && parts.includes("files[]")),
 );
 assert.equal(wireTypes[0], "application/javascript");
 
-function multipart(metadata, source = code) {
-  const form = new FormData();
-  form.set(
-    "metadata",
-    new File([JSON.stringify(metadata)], "metadata.json", { type: "application/json" }),
-  );
-  form.set("worker.js", new File([source], "worker.js", { type: "application/javascript+module" }));
-  return form;
+function jsonMetadata(metadata) {
+  return new File([JSON.stringify(metadata)], "metadata.json", { type: "application/json" });
 }
 const first = await scripts.update(
   "alpha",
-  { ...params, metadata: {} },
   {
-    body: multipart({ main_module: "worker.js", compatibility_date: "2025-12-10" }),
-    headers: { "Content-Type": null, "Idempotency-Key": "sdk-first" },
+    ...params,
+    metadata: jsonMetadata({ main_module: "worker.js", compatibility_date: "2025-12-10" }),
+    files: [new File([code], "worker.js", { type: "application/javascript+module" })],
   },
+  { headers: { "Idempotency-Key": "sdk-first" } },
 );
 assert.equal(first.id, "alpha");
 assert.equal(first.nanoflare_runtime_ready_verified, false);
@@ -115,10 +141,8 @@ for await (const tag of scripts.tags.list("alpha", params)) tags.push(tag);
 assert.deepEqual(tags, ["sdk"]);
 await scripts.tags.delete("sdk", { ...params, script_name: "alpha" });
 
-await assert.rejects(
-  scripts.settings.edit("alpha", { ...params, settings: { tags: ["new"] } }),
-  (error) => error.status === 422,
-);
+await scripts.settings.edit("alpha", { ...params, settings: { tags: ["sdk-default", "second"] } });
+assert.deepEqual((await scripts.settings.get("alpha", params)).tags, ["sdk-default", "second"]);
 await scripts.settings.edit("alpha", {
   ...params,
   settings: new File([JSON.stringify({ tags: ["new"] })], "settings.json", {
@@ -139,18 +163,36 @@ const completion = await client.workers.assets.upload.create(
   { headers: { Authorization: `Bearer ${upload.jwt}` } },
 );
 assert.ok(completion.jwt);
+// Default SDK upload can attach assets without a named ASSETS binding.
+await scripts.update("alpha", {
+  ...params,
+  metadata: {
+    main_module: "worker.js",
+    compatibility_date: "2025-12-10",
+    assets: {
+      jwt: completion.jwt,
+      config: {
+        html_handling: "auto-trailing-slash",
+        not_found_handling: "404-page",
+        run_worker_first: ["/api/*", "/rpc/*"],
+      },
+    },
+  },
+  files: [new File([code], "worker.js", { type: "application/javascript+module" })],
+});
 await scripts.update(
   "alpha",
-  { ...params, metadata: {} },
   {
-    body: multipart({
+    ...params,
+    metadata: jsonMetadata({
       main_module: "worker.js",
       compatibility_date: "2025-12-10",
       assets: { jwt: completion.jwt },
       bindings: [{ name: "ASSETS", type: "assets" }],
     }),
-    headers: { "Content-Type": null, "Idempotency-Key": "sdk-assets" },
+    files: [new File([code], "worker.js", { type: "application/javascript+module" })],
   },
+  { headers: { "Idempotency-Key": "sdk-assets" } },
 );
 const bindings = [];
 for await (const binding of scripts.bindings.get("alpha", params)) bindings.push(binding);
@@ -161,9 +203,10 @@ console.log(
   JSON.stringify({
     version,
     json_operations: "passed",
-    explicit_multipart: "passed",
+    sdk_json_metadata_file: "passed",
     assets: "passed",
-    generated_multipart: "rejected",
+    generated_multipart: "passed",
+    binding_array_ambiguity: "reproduced_and_rejected",
     generated_upload_parts: wireParts[0],
     generated_upload_content_type: wireTypes[0],
   }),

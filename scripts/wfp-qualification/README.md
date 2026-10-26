@@ -362,3 +362,14 @@ bounded correctness/load test does not establish production soak, tenant
 capacity, hosted portability, empty asset support or cross-session deduplication.
 The runner is bounded at 512 MiB/no additional swap/128 tasks; the daemon runs
 on the host, so this is separate from the container-bounded pilot measurement.
+
+## Cloudflare compatibility merge branch
+
+`codex/cloudflare-compatibility` extracts stages 1–5 from the original
+`codex/cloudflare-api-stages` branch. Its scope and deferred untrusted-execution
+work are recorded in [the stage plan](../../docs/plans/cloudflare-api-stages.md).
+Retained `results-cloudflare-stages-*` SDK/Wrangler, Wasm, recovery and pilot
+reports are historical evidence from their recorded source versions. Fresh
+extracted-branch validation is in `results-cloudflare-compatibility-merge.json`.
+No dedicated-process CPU, bootstrap, namespace, invocation cgroup or custom
+workerd patch is included. Normal serving continues through shared workerd.

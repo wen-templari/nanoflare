@@ -12,6 +12,57 @@ import (
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
+func TestCloudflareSDKRuntimeWorkflow(t *testing.T) {
+	cloudflareSDKRuntimeWorkflow(t)
+}
+
+func TestCloudflareSDKRuntimePostgresWorkflow(t *testing.T) {
+	if os.Getenv("NANOFLARE_TEST_POSTGRES_URL") == "" {
+		t.Skip("disposable PostgreSQL required")
+	}
+	t.Setenv("NANOFLARE_TEST_RUNTIME_BACKEND", "postgres")
+	cloudflareSDKRuntimeWorkflow(t)
+}
+
+func cloudflareSDKRuntimeWorkflow(t *testing.T) {
+	sdk := os.Getenv("NANOFLARE_TEST_CF_SDK_DIR")
+	if sdk == "" || os.Getenv("NANOFLARE_TEST_WORKERD") == "" {
+		t.Skip("set pinned SDK directory and native NANOFLARE_TEST_WORKERD executable")
+	}
+	if !filepath.IsAbs(sdk) {
+		t.Fatal("SDK directory must be absolute")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDynamicDispatchWithFixture(t, false, true, func(handler *Server, service *nanoflare.Service, org nanoflare.Organization, token string) {
+		handler.SetCloudflareCompatibilityEnabled(true)
+		server := httptest.NewServer(handler)
+		defer server.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, node, "../../scripts/wfp-client-flows/sdk-runtime.mjs")
+		command.Env = append(os.Environ(), "NF_SDK_FIXTURE_URL="+server.URL, "NF_SDK_FIXTURE_TOKEN="+token, "NF_SDK_FIXTURE_ORG="+org.ID)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("SDK runtime: %v\n%s", err, output)
+		}
+		t.Log(string(output))
+		namespaces, err := service.DispatchNamespacesForOrg(org.ID)
+		if err != nil || len(namespaces) != 0 {
+			t.Fatalf("namespace cleanup: %v %v", namespaces, err)
+		}
+		worker, err := service.OrdinaryScriptForOrg(org.ID, "sdk-dispatcher")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := service.DeleteAppForOrg(org.ID, worker.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestCloudflareSDKClientFlows(t *testing.T) {
 	sdk := os.Getenv("NANOFLARE_TEST_CF_SDK_DIR")
 	if sdk == "" {

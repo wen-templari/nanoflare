@@ -1,0 +1,34 @@
+{
+  "alert_delivery_passed": true,
+  "daemon_only_recovery_passed": true,
+  "route": "real pilot scrape failure -> Prometheus rule -> Alertmanager -> network-local webhook",
+  "firing_delivery_seconds": 32.25,
+  "total_recovery_delivery_seconds": 47.28,
+  "firing": {
+    "received_at": "2026-10-24T02:06:19.207Z",
+    "status": "firing",
+    "alerts": [
+      {
+        "status": "firing",
+        "alertname": "NanoflarePilotControlUnavailable"
+      }
+    ]
+  },
+  "resolved": {
+    "received_at": "2026-10-24T02:06:34.210Z",
+    "status": "resolved",
+    "alerts": [
+      {
+        "status": "resolved",
+        "alertname": "NanoflarePilotControlUnavailable"
+      }
+    ]
+  },
+  "limitations": "Local durable receiver only; no external operator notification or on-call acknowledgement qualified.",
+  "runner_image": "sha256:21bfa109fa0465c1b184deabc4216ecb3d95f21f57c462f2073d699f78ac2303",
+  "source_sha256": {
+    "internal/runtime/dynamic_manager.go": "83b9469fb86017b984bf1c7b1188b8185da66ac2758437c3621ad84c2784370e",
+    "internal/runtime/dynamic_manager_test.go": "b128ea6afc9d67e8a8468b1548b22532c51474401da56b388470ebf6a7500002"
+  },
+  "post_recovery_dispatch_and_d1_verified": true
+}

@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "backup_type": "cold physical snapshot, same pinned images and signing/encryption keys",
+  "stores": {
+    "postgres-data": {
+      "sha256": "d0be9ee1a10abed5f56825d83f32bdb61ce7a68435841428fce572f3405cd6f5",
+      "bytes": 50476544
+    },
+    "minio-data": {
+      "sha256": "e5c73e90f0e8672feec9d3308c8899d1e7eb1094805a6bb76c7d974a125c6d17",
+      "bytes": 93696
+    },
+    "nanoflared-data": {
+      "sha256": "4d2cf8d913698f6ce633bd2d2ad39ab3b45de9d4ad960d414b0140f354a79373",
+      "bytes": 3072
+    },
+    "nanoflare-runner-data": {
+      "sha256": "adf34b9da98b79d5515d34de1903dad5cb24dc6f68fc7a0e61575e43fd8dbe0c",
+      "bytes": 23552
+    }
+  },
+  "restored_project": "nanoflare-pilot-restore",
+  "restored_dispatch_and_secret": true,
+  "restored_login_token": true,
+  "original_pilot_recovered": true,
+  "limitations": "No point-in-time recovery, cross-version migration, populated D1 SQLite fixture or off-host/disaster recovery qualification. Restore stack retained for inspection."
+}

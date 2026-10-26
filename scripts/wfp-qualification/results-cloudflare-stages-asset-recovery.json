@@ -1,0 +1,46 @@
+{
+  "at": "2026-10-23T14:51:03.354677+00:00",
+  "host_os": "Darwin",
+  "host_arch": "arm64",
+  "python": "3.14.3",
+  "passed": true,
+  "observations": [
+    {
+      "name": "four_concurrent_adapter_sessions_group_duplicate_hashes_and_publish_verified_assets",
+      "elapsed_ms": 699
+    },
+    {
+      "name": "native_dispatch_reads_exact_bytes_and_content_types_from_both_manifest_paths",
+      "reads": 8,
+      "distinct_bytes": 4194304,
+      "manifest_bytes": 8388608
+    },
+    {
+      "name": "control_process_and_minio_restart_preserve_adapter_published_artifacts"
+    },
+    {
+      "name": "deleting_staging_sessions_does_not_delete_published_assets"
+    }
+  ],
+  "limitations": [
+    "four concurrent customer sessions, 1 MiB distinct content each and two paths per manifest; bounded correctness/load fixture, not production soak",
+    "512 MiB native runner with 128 task limit; host control process has no cgroup memory bound",
+    "real PostgreSQL, MinIO and native workerd; no Cloudflare account, hosted portability or untrusted/CPU claims",
+    "same-session duplicate hash grouping only; cross-session deduplication remains unsupported"
+  ],
+  "fixture_sources": {
+    "asset_storage.py": "b53c3ca6c870906c2ea781b87c6db748f3951363e5b21756d76e16a1d4032f57",
+    "process_recovery.py": "99c48e9594b2b4330a5ba4be8a7b97e6fcd9600fc70baa3b6815afd6ec431470"
+  },
+  "runner_image_id": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "object_store_image_id": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d",
+  "control_sha256": "f17df656b70fee5075295fe8f7cd89134a570d902e92d77acb14ebe349ca6ac7",
+  "runner_sha256": "7ddd3a494c2276d9a8fa4ca02ae7faa7fa42f9238c9f3af62ea4cc043a70ab5e",
+  "verified_runner_cgroup_limits": "536870912\n0\n128",
+  "workerd": "workerd 2026-09-11",
+  "workerd_sha256": "3f4542165f63d9018739d14688f462430a055e71b4cf06321c51d77e2ffc6b35",
+  "cleanup_verified": true,
+  "source_base_commit": "f1db35c845231ed10de264cd75ecbe06d7053ee3",
+  "source_diff_sha256": "fe12b41e41e861560fd7080876275e963e8918a85d56d091452aed616adcfb94"
+}

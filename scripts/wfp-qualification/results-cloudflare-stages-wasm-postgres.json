@@ -1,0 +1,102 @@
+{
+  "scope": "PostgreSQL binary Wasm persistence and pinned trusted client workflows",
+  "passed": true,
+  "postgres": "17.10",
+  "sdk": "7.3.0",
+  "wrangler": "4.54.0",
+  "serving_workerd": "2026-09-11",
+  "macos": {
+    "scope": "owned disposable PostgreSQL only",
+    "container": "nf-wasm-pg-f806c074f4",
+    "passed": true,
+    "stages": [
+      {
+        "name": "reopen",
+        "exit_code": 0,
+        "completed_without_skips": true
+      },
+      {
+        "name": "clients",
+        "exit_code": 0,
+        "completed_without_skips": true
+      }
+    ],
+    "image": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+    "postgres_version": "17.10",
+    "container_oom_killed": false,
+    "owned_container_removed": true
+  },
+  "linux": {
+    "scope": "owned internal Docker network and disposable PostgreSQL",
+    "passed": true,
+    "stages": [
+      {
+        "name": "reopen",
+        "exit_code": 0,
+        "completed_without_skips": true,
+        "go_race": true,
+        "image": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+        "oom_killed": false
+      },
+      {
+        "name": "clients",
+        "exit_code": 0,
+        "completed_without_skips": true,
+        "go_race": false,
+        "image": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+        "oom_killed": false
+      }
+    ],
+    "network": "nf-wasm-pg-linux-172786a707-net",
+    "postgres_version": "17.10",
+    "postgres_image": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+    "owned_containers_removed": true,
+    "owned_network_removed": true
+  },
+  "assertions": [
+    "Exact non-UTF-8 binary bytes, type and size survive three connection-pool reopenings per run",
+    "Binary update changes 42 to 7; traffic rollback restores first artifact while management head stays at revision 2",
+    "Immutable artifact digest and inherited sealed secret survive",
+    "Pinned SDK and Wrangler execute 42 then binary-only update 7, preserve download MIME/bytes, assets and secrets, and clean up",
+    "Original memory client workflows pass under macOS Go race detector"
+  ],
+  "repetitions": {
+    "database_macos_race": 3,
+    "database_linux_race": 3,
+    "sdk_postgres_each_platform": 1,
+    "wrangler_postgres_each_platform": 1
+  },
+  "source_and_artifact_sha256": {
+    "internal/database/postgres_wasm_artifacts_test.go": "327d3f80dd054e6ab4bb77bdb4731525f81ae286233a52b34e63286e84cbf4ad",
+    "internal/api/cfcompat_sdk_test.go": "b0459b9a21887b1bc26393ad0e6fd918f6bed6ac3a6bd66e943b00c75594effa",
+    "internal/api/cfcompat_wrangler_runtime_test.go": "43698d346b9dcb0c44fe7a2ac72a58432da4aa2d96ba806e600169aa9b633d26",
+    "internal/api/dispatch_e2e_test.go": "7dbc38ced70c75a537aa7eca9e2781619e84f1b6b035fb6b474a38525a94d794",
+    "scripts/wfp-client-flows/sdk-runtime.mjs": "92ad690bd134a809ae1fcda4ed43c06f1f169ee06228e81b0cf374496a927291",
+    "/tmp/nanoflare-wasm-pg-api.test": "1cd23b1e3c07cd333aeb52cc17e2214d0c4016037a00db0ff93b0b52806c1645",
+    "/tmp/nanoflare-cgroup-linux-race/wasm-pg-database.test": "013da5498f55847eb03af4c7cfdd880521e415f56934a8ca85aa4427e7579f95"
+  },
+  "initial_invalid_evidence": {
+    "startup": {
+      "scope": "owned disposable PostgreSQL only",
+      "container": "nf-wasm-pg-0baea58125",
+      "passed": false,
+      "stages": [],
+      "image": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+      "owned_container_removed": true
+    },
+    "notes": [
+      "Initial readiness check saw temporary initialization server; fixed to TCP readiness before replay.",
+      "Initial filename postgres_wasm_test.go selected GOARCH wasm and matched no tests; renamed before qualification. No-match output is not counted."
+    ]
+  },
+  "limits": [
+    "Connection pools reopened; PostgreSQL server was not restarted or crash-tested.",
+    "Client fixtures use local object storage, not remote S3 durability.",
+    "macOS client and database checks use Go race; Linux database uses Go race, Linux clients use native CGO-disabled build.",
+    "Existing client adaptations remain as documented in pinned SDK/Wrangler evidence.",
+    "Does not qualify hosted parity, production or untrusted execution."
+  ],
+  "hosted_parity_qualified": false,
+  "production_qualified": false,
+  "untrusted_execution_qualified": false
+}

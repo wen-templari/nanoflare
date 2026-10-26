@@ -183,6 +183,9 @@ func (s *Server) validatePublication(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) prepare(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Err() != nil {
+		return
+	}
 	var input PrepareRequest
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -219,6 +222,13 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
+		return
+	}
+	if r.Context().Err() != nil {
+		// A dead control process cannot commit this candidate. In particular,
+		// a request queued behind a paused runner may resume after its caller
+		// has gone away; do not leave that generation blocking startup recovery.
+		_ = s.manager.Abort(generation)
 		return
 	}
 	for i := range deployments {

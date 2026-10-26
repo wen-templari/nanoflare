@@ -1,0 +1,102 @@
+{
+  "passed": true,
+  "container_logging": {
+    "alert-receiver": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "alertmanager": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "alloy": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "grafana": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "loki": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "minio": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "nanoflare-runner": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "nanoflared": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "postgres": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "prometheus": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "tempo": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "traefik": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "vector": {
+      "log_driver": "local",
+      "options": {
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    }
+  },
+  "prometheus": {
+    "storage.tsdb.retention.size": "512MiB",
+    "storage.tsdb.retention.time": "1w"
+  },
+  "worker_and_d1_survived_container_recreation": true,
+  "limitations": "Active configuration verified, not time-based deletion. Metrics block retention excludes WAL and head storage; log limits are per container and exclude other stores. No deployment revision or backup retention policy qualified."
+}

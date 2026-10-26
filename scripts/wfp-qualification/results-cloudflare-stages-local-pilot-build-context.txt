@@ -1,0 +1,28 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 169B done
+#1 DONE 0.0s
+
+#2 [internal] load .dockerignore
+#2 transferring context: 240B done
+#2 DONE 0.0s
+
+#3 [internal] load build context
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/1] COPY docker/pilot/private/context-canary-78ea0d72f2b6480fa4565c6f2526de59 /canary
+#4 ERROR: failed to calculate checksum of ref 054cdfe1-c1ca-4dae-9f2e-68a23ec7f82c::kxs7jeqoy83op3z199soknod0: "/docker/pilot/private/context-canary-78ea0d72f2b6480fa4565c6f2526de59": not found
+------
+ > [1/1] COPY docker/pilot/private/context-canary-78ea0d72f2b6480fa4565c6f2526de59 /canary:
+------
+Dockerfile:2
+--------------------
+   1 |     FROM scratch
+   2 | >>> COPY docker/pilot/private/context-canary-78ea0d72f2b6480fa4565c6f2526de59 /canary
+   3 |     
+--------------------
+ERROR: failed to solve: failed to compute cache key: failed to calculate checksum of ref 054cdfe1-c1ca-4dae-9f2e-68a23ec7f82c::kxs7jeqoy83op3z199soknod0: "/docker/pilot/private/context-canary-78ea0d72f2b6480fa4565c6f2526de59": not found
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/794jotwv2hlq2pv9wjniza9om

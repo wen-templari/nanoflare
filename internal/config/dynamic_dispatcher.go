@@ -90,7 +90,9 @@ async function load(env, ctx, key, validation = false, state = {}) {
       __NANOFLARE_DURATION_COLLECTOR: parentExports.ResourceBridge({ props: { key, binding: "__NANOFLARE_DURATION_COLLECTOR" } }),
     };
     let mainModule = code.mainModule;
-    let modules = code.modules;
+    let modules = Object.fromEntries(Object.entries(code.modules).map(([name, module]) => [name,
+      Object.hasOwn(module, "wasm") ? {wasm: Uint8Array.from(atob(module.wasm), byte => byte.charCodeAt(0)).buffer} : module
+    ]));
     if (validation) {
       const name = "__nanoflare_validation__.js";
       if (Object.hasOwn(modules, name)) throw new Error("Reserved validation module name");

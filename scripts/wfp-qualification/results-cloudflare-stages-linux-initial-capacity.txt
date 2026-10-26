@@ -1,0 +1,6 @@
+=== RUN   TestPrivateDispatchCapacityQualification
+2026/10/23 15:15:17 started workerd pid=20 config=/tmp/TestPrivateDispatchCapacityQualification3873433192/001/workerd-000001.capnp
+    dispatch_capacity_test.go:379: status 410: Dispatch failed (410): {"detail":"invocation expired or revoked","instance":"6898105fcd5a9b25bd470051","status":410,"title":"Gone","type":"about:blank"}
+        
+--- FAIL: TestPrivateDispatchCapacityQualification (53.81s)
+FAIL

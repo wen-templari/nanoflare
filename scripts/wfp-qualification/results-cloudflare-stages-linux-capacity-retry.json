@@ -1,0 +1,38 @@
+{
+  "at": "2026-10-23T16:28:22.244113+00:00",
+  "passed": true,
+  "probe_sha256": "2479b934cdd2967308c6bfb425d22d8c21ad9feaa5414876dc6aeeb5a1f191f8",
+  "matrix_expression": "^Test(RuntimeCapabilityBoundaries|RuntimeStorageCancellationReachesBackend|RuntimeReconciliationSerializesWithDeletion|PoolMetricsKeepUnknownAndStaleUsageUnavailable|DispatchLeaseAuthorization|DynamicServicesInheritAuthorityAndBudget|DispatchResourceSharingRevisionAndRevocationMatrix|DispatchTelemetryScopesPolicyAndTrustedElapsedTime|PrivateDynamicDispatchEndToEnd|ImmutableArtifactsAndPublicationRecovery|ArtifactAPIProtectionAndIdempotency|ManagedPublication.*|ManagedRecovery.*|Cloudflare.*)$",
+  "stages": [
+    {
+      "name": "capacity",
+      "exit_code": 0,
+      "passes": 1,
+      "skips": [],
+      "memory.max": "2147483648",
+      "memory.swap.max": "0",
+      "memory.current": "33873920",
+      "memory.peak": "837705728",
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "pids.max": "128",
+      "pids.current": "3",
+      "capacity_report_sha256": "1fdfb23cbc6a5f341af8954d68fa6568305659da88bdcb1b11bfb0ce341177e6"
+    }
+  ],
+  "source_scope": "cmd/**/*.go, internal/**/*.go, internal/**/*.js, scripts/wfp-client-flows/*.{mjs,cjs}, linux_pool.py, go.mod, go.sum; sorted relative path NUL SHA-256 newline",
+  "source_files": 279,
+  "source_tree_sha256": "76f8ef7df73005e6e9698f16df590768e6649956c4f889e31f6ed1c7648bcfff",
+  "limitations": [
+    "single-host trusted shared profile; no untrusted sandbox or CPU enforcement",
+    "capacity has memory metadata/object fixtures; separate process drills cover real S3/PG recovery",
+    "whole probe cgroup includes the Go control fixture and native engine; production API is outside runner cgroup",
+    "RSS is approximate and point-in-time; cgroup peak is whole-probe memory, not per-isolate RSS",
+    "bounded sustained slices are not production soak or an advertised maximum tenant count"
+  ],
+  "image_id": "sha256:2a75ae1fc596809ff78a132c030c24fb8660db1a5f4c00dced053bc4c8fb8e8e",
+  "postgres_image_id": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459",
+  "phase_seconds": 15,
+  "memory_bytes": 2147483648,
+  "sdk_version": "7.3.0",
+  "cleanup_verified": true
+}

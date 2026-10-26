@@ -1,0 +1,31 @@
+=== RUN   TestCloudflareSDKRuntimePostgresWorkflow
+    dispatch_e2e_test.go:131: runtime_backend=postgres private_schema=true
+2026/10/25 21:42:44 started workerd pid=892 config=/var/folders/s5/0j54kh_95rggcyv_3pq2jp6m0000gn/T/TestCloudflareSDKRuntimePostgresWorkflow2916431536/001/dynamic-dispatcher.capnp
+    cfcompat_sdk_test.go:51: {"sdk":"7.3.0","runtime_dispatch":"passed","wasm_upload_execute_download":"passed","wasm_content_update":"passed","wasm_secret_asset_retention":"passed","source_update":"passed","secret_update":"passed","assets":"passed","namespace_cleanup":"passed","dispatcher_metadata":"JSON File adaptation"}
+        
+--- PASS: TestCloudflareSDKRuntimePostgresWorkflow (6.04s)
+=== RUN   TestCloudflareSDKClientFlows
+=== RUN   TestCloudflareSDKClientFlows/memory
+    cfcompat_sdk_test.go:113: {"version":"7.3.0","json_operations":"passed","sdk_json_metadata_file":"passed","assets":"passed","generated_multipart":"passed","binding_array_ambiguity":"reproduced_and_rejected","generated_upload_parts":["metadata[main_module]","metadata[bindings][][name]","metadata[bindings][][type]","metadata[bindings][][old_name]","metadata[bindings][][name]","metadata[bindings][][type]","files[]"],"generated_upload_content_type":"application/javascript"}
+        
+=== RUN   TestCloudflareSDKClientFlows/postgres
+    cfcompat_sdk_test.go:113: {"version":"7.3.0","json_operations":"passed","sdk_json_metadata_file":"passed","assets":"passed","generated_multipart":"passed","binding_array_ambiguity":"reproduced_and_rejected","generated_upload_parts":["metadata[main_module]","metadata[bindings][][name]","metadata[bindings][][type]","metadata[bindings][][old_name]","metadata[bindings][][name]","metadata[bindings][][type]","files[]"],"generated_upload_content_type":"application/javascript"}
+        
+--- PASS: TestCloudflareSDKClientFlows (0.98s)
+    --- PASS: TestCloudflareSDKClientFlows/memory (0.24s)
+    --- PASS: TestCloudflareSDKClientFlows/postgres (0.74s)
+=== RUN   TestWranglerRuntimePostgresWorkflow
+    dispatch_e2e_test.go:131: runtime_backend=postgres private_schema=true
+2026/10/25 21:42:52 started workerd pid=946 config=/var/folders/s5/0j54kh_95rggcyv_3pq2jp6m0000gn/T/TestWranglerRuntimePostgresWorkflow2694360504/001/dynamic-dispatcher.capnp
+    cfcompat_wrangler_runtime_test.go:244: Wrangler 4.54.0 runtime dispatch, Wasm upload/execution/binary update, compatible-API binary download, code/secret updates, assets and cleanup passed
+--- PASS: TestWranglerRuntimePostgresWorkflow (9.61s)
+=== RUN   TestWranglerLocalRequestQualification
+=== RUN   TestWranglerLocalRequestQualification/memory
+    cfcompat_wrangler_test.go:163: Wrangler 4.54.0 local paths=[GET /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/dispatch/namespaces POST /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/dispatch/namespaces GET /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/dispatch/namespaces/staging GET /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/scripts/alpha/settings PUT /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/dispatch/namespaces/staging/scripts/alpha GET /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/scripts/alpha/settings PUT /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/dispatch/namespaces/staging/scripts/alpha DELETE /client/v4/accounts/446f2b3e88f1c4b8452278b11b69afa9d1ca0e8dc7179fcd/workers/dispatch/namespaces/staging] upload metadata keys=[bindings compatibility_date compatibility_flags main_module] metadata content type=""
+=== RUN   TestWranglerLocalRequestQualification/postgres
+    cfcompat_wrangler_test.go:163: Wrangler 4.54.0 local paths=[GET /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/dispatch/namespaces POST /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/dispatch/namespaces GET /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/dispatch/namespaces/staging GET /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/scripts/alpha/settings PUT /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/dispatch/namespaces/staging/scripts/alpha GET /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/scripts/alpha/settings PUT /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/dispatch/namespaces/staging/scripts/alpha DELETE /client/v4/accounts/3dcdeafc812e6f944431d0e8b5ccc099ee6c22b959373446/workers/dispatch/namespaces/staging] upload metadata keys=[bindings compatibility_date compatibility_flags main_module] metadata content type=""
+--- PASS: TestWranglerLocalRequestQualification (3.90s)
+    --- PASS: TestWranglerLocalRequestQualification/memory (1.79s)
+    --- PASS: TestWranglerLocalRequestQualification/postgres (2.10s)
+PASS
+ok  	github.com/clas/nanoflare/internal/api	22.200s

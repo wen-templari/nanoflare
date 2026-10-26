@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -26,6 +27,9 @@ func DecodeSettings(contentType string, body io.Reader) (json.RawMessage, error)
 	}
 	reader := multipart.NewReader(bytes.NewReader(data), params["boundary"])
 	part, err := reader.NextRawPart()
+	if err == nil && strings.HasPrefix(part.FormName(), "settings[") {
+		return decodeSDKSettings(reader, part)
+	}
 	if err != nil || part.FormName() != "settings" {
 		return nil, errors.New("one settings part is required")
 	}
@@ -52,6 +56,51 @@ func DecodeSettings(contentType string, body io.Reader) (json.RawMessage, error)
 		return nil, err
 	}
 	return settings, nil
+}
+
+// SDK 7 flattens settings into bracketed fields. Only scalar and scalar-list
+// fields have lossless boundaries here; binding object arrays need an explicit
+// JSON settings part until their wire representation can be disambiguated.
+func decodeSDKSettings(reader *multipart.Reader, part *multipart.Part) (json.RawMessage, error) {
+	fields := map[string]any{}
+	for count := 0; ; count++ {
+		if count >= 256 || len(part.Header.Values("Content-Disposition")) != 1 || len(part.Header.Values("Content-Type")) != 0 || part.FileName() != "" || part.Header.Get("Content-Transfer-Encoding") != "" || part.Header.Get("Content-Encoding") != "" {
+			return nil, errors.New("invalid SDK settings field")
+		}
+		value, err := io.ReadAll(part)
+		if err != nil || !utf8.Valid(value) {
+			return nil, errors.New("invalid SDK settings value")
+		}
+		name := part.FormName()
+		switch name {
+		case "settings[compatibility_date]":
+			if _, exists := fields["compatibility_date"]; exists {
+				return nil, errors.New("duplicate SDK settings field")
+			}
+			fields["compatibility_date"] = string(value)
+		case "settings[tags][]", "settings[compatibility_flags][]":
+			key := strings.TrimSuffix(strings.TrimPrefix(name, "settings["), "][]")
+			values, _ := fields[key].([]string)
+			fields[key] = append(values, string(value))
+		default:
+			return nil, errors.New("unsupported or ambiguous SDK settings field; use a JSON settings part")
+		}
+		part, err = reader.NextRawPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, errors.New("invalid SDK settings multipart")
+		}
+	}
+	data, err := json.Marshal(fields)
+	if err != nil || len(data) > 1<<20 {
+		return nil, errors.New("settings metadata exceeds 1 MiB")
+	}
+	if _, err := decodeSettingsPatch(data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 type settingsPatch struct {

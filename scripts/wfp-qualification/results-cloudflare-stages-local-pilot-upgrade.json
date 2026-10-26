@@ -1,0 +1,34 @@
+{
+  "passed": true,
+  "scope": "owned local trusted pilot image upgrade; not production or cross-version database migration qualification",
+  "old_images": {
+    "PILOT_DAEMON_IMAGE": "sha256:0b4a9beb9442ef74b3a4bdd5944263178a05e9133336cea34c0755df8a69bf83",
+    "PILOT_RUNNER_IMAGE": "sha256:21bfa109fa0465c1b184deabc4216ecb3d95f21f57c462f2073d699f78ac2303"
+  },
+  "new_images": {
+    "PILOT_DAEMON_IMAGE": "sha256:514f162d54ab40b7c3de82a77ec75c783e0e9ee5801c011fcff74dc04a8e9c32",
+    "PILOT_RUNNER_IMAGE": "sha256:e9fba41f883e0f79cdb554223a890d6cdb01a56b3a386464541786a876dd0c58"
+  },
+  "fixture_session_refreshed_before_upgrade": true,
+  "private_backup_directory": "/Users/clas/Developer/platform/docker/pilot/private/upgrade-backup-1792901889770795000",
+  "cold_backup_stores": {
+    "postgres-data": {
+      "sha256": "89c205268f317ef37a5f65acf911a15a6c3349b3d8875693039e8928c7743ce8",
+      "bytes": 67353088
+    },
+    "minio-data": {
+      "sha256": "88d110d5ba4cfe7fe307f07948a0c17c36085a5494b74d6a0623ad882cc0e517",
+      "bytes": 106496
+    },
+    "nanoflared-data": {
+      "sha256": "b56f75e0cec57ef8cfc123d80a9cb74265e35d2795243932e3d8625a0487a4ea",
+      "bytes": 54272
+    },
+    "nanoflare-runner-data": {
+      "sha256": "abe782adc12e9eaae612ab06104f8ca114f590a4bb51ac03942b44de59dba558",
+      "bytes": 26112
+    }
+  },
+  "retained_login_dispatch_secret_and_d1_verified": true,
+  "credentials_preserved": true
+}

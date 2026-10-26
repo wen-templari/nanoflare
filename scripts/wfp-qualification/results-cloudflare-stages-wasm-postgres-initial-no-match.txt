@@ -1,0 +1,2 @@
+ok  	github.com/clas/nanoflare/internal/database	0.766s [no tests to run]
+ok  	github.com/clas/nanoflare/internal/api	0.538s

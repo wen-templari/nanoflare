@@ -1,0 +1,6 @@
+=== RUN   TestWranglerRuntimeWorkflow
+2026/10/25 10:01:25 started workerd pid=39537 config=/var/folders/s5/0j54kh_95rggcyv_3pq2jp6m0000gn/T/TestWranglerRuntimeWorkflow3658473347/001/dynamic-dispatcher.capnp
+    cfcompat_wrangler_runtime_test.go:232: Wrangler 4.54.0 runtime dispatch, Wasm upload/execution/binary update, compatible-API binary download, code/secret updates, assets and cleanup passed
+--- PASS: TestWranglerRuntimeWorkflow (8.43s)
+PASS
+ok  	github.com/clas/nanoflare/internal/api	15.768s

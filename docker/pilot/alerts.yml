@@ -1,0 +1,10 @@
+groups:
+  - name: pilot-availability
+    rules:
+      - alert: NanoflarePilotControlUnavailable
+        expr: up{job="nanoflared"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: Local pilot control API scrape is unavailable

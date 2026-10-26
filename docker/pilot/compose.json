@@ -1,0 +1,630 @@
+{
+  "name": "nanoflare-pilot",
+  "networks": {
+    "default": {
+      "ipam": {}
+    }
+  },
+  "services": {
+    "alloy": {
+      "command": [
+        "run",
+        "--server.http.listen-addr=0.0.0.0:12345",
+        "--storage.path=/var/lib/alloy/data",
+        "/etc/alloy/config.alloy"
+      ],
+      "depends_on": {
+        "tempo": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "image": "grafana/alloy:v1.18.1",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "../alloy/config.alloy",
+          "target": "/etc/alloy/config.alloy",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "volume",
+          "source": "alloy-data",
+          "target": "/var/lib/alloy/data",
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "grafana": {
+      "command": null,
+      "depends_on": {
+        "loki": {
+          "condition": "service_started",
+          "required": true
+        },
+        "tempo": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "GF_AUTH_ANONYMOUS_ENABLED": "false",
+        "GF_AUTH_ANONYMOUS_ORG_ROLE": "Viewer",
+        "GF_SECURITY_ADMIN_PASSWORD": "${PILOT_GRAFANA_PASSWORD:?required}"
+      },
+      "image": "grafana/grafana:12.0.2",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "grafana-data",
+          "target": "/var/lib/grafana",
+          "volume": {}
+        },
+        {
+          "type": "bind",
+          "source": "../grafana/provisioning",
+          "target": "/etc/grafana/provisioning",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        }
+      ],
+      "restart": "unless-stopped",
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "published": "13000",
+          "target": 3000
+        }
+      ],
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "loki": {
+      "command": ["-config.file=/etc/loki/config.yml"],
+      "entrypoint": null,
+      "image": "grafana/loki:3.5.0",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "../loki/loki-config.yml",
+          "target": "/etc/loki/config.yml",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "volume",
+          "source": "loki-data",
+          "target": "/loki",
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "minio": {
+      "command": ["server", "/data", "--console-address", ":9001"],
+      "entrypoint": null,
+      "environment": {
+        "MINIO_ROOT_PASSWORD": "${PILOT_PASSWORD:?required}",
+        "MINIO_ROOT_USER": "nanoflare"
+      },
+      "image": "minio/minio:RELEASE.2025-04-22T22-12-26Z",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "minio-data",
+          "target": "/data",
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "nanoflare-runner": {
+      "command": [
+        "-addr=:8090",
+        "-config-dir=/var/lib/nanoflare/runner",
+        "-runtime-socket-dir=/tmp/nanoflare-sockets",
+        "-nanoflare-runtime-addr=nanoflared:8081"
+      ],
+      "entrypoint": null,
+      "environment": {
+        "NANOFLARE_DNS_ADDR": "127.0.0.1:8083",
+        "NANOFLARE_DNS_CONFIG": "",
+        "NANOFLARE_LOG_VECTOR_SOCKET": "unix:///var/run/nanoflare/vector.sock",
+        "NANOFLARE_RUNNER_TOKEN": "${PILOT_RUNNER_TOKEN:?required}",
+        "NANOFLARE_WORKERD_EGRESS_CA_FILES": "",
+        "NANOFLARE_WORKERD_EGRESS_NO_PROXY": "",
+        "NANOFLARE_WORKERD_EGRESS_PROXY_RESOLVES": "false",
+        "NANOFLARE_WORKERD_EGRESS_PROXY_URL": "",
+        "NANOFLARE_WORKERD_EXECUTABLE": "/usr/local/bin/workerd-native"
+      },
+      "image": "${PILOT_RUNNER_IMAGE:?required}",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "nanoflare-runner-data",
+          "target": "/var/lib/nanoflare/runner",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "nanoflare-vector-socket",
+          "target": "/var/run/nanoflare",
+          "read_only": true,
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "mem_limit": "2g",
+      "memswap_limit": "2g",
+      "pids_limit": 128,
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "nanoflared": {
+      "command": [
+        "-addr=:8080",
+        "-runtime-addr=:8081",
+        "-config-dir=/var/lib/nanoflare/generated",
+        "-auth-url=http://nanoflared:8080/internal/auth/verify",
+        "-worker-host=nanoflare-runner",
+        "-prometheus-url=http://prometheus:9090",
+        "-loki-url=http://loki:3100",
+        "-runner-url=http://nanoflare-runner:8090",
+        "-litestream-enabled=false"
+      ],
+      "depends_on": {
+        "alloy": {
+          "condition": "service_started",
+          "required": true
+        },
+        "minio": {
+          "condition": "service_started",
+          "required": true
+        },
+        "nanoflare-runner": {
+          "condition": "service_started",
+          "required": true
+        },
+        "postgres": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "DATABASE_URL": "postgres://nanoflare:${PILOT_PASSWORD:?required}@postgres:5432/nanoflare?sslmode=disable",
+        "MINIO_ACCESS_KEY": "nanoflare",
+        "MINIO_BUCKET": "nanoflare",
+        "MINIO_ENDPOINT": "minio:9000",
+        "MINIO_SECRET_KEY": "${PILOT_PASSWORD:?required}",
+        "MINIO_SECURE": "false",
+        "NANOFLARE_BASE_HOSTNAME": "workers.pilot.localhost",
+        "NANOFLARE_CONTROL_OIDC_CLIENT_ID": "",
+        "NANOFLARE_CONTROL_OIDC_CLIENT_SECRET": "",
+        "NANOFLARE_CONTROL_OIDC_EMAIL_CLAIM": "email",
+        "NANOFLARE_CONTROL_OIDC_ISSUER": "",
+        "NANOFLARE_CONTROL_OIDC_PUBLIC_URL": "",
+        "NANOFLARE_LOG_VECTOR_SOCKET": "unix:///var/run/nanoflare/vector.sock",
+        "NANOFLARE_METRICS_TOKEN": "${PILOT_METRICS_TOKEN:?required}",
+        "NANOFLARE_OIDC_AUDIENCE": "",
+        "NANOFLARE_OIDC_CLIENT_ID": "",
+        "NANOFLARE_OIDC_CLIENT_SECRET": "",
+        "NANOFLARE_OIDC_COOKIE_DOMAIN": "",
+        "NANOFLARE_OIDC_EMAIL_CLAIM": "email",
+        "NANOFLARE_OIDC_ISSUER": "",
+        "NANOFLARE_OIDC_PUBLIC_URL": "",
+        "NANOFLARE_OTEL_SAMPLE_RATIO": "0.1",
+        "NANOFLARE_RUNNER_TOKEN": "${PILOT_RUNNER_TOKEN:?required}",
+        "NANOFLARE_SECRET_KEY": "${PILOT_SECRET_KEY:?required}",
+        "NANOFLARE_TRAEFIK_TOKEN": "${PILOT_TRAEFIK_TOKEN:?required}",
+        "NANOFLARE_WORKERD_EGRESS_CA_FILES": "",
+        "NANOFLARE_WORKERD_EGRESS_NO_PROXY": "",
+        "NANOFLARE_WORKERD_EGRESS_PROXY_RESOLVES": "false",
+        "NANOFLARE_WORKERD_EGRESS_PROXY_URL": "",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://alloy:4317",
+        "OTEL_SERVICE_NAME": "nanoflared",
+        "NANOFLARE_WORKERD_EXECUTABLE": "/usr/local/bin/workerd-native",
+        "NANOFLARE_PLATFORM_DISPATCH_ENABLED": "true",
+        "NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED": "true",
+        "NANOFLARE_AUTH_SECRET": "${PILOT_AUTH_SECRET:?required}"
+      },
+      "image": "${PILOT_DAEMON_IMAGE:?required}",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "nanoflared-data",
+          "target": "/var/lib/nanoflare/generated",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "nanoflare-vector-socket",
+          "target": "/var/run/nanoflare",
+          "read_only": true,
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "published": "18080",
+          "target": 8080
+        }
+      ],
+      "mem_limit": "512m",
+      "memswap_limit": "512m",
+      "pids_limit": 128,
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "postgres": {
+      "command": null,
+      "entrypoint": null,
+      "environment": {
+        "POSTGRES_DB": "nanoflare",
+        "POSTGRES_PASSWORD": "${PILOT_PASSWORD:?required}",
+        "POSTGRES_USER": "nanoflare"
+      },
+      "healthcheck": {
+        "test": ["CMD-SHELL", "pg_isready -U nanoflare -d nanoflare"],
+        "timeout": "2s",
+        "interval": "2s",
+        "retries": 30
+      },
+      "image": "postgres:17-alpine",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "postgres-data",
+          "target": "/var/lib/postgresql/data",
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "prometheus": {
+      "command": [
+        "--config.file=/etc/prometheus/prometheus.yml",
+        "--storage.tsdb.path=/prometheus",
+        "--storage.tsdb.retention.time=7d",
+        "--storage.tsdb.retention.size=512MB"
+      ],
+      "depends_on": {
+        "traefik": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "image": "prom/prometheus:v3.5.0",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "./prometheus.yml",
+          "target": "/etc/prometheus/prometheus.yml",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "bind",
+          "source": "./private/metrics-token",
+          "target": "/run/secrets/nanoflare-metrics-token",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "bind",
+          "source": "../prometheus/nanoflare-alerts.yml",
+          "target": "/etc/prometheus/nanoflare-alerts.yml",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "volume",
+          "source": "prometheus-data",
+          "target": "/prometheus",
+          "volume": {}
+        },
+        {
+          "type": "bind",
+          "source": "./alerts.yml",
+          "target": "/etc/prometheus/pilot-alerts.yml",
+          "read_only": true
+        }
+      ],
+      "restart": "unless-stopped",
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "published": "19090",
+          "target": 9090
+        }
+      ],
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "tempo": {
+      "command": ["-config.file=/etc/tempo/tempo.yml"],
+      "entrypoint": null,
+      "image": "grafana/tempo:2.10.7",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "../tempo/tempo.yml",
+          "target": "/etc/tempo/tempo.yml",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "volume",
+          "source": "tempo-data",
+          "target": "/var/tempo",
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "traefik": {
+      "command": [
+        "--api.insecure=true",
+        "--entrypoints.web.address=:80",
+        "--entrypoints.websecure.address=:443",
+        "--metrics.prometheus=true",
+        "--metrics.prometheus.addrouterslabels=true",
+        "--metrics.prometheus.addserviceslabels=true",
+        "--providers.http.endpoint=http://nanoflared:8080/internal/traefik/config",
+        "--providers.http.pollInterval=1s",
+        "--providers.http.headers.Authorization=Bearer ${PILOT_TRAEFIK_TOKEN:?required}"
+      ],
+      "depends_on": {
+        "nanoflared": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "image": "traefik:v3.4",
+      "networks": {
+        "default": null
+      },
+      "restart": "unless-stopped",
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "published": "18088",
+          "target": 80
+        },
+        {
+          "host_ip": "127.0.0.1",
+          "published": "18443",
+          "target": 443
+        }
+      ],
+      "volumes": [],
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "vector": {
+      "command": [
+        "mkdir -p /var/run/nanoflare && chown 0:65532 /var/run/nanoflare && chmod 0710 /var/run/nanoflare && exec /usr/local/bin/vector --config /etc/vector/vector.yaml"
+      ],
+      "depends_on": {
+        "loki": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "entrypoint": ["/bin/sh", "-ec"],
+      "image": "timberio/vector:0.46.1-alpine",
+      "networks": {
+        "default": null
+      },
+      "user": "0:65532",
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "./vector.yaml",
+          "target": "/etc/vector/vector.yaml",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "volume",
+          "source": "vector-data",
+          "target": "/var/lib/vector",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "nanoflare-vector-socket",
+          "target": "/var/run/nanoflare",
+          "volume": {}
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "alertmanager": {
+      "image": "prom/alertmanager:v0.28.1",
+      "command": [
+        "--config.file=/etc/alertmanager/alertmanager.yml",
+        "--storage.path=/alertmanager"
+      ],
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "./alertmanager.yml",
+          "target": "/etc/alertmanager/alertmanager.yml",
+          "read_only": true
+        },
+        {
+          "type": "volume",
+          "source": "alertmanager-data",
+          "target": "/alertmanager"
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "alert-receiver": {
+      "image": "node:22-bookworm-slim",
+      "command": ["node", "/app/receiver.cjs"],
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "./alert-receiver.cjs",
+          "target": "/app/receiver.cjs",
+          "read_only": true
+        },
+        {
+          "type": "volume",
+          "source": "alert-notifications",
+          "target": "/data"
+        }
+      ],
+      "restart": "unless-stopped",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    }
+  },
+  "volumes": {
+    "alloy-data": {},
+    "grafana-data": {},
+    "loki-data": {},
+    "minio-data": {},
+    "nanoflare-runner-data": {},
+    "nanoflare-vector-socket": {},
+    "nanoflared-data": {},
+    "postgres-data": {},
+    "prometheus-data": {},
+    "tempo-data": {},
+    "vector-data": {},
+    "alertmanager-data": {},
+    "alert-notifications": {}
+  }
+}

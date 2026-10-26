@@ -1,0 +1,5 @@
+{
+  "private_canary_excluded": true,
+  "probe": "COPY of existing non-secret file inside ignored private directory must fail",
+  "docker_exit": 1
+}

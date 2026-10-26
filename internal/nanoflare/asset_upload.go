@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/zeebo/blake3"
 )
 
 var ErrAssetUploadUnavailable = errors.New("asset upload session is unavailable or expired")
@@ -236,7 +238,10 @@ func assetWireHash(data []byte, name string) (string, string) {
 func assetWireHashMatches(data []byte, name, script, hash string) bool {
 	raw, extended := assetWireHash(data, name)
 	salted := sha256.Sum256(append([]byte(script+"\x00"+name+"\x00"), data...))
-	return hash == raw || hash == extended || hash == hex.EncodeToString(salted[:16])
+	// Wrangler 4.54 uses BLAKE3(base64(bytes) + extension), truncated to 128
+	// bits. The stored blob still carries our independent full content digest.
+	wrangler := blake3.Sum256([]byte(base64.StdEncoding.EncodeToString(data) + strings.TrimPrefix(path.Ext(name), ".")))
+	return hash == raw || hash == extended || hash == hex.EncodeToString(salted[:16]) || hash == hex.EncodeToString(wrangler[:16])
 }
 
 func validateAssetUploadTarget(ns DispatchNamespace, script, customer string) error {

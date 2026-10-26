@@ -1,0 +1,82 @@
+{
+  "wasm_restored_and_both_revisions_verified": true,
+  "populated_d1_restored": true,
+  "passed": true,
+  "backup_type": "cold physical snapshot, same pinned images and signing/encryption keys",
+  "stores": {
+    "postgres-data": {
+      "sha256": "e5fa02e37e63f2e9d158be6d2e9af1d80ed1bd67a0e34c2ec27cdc3dddce64ea",
+      "bytes": 67402752
+    },
+    "minio-data": {
+      "sha256": "a64af11583b1dc8e21862a92d3acc76aa4db86fd3c093c3ab9b7a66dc0b88f81",
+      "bytes": 138240
+    },
+    "nanoflared-data": {
+      "sha256": "486c0c6aa51bfabd2a779c9d077f029dfb3753117701229e4cb4383e40311aa6",
+      "bytes": 54784
+    },
+    "nanoflare-runner-data": {
+      "sha256": "8d5b1e22bbdf5ec42ccfc6d59a659163fc0ecdaa1c2ce10a6fb63f288b351e83",
+      "bytes": 27136
+    }
+  },
+  "restored_project": "nanoflare-pilot-restore-wasm",
+  "restored_dispatch_and_secret": true,
+  "restored_login_token": true,
+  "original_pilot_recovered": true,
+  "port_offset": 30000,
+  "production_qualified": false,
+  "untrusted_execution_qualified": false,
+  "limitations": "No point-in-time recovery, cross-version migration or off-host/disaster recovery qualification. Restore stack retained for inspection.",
+  "restored_7_while_source_42_verified": true,
+  "separate_mounted_stores_and_networks": {
+    "postgres-data": {
+      "source_volume": "nanoflare-pilot_postgres-data",
+      "restored_volume": "nanoflare-pilot-restore-wasm_postgres-data",
+      "source_networks": [
+        "nanoflare-pilot_default"
+      ],
+      "restored_networks": [
+        "nanoflare-pilot-restore-wasm_default"
+      ],
+      "same_image": "sha256:872a12eb3c5de110145da29dd03154f6de537bda7860a5731df9c02fad256459"
+    },
+    "minio-data": {
+      "source_volume": "nanoflare-pilot_minio-data",
+      "restored_volume": "nanoflare-pilot-restore-wasm_minio-data",
+      "source_networks": [
+        "nanoflare-pilot_default"
+      ],
+      "restored_networks": [
+        "nanoflare-pilot-restore-wasm_default"
+      ],
+      "same_image": "sha256:6c83c74c8028019d82d3f20d65cc6645fd5694b82a25dc38733df5227ffa4e8d"
+    },
+    "nanoflared-data": {
+      "source_volume": "nanoflare-pilot_nanoflared-data",
+      "restored_volume": "nanoflare-pilot-restore-wasm_nanoflared-data",
+      "source_networks": [
+        "nanoflare-pilot_default"
+      ],
+      "restored_networks": [
+        "nanoflare-pilot-restore-wasm_default"
+      ],
+      "same_image": "sha256:514f162d54ab40b7c3de82a77ec75c783e0e9ee5801c011fcff74dc04a8e9c32"
+    },
+    "nanoflare-runner-data": {
+      "source_volume": "nanoflare-pilot_nanoflare-runner-data",
+      "restored_volume": "nanoflare-pilot-restore-wasm_nanoflare-runner-data",
+      "source_networks": [
+        "nanoflare-pilot_default"
+      ],
+      "restored_networks": [
+        "nanoflare-pilot-restore-wasm_default"
+      ],
+      "same_image": "sha256:e9fba41f883e0f79cdb554223a890d6cdb01a56b3a386464541786a876dd0c58"
+    }
+  },
+  "final_restore_fixture_answer": 42,
+  "restore_helper_sha256": "05a529cfecec49ec17fa4613e27e624b6f78a1e4c16c451d0216d6187a245148",
+  "base_commit": "2b31b122f8af593314d2fc8d1ee6a5ad635d0048"
+}

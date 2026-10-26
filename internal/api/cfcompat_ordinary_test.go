@@ -56,7 +56,9 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 					r.Header.Set("Authorization", "Bearer "+token)
 				}
 				r.Header.Set("Content-Type", contentType)
-				r.Header.Set("Idempotency-Key", key)
+				if key != "" {
+					r.Header.Set("Idempotency-Key", key)
+				}
 				for k, v := range headers {
 					r.Header.Set(k, v)
 				}
@@ -99,6 +101,50 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			}
 			firstResponse := request("PUT", base+"?excludeScript=true", kind, body, session.Token, "first", nil)
 			first := check(firstResponse, 200)
+			secretBody := []byte(`{"name":"CLI_TOKEN","type":"secret_text","text":"private-cli-value"}`)
+			check(request("PUT", base+"/secrets", "application/json", secretBody, limited.Token, "cli-secret", nil), 403)
+			check(request("PUT", base+"/secrets", "application/json", secretBody, session.Token, "cli-secret", nil), 200)
+			check(request("PUT", base+"/secrets", "application/json", secretBody, limited.Token, "cli-secret", nil), 403)
+			listedSecrets := check(request("GET", base+"/secrets", "", nil, session.Token, "", nil), 200)
+			if bytes.Contains(listedSecrets, []byte("private-cli-value")) {
+				t.Fatal("ordinary secret plaintext leaked")
+			}
+			check(request("GET", base+"/secrets/CLI_TOKEN", "", nil, session.Token, "", nil), 200)
+			check(request("PUT", base+"/secrets", "application/json", []byte(`{"name":"DISPATCHER","type":"secret_text","text":"conflict"}`), session.Token, "cli-conflict", nil), 422)
+			check(request("DELETE", base+"/secrets/CLI_TOKEN?url_encoded=false", "", nil, session.Token, "", nil), 422)
+			check(request("DELETE", base+"/secrets/CLI_TOKEN?url_encoded=true", "", nil, session.Token, "cli-delete", nil), 200)
+			check(request("GET", base+"/secrets/CLI_TOKEN", "", nil, session.Token, "", nil), 404)
+			kv, err := service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{OrgID: org.ID, Name: "z-owned"})
+			must(err)
+			_, err = service.CreateKVNamespace(nanoflare.CreateKVNamespaceInput{OrgID: foreign.ID, Name: "a-foreign"})
+			must(err)
+			kvPath := "/client/v4/accounts/" + org.ID + "/storage/kv/namespaces"
+			check(request("GET", kvPath, "", nil, "", "", nil), 401)
+			check(request("GET", kvPath, "", nil, limited.Token, "", nil), 403)
+			check(request("GET", strings.Replace(kvPath, org.ID, foreign.ID, 1), "", nil, bound.Token, "", nil), 403)
+			listedKV := check(request("GET", kvPath+"?page=1&per_page=1&order=title&direction=asc", "", nil, session.Token, "", nil), 200)
+			if !bytes.Contains(listedKV, []byte(kv.ID)) || bytes.Contains(listedKV, []byte("a-foreign")) {
+				t.Fatalf("KV listing scope: %s", listedKV)
+			}
+			if string(check(request("GET", kvPath+"?page=2&per_page=1", "", nil, session.Token, "", nil), 200)) != "[]" {
+				t.Fatal("KV page did not terminate")
+			}
+			for _, query := range []string{"page=0", "per_page=0", "per_page=1001", "order=id", "direction=desc", "page=1&page=2", "unknown=true"} {
+				check(request("GET", kvPath+"?"+query, "", nil, session.Token, "", nil), 422)
+			}
+
+			servicePath := "/client/v4/accounts/" + org.ID + "/workers/services/dispatcher"
+			for _, path := range []string{servicePath, base + "/deployments", base + "/subdomain"} {
+				check(request("GET", path, "", nil, "", "", nil), 401)
+				check(request("GET", path, "", nil, limited.Token, "", nil), 403)
+				check(request("GET", strings.Replace(path, org.ID, foreign.ID, 1), "", nil, bound.Token, "", nil), 403)
+				check(request("GET", path, "", nil, session.Token, "", nil), 200)
+				check(request("GET", path+"?unexpected=true", "", nil, session.Token, "", nil), 422)
+			}
+			check(request("POST", base+"/subdomain", "application/json", []byte(`{"enabled":false,"previews_enabled":false}`), session.Token, "", nil), 200)
+			check(request("POST", base+"/subdomain", "application/json", []byte(`{"enabled":true}`), session.Token, "", nil), 422)
+			check(request("POST", base+"/subdomain", "application/json", []byte(`{"enabled":false,"previews_enabled":true}`), session.Token, "", nil), 422)
+
 			var receipt struct {
 				ID       string `json:"id"`
 				WorkerID string `json:"nanoflare_worker_id"`
@@ -202,6 +248,18 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			if len(workers) != 3 {
 				t.Fatalf("concurrent upload created duplicate Workers: %d", len(workers))
 			}
+			deletePath := strings.Replace(servicePath, "dispatcher", "concurrent", 1)
+			readOnly, err := auth.CreatePersonalAccessToken(session.User.ID, nanoflare.CreatePersonalAccessTokenInput{Name: "read-only", ScopeType: "org", OrgID: org.ID, Scopes: []string{"workers:read"}})
+			must(err)
+			check(request("DELETE", deletePath+"?force=true", "", nil, readOnly.Token, "", nil), 403)
+			check(request("DELETE", strings.Replace(deletePath, org.ID, foreign.ID, 1)+"?force=true", "", nil, bound.Token, "", nil), 403)
+			check(request("DELETE", deletePath, "", nil, session.Token, "", nil), 422)
+			check(request("DELETE", deletePath+"?force=true", "", nil, session.Token, "", map[string]string{"If-Match": "*"}), 422)
+			check(request("DELETE", deletePath+"?force=true", "", nil, session.Token, "", nil), 200)
+			if _, err := service.OrdinaryScriptForOrg(org.ID, "concurrent"); err != nanoflare.ErrAppNotFound {
+				t.Fatalf("ordinary deletion did not remove identity: %v", err)
+			}
+
 		})
 	}
 }

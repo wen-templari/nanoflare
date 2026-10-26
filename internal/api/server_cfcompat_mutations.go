@@ -107,11 +107,29 @@ func (s *Server) cfApplyMutation(w http.ResponseWriter, r *http.Request, app nan
 	cfJSON(w, render(result))
 }
 
-func cfPreservedMutation(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
-	if snapshot.Deployment.Format != "modules" || len(snapshot.Deployment.DispatchNamespaces) > 0 {
+func cfPreservedMutation(snapshot nanoflare.ManagementUpload, allowDispatch ...bool) (nanoflare.ManagedDeployInput, error) {
+	if snapshot.Deployment.Format != "modules" || (len(snapshot.Deployment.DispatchNamespaces) > 0 && !(len(allowDispatch) > 0 && allowDispatch[0])) {
 		return nanoflare.ManagedDeployInput{}, errors.New("this native configuration requires the native API")
 	}
 	input := nanoflare.ManagedDeployInput{Deployment: snapshot.Deployment, ExpectedRevision: snapshot.State.Revision, BaseDeploymentID: snapshot.DeploymentID, Metadata: snapshot.State.Metadata, KeepSecrets: map[string]string{}}
+	// Native publication supplies an ASSETS runtime default even when the
+	// compatible upload omitted an explicit assets binding. Restore that intent
+	// before validating a preserved mutation against management metadata.
+	if len(input.Deployment.Assets) > 0 {
+		explicit := false
+		for _, raw := range input.Metadata.Bindings {
+			var binding struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(raw, &binding); err != nil {
+				return input, err
+			}
+			explicit = explicit || binding.Type == "assets"
+		}
+		if !explicit {
+			input.Deployment.AssetConfig.Binding = ""
+		}
+	}
 	for _, secret := range snapshot.SecretRefs {
 		input.KeepSecrets[secret.Name] = secret.Name
 	}
@@ -147,7 +165,7 @@ func cfWithoutBinding(metadata nanoflare.ScriptManagementMetadata, name string) 
 
 // Returns true only for a supported mutation route, leaving read operations to
 // the shared reader. Each response excludes secret plaintext and source code.
-func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nanoflare.App, suffix []string) bool {
+func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nanoflare.App, suffix []string, allowDispatch ...bool) bool {
 	if len(suffix) == 1 && suffix[0] == "secrets-bulk" && r.Method == "PATCH" {
 		data, err := cfMutationBody(r)
 		if err != nil {
@@ -160,7 +178,7 @@ func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nano
 			return true
 		}
 		s.cfApplyMutation(w, r, app, "secrets.bulk", json.RawMessage(data), func(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
-			input, err := cfPreservedMutation(snapshot)
+			input, err := cfPreservedMutation(snapshot, allowDispatch...)
 			if err != nil {
 				return input, err
 			}
@@ -226,7 +244,7 @@ func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nano
 			return true
 		}
 		s.cfApplyMutation(w, r, app, "content.put", json.RawMessage(payload), func(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
-			input, err := cfPreservedMutation(snapshot)
+			input, err := cfPreservedMutation(snapshot, allowDispatch...)
 			if err != nil {
 				return input, err
 			}
@@ -270,7 +288,7 @@ func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nano
 			return true
 		}
 		s.cfApplyMutation(w, r, app, "secrets.put", secret, func(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
-			input, err := cfPreservedMutation(snapshot)
+			input, err := cfPreservedMutation(snapshot, allowDispatch...)
 			if err != nil {
 				return input, err
 			}
@@ -297,7 +315,7 @@ func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nano
 	if len(suffix) == 2 && suffix[0] == "secrets" && r.Method == "DELETE" {
 		name := suffix[1]
 		s.cfApplyMutation(w, r, app, "secrets.delete", name, func(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
-			input, err := cfPreservedMutation(snapshot)
+			input, err := cfPreservedMutation(snapshot, allowDispatch...)
 			if err != nil {
 				return input, err
 			}
@@ -322,7 +340,7 @@ func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nano
 			return true
 		}
 		s.cfApplyMutation(w, r, app, "tags.put", tags, func(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
-			input, err := cfPreservedMutation(snapshot)
+			input, err := cfPreservedMutation(snapshot, allowDispatch...)
 			input.Metadata.Tags = append([]string{}, tags...)
 			input.ConfigurationOnly = true
 			return input, err
@@ -338,7 +356,7 @@ func (s *Server) cfMutateScript(w http.ResponseWriter, r *http.Request, app nano
 			return true
 		}
 		s.cfApplyMutation(w, r, app, "tags.item", name, func(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
-			input, err := cfPreservedMutation(snapshot)
+			input, err := cfPreservedMutation(snapshot, allowDispatch...)
 			if err != nil {
 				return input, err
 			}

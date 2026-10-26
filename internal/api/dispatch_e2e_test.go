@@ -111,6 +111,10 @@ func TestStableRuntimePrivateDynamicDispatch(t *testing.T) {
 }
 func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bool) {
 	dynamic := len(dynamicMode) > 0 && dynamicMode[0]
+	privateDynamicDispatchWithFixture(t, remote, dynamic, nil)
+}
+
+func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixture func(*Server, *nanoflare.Service, nanoflare.Organization, string)) {
 	executable, err := exec.LookPath("workerd")
 	if dynamic {
 		executable = os.Getenv("NANOFLARE_TEST_WORKERD")
@@ -119,7 +123,15 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 	if err != nil {
 		t.Skip("workerd not installed")
 	}
-	repo := nanoflare.NewStore()
+	var repo nanoflare.Repository = nanoflare.NewStore()
+	switch backend := os.Getenv("NANOFLARE_TEST_RUNTIME_BACKEND"); backend {
+	case "", "memory":
+	case "postgres":
+		repo = runtimePostgres(t)
+		t.Log("runtime_backend=postgres private_schema=true")
+	default:
+		t.Fatalf("unknown fixture runtime backend %q", backend)
+	}
 	auth := nanoflare.NewControlAuthService(repo, "dispatch-test-auth")
 	auth.SetTestHashCost(4)
 	session, err := auth.Signup(nanoflare.SignupInput{Email: "dispatch@example.com", Password: "password", OrganizationName: "Dispatch"})
@@ -271,6 +283,10 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 	}
 	service.SetDBExecutor(sqlite)
 	server = NewServerWithRuntime(service, nil, "", nil, auth, ensurer)
+	if fixture != nil {
+		fixture(server, service, org, session.Token)
+		return
+	}
 	control := func(method, path string, input any, want int) []byte {
 		t.Helper()
 		var body []byte
@@ -617,10 +633,15 @@ class Customer extends WorkerEntrypoint {
   return Response.json({version:"class",marker:this.ctx.props.marker,rpc:await this.ctx.props.CONNECTOR.identify(),secret:this.env.TOKEN});
  }
 }`
+	wasmAnswer, decodeErr := hex.DecodeString("0061736d010000000105016000017f030201000707010372756e00000a06010400412a0b")
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
 	for _, variant := range []struct {
 		name  string
 		files []nanoflare.WorkerFile
 	}{
+		{"wasm", []nanoflare.WorkerFile{{Path: "worker.js", Content: `import module from "./answer.wasm";const instance=new WebAssembly.Instance(module);export default {async fetch(request,env,ctx){return Response.json({version:"class",wasm:instance.exports.run(),marker:ctx.props.marker,rpc:await ctx.props.CONNECTOR.identify(),secret:env.TOKEN})}}`}, {Path: "answer.wasm", Wasm: wasmAnswer}}},
 		{"inline", []nanoflare.WorkerFile{{Path: "worker.js", Content: strings.Replace(classModule, "class Customer", "export default class Customer", 1)}}},
 		{"named", []nanoflare.WorkerFile{{Path: "worker.js", Content: classModule + "\nexport default Customer;"}}},
 		{"alias", []nanoflare.WorkerFile{{Path: "worker.js", Content: classModule + "\nexport {Customer as default};"}}},
@@ -628,11 +649,37 @@ class Customer extends WorkerEntrypoint {
 		{"object-comment", []nanoflare.WorkerFile{{Path: "worker.js", Content: `// export default class is only a comment.
 export default {async fetch(request,env,ctx){return Response.json({version:"class",marker:ctx.props.marker,rpc:await ctx.props.CONNECTOR.identify(),secret:env.TOKEN});}};`}}},
 	} {
+		// These are sequential format/serialization checks. Let the preceding
+		// response's existing background authority drain before admitting another
+		// variant; adding binary cases must not silently expand admission limits.
+		time.Sleep(1600 * time.Millisecond)
+		t.Logf("native export variant=%s", variant.name)
 		customerInput.IdempotencyKey = "alpha-export-" + variant.name
 		customerInput.Files = variant.files
 		control("POST", "/workers/"+customer.ID+"/deployments", customerInput, 201)
+		if variant.name == "wasm" {
+			stored, err := service.WorkerFilesForOrg(org.ID, customer.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, file := range stored {
+				if file.Path == "answer.wasm" {
+					found = true
+					if !bytes.Equal(file.Wasm, wasmAnswer) {
+						t.Fatalf("stored Wasm lost: %+v", file)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("stored Wasm absent")
+			}
+		}
 		if result = invoke("class-props"); result["version"] != "class" || result["rpc"] != "class-props" || result["secret"] != "pinned-secret" {
 			t.Fatalf("native export %s: %#v", variant.name, result)
+		}
+		if variant.name == "wasm" && result["wasm"] != float64(42) {
+			t.Fatalf("native Wasm export: %#v", result)
 		}
 	}
 	if proxied.Load() == 0 {

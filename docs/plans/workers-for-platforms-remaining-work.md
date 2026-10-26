@@ -19,11 +19,17 @@ See the [prerequisite record](../archive/workers-for-platforms/workers-for-platf
 
 ## Broader client compatibility
 
-SDK 7.3.0 default bracketed upload/settings serialization remains unsupported;
-manual multipart construction is required. Wrangler 4.54.0 qualification covers
+SDK 7.3.0 default uploads support scalar/list metadata and asset completion
+tokens. Asset routing configuration is supported. Binding object arrays still require
+explicit JSON metadata. Default settings support covers
+compatibility date, compatibility flags and tags; bindings and explicit empty
+lists require a JSON settings part. Wrangler 4.54.0 qualification covers
 selected management requests directly, with administrator-configured execution consent. Full provisioning,
 secrets/assets CLI flows and other versions need implementation/verification.
-The ordinary Worker adapter currently supports upload and settings GET only.
+The ordinary Worker adapter also supports service/current-traffic probes,
+disabled workers.dev state, secret reads/mutations and forced service deletion.
+A pinned Wrangler runtime workflow is qualified with namespace secret/customer
+cleanup adaptations; ordinary asset sessions and broad CLI parity remain open.
 Pagination, compound filters and further module/binding formats are explicit
 extensions, not behavior inferred from the current route subset.
 
