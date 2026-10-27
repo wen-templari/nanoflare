@@ -28,6 +28,7 @@ type RuntimeExecutionServer struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	closed    bool
+	output    RuntimeLogAppender
 }
 
 type runtimeExecutionPin struct {
@@ -44,10 +45,13 @@ type runtimeExecutionSession struct {
 
 const runtimeExecutionSessionTTL = time.Minute
 
-func NewRuntimeExecutionServer(service *nanoflare.Service, runnerControlToken string) *RuntimeExecutionServer {
+func NewRuntimeExecutionServer(service *nanoflare.Service, runnerControlToken string, outputs ...RuntimeLogAppender) *RuntimeExecutionServer {
 	s := &RuntimeExecutionServer{service: service, token: runnerControlToken,
 		pins: make(map[string]runtimeExecutionPin), sessions: make(map[string]*runtimeExecutionSession), owners: make(map[string]string),
 		stop: make(chan struct{}), done: make(chan struct{})}
+	if len(outputs) > 0 {
+		s.output = outputs[0]
+	}
 	go func() {
 		defer close(s.done)
 		ticker := time.NewTicker(15 * time.Second)
@@ -110,6 +114,7 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		AdmissionID    string                     `json:"admission_id"`
 		RegistrationID string                     `json:"registration_id"`
 		SessionID      string                     `json:"session_id"`
+		Message        string                     `json:"message"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -118,6 +123,16 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	switch strings.TrimPrefix(r.URL.Path, "/internal/runtime/executions/") {
+	case "diagnostic":
+		line, accepted, err := s.service.ProcessExecutionDiagnostic(r.Context(), request.SessionID, request.ExecutionID, request.Message)
+		if err != nil {
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
+		if accepted {
+			appendRuntimeLog(s.output, line)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case "open-session":
 		id, err := runtimeExecutionRandomID()
 		if err != nil {

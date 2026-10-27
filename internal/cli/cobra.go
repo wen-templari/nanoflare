@@ -28,6 +28,7 @@ func (r *Runner) newRootCommand() *cobra.Command {
 		r.initCommand(),
 		r.leaf("check", "Validate the current worker project before deployment", r.check, func(c *cobra.Command) {
 			c.Flags().Bool("types", false, "Also verify worker-configuration.d.ts is current")
+			c.Flags().String("runtime-profile", "standard", "Runtime profile: standard or private-dynamic")
 		}),
 		r.typesCommand(),
 		r.workerLeaf("create", "Create the current worker", r.create, apiURLFlag("")),

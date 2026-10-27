@@ -143,6 +143,23 @@ async function writeTemplate(template, destination, name, date) {
     projectPath,
     project.replaceAll("{{projectName}}", name).replaceAll("{{compatibilityDate}}", date),
   );
+  await writeFile(
+    resolve(destination, "AGENTS.md"),
+    `# Nanoflare runtime compatibility
+
+Confirm whether this project targets an ordinary Worker or a private dynamic
+namespace script. Cloudflare local development does not prove production support.
+For private dynamic scripts, omit fetch cf options, Cache API access and outbound
+WebSockets. Cache-Control headers do not replace programmatic cache storage.
+AbortSignal timeouts and cancellation are supported on fetch and fetch bindings.
+Run nanoflare check --types --runtime-profile private-dynamic and enable the
+privateDynamicProfile helper from @nanoflare/cli/vite for local capability checks
+when using a CLI release containing that helper.
+Inspect nanoflare deployment output <worker-id> --level error after failures;
+use --search <reference> with the response's X-Nanoflare-Error-Id header.
+Full guide: https://github.com/wen-templari/nanoflare/blob/main/docs/guides/private-dynamic-runtime.md
+`,
+  );
 }
 export async function run(args, options = {}) {
   const parsed = parseArgs(args);

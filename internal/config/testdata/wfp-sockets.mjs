@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
-import tls from "node:tls";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import tls from "node:tls";
 const fixture = JSON.parse(await readFile(process.argv[2], "utf8"));
 const temp = await mkdtemp(join(tmpdir(), "wfp-sockets-"));
 const servers = [],
@@ -50,9 +50,7 @@ try {
     s.on("data", (data) => s.write(data));
   };
   const plain = await listen(net.createServer(echo));
-  const direct = await listen(
-    tls.createServer({ key, cert }, echo).on("tlsClientError", () => {}),
-  );
+  const direct = await listen(tls.createServer({ key, cert }, echo).on("tlsClientError", () => {}));
   const upgrade = await listen(
     net.createServer((s) => {
       s.on("error", () => {});
@@ -111,17 +109,15 @@ try {
   ]) {
     const enabled = policy !== "disabled";
     const config = `using Workerd = import "/workerd/workerd.capnp";const config :Workerd.Config = (services=[
-   (name="host",worker=(compatibilityDate="2026-09-08",modules=[(name="host.js",esModule=${JSON.stringify(host)}),(name="dispatch.js",esModule=${JSON.stringify(fixture.dispatch)})],bindings=[(name="__NANOFLARE_WORKER_LOADER",workerLoader=()),${enabled ? '(name="__NANOFLARE_WFP_SOCKET_OUTBOUND",service="nanoflare-wfp-sockets"),' : ""}(name="OUTBOUND",service="internet")])),
+   (name="host",worker=(compatibilityDate="2026-09-08",compatibilityFlags=["experimental","enable_abortsignal_rpc"],modules=[(name="host.js",esModule=${JSON.stringify(host)}),(name="dispatch.js",esModule=${JSON.stringify(fixture.dispatch)})],bindings=[(name="__NANOFLARE_WORKER_LOADER",workerLoader=()),${enabled ? '(name="__NANOFLARE_WFP_SOCKET_OUTBOUND",service="nanoflare-wfp-sockets"),' : ""}(name="OUTBOUND",service="internet")])),
    (name="internet",network=(allow=["public"])),
    ${(policy === "loopback-denied" ? fixture.defaultDeny : policy === "explicit-denied" ? fixture.service.replace("deny = []", 'deny = ["127.0.0.1/32", "::1/128"]') : fixture.service).replace('"local"', JSON.stringify(policy === "denied" ? "192.0.2.0/24" : "local")).replace('"CERTIFICATE_PLACEHOLDER"', policy === "untrusted" ? "" : JSON.stringify(cert))}
   ],sockets=[(name="http",address="127.0.0.1:0",http=(),service="host")]);`;
     const path = join(temp, policy + ".capnp");
     await writeFile(path, config);
-    const child = spawn(
-      process.argv[3],
-      ["serve", "--experimental", "--control-fd=3", path],
-      { stdio: ["ignore", "pipe", "pipe", "pipe"] },
-    );
+    const child = spawn(process.argv[3], ["serve", "--experimental", "--control-fd=3", path], {
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+    });
     let logs = "";
     child.stderr.on("data", (c) => (logs += c));
     child.stdout.on("data", (c) => (logs += c));
@@ -130,9 +126,7 @@ try {
         new Promise((resolve, reject) => {
           let buffer = "";
           child.once("error", reject);
-          child.once("exit", (code) =>
-            reject(new Error("runtime exited " + code + ": " + logs)),
-          );
+          child.once("exit", (code) => reject(new Error("runtime exited " + code + ": " + logs)));
           child.stdio[3].on("data", (chunk) => {
             buffer += chunk;
             const lines = buffer.split("\n");
@@ -144,10 +138,7 @@ try {
           });
         }),
         new Promise((_, reject) => {
-          const t = setTimeout(
-            () => reject(new Error("startup timeout: " + logs)),
-            10000,
-          );
+          const t = setTimeout(() => reject(new Error("startup timeout: " + logs)), 10000);
           t.unref();
         }),
       ]);
@@ -165,8 +156,7 @@ try {
       for (const mode of ["plain", "tls", "starttls", "nested"]) {
         const r = await get("mode=" + mode);
         const succeeds =
-          policy === "allowed" ||
-          (policy === "untrusted" && ["plain", "nested"].includes(mode));
+          policy === "allowed" || (policy === "untrusted" && ["plain", "nested"].includes(mode));
         assert.equal(
           r.status,
           succeeds ? 200 : 500,
@@ -186,9 +176,7 @@ try {
         { status: 200, body: "200:429" },
         "fetch bypassed broker budget: " + logs,
       );
-      console.log(
-        "PASS " + policy + " sockets, nested calls, and broker fetch",
-      );
+      console.log("PASS " + policy + " sockets, nested calls, and broker fetch");
     } finally {
       if (child.exitCode === null && child.signalCode === null) {
         const exited = once(child, "exit");

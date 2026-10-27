@@ -1,5 +1,20 @@
 # Nanoflare Worker platform reference
 
+## Runtime differences from Cloudflare
+
+Private dynamic namespace scripts reject `fetch(url, { cf: ... })`, Cache API
+access (`caches.default`, `caches.open`), outbound WebSockets, and URLs containing
+credentials. Response `Cache-Control` headers do not replace programmatic cache
+storage. Standard AbortSignal timeouts and cancellation are supported on outbound,
+service and asset fetches, including Request inputs.
+
+For that profile, run `nanoflare check --types --runtime-profile private-dynamic`
+and enable the shared local checks described in
+[the private runtime guide](../../../docs/guides/private-dynamic-runtime.md).
+Cloudflare local development alone does not establish production support.
+Inspect `nanoflare deployment output <worker-id> --level error` after failures;
+use `--search <reference>` with the response's `X-Nanoflare-Error-Id`.
+
 ## Core project configuration
 
 `nanoflare.json` requires `name`, `main`, and `compatibility_date`. New projects

@@ -49,9 +49,15 @@ export class ResourceBroker extends WorkerEntrypoint {
     const name = request.headers.get("X-Nanoflare-Binding-Name");
     if (!grant?.startsWith("invocation-")) return new Response("unauthorized", { status: 403 });
     await this.env.EVENTS.fetch("http://events.invalid/invocation-resource", {
-      method: "POST", body: JSON.stringify({ grant, binding: name, path: new URL(request.url).pathname }),
+      method: "POST",
+      body: JSON.stringify({ grant, binding: name, path: new URL(request.url).pathname }),
     });
-    const binding = { KV: this.env.KV_BACKEND, DB: this.env.DB, OBJECTS: this.env.OBJECTS, ASSETS: this.env.ASSETS }[name];
+    const binding = {
+      KV: this.env.KV_BACKEND,
+      DB: this.env.DB,
+      OBJECTS: this.env.OBJECTS,
+      ASSETS: this.env.ASSETS,
+    }[name];
     if (!binding) return new Response("unknown binding", { status: 403 });
     return binding.fetch(request);
   }
@@ -62,7 +68,8 @@ export class LifecycleBroker extends WorkerEntrypoint {
     const path = new URL(request.url).pathname;
     if (path !== "/complete" && path !== "/start") return new Response("bad path", { status: 400 });
     await this.env.EVENTS.fetch("http://events.invalid/invocation-" + path.slice(1), {
-      method: "POST", body: request.headers.get("X-Nanoflare-Invocation"),
+      method: "POST",
+      body: request.headers.get("X-Nanoflare-Invocation"),
     });
     return new Response(null, { status: 204 });
   }
@@ -70,11 +77,13 @@ export class LifecycleBroker extends WorkerEntrypoint {
 
 export class ServiceBroker extends WorkerEntrypoint {
   invoke(token, binding, method, args) {
-    if (!token.startsWith("invocation-") || binding !== "IDENTITY") throw new Error("unauthorized service");
+    if (!token.startsWith("invocation-") || binding !== "IDENTITY")
+      throw new Error("unauthorized service");
     return identityTarget(this.env)[method](...args);
   }
   fetch(token, binding, request) {
-    if (!token.startsWith("invocation-") || binding !== "IDENTITY") throw new Error("unauthorized service");
+    if (!token.startsWith("invocation-") || binding !== "IDENTITY")
+      throw new Error("unauthorized service");
     return identityTarget(this.env).fetch(request);
   }
 }
@@ -124,14 +133,17 @@ export default {
         __NANOFLARE_DURATION_COLLECTOR: env.EVENTS,
         __NANOFLARE_DNS: env.DNS,
       });
-    if (name.startsWith("invocation-")) Object.assign(bindings, {
-      __NANOFLARE_RESOURCE_BROKER: ctx.exports.ResourceBroker({ props: { grant: `${name}:${record.revision}` } }),
-      __NANOFLARE_LIFECYCLE: ctx.exports.LifecycleBroker({ props: {} }),
-      __NANOFLARE_SERVICE_BROKER: ctx.exports.ServiceBroker({ props: {} }),
-      __NANOFLARE_APP_ID: env.APP_ID,
-      __NANOFLARE_DEPLOYMENT_ID: env.DEPLOYMENT_ID,
-      __NANOFLARE_DURATION_COLLECTOR: env.EVENTS,
-    });
+    if (name.startsWith("invocation-"))
+      Object.assign(bindings, {
+        __NANOFLARE_RESOURCE_BROKER: ctx.exports.ResourceBroker({
+          props: { grant: `${name}:${record.revision}` },
+        }),
+        __NANOFLARE_LIFECYCLE: ctx.exports.LifecycleBroker({ props: {} }),
+        __NANOFLARE_SERVICE_BROKER: ctx.exports.ServiceBroker({ props: {} }),
+        __NANOFLARE_APP_ID: env.APP_ID,
+        __NANOFLARE_DEPLOYMENT_ID: env.DEPLOYMENT_ID,
+        __NANOFLARE_DURATION_COLLECTOR: env.EVENTS,
+      });
     if (name === "caller") {
       const identity = active.get("identity");
       bindings.IDENTITY = env.LOADER.get(`identity:${identity.revision}`, () => ({
@@ -143,6 +155,7 @@ export default {
     }
     if (name === "bridged-caller") bindings.IDENTITY = ctx.exports.IdentityBridge({ props: {} });
     const target = env.LOADER.get(`${name}:${record.revision}`, () => ({
+      allowExperimental: true,
       compatibilityDate: "2026-09-08",
       compatibilityFlags: ["nodejs_compat"],
       ...(record.program ?? { mainModule: "worker.js", modules: { "worker.js": record.source } }),
@@ -151,12 +164,20 @@ export default {
           ? bindings
           : { ...bindings, KV: undefined },
       globalOutbound: name === "resource-network" || name === "tcp" ? env.EGRESS : null,
-    })).getEntrypoint(undefined, name.startsWith("invocation-") ? {
-      props: { __nanoflare_invocation: {
-        token: request.headers.get("X-Test-Invocation") ?? name,
-        key: `${name}:${record.revision}`,
-      }, publicValue: "safe" },
-    } : undefined);
+    })).getEntrypoint(
+      undefined,
+      name.startsWith("invocation-")
+        ? {
+            props: {
+              __nanoflare_invocation: {
+                token: request.headers.get("X-Test-Invocation") ?? name,
+                key: `${name}:${record.revision}`,
+              },
+              publicValue: "safe",
+            },
+          }
+        : undefined,
+    );
     url.pathname = `/${segments.join("/")}`;
     if (name === "invocation-class" && url.pathname === "/method")
       return Response.json(await target.inspect("direct-rpc"));

@@ -344,11 +344,15 @@ func (r *Runner) check(args []string) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	types := flags.Bool("types", false, "also verify worker-configuration.d.ts is current")
+	profile := flags.String("runtime-profile", "standard", "Runtime profile: standard or private-dynamic")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("usage: nanoflare check [flags]")
+	}
+	if *profile != "standard" && *profile != "private-dynamic" {
+		return errors.New("runtime-profile must be standard or private-dynamic")
 	}
 	projectPath, project, err := loadDeploymentProject()
 	if err != nil {
@@ -363,8 +367,12 @@ func (r *Runner) check(args []string) error {
 	if _, err := generateWorkerTypes(project, "Env"); err != nil {
 		return fmt.Errorf("validate Worker bindings: %w", err)
 	}
-	if _, err := projectWorkerFiles(project); err != nil {
+	files, err := projectWorkerFiles(project)
+	if err != nil {
 		return err
+	}
+	if *profile == "private-dynamic" {
+		warnPrivateRuntime(files, r.Stderr)
 	}
 	if _, err := loadAssetFiles(project.Assets.Directory); err != nil {
 		return err

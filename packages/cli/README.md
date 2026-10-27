@@ -1,5 +1,11 @@
 # Nanoflare CLI
 
+Private dynamic namespace targets can use
+`nanoflare check --runtime-profile private-dynamic` for advisory compatibility
+warnings and `privateDynamicProfile` from `@nanoflare/cli/vite` alongside the
+Cloudflare Vite plugin. See
+[runtime differences and diagnostics](../../docs/guides/private-dynamic-runtime.md).
+
 Install the Nanoflare command-line interface:
 
 ```sh

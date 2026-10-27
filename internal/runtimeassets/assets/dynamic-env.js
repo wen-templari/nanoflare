@@ -1,20 +1,71 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 const invocation = new AsyncLocalStorage();
-export function withInvocation(ctx, run) {
-  return invocation.run({ broker: ctx.props.__NANOFLARE_BROKER, ctx }, run);
+const contexts = new WeakMap();
+export function invocationContext(ctx) {
+  if (contexts.has(ctx)) return contexts.get(ctx).ctx;
+  const broker = ctx.props.__NANOFLARE_BROKER;
+  const reference = ctx.props.__NANOFLARE_ERROR_ID || crypto.randomUUID();
+  const state = { broker, rawCtx: ctx, reference, starts: [] };
+  state.report = errorReporter((level, message) => broker.log(level, message), reference);
+  state.ctx = new Proxy(ctx, {
+    get(target, name) {
+      if (name === "waitUntil")
+        return (value) => {
+          const start = Promise.resolve()
+            .then(() => broker.retainBackground())
+            .then(
+              () => true,
+              () => false,
+            );
+          state.starts.push(start);
+          const task = Promise.resolve(value)
+            .catch(async (error) => {
+              await start;
+              await state.report(error, "waitUntil");
+              throw error;
+            })
+            .finally(async () => {
+              if (await start)
+                await Promise.resolve()
+                  .then(() => broker.releaseBackground())
+                  .catch(() => {});
+            });
+          target.waitUntil(task);
+        };
+      const value = Reflect.get(target, name, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  contexts.set(ctx, state);
+  contexts.set(state.ctx, state);
+  return state.ctx;
+}
+export async function withInvocation(ctx, run) {
+  invocationContext(ctx);
+  const state = contexts.get(ctx);
+  return invocation.run(state, async () => {
+    try {
+      return observeResponseErrors(await run(), state.report);
+    } catch (error) {
+      await state.report(error, "fetch");
+      return executionFailure(state.reference);
+    } finally {
+      await Promise.all(state.starts);
+    }
+  });
 }
 async function scopedFetch(input, init) {
   const broker = invocation.getStore()?.broker;
   if (!broker) throw new TypeError("Outbound fetch requires a live invocation");
   if (init?.cf) throw new TypeError("Custom fetch/cache options are unavailable");
   let request = new Request(input, init);
+  const signal = request.signal;
   const mode = request.redirect;
   for (let hop = 0; hop <= 20; hop++) {
-    if (new URL(request.url).username || new URL(request.url).password)
-      throw new TypeError("URL credentials are unavailable");
-    if (request.headers.has("upgrade")) throw new TypeError("Outbound WebSockets are unavailable");
+    signal?.throwIfAborted();
+    validatePrivateDynamicRequest(request);
     const replay = request.clone();
-    const response = await broker.outbound(request);
+    const response = await fetchWithSignal(request, (request) => broker.outbound(request));
     if (
       ![301, 302, 303, 307, 308].includes(response.status) ||
       !response.headers.has("location") ||
@@ -45,34 +96,11 @@ async function scopedFetch(input, init) {
       headers,
       body: get || ["GET", "HEAD"].includes(replay.method) ? null : replay.body,
       redirect: mode,
+      signal,
     });
   }
 }
-Object.defineProperty(globalThis, "fetch", {
-  value: scopedFetch,
-  writable: false,
-  configurable: false,
-});
-
-// The native loader currently has no supported cache backend contract. Reject
-// cache operations explicitly rather than exposing workerd's silent local no-op.
-const unavailableCache = () => {
-  throw new TypeError("Cache API is unavailable in the private dynamic profile");
-};
-const nativeStorage = globalThis.caches;
-const nativeCache = nativeStorage.default;
-for (const [object, names] of [
-  [Object.getPrototypeOf(nativeStorage), ["open"]],
-  [Object.getPrototypeOf(nativeCache), ["match", "put", "delete"]],
-]) {
-  for (const name of names)
-    Object.defineProperty(object, name, {
-      value: unavailableCache,
-      writable: false,
-      configurable: false,
-    });
-}
-Object.defineProperty(globalThis, "caches", { get: unavailableCache, configurable: false });
+installPrivateDynamicProfile(scopedFetch);
 
 import { wrapEnv } from "nanoflare-internal:runtime-bindings.js";
 
@@ -139,7 +167,9 @@ export function dynamicEnv(values, ctx, metadata) {
       Object.defineProperty(env, b.binding, {
         value: {
           fetch(input, init) {
-            return broker.effect(kind, b.binding, new Request(input, init));
+            return fetchWithSignal(new Request(input, init), (request) =>
+              broker.effect(kind, b.binding, request),
+            );
           },
         },
         enumerable: true,
@@ -148,7 +178,9 @@ export function dynamicEnv(values, ctx, metadata) {
     Object.defineProperty(env, b.binding, {
       value: {
         fetch(input, init) {
-          return broker.service(b.binding, new Request(input, init));
+          return fetchWithSignal(new Request(input, init), (request) =>
+            broker.service(b.binding, request),
+          );
         },
       },
       enumerable: true,
@@ -159,7 +191,9 @@ export function dynamicEnv(values, ctx, metadata) {
       fetch(input, init) {
         if (typeof input === "string" && input.startsWith("/"))
           input = "https://assets.internal" + input;
-        return broker.effect("assets", asset, new Request(input, init));
+        return fetchWithSignal(new Request(input, init), (request) =>
+          broker.effect("assets", asset, request),
+        );
       },
     },
     enumerable: true,
@@ -188,7 +222,7 @@ for (const level of ["log", "info", "debug", "warn", "error"]) {
       .join(" ");
     if (new TextEncoder().encode(message).byteLength > 4096)
       message = "[log message omitted: exceeds collection limit]";
-    current.ctx.waitUntil(
+    current.rawCtx.waitUntil(
       Promise.resolve(current.broker.log(level === "log" ? "info" : level, message)).catch(
         () => {},
       ),
