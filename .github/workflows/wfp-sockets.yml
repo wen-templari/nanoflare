@@ -5,6 +5,11 @@ on:
     paths:
       - "internal/config/**"
       - "internal/runtimeassets/**"
+      - "internal/api/**"
+      - "internal/nanoflare/**"
+      - "internal/cli/**"
+      - "packages/cli/lib/runtime-profile.mjs"
+      - "scripts/update-runtime-profile.mjs"
       - "cmd/nanoflared/**"
       - "cmd/nanoflare-runner/**"
       - "go.mod"
@@ -15,6 +20,11 @@ on:
     paths:
       - "internal/config/**"
       - "internal/runtimeassets/**"
+      - "internal/api/**"
+      - "internal/nanoflare/**"
+      - "internal/cli/**"
+      - "packages/cli/lib/runtime-profile.mjs"
+      - "scripts/update-runtime-profile.mjs"
       - "cmd/nanoflared/**"
       - "cmd/nanoflare-runner/**"
       - "go.mod"
@@ -43,3 +53,7 @@ jobs:
           export NANOFLARE_TEST_WORKERD="$RUNNER_TEMP/wfp-tools/node_modules/.bin/workerd"
           "$NANOFLARE_TEST_WORKERD" --version
           go test -count=1 -v ./internal/config ./cmd/nanoflared ./cmd/nanoflare-runner
+          go test -count=1 -v ./internal/api -run 'TestIssue78RuntimeRestrictionObservations|TestStableRuntimePrivateDynamicDispatch|TestWorkerdDynamicLoaderContracts'
+          go test -count=1 ./internal/nanoflare ./internal/cli
+          node scripts/update-runtime-profile.mjs --check
+          node --test packages/cli/test/*.cjs packages/cli/test/*.mjs

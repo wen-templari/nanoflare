@@ -7,6 +7,11 @@ versions and legacy build manifests remain supported.
 
 The documentation below describes the legacy plugin.
 
+For a private dynamic namespace target, use
+`nanoflare({ runtimeProfile: "private-dynamic" })` to reproduce production API
+restrictions locally. The default is `standard`. See
+[runtime differences and diagnostics](../../docs/guides/private-dynamic-runtime.md).
+
 Run a single React SSR or API Worker in a local Workers runtime during `vite dev`
 and build its deploy artifact with `vite build`. Vite continues to serve browser
 modules, static files, and client HMR; matching document and `/api/*` requests

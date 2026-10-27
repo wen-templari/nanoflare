@@ -15,6 +15,12 @@ const loaderInvocationContextModule = "nanoflare-internal:invocation-context"
 // invocation completion accounting. The input snapshot is not mutated. The parent must
 // admit an invocation before supplying its private props to getEntrypoint().
 func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.ActiveDeployment) WorkerCodeSnapshot {
+	// Request signals cross internal RPC bridges independently of the user's
+	// compatibility date. The pinned native runtime implements their transport.
+	code.CompatibilityFlags = slices.Clone(code.CompatibilityFlags)
+	if !slices.Contains(code.CompatibilityFlags, "enable_abortsignal_rpc") {
+		code.CompatibilityFlags = append(code.CompatibilityFlags, "enable_abortsignal_rpc")
+	}
 	code.Modules = maps.Clone(code.Modules)
 	code.moduleOrder = slices.Clone(code.moduleOrder)
 	declarations := struct {
@@ -128,7 +134,7 @@ export default WrappedWorker;
 	return code
 }
 
-var loaderInvocationContextSource = runtimeassets.ExportPropsModule + "\n" + `import { AsyncLocalStorage } from "node:async_hooks";
+var loaderInvocationContextSource = runtimeassets.ExportPropsModule + "\n" + runtimeassets.ErrorsModule + "\n" + runtimeassets.FetchSignalModule + "\n" + `import { AsyncLocalStorage } from "node:async_hooks";
 import { env as nativeEnv, RpcTarget } from "cloudflare:workers";
 const storage = new AsyncLocalStorage();
 function recordLog(state,level,args) {
@@ -288,6 +294,10 @@ export function wrapInvocationExports(state,module,nativeExports) {
 }
 function returnedValue(state, value, seen = new WeakMap(), exportedInstance) {
   if (!value || typeof value !== "object") return value;
+  if(value instanceof Response && value.body && value.status!==101) {
+    state.pending++;
+    return observeResponseErrors(value,state.report,()=>{state.pending--;state.maybeComplete();});
+  }
   if (value instanceof RpcTarget) {
     if (state.capabilities.has(value)) return state.capabilities.get(value);
     // Forward public prototype methods and getters in the same admission.
@@ -332,7 +342,7 @@ function resourceBinding(broker, name) {
     const request = new Request(typeof input === "string" && input.startsWith("/") ? "https://assets.local" + input : input, init);
     request.headers.delete("X-Nanoflare-Invocation");
     request.headers.set("X-Nanoflare-Binding-Name", name);
-    return broker.fetch(request);
+    return fetchWithSignal(request, request => broker.fetch(request));
   } };
 }
 function namespaceBinding(fetcher) {
@@ -384,7 +394,7 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
   for (const name of declarations.services) {
     state.env[name] = new Proxy({}, { get(_, method) {
       if (method === "then") return undefined;
-      if (method === "fetch") return (input, init) => rawEnv.__NANOFLARE_SERVICE_BROKER.invoke(token, name, "fetch", [new Request(input, init)]);
+      if (method === "fetch") return (input, init) => fetchWithSignal(new Request(input, init), request => rawEnv.__NANOFLARE_SERVICE_BROKER.invoke(token, name, "fetch", [request]));
       if (typeof method !== "string") return undefined;
       return (...args) => rawEnv.__NANOFLARE_SERVICE_BROKER.invoke(token, name, method, args);
     } });
@@ -447,13 +457,15 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
       state.pending++;
       const tracked = Promise.resolve(value).then(
         result => { state.pending--; state.maybeComplete(); return result; },
-        error => { state.pending--; state.maybeComplete(); throw error; },
+        async error => { await state.report(error,"waitUntil"); state.pending--; state.maybeComplete(); throw error; },
       );
       rawCtx.waitUntil(tracked);
     },
     passThroughOnException() { rawCtx.passThroughOnException(); },
   };
-  if(rawEnv.__NANOFLARE_LOG_COLLECTOR) state.log=(level,message)=>state.ctx.waitUntil(rawEnv.__NANOFLARE_LOG_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/logs",{method:"POST",headers:{"content-type":"application/json","X-Nanoflare-Invocation":token},body:JSON.stringify([{logs:[{level,message:[message]}]}])}));
+  const sendLog=(level,message)=>rawEnv.__NANOFLARE_LOG_COLLECTOR?.fetch("http://nanoflare.internal/internal/runtime/logs",{method:"POST",headers:{"content-type":"application/json","X-Nanoflare-Invocation":token},body:JSON.stringify([{logs:[{level,message:[message]}]}])});
+  state.report=errorReporter(sendLog);
+  if(rawEnv.__NANOFLARE_LOG_COLLECTOR) state.log=(level,message)=>state.ctx.waitUntil(Promise.resolve(sendLog(level,message)).catch(()=>{}));
   return state;
 }
 
@@ -463,14 +475,14 @@ export function runInvocation(state, callback) {
   const invoke = () => storage.run(state, () => {
     try {
       const result = callback();
-      if (result && typeof result.then === "function") return Promise.resolve(result).then(value => { try { return returnedValue(state,value); } finally { done(); } }, error => {recordLog(state,"error",[String(error)]); done(); throw error; });
+      if (result && typeof result.then === "function") return Promise.resolve(result).then(value => { try { return returnedValue(state,value); } finally { done(); } }, async error => {await state.report(error,"invocation"); done(); throw error; });
       const wrapped = returnedValue(state,result);
       done();
       return wrapped;
-    } catch (error) {recordLog(state,"error",[String(error)]); done(); throw error; }
+    } catch (error) {state.ctx.waitUntil(state.report(error,"invocation")); done(); throw error; }
   });
   // Once admitted, ordinary synchronous calls between methods retain their
   // synchronous behavior. Only the first runtime entry waits for the handshake.
-  return state.started && !state.completing ? invoke() : state.start().then(invoke, error => {recordLog(state,"error",[String(error)]); done(); throw error; });
+  return state.started && !state.completing ? invoke() : state.start().then(invoke, async error => {await state.report(error,"admission"); done(); throw error; });
 }
 `

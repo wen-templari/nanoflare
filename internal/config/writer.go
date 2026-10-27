@@ -258,6 +258,17 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 // compatibility date before ctx.exports became enabled by default.
 func runtimeCompatibilityFlags(deployment nanoflare.Deployment) []string {
 	flags := outputIdentityCompatibilityFlags(deployment.CompatibilityFlags)
+	if len(deployment.DispatchNamespaces) > 0 {
+		for _, required := range []string{"experimental", "enable_abortsignal_rpc"} {
+			found := false
+			for _, flag := range flags {
+				found = found || flag == required
+			}
+			if !found {
+				flags = append(flags, required)
+			}
+		}
+	}
 	if len(deployment.DispatchNamespaces) > 0 && deployment.CompatibilityDate < "2025-11-17" {
 		found := false
 		for _, flag := range flags {

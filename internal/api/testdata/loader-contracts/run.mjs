@@ -47,6 +47,7 @@ const config :Workerd.Config = (
   services = [
     (name = "host", worker = (
       compatibilityDate = "2026-09-08",
+      compatibilityFlags = ["experimental", "enable_abortsignal_rpc"],
       modules = [(name = "host.js", esModule = ${JSON.stringify(host)})],
       bindings = [(name = "LOADER", workerLoader = (id = "contracts")),
                   (name = "EVENTS", service = "events"),
@@ -228,15 +229,22 @@ try {
         });
       if (name === "legacy") {
         assert.equal(result.legacy, "ok");
-        const scheduled = await fetch(base + "/resource-legacy/cdn-cgi/handler/scheduled?cron=" + encodeURIComponent("7 * * * *"));
+        const scheduled = await fetch(
+          base +
+            "/resource-legacy/cdn-cgi/handler/scheduled?cron=" +
+            encodeURIComponent("7 * * * *"),
+        );
         assert.equal(scheduled.status, 204, await scheduled.text());
         const after = await get("/resource-legacy/");
         assert.equal(after.cron, "7 * * * *");
         assert.equal(after.background, "done");
       }
-      if (name === "network") assert.deepEqual(result, {
-        callback: "10.42.0.7", promise: { address: "10.42.0.7", family: 4 }, egress: "proxy-egress",
-      });
+      if (name === "network")
+        assert.deepEqual(result, {
+          callback: "10.42.0.7",
+          promise: { address: "10.42.0.7", family: 4 },
+          egress: "proxy-egress",
+        });
       if (name === "db") assert.deepEqual(result, { first: "hello", raw: [[1, "hello"]] });
       if (name === "objects") {
         assert.equal(result.created.key, "folder/demo.json");
@@ -249,25 +257,25 @@ try {
         assert.deepEqual(result, { logged: true });
         await bounded(
           (async () => {
-            while (
-              !logs.includes(
-                `loader-contract-output`,
-              )
-            )
+            while (!logs.includes(`loader-contract-output`))
               await new Promise((resolve) => setTimeout(resolve, 10));
           })(),
         );
       }
     });
   }
-  await publish("tcp", "v1", `import { connect } from "cloudflare:sockets";
+  await publish(
+    "tcp",
+    "v1",
+    `import { connect } from "cloudflare:sockets";
     export default { async fetch() {
       const socket = connect(${JSON.stringify(fixture.echoAddr)});
       const writer = socket.writable.getWriter(); await writer.write(new TextEncoder().encode("ping"));
       const reader = socket.readable.getReader(); const {value} = await reader.read();
       await reader.cancel(); await writer.close();
       return Response.json({ value: new TextDecoder().decode(value) });
-    } };`);
+    } };`,
+  );
   await check("dynamic raw TCP connect uses configured egress NO_PROXY path", async () => {
     assert.deepEqual(await get("/tcp/"), { value: "pong" });
   });
@@ -339,52 +347,107 @@ try {
       const response = await fetch(base + `/invocation-${name}` + path);
       assert.equal(response.status, name === "cron" ? 204 : 200, await response.text());
       await waitEvent("/invocation-complete", `invocation-${name}`);
-      assert.equal(events.filter(event => event.path === "/invocation-complete" && event.body === `invocation-${name}`).length, 1);
+      assert.equal(
+        events.filter(
+          (event) => event.path === "/invocation-complete" && event.body === `invocation-${name}`,
+        ).length,
+        1,
+      );
     });
   }
-  await check("concurrent invocations share revision resources and complete after nested waitUntil", async () => {
-    await Promise.all(["alpha", "beta"].map(async label => {
-      const token = `invocation-${label}`;
-      const response = await fetch(base + "/invocation-isolation/" + label, { headers: { "X-Test-Invocation": token } });
-      assert.equal(response.status, 200, await response.clone().text());
-      assert.deepEqual(await response.json(), { value: label, props: { publicValue: "safe" }, hidden: true });
-      await waitEvent("/invocation-complete", token);
-      const done = events.findIndex(event => event.path === "/invocation-complete" && event.body === token);
-      for (const path of ["/invocation-finally", "/invocation-nested"]) {
-        const task = events.findIndex(event => event.path === path && event.body === label);
-        assert.ok(task >= 0 && task < done, `${path} must finish before completion`);
-      }
-      const calls = events.filter(event => event.path === "/invocation-resource").map(event => JSON.parse(event.body)).filter(event => event.path.includes(label));
-      assert.equal(calls.length, 2);
-      assert.ok(calls.every(event => event.grant === "invocation-isolation:v1" && event.binding === "KV"));
-    }));
-  });
+  await check(
+    "concurrent invocations share revision resources and complete after nested waitUntil",
+    async () => {
+      await Promise.all(
+        ["alpha", "beta"].map(async (label) => {
+          const token = `invocation-${label}`;
+          const response = await fetch(base + "/invocation-isolation/" + label, {
+            headers: { "X-Test-Invocation": token },
+          });
+          assert.equal(response.status, 200, await response.clone().text());
+          assert.deepEqual(await response.json(), {
+            value: label,
+            props: { publicValue: "safe" },
+            hidden: true,
+          });
+          await waitEvent("/invocation-complete", token);
+          const done = events.findIndex(
+            (event) => event.path === "/invocation-complete" && event.body === token,
+          );
+          for (const path of ["/invocation-finally", "/invocation-nested"]) {
+            const task = events.findIndex((event) => event.path === path && event.body === label);
+            assert.ok(task >= 0 && task < done, `${path} must finish before completion`);
+          }
+          const calls = events
+            .filter((event) => event.path === "/invocation-resource")
+            .map((event) => JSON.parse(event.body))
+            .filter((event) => event.path.includes(label));
+          assert.equal(calls.length, 2);
+          assert.ok(
+            calls.every(
+              (event) => event.grant === "invocation-isolation:v1" && event.binding === "KV",
+            ),
+          );
+        }),
+      );
+    },
+  );
   await check("service broker preserves HTTP, RPC, and nested RPC capabilities", async () => {
     await publish("identity", "invocation", identity("invocation"));
     assert.deepEqual(await get("/invocation-isolation/rpc"), {
-      user: { id: "invocation", version: "invocation" }, nested: "invocation:session", http: { id: "http", version: "invocation" },
+      user: { id: "invocation", version: "invocation" },
+      nested: "invocation:session",
+      http: { id: "http", version: "invocation" },
     });
   });
   await check("main invocation exceptions still acknowledge runtime completion", async () => {
-    const response = await fetch(base + "/invocation-isolation/fail", { headers: { "X-Test-Invocation": "invocation-failure" } });
+    const response = await fetch(base + "/invocation-isolation/fail", {
+      headers: { "X-Test-Invocation": "invocation-failure" },
+    });
     assert.equal(response.status, 500);
     assert.match(await response.text(), /intentional invocation failure/);
     await waitEvent("/invocation-complete", "invocation-failure");
   });
-  await check("WorkerEntrypoint RPC preserves scoped env, private context, and returned capabilities", async () => {
-    const response = await fetch(base + "/invocation-class/method", { headers: { "X-Test-Invocation": "invocation-class-method" } });
-    assert.equal(response.status, 200, await response.clone().text());
-    assert.deepEqual(await response.json(), { value: "direct-rpc", props: { publicValue: "safe" }, hidden: true });
-    await waitEvent("/invocation-complete", "invocation-class-method");
-    const started = events.findIndex(event => event.path === "/invocation-start" && event.body === "invocation-class-method");
-    const constructed = events.findIndex((event, index) => index > started && event.path === "/invocation-resource" && (() => {
-      const call = JSON.parse(event.body);
-      return call.grant === "invocation-class:v1" && call.binding === "KV" && call.path === "/constructor";
-    })());
-    assert.ok(started >= 0 && constructed > started, "constructor resource access must follow admission acknowledgement");
-    assert.deepEqual(await get("/invocation-class/nested"), { value: "scoped-session", status:"active" });
-    await waitEvent("/disposed","session");
-  });
+  await check(
+    "WorkerEntrypoint RPC preserves scoped env, private context, and returned capabilities",
+    async () => {
+      const response = await fetch(base + "/invocation-class/method", {
+        headers: { "X-Test-Invocation": "invocation-class-method" },
+      });
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.deepEqual(await response.json(), {
+        value: "direct-rpc",
+        props: { publicValue: "safe" },
+        hidden: true,
+      });
+      await waitEvent("/invocation-complete", "invocation-class-method");
+      const started = events.findIndex(
+        (event) => event.path === "/invocation-start" && event.body === "invocation-class-method",
+      );
+      const constructed = events.findIndex(
+        (event, index) =>
+          index > started &&
+          event.path === "/invocation-resource" &&
+          (() => {
+            const call = JSON.parse(event.body);
+            return (
+              call.grant === "invocation-class:v1" &&
+              call.binding === "KV" &&
+              call.path === "/constructor"
+            );
+          })(),
+      );
+      assert.ok(
+        started >= 0 && constructed > started,
+        "constructor resource access must follow admission acknowledgement",
+      );
+      assert.deepEqual(await get("/invocation-class/nested"), {
+        value: "scoped-session",
+        status: "active",
+      });
+      await waitEvent("/disposed", "session");
+    },
+  );
   const message = async (socket, value) => {
     const received = new Promise((resolve) =>
       socket.addEventListener("message", (event) => resolve(event.data), { once: true }),
@@ -410,18 +473,25 @@ try {
   });
   // Destroy an actual HTTP transport after receiving bytes. This avoids
   // confusing client library body cancellation with a confirmed disconnect.
-  const disconnect = async (path) => bounded(new Promise((resolve, reject) => {
-    const request = httpGet(base + path, { agent: false }, (response) => {
-      response.once("data", () => {
-        response.destroy();
-        request.destroy();
-        resolve();
-      });
-      response.on("error", () => {});
-    });
-    request.once("error", reject);
-  }));
-  const cancellation = { dynamic: false, static: false, upstream: { dynamic: false, static: false } };
+  const disconnect = async (path) =>
+    bounded(
+      new Promise((resolve, reject) => {
+        const request = httpGet(base + path, { agent: false }, (response) => {
+          response.once("data", () => {
+            response.destroy();
+            request.destroy();
+            resolve();
+          });
+          response.on("error", () => {});
+        });
+        request.once("error", reject);
+      }),
+    );
+  const cancellation = {
+    dynamic: false,
+    static: false,
+    upstream: { dynamic: false, static: false },
+  };
   {
     await disconnect("/lifecycle/cancel");
     await publish("lifecycle", "v4", lifecycle("v4"));
@@ -446,21 +516,28 @@ try {
   const cleanupDeadline = Date.now() + 1500;
   while (Date.now() < cleanupDeadline) {
     for (const kind of ["dynamic", "static"])
-      cancellation.upstream[kind] = events.some(event => event.path === "/disconnect-closed" && event.body === kind);
+      cancellation.upstream[kind] = events.some(
+        (event) => event.path === "/disconnect-closed" && event.body === kind,
+      );
     if (cancellation.upstream.dynamic && cancellation.upstream.static) break;
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  await check("client disconnect closes upstream transport in dynamic and static baseline", async () => {
-    assert.deepEqual(cancellation.upstream, { dynamic: true, static: true });
-  });
+  await check(
+    "client disconnect closes upstream transport in dynamic and static baseline",
+    async () => {
+      assert.deepEqual(cancellation.upstream, { dynamic: true, static: true });
+    },
+  );
   assert.equal(child.exitCode, null);
   const report = {
     workerd: version.stdout.trim(),
     pid: child.pid,
     passed: results.every((result) => result.passed),
     cutoverQualified: false,
-    scope: "Exploratory loader and invocation contracts; this fixture is not the production publication gate",
-    productionCoverage: "Separate production dispatcher and publication end-to-end tests cover local and remote runtime publication, revision-aware authorization, and recovery; those results are not inferred from this fixture",
+    scope:
+      "Exploratory loader and invocation contracts; this fixture is not the production publication gate",
+    productionCoverage:
+      "Separate production dispatcher and publication end-to-end tests cover local and remote runtime publication, revision-aware authorization, and recovery; those results are not inferred from this fixture",
     results,
     cancellation,
     remaining: [
@@ -472,7 +549,10 @@ try {
   };
   if (process.env.NANOFLARE_LOADER_REPORT)
     await writeFile(process.env.NANOFLARE_LOADER_REPORT, JSON.stringify(report, null, 2) + "\n");
-  console.log("Disconnect observations (JavaScript callbacks remain unqualified):", JSON.stringify(cancellation));
+  console.log(
+    "Disconnect observations (JavaScript callbacks remain unqualified):",
+    JSON.stringify(cancellation),
+  );
   console.log(
     `\n${results.filter((result) => result.passed).length}/${results.length} contracts passed`,
   );

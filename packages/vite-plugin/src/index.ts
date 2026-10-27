@@ -3,16 +3,20 @@ import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
 import { parse as parseJSONC, type ParseError } from "jsonc-parser";
 import { Miniflare } from "miniflare";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { parse as parseTOML } from "smol-toml";
 import { build, normalizePath } from "vite";
 
+import { runtimeProfileSource } from "./runtime-profile-source.js";
+
 export type BindingValue = string | number | boolean;
 
 export interface NanoflarePluginOptions {
+  /** Reproduce private namespace restrictions locally; ordinary Workers use standard. */
+  runtimeProfile?: "standard" | "private-dynamic";
   /**
    * The Worker module Vite bundles and runs locally. When omitted, this comes
    * from `main` in the Worker configuration.
@@ -228,6 +232,18 @@ export function nanoflare(options: NanoflarePluginOptions = {}): Plugin {
       throw new Error("Nanoflare Vite plugin was not initialized.");
     }
 
+    let entry = resolve(config.root, resolvedOptions.entry);
+    if (resolvedOptions.runtimeProfile === "private-dynamic") {
+      await writeFile(
+        join(outputDirectory, "runtime-profile.mjs"),
+        runtimeProfileSource + "\ninstallPrivateDynamicProfile();\n",
+      );
+      await writeFile(
+        join(outputDirectory, "profile-entry.mjs"),
+        `import "./runtime-profile.mjs";\nexport {default} from ${JSON.stringify(normalizePath(entry))};\nexport * from ${JSON.stringify(normalizePath(entry))};\n`,
+      );
+      entry = join(outputDirectory, "profile-entry.mjs");
+    }
     await build({
       root: config.root,
       configFile: false,
@@ -238,7 +254,7 @@ export function nanoflare(options: NanoflarePluginOptions = {}): Plugin {
       ssr: { noExternal: true },
       logLevel: "error",
       build: {
-        ssr: resolve(config.root, resolvedOptions.entry),
+        ssr: entry,
         outDir: outputDirectory,
         emptyOutDir: false,
         sourcemap: true,

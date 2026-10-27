@@ -717,6 +717,9 @@ func writeWorkerResponse(ctx context.Context, w http.ResponseWriter, response *h
 	span.SetAttributes(attribute.Int64("http.response.body.size", written))
 	if err != nil {
 		recordSpanError(span, err)
+		// Headers may already have been sent. Closing the HTTP stream is the
+		// only way to keep a truncated Worker body from appearing successful.
+		panic(http.ErrAbortHandler)
 	}
 }
 

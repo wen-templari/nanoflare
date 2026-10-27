@@ -4,6 +4,10 @@ New projects use `@cloudflare/vite-plugin` for development, builds, and preview.
 Nanoflare remains the deployment target. Existing `@nanoflare/vite-plugin`
 projects and their build manifests continue to work with the CLI.
 
+For private dynamic namespace scripts, enable the shared capability checks in
+[the private runtime guide](private-dynamic-runtime.md). The official plugin's
+local support for an API does not establish production support.
+
 ## Update a project
 
 Use a Nanoflare CLI release containing Cloudflare build-output support before

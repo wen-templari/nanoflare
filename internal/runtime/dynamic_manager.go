@@ -901,6 +901,23 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 	}
 	active := snapshot.frozen.ActiveDeployment()
 	switch operation {
+	case "diagnostic":
+		if r.Method != http.MethodPost {
+			http.Error(w, "unsupported diagnostic operation", 405)
+			return
+		}
+		var input struct {
+			Message string `json:"message"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input); err != nil {
+			http.Error(w, "invalid diagnostic", 400)
+			return
+		}
+		if err := m.control(r.Context(), "diagnostic", map[string]string{"session_id": snapshot.registeredSession, "execution_id": key, "message": input.Message}, nil); err != nil {
+			http.Error(w, "diagnostic unavailable", 502)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case "source":
 		env := map[string]any{"__NANOFLARE_APP_ID": active.App.ID, "__NANOFLARE_DEPLOYMENT_ID": active.Deployment.ID}
 		for name, value := range active.Deployment.Vars {

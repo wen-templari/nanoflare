@@ -82,6 +82,24 @@ func (s *Service) ProcessRuntimeLog(ctx context.Context, token, level, message s
 	if err != nil {
 		return WorkerOutputLine{}, false, err
 	}
+	return s.processRuntimeLog(ctx, token, principal, level, message, nil)
+}
+
+// ProcessExecutionDiagnostic accepts initialization diagnostics only from the
+// runner session that owns the prepared snapshot, before admission is possible.
+func (s *Service) ProcessExecutionDiagnostic(ctx context.Context, session, executionID, message string) (WorkerOutputLine, bool, error) {
+	s.executions.mu.Lock()
+	revision := s.executions.revisions[executionID]
+	if revision == nil || revision.session != session || revision.state == ResourceGrantRevoked || !s.executions.sessionLiveLocked(session) {
+		s.executions.mu.Unlock()
+		return WorkerOutputLine{}, false, ErrInvalidCapability
+	}
+	active := cloneExecutionActive(revision.snapshot.active)
+	s.executions.mu.Unlock()
+	return s.processRuntimeLog(ctx, "", RuntimePrincipal{App: active.App, Deployment: active.Deployment}, "error", message, &active)
+}
+
+func (s *Service) processRuntimeLog(ctx context.Context, token string, principal RuntimePrincipal, level, message string, frozen *ActiveDeployment) (WorkerOutputLine, bool, error) {
 	if len(message) > 4096 {
 		s.telemetry.dropped.Add(1)
 		return WorkerOutputLine{}, false, nil
@@ -149,9 +167,11 @@ func (s *Service) ProcessRuntimeLog(ctx context.Context, token, level, message s
 		line.InvocationID = correlationID(token)
 		line.ParentInvocationID = correlationID(lease.Parent)
 		s.dispatch.mu.Unlock()
+	} else if frozen != nil {
+		secrets = frozen.App.SecretValues
 	} else {
 		active := ActiveDeployment{App: principal.App, Deployment: principal.Deployment}
-		if err = s.hydrateArtifact(&active); err != nil {
+		if err := s.hydrateArtifact(&active); err != nil {
 			return WorkerOutputLine{}, false, err
 		}
 		secrets = active.App.SecretValues

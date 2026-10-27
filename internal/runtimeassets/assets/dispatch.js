@@ -41,6 +41,13 @@ function dispatchControl(entrypoint) {
     : entrypoint.env[entrypoint.ctx.props.control];
 }
 export class DispatchBroker extends WorkerEntrypoint {
+  retainBackground() {
+    this._background = (this._background || 0) + 1;
+  }
+  async releaseBackground() {
+    this._background--;
+    if (!this._background && this._finishRequested) await this.finish(this._cancel);
+  }
   async effect(kind, binding, request) {
     const control = dispatchControl(this);
     const original = new Request(request);
@@ -56,6 +63,7 @@ export class DispatchBroker extends WorkerEntrypoint {
         method: original.method,
         headers,
         body: original.body,
+        signal: original.signal,
         redirect: "manual",
       }),
     );
@@ -78,7 +86,13 @@ export class DispatchBroker extends WorkerEntrypoint {
     headers.delete("Authorization");
     return dispatchControl(this).fetch(
       "http://nanoflare.internal/internal/runtime/dispatch/outbound",
-      { method: request.method, headers, body: request.body, redirect: "manual" },
+      {
+        method: request.method,
+        headers,
+        body: request.body,
+        redirect: "manual",
+        signal: request.signal,
+      },
     );
   }
   async service(binding, request) {
@@ -107,6 +121,9 @@ export class DispatchBroker extends WorkerEntrypoint {
     );
   }
   async finish(cancel) {
+    this._finishRequested = true;
+    this._cancel ||= cancel;
+    if (this._background && !cancel) return;
     const response = await dispatchControl(this).fetch(
       "http://nanoflare.internal/internal/runtime/dispatch/finish",
       {
@@ -119,7 +136,7 @@ export class DispatchBroker extends WorkerEntrypoint {
     if (response.status !== 410) await requireOK(response);
   }
 }
-function trackResponse(response, broker, ctx) {
+function trackResponse(response, broker, ctx, brokerReference) {
   if (response.status === 101 || response.webSocket) {
     ctx.waitUntil(broker.finish(true));
     throw Object.assign(new Error("WebSockets are not available in private dynamic dispatch"), {
@@ -146,6 +163,9 @@ function trackResponse(response, broker, ctx) {
           controller.close();
         } else controller.enqueue(part.value);
       } catch (error) {
+        await broker
+          .log("error", exceptionMessage(error, "response stream", brokerReference))
+          .catch(() => {});
         finish(true);
         controller.error(error);
       }
@@ -162,6 +182,7 @@ function trackResponse(response, broker, ctx) {
   });
 }
 async function invokeArtifact(env, ctx, control, artifact, request, props) {
+  const reference = crypto.randomUUID();
   const broker = (parentExports || ctx.exports).DispatchBroker({
     props: { control, lease: artifact.lease, resourceControl: env.__NANOFLARE_RESOURCE_CONTROL },
   });
@@ -190,9 +211,14 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
       modules["nanoflare-internal:runtime-bindings.js"] = { js: artifact.runtime_bindings };
       modules["nanoflare-internal:dynamic-env.js"] = { js: artifact.dynamic_env };
       code = {
+        allowExperimental: true,
         compatibilityDate: artifact.deployment.compatibility_date,
         compatibilityFlags: [
-          ...new Set([...(artifact.deployment.compatibility_flags || []), "nodejs_als"]),
+          ...new Set([
+            ...(artifact.deployment.compatibility_flags || []),
+            "nodejs_als",
+            "enable_abortsignal_rpc",
+          ]),
         ],
         mainModule: "__nanoflare_dynamic_entrypoint__.js",
         modules,
@@ -220,12 +246,19 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
     const worker = env.__NANOFLARE_WORKER_LOADER.get(key, () => code);
     request.headers.delete("X-Nanoflare-Dispatch-Root");
     const target = worker.getEntrypoint(undefined, {
-      props: { ...props, __NANOFLARE_BROKER: broker },
+      props: { ...props, __NANOFLARE_BROKER: broker, __NANOFLARE_ERROR_ID: reference },
     });
-    return trackResponse(await target.fetch(request), broker, ctx);
+    return trackResponse(await target.fetch(request), broker, ctx, reference);
   } catch (error) {
+    await broker
+      .log("error", exceptionMessage(error, "fetch/initialization", reference))
+      .catch(() => {});
     ctx.waitUntil(broker.finish(true));
-    throw error;
+    const status =
+      Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599
+        ? error.status
+        : 500;
+    return executionFailure(reference, status);
   }
 }
 export function wrapDispatchEnv(env, ctx, root) {

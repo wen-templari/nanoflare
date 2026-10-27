@@ -17,6 +17,10 @@
     "lib",
     "README.md"
   ],
+  "exports": {
+    "./runtime-profile": "./lib/runtime-profile.mjs",
+    "./vite": "./lib/vite.mjs"
+  },
   "scripts": {
     "test": "node --test"
   },

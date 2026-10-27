@@ -114,7 +114,12 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 	privateDynamicDispatchWithFixture(t, remote, dynamic, nil)
 }
 
-func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixture func(*Server, *nanoflare.Service, nanoflare.Organization, string)) {
+type dispatchFixtureObservations struct {
+	Output           *runtime.OutputBuffer
+	OutboundCanceled func(string)
+}
+
+func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixture func(*Server, *nanoflare.Service, nanoflare.Organization, string), observations ...dispatchFixtureObservations) {
 	executable, err := exec.LookPath("workerd")
 	if dynamic {
 		executable = os.Getenv("NANOFLARE_TEST_WORKERD")
@@ -155,18 +160,30 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 		if r.Header.Get("X-Nanoflare-Invocation") != "" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer nfc1.") {
 			t.Error("runtime authority leaked to origin")
 		}
-		if r.URL.Path == "/slow" {
-			fmt.Fprint(w, "outbound-start\n")
-			w.(http.Flusher).Flush()
+		if r.URL.Path == "/slow" || r.URL.Path == "/wait-headers" {
+			if r.URL.Path == "/slow" {
+				fmt.Fprint(w, "outbound-start\n")
+				w.(http.Flusher).Flush()
+			}
 			select {
 			case <-r.Context().Done():
-				outboundCanceled <- struct{}{}
+				select {
+				case outboundCanceled <- struct{}{}:
+				default:
+				}
+				if len(observations) > 0 && observations[0].OutboundCanceled != nil {
+					observations[0].OutboundCanceled(r.URL.Query().Get("probe"))
+				}
 			case <-time.After(5 * time.Second):
 			}
 			return
 		}
 		if r.URL.Path == "/redirect" {
 			http.Redirect(w, r, "http://169.254.169.254/metadata", 302)
+			return
+		}
+		if r.URL.Path == "/redirect-slow" {
+			http.Redirect(w, r, "http://8.8.8.8/slow?"+r.URL.RawQuery, 302)
 			return
 		}
 		w.Header().Set("X-Customer-Marker", r.Header.Get("X-Marker"))
@@ -209,6 +226,9 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 		t.Fatal(err)
 	}
 	logOutput := runtime.NewOutputBuffer()
+	if len(observations) > 0 && observations[0].Output != nil {
+		logOutput = observations[0].Output
+	}
 	var service *nanoflare.Service
 	var server *Server
 	var executions *RuntimeExecutionServer
@@ -265,7 +285,7 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 		ensurer = client
 	}
 	service = nanoflare.NewServiceWithObjects(repo, publisher, &dispatchObjectStore{apiObjectStore: newAPIObjectStore()})
-	executions = NewRuntimeExecutionServer(service, "dispatch-control")
+	executions = NewRuntimeExecutionServer(service, "dispatch-control", logOutput)
 	defer executions.Close()
 	service.SetPlatformDispatchEnabled(true)
 	durations := runtime.NewDurationTelemetry()

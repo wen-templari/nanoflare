@@ -1,5 +1,9 @@
 # Workers for Platforms runtime contract
 
+For application-facing restrictions, cancellation support, local capability
+checks and exception diagnostics, see
+[the private dynamic runtime guide](../guides/private-dynamic-runtime.md).
+
 Updated 2026-10-22. Current native contract for the disabled-by-default
 `trusted_shared_workerd` pilot. Bounded local qualification and independent
 review are complete for their recorded scope; production rollout, untrusted
@@ -45,7 +49,6 @@ Untrusted execution profiles, custom WFP CPU/outbound/limit options, classic scr
 Real CPU accounting/interruption is the user's [separate workstream](../plans/workers-for-platforms-cpu-enforcement.md). The wall/effect deadline cannot stop a JavaScript infinite loop. Customer cells, hardened OS/VM containment and independent security qualification remain gates before an untrusted release.
 
 Developer tools, effective-capability reporting and customer telemetry are implemented. The [management adapter](cloudflare-management-api.md) provides a separate Cloudflare-shaped subset over this native contract. Bounded local capacity, storage/recovery and rollback qualification and independent review are recorded in the [archive](../archive/workers-for-platforms/README.md). Live comparison remains blocked by account entitlement; broad Wrangler/SDK, runtime/security equivalence and production expansion remain unqualified.
-
 
 ## Opt-in namespace TCP and TLS sockets
 
@@ -94,7 +97,6 @@ SQL Server through tedious remains plaintext-only: `encrypt: true` requires TLS
 on a JavaScript duplex unsupported by workerd, and strict mode uses unsupported
 ALPN options. Use an HTTP gateway for SQL Server TLS. Standalone Worker socket TLS
 through proxy egress is outside this configuration's scope.
-
 
 ### Protecting platform networks
 

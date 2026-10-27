@@ -466,7 +466,7 @@ func newRuntimeMuxWithOutbound(service *nanoflare.Service, server *api.Server, d
 }
 func newRuntimeMuxWithControl(service *nanoflare.Service, server *api.Server, durationTelemetry *runtime.DurationTelemetry, outbound http.RoundTripper, token string, outputs ...api.RuntimeLogAppender) *privateRuntimeMux {
 	runtimeMux := http.NewServeMux()
-	executions := api.NewRuntimeExecutionServer(service, token)
+	executions := api.NewRuntimeExecutionServer(service, token, outputs...)
 	runtimeMux.Handle("/internal/runtime/executions/", executions)
 	if durationTelemetry != nil {
 		service.SetDispatchObservationSink(func(event nanoflare.DispatchObservation) {

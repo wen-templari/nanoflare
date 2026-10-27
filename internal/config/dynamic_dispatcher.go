@@ -21,6 +21,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
 	fmt.Fprintf(&out, `(name = "broker", external = (address = %s, http = (injectRequestHeaders = [(name = "X-Nanoflare-Broker-Token", value = %s)]))),
 (name = "dispatcher", worker = (
   compatibilityDate = "2026-09-08",
+  compatibilityFlags = ["experimental", "enable_abortsignal_rpc"],
   modules = [(name = "dispatcher.js", esModule = %s), (name = "dispatch.js", esModule = %s)],
   bindings = [
 %s    (name = "LOADER", workerLoader = (id = "nanoflare-publications")),
@@ -67,6 +68,16 @@ export class WFPBridge extends WorkerEntrypoint {
 
 function brokerURL(path) { return "http://nanoflare.broker" + path; }
 
+async function reportInitialization(env, key, error) {
+  // This endpoint is reachable only from the authenticated parent dispatcher.
+  // The broker supplies the frozen snapshot and owning runner session.
+  const reference=crypto.randomUUID();
+  let detail;
+  try {detail=String(error);} catch {detail="[unprintable exception]";}
+  const message="initialization ["+reference+"]: "+detail;
+  try {await env.BROKER.fetch(brokerURL("/diagnostic/"+encodeURIComponent(key)),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:new TextEncoder().encode(message).byteLength<=4096?message:"initialization ["+reference+"]: [exception exceeds collection limit]"})});} catch {}
+}
+
 async function load(env, ctx, key, validation = false, state = {}) {
   const source = async () => {
     const response = await env.BROKER.fetch(brokerURL("/source/" + encodeURIComponent(key)));
@@ -101,6 +112,7 @@ async function load(env, ctx, key, validation = false, state = {}) {
       mainModule = name;
     }
     return {
+      allowExperimental: true,
       compatibilityDate: code.compatibilityDate,
       compatibilityFlags: code.compatibilityFlags,
       mainModule, modules, env: childEnv, globalOutbound: env.OUTBOUND,
@@ -179,6 +191,7 @@ export default {
         return await worker.getEntrypoint().fetch(request);
       } catch (error) {
         if (!state.sourceReady) throw error;
+        await reportInitialization(env,key,error);
         return new Response("Worker initialization failed", {status:422, headers:{"X-Nanoflare-Validation-Failure":"worker_initialization"}});
       }
     }
