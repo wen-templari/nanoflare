@@ -173,11 +173,11 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 }
 
 type WorkerdOptions struct {
-	WFPSockets   WFPSocketOptions
 	RuntimeAddr  string
 	NetworkAllow []string
 	EgressAddr   string
 	DNSAddr      string
+	WFPSockets   WFPSocketOptions
 }
 
 func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOptions) string {

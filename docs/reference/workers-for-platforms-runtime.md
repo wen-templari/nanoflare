@@ -60,7 +60,7 @@ NANOFLARE_WFP_SOCKET_CA_FILES=/etc/nanoflare/database-ca.pem
 
 The equivalent flags are `--wfp-socket-allow` and `--wfp-socket-ca-files`.
 Allow entries are comma-separated IP addresses, CIDRs, or workerd categories
-`public`, `private`, and `local`. Explicit `public` is supported; it is never
+`public` and `private`. Explicit `public` is supported; it is never
 implied. Empty or whitespace-only input disables sockets. CA files alone do not
 enable networking. Invalid destinations, unreadable files, and invalid certificate
 PEM fail startup. Certificates are loaded at startup; restart to rotate them.
@@ -94,3 +94,44 @@ SQL Server through tedious remains plaintext-only: `encrypt: true` requires TLS
 on a JavaScript duplex unsupported by workerd, and strict mode uses unsupported
 ALPN options. Use an HTTP gateway for SQL Server TLS. Standalone Worker socket TLS
 through proxy egress is outside this configuration's scope.
+
+
+### Protecting platform networks
+
+`NANOFLARE_WFP_SOCKET_DENY` (`--wfp-socket-deny`) adds comma-separated destination
+rules to the service's workerd `deny` list. The `local` category is denied by
+default, including when the allow list contains explicit loopback addresses.
+Allowing `local` requires the unsafe administrator opt-in
+`NANOFLARE_WFP_SOCKET_ALLOW_LOCAL=true` (`--wfp-socket-allow-local`); this also
+removes the automatic local deny. Explicit deny rules remain configured. Custom allow/deny rules otherwise follow
+workerd's longest-prefix matching: a more specific allow can override a broader
+custom deny, so avoid such overlaps. The automatic local guard adds matching
+denies for narrower local allow CIDRs to prevent that bypass. The
+native test fixture opts into local access solely to reach its isolated test
+servers, and separately verifies default loopback denial and explicit denies.
+
+Allowed CIDRs must not overlap the platform's own networks. In particular,
+`private` includes Docker bridge networks and potentially Nanoflare's Postgres,
+MinIO, Loki, and other internal services. Startup warns when `private` is used;
+prefer database-specific CIDRs and explicitly deny platform subnets, for example:
+
+```sh
+NANOFLARE_WFP_SOCKET_ALLOW=10.20.0.0/16
+NANOFLARE_WFP_SOCKET_DENY=10.20.10.0/24
+```
+
+On static hosts, the platform host Worker itself also receives the internal socket
+binding and loader capability. Its code can use them to make direct connections
+under this socket policy, bypassing the general outbound allow list and corporate
+proxy. Internal binding names are not a security boundary: only trusted platform
+host code may run with these capabilities. The native dispatcher keeps the binding
+on its internal bridge, rather than passing it to the dynamically loaded host.
+
+Each nanoflared and remote runner logs its own effective enabled state, allow/deny
+rules, and additional certificate count at startup, plus a warning if local access
+is opted into. Certificate contents are never logged. Configuration is executor-local;
+these logs make mismatches visible but do not enforce cross-process equality.
+
+The `WFP native sockets` GitHub Actions job installs the repository-pinned
+`workerd@1.20260911.1` and runs the native contract tests, including TLS trust and
+hostname rejection, destination denial, nested dispatch, and brokered fetch.

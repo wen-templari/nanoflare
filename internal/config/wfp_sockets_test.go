@@ -1,11 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"os"
 	"os/exec"
@@ -109,8 +111,10 @@ func TestWorkerdWFPSockets(t *testing.T) {
 		t.Fatalf("requires pinned runtime: %s (%v)", version, err)
 	}
 	var service strings.Builder
-	writeWFPSocketService(&service, WFPSocketOptions{Allow: []string{"local"}, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
-	fixture := map[string]string{"service": service.String(), "dispatch": runtimeassets.DispatchModule, "dynamicEnv": runtimeassets.DynamicEnvModule, "bindings": runtimeassets.BindingsModule}
+	writeWFPSocketService(&service, WFPSocketOptions{Allow: []string{"local"}, AllowLocal: true, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
+	var defaultDeny strings.Builder
+	writeWFPSocketService(&defaultDeny, WFPSocketOptions{Allow: []string{"127.0.0.1/32", "::1/128"}, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
+	fixture := map[string]string{"defaultDeny": defaultDeny.String(), "service": service.String(), "dispatch": runtimeassets.DispatchModule, "dynamicEnv": runtimeassets.DynamicEnvModule, "bindings": runtimeassets.BindingsModule}
 	data, err := json.Marshal(fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -125,4 +129,51 @@ func TestWorkerdWFPSockets(t *testing.T) {
 		t.Fatalf("WFP sockets: %v\n%s", err, output)
 	}
 	t.Log(string(output))
+}
+
+func TestWFPSocketLocalGuard(t *testing.T) {
+	if _, err := LoadWFPSocketOptions("local", ""); err == nil {
+		t.Fatal("local accepted without unsafe opt-in")
+	}
+	for _, allowLocal := range []bool{false, true} {
+		o, err := LoadWFPSocketPolicy("private,127.0.0.1", "10.0.0.0/8", "", allowLocal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out strings.Builder
+		writeWFPSocketService(&out, o)
+		if strings.Contains(out.String(), `"local"`) == allowLocal {
+			t.Fatal("default local deny does not follow unsafe opt-in")
+		}
+		if !strings.Contains(out.String(), `deny = ["10.0.0.0/8"`) {
+			t.Fatal("missing explicit deny")
+		}
+	}
+	if _, err := LoadWFPSocketPolicy("public", "not-a-range", "", false); err == nil {
+		t.Fatal("invalid deny accepted")
+	}
+	if _, err := LoadWFPSocketPolicy("local", "", "", true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWFPSocketPolicyLogging(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	defer slog.SetDefault(previous)
+	LogWFPSocketPolicy(WFPSocketOptions{})
+	if !strings.Contains(output.String(), `"enabled":false`) {
+		t.Fatal("missing disabled policy log")
+	}
+	output.Reset()
+	LogWFPSocketPolicy(WFPSocketOptions{Allow: []string{"private"}, AllowLocal: true, Certificates: []string{"secret-certificate-content"}})
+	for _, expected := range []string{`"enabled":true`, `"additional_ca_count":1`, "private policy", "local access explicitly enabled"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %s in log", expected)
+		}
+	}
+	if strings.Contains(output.String(), "secret-certificate-content") {
+		t.Fatal("logged certificate contents")
+	}
 }

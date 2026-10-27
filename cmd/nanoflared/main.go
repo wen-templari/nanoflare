@@ -43,6 +43,8 @@ func main() {
 	}
 
 	var (
+		wfpSocketDeny                  = flag.String("wfp-socket-deny", envOrDefault("NANOFLARE_WFP_SOCKET_DENY", ""), "additional WFP socket destination deny list; local is denied by default")
+		wfpSocketAllowLocal            = flag.Bool("wfp-socket-allow-local", envBoolOrDefault("NANOFLARE_WFP_SOCKET_ALLOW_LOCAL", false), "unsafe opt-in to WFP access to local platform services")
 		wfpSocketAllow                 = flag.String("wfp-socket-allow", envOrDefault("NANOFLARE_WFP_SOCKET_ALLOW", ""), "opt-in WFP socket destination allow list (including explicit public)")
 		wfpSocketCAFiles               = flag.String("wfp-socket-ca-files", envOrDefault("NANOFLARE_WFP_SOCKET_CA_FILES", ""), "comma-separated PEM CA files for WFP sockets")
 		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", envBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "administrator opt-in to trusted_shared_workerd dispatch; namespaces share a runtime without CPU interruption or hardened untrusted isolation")
@@ -96,10 +98,11 @@ func main() {
 		otelSampleRatio                = flag.Float64("otel-sample-ratio", envFloatOrDefault("NANOFLARE_OTEL_SAMPLE_RATIO", 0.1), "fraction of root traces to sample, from 0 to 1")
 	)
 	flag.Parse()
-	wfpSockets, err := config.LoadWFPSocketOptions(*wfpSocketAllow, *wfpSocketCAFiles)
+	wfpSockets, err := config.LoadWFPSocketPolicy(*wfpSocketAllow, *wfpSocketDeny, *wfpSocketCAFiles, *wfpSocketAllowLocal)
 	if err != nil {
 		log.Fatal(err)
 	}
+	config.LogWFPSocketPolicy(wfpSockets)
 	if *cloudflareCompatibilityEnabled && !*platformDispatchEnabled {
 		log.Fatal("Cloudflare compatibility requires --enable-platform-dispatch (or NANOFLARE_PLATFORM_DISPATCH_ENABLED=true)")
 	}

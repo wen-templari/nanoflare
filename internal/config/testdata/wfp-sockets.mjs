@@ -101,12 +101,19 @@ try {
  export class Control extends WorkerEntrypoint {async fetch(request){const p=new URL(request.url).pathname;if(p.endsWith('/acquire')||p.endsWith('/nested'))return Response.json(${JSON.stringify(artifact)});if(p.endsWith('/outbound'))return new Response('broker',{status:++effects%2===1?200:429});return new Response(null,{status:204});}}
  export class ResourceBridge extends Control {}
  export default {fetch(r,e,c){return wrapDispatchEnv({...e,__NANOFLARE_RESOURCE_CONTROL:{},control:c.exports.Control({}),__NANOFLARE_DISPATCH_BINDINGS:{NS:'control'}},c,'root').NS.get('customer').fetch(r);}};`;
-  for (const policy of ["disabled", "allowed", "denied", "untrusted"]) {
+  for (const policy of [
+    "disabled",
+    "allowed",
+    "denied",
+    "untrusted",
+    "loopback-denied",
+    "explicit-denied",
+  ]) {
     const enabled = policy !== "disabled";
     const config = `using Workerd = import "/workerd/workerd.capnp";const config :Workerd.Config = (services=[
    (name="host",worker=(compatibilityDate="2026-09-08",modules=[(name="host.js",esModule=${JSON.stringify(host)}),(name="dispatch.js",esModule=${JSON.stringify(fixture.dispatch)})],bindings=[(name="__NANOFLARE_WORKER_LOADER",workerLoader=()),${enabled ? '(name="__NANOFLARE_WFP_SOCKET_OUTBOUND",service="nanoflare-wfp-sockets"),' : ""}(name="OUTBOUND",service="internet")])),
    (name="internet",network=(allow=["public"])),
-   ${fixture.service.replace('"local"', JSON.stringify(policy === "denied" ? "192.0.2.0/24" : "local")).replace('"CERTIFICATE_PLACEHOLDER"', policy === "untrusted" ? "" : JSON.stringify(cert))}
+   ${(policy === "loopback-denied" ? fixture.defaultDeny : policy === "explicit-denied" ? fixture.service.replace("deny = []", 'deny = ["127.0.0.1/32", "::1/128"]') : fixture.service).replace('"local"', JSON.stringify(policy === "denied" ? "192.0.2.0/24" : "local")).replace('"CERTIFICATE_PLACEHOLDER"', policy === "untrusted" ? "" : JSON.stringify(cert))}
   ],sockets=[(name="http",address="127.0.0.1:0",http=(),service="host")]);`;
     const path = join(temp, policy + ".capnp");
     await writeFile(path, config);
@@ -183,8 +190,11 @@ try {
         "PASS " + policy + " sockets, nested calls, and broker fetch",
       );
     } finally {
-      child.kill();
-      await once(child, "exit");
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, "exit");
+        child.kill();
+        await exited;
+      }
     }
   }
 } finally {
