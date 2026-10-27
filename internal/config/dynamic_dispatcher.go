@@ -17,12 +17,13 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
 		outbound = "nanoflare-egress"
 		fmt.Fprintf(&out, "(name = %s, external = (address = %s, http = (style = proxy))),\n", quote(outbound), quote(address))
 	}
+	writeWFPSocketService(&out, options.WFPSockets)
 	fmt.Fprintf(&out, `(name = "broker", external = (address = %s, http = (injectRequestHeaders = [(name = "X-Nanoflare-Broker-Token", value = %s)]))),
 (name = "dispatcher", worker = (
   compatibilityDate = "2026-09-08",
   modules = [(name = "dispatcher.js", esModule = %s), (name = "dispatch.js", esModule = %s)],
   bindings = [
-    (name = "LOADER", workerLoader = (id = "nanoflare-publications")),
+%s    (name = "LOADER", workerLoader = (id = "nanoflare-publications")),
     (name = "BROKER", service = "broker"),
     (name = "OUTBOUND", service = %s),
     (name = "DISPATCHER_TOKEN", text = %s)
@@ -31,7 +32,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
  ],
  sockets = [(name = "dispatcher", address = %s, http = (forwardedProtoHeader = "X-Forwarded-Proto"), service = "dispatcher")],
 );
-`, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(runtimeassets.DispatchModule), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
+`, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(runtimeassets.DispatchModule), wfpSocketBindingLine(options.WFPSockets), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
 	return out.String()
 }
 
@@ -57,7 +58,7 @@ export class NamedExportBridge extends WorkerEntrypoint {
 export class WFPBridge extends WorkerEntrypoint {
  async invoke(token,binding,script,options,dispatchOptions,root,request) {
   const control=parentExports.ResourceBridge({props:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token}});
-  const env={__NANOFLARE_RESOURCE_CONTROL:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token},__NANOFLARE_WORKER_LOADER:this.env.LOADER,__NANOFLARE_DISPATCH_BINDINGS:{[binding]:"control"},control};
+  const env={__NANOFLARE_WFP_SOCKET_OUTBOUND:this.env.__NANOFLARE_WFP_SOCKET_OUTBOUND,__NANOFLARE_RESOURCE_CONTROL:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token},__NANOFLARE_WORKER_LOADER:this.env.LOADER,__NANOFLARE_DISPATCH_BINDINGS:{[binding]:"control"},control};
   try{return {response:await wrapDispatchEnv(env,this.ctx,root)[binding].get(script,restoreExportProps(options,this.ctx.props.key,token),dispatchOptions).fetch(request)};}
   catch(error){return {error:error.message,status:error.status||500};}
  }

@@ -40,8 +40,108 @@ The implementation uses a 30-second root wall/effect deadline, 100 shared effect
 
 ## Rejected, deferred and independent work
 
-Untrusted execution profiles, custom WFP CPU/outbound/limit options, classic scripts, WebSockets, native customer raw TCP, arbitrary cross-Worker service RPC, dynamic namespace-wide nested dispatch, schedules, custom DNS profiles, Cache API and presigned object URL effects are unavailable. Unsupported dispatch options are rejected explicitly. Native control JSON rejects unknown fields; it does not accept a limit and silently substitute a weaker one.
+Untrusted execution profiles, custom WFP CPU/outbound/limit options, classic scripts, WebSockets, arbitrary cross-Worker service RPC, dynamic namespace-wide nested dispatch, schedules, custom DNS profiles, Cache API and presigned object URL effects are unavailable. Unsupported dispatch options are rejected explicitly. Native control JSON rejects unknown fields; it does not accept a limit and silently substitute a weaker one.
 
 Real CPU accounting/interruption is the user's [separate workstream](../plans/workers-for-platforms-cpu-enforcement.md). The wall/effect deadline cannot stop a JavaScript infinite loop. Customer cells, hardened OS/VM containment and independent security qualification remain gates before an untrusted release.
 
 Developer tools, effective-capability reporting and customer telemetry are implemented. The [management adapter](cloudflare-management-api.md) provides a separate Cloudflare-shaped subset over this native contract. Bounded local capacity, storage/recovery and rollback qualification and independent review are recorded in the [archive](../archive/workers-for-platforms/README.md). Live comparison remains blocked by account entitlement; broad Wrangler/SDK, runtime/security equivalence and production expansion remain unqualified.
+
+
+## Opt-in namespace TCP and TLS sockets
+
+Namespace sockets are disabled by default (`globalOutbound: null`), independently
+of standalone Worker egress. Configure both nanoflared and each remote runner
+that executes platform hosts:
+
+```sh
+NANOFLARE_WFP_SOCKET_ALLOW=10.20.0.0/16
+NANOFLARE_WFP_SOCKET_CA_FILES=/etc/nanoflare/database-ca.pem
+```
+
+The equivalent flags are `--wfp-socket-allow` and `--wfp-socket-ca-files`.
+Allow entries are comma-separated IP addresses, CIDRs, or workerd categories
+`public` and `private`. Explicit `public` is supported; it is never
+implied. Empty or whitespace-only input disables sockets. CA files alone do not
+enable networking. Invalid destinations, unreadable files, and invalid certificate
+PEM fail startup. Certificates are loaded at startup; restart to rotate them.
+Browser CAs remain trusted alongside configured PEM certificates.
+
+A dedicated `nanoflare-wfp-sockets` network service supplies namespace
+`globalOutbound` on both static hosts and the dynamic dispatcher. It dials directly,
+bypassing the corporate HTTP proxy and its routing/CA configuration. Socket policy
+is independent of `NANOFLARE_WORKERD_NETWORK_ALLOW`. Ordinary namespace `fetch()`
+continues through the invocation broker and its accounting. Native outbound that
+bypasses the JavaScript fetch override can reach the socket service's allowed ranges.
+
+Both `secureTransport: "on"` and `startTls()` support verified TLS. Connect using a
+hostname matching the server certificate; an untrusted CA or wrong hostname is
+rejected. The proxy-style `nanoflare-egress` service cannot supply workerd-managed
+socket TLS in workerd 2026-09-11 and is not used for namespace sockets.
+
+All namespaces on an executor share this allow list and trust store. Sockets do
+not consume broker effect units and have no per-tenant destination grants or
+broker-enforced invocation deadlines. No socket-specific lifetime, idle timeout,
+or concurrency limit is added here; applications must close sockets and bound
+operations. Runtime socket/request ownership still applies, but broker expiry is
+not a socket revocation mechanism. This remains part of the trusted shared pilot.
+
+PostgreSQL supports plaintext and TLS. MySQL TLS requires the customer deployment
+compatibility flag `no_throw_on_not_implemented_tls_options`: mysql2 supplies an
+unsupported `checkServerIdentity` callback, while workerd still performs native
+certificate and hostname verification. Nanoflare does not add that flag silently.
+Oracle Thin plaintext is supported; TCPS needs database-specific qualification.
+SQL Server through tedious remains plaintext-only: `encrypt: true` requires TLS
+on a JavaScript duplex unsupported by workerd, and strict mode uses unsupported
+ALPN options. Use an HTTP gateway for SQL Server TLS. Standalone Worker socket TLS
+through proxy egress is outside this configuration's scope.
+
+
+### Protecting platform networks
+
+`NANOFLARE_WFP_SOCKET_DENY` (`--wfp-socket-deny`) adds comma-separated destination
+rules to the service's workerd `deny` list. The `local` category, loopback ranges
+`127.0.0.0/8` and `::1/128`, and link-local ranges `169.254.0.0/16` and `fe80::/10`
+are denied by default, including when the allow list contains narrower addresses.
+Link-local denial protects cloud metadata endpoints such as `169.254.169.254`
+and link-local container or VM services even when `private` is allowed.
+Allowing `local` requires the unsafe administrator opt-in
+`NANOFLARE_WFP_SOCKET_ALLOW_LOCAL=true` (`--wfp-socket-allow-local`); this also
+removes the automatic loopback and link-local denies. Explicit deny rules remain configured. Custom allow/deny rules otherwise follow
+workerd's longest-prefix matching: a more specific allow can override a broader
+custom deny, so avoid such overlaps. The automatic local guard adds matching
+denies for narrower local allow CIDRs to prevent that bypass. The
+native test fixture opts into local access solely to reach its isolated test
+servers, and separately verifies default loopback denial and explicit denies.
+
+Allow and deny entries filter destination IP addresses only; they do not filter
+ports. An allowed address is reachable on every TCP port. Prefer individual
+database hosts (`/32` for IPv4 or `/128` for IPv6). When broader corporate ranges
+are necessary, explicitly deny the Nanoflare host's own IP, the corporate proxy
+host's IP, and platform subnets. A future database binding or port-aware adapter
+is needed for port-level controls.
+
+Allowed CIDRs must not overlap the platform's own networks. In particular,
+`private` includes Docker bridge networks and potentially Nanoflare's Postgres,
+MinIO, Loki, and other internal services. Startup warns when `private` is used;
+prefer database-specific CIDRs and explicitly deny platform subnets, for example:
+
+```sh
+NANOFLARE_WFP_SOCKET_ALLOW=10.20.0.0/16
+NANOFLARE_WFP_SOCKET_DENY=10.20.10.0/24
+```
+
+On static hosts, the platform host Worker itself also receives the internal socket
+binding and loader capability. Its code can use them to make direct connections
+under this socket policy, bypassing the general outbound allow list and corporate
+proxy. Internal binding names are not a security boundary: only trusted platform
+host code may run with these capabilities. The native dispatcher keeps the binding
+on its internal bridge, rather than passing it to the dynamically loaded host.
+
+Each nanoflared and remote runner logs its own effective enabled state, allow/deny
+rules, and additional certificate count at startup, plus a warning if local access
+is opted into. Certificate contents are never logged. Configuration is executor-local;
+these logs make mismatches visible but do not enforce cross-process equality.
+
+The `WFP native sockets` GitHub Actions job installs the repository-pinned
+`workerd@1.20260911.1` and runs the native contract tests, including TLS trust and
+hostname rejection, destination denial, nested dispatch, and brokered fetch.
