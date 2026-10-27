@@ -21,6 +21,8 @@ import (
 
 func main() {
 	var (
+		wfpSocketAllow       = flag.String("wfp-socket-allow", envOrDefault("NANOFLARE_WFP_SOCKET_ALLOW", ""), "opt-in WFP socket destination allow list (including explicit public)")
+		wfpSocketCAFiles     = flag.String("wfp-socket-ca-files", envOrDefault("NANOFLARE_WFP_SOCKET_CA_FILES", ""), "comma-separated PEM CA files for WFP sockets")
 		addr                 = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
 		configDir            = flag.String("config-dir", "./var/runner", "directory for generated runtime configuration")
 		workerd              = flag.String("workerd", envOrDefault("NANOFLARE_WORKERD_EXECUTABLE", "workerd"), "path to the workerd executable")
@@ -38,6 +40,10 @@ func main() {
 		vectorSocket         = flag.String("log-vector-socket", os.Getenv("NANOFLARE_LOG_VECTOR_SOCKET"), "optional local Vector Unix socket for structured runtime output")
 	)
 	flag.Parse()
+	wfpSockets, err := config.LoadWFPSocketOptions(*wfpSocketAllow, *wfpSocketCAFiles)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if *token == "" {
 		log.Fatal("runner token is required")
@@ -63,6 +69,7 @@ func main() {
 	)
 	writer.SetNanoflareRuntimeAddr(*nanoflareRuntimeAddr)
 	writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
+	writer.SetWFPSockets(wfpSockets)
 	dnsConfig, err := dnsresolver.LoadConfig(*dnsConfigValue)
 	if err != nil {
 		log.Fatal(err)

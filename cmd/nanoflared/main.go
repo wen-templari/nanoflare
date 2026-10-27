@@ -43,6 +43,8 @@ func main() {
 	}
 
 	var (
+		wfpSocketAllow                 = flag.String("wfp-socket-allow", envOrDefault("NANOFLARE_WFP_SOCKET_ALLOW", ""), "opt-in WFP socket destination allow list (including explicit public)")
+		wfpSocketCAFiles               = flag.String("wfp-socket-ca-files", envOrDefault("NANOFLARE_WFP_SOCKET_CA_FILES", ""), "comma-separated PEM CA files for WFP sockets")
 		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", envBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "administrator opt-in to trusted_shared_workerd dispatch; namespaces share a runtime without CPU interruption or hardened untrusted isolation")
 		cloudflareCompatibilityEnabled = flag.Bool("enable-cloudflare-compatibility", envBoolOrDefault("NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED", false), "enable the experimental trusted Cloudflare management adapter; requires platform dispatch")
 		addr                           = flag.String("addr", ":8080", "HTTP listen address")
@@ -94,6 +96,10 @@ func main() {
 		otelSampleRatio                = flag.Float64("otel-sample-ratio", envFloatOrDefault("NANOFLARE_OTEL_SAMPLE_RATIO", 0.1), "fraction of root traces to sample, from 0 to 1")
 	)
 	flag.Parse()
+	wfpSockets, err := config.LoadWFPSocketOptions(*wfpSocketAllow, *wfpSocketCAFiles)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *cloudflareCompatibilityEnabled && !*platformDispatchEnabled {
 		log.Fatal("Cloudflare compatibility requires --enable-platform-dispatch (or NANOFLARE_PLATFORM_DISPATCH_ENABLED=true)")
 	}
@@ -212,6 +218,7 @@ func main() {
 		writer := config.NewRuntimeWriter(filepath.Join(*configDir, "workerd.capnp"), traefikWriter)
 		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
 		writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
+		writer.SetWFPSockets(wfpSockets)
 		dnsConfig, err := dnsresolver.LoadConfig(*dnsConfigValue)
 		if err != nil {
 			log.Fatal(err)

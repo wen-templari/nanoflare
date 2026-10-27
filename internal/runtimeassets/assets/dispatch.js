@@ -197,13 +197,16 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
         mainModule: "__nanoflare_dynamic_entrypoint__.js",
         modules,
         env: artifact.values,
-        globalOutbound: null,
+        globalOutbound: env.__NANOFLARE_WFP_SOCKET_OUTBOUND ?? null,
       };
     }
     if (!cached)
       cached = {
         code,
-        bytes: new TextEncoder().encode(JSON.stringify(code)).byteLength + wasmBytes,
+        // The administrator service capability is not JSON code payload.
+        bytes:
+          new TextEncoder().encode(JSON.stringify({ ...code, globalOutbound: null })).byteLength +
+          wasmBytes,
       };
     revisions.set(key, cached);
     codeBytes += cached.bytes;

@@ -26,6 +26,7 @@ type Writer struct {
 	egressAddr   string
 	dnsAddr      string
 	dnsProfiles  map[string]bool
+	wfpSockets   WFPSocketOptions
 }
 
 type TraefikWriter interface {
@@ -40,6 +41,7 @@ type RuntimeWriter struct {
 	egressAddr   string
 	dnsAddr      string
 	dnsProfiles  map[string]bool
+	wfpSockets   WFPSocketOptions
 }
 
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
@@ -79,10 +81,10 @@ func (w *RuntimeWriter) ValidateRuntime(active []nanoflare.ActiveDeployment) err
 
 // RuntimeOptions returns a detached snapshot of the runtime compiler options.
 func (w *Writer) RuntimeOptions() WorkerdOptions {
-	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr}
+	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr, WFPSockets: w.wfpSockets.clone()}
 }
 func (w *RuntimeWriter) RuntimeOptions() WorkerdOptions {
-	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr}
+	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr, WFPSockets: w.wfpSockets.clone()}
 }
 
 func DefaultNetworkAllow() []string {
@@ -123,7 +125,7 @@ func (w *Writer) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) 
 	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
 		return err
 	}
-	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr})))
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, w.RuntimeOptions())))
 }
 
 func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
@@ -134,7 +136,7 @@ func (w *RuntimeWriter) WriteWorkerd(path string, active []nanoflare.ActiveDeplo
 	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
 		return err
 	}
-	return writeAtomic(path, []byte(WorkerdWithOptions(active, WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: w.networkAllow, EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr})))
+	return writeAtomic(path, []byte(WorkerdWithOptions(active, w.RuntimeOptions())))
 }
 
 func profileSet(profiles []string) map[string]bool {
@@ -171,6 +173,7 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 }
 
 type WorkerdOptions struct {
+	WFPSockets   WFPSocketOptions
 	RuntimeAddr  string
 	NetworkAllow []string
 	EgressAddr   string
@@ -191,6 +194,7 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	if egressAddr := strings.TrimSpace(options.EgressAddr); egressAddr != "" {
 		fmt.Fprintf(&out, "    (name = \"nanoflare-egress\", external = (address = %s, http = (style = proxy))),\n", quote(egressAddr))
 	}
+	writeWFPSocketService(&out, options.WFPSockets)
 	out.WriteString(durationTelemetryServices(runtimeAddr, active))
 	writeDispatchServices(&out, runtimeAddr, active)
 	for _, item := range active {
@@ -241,7 +245,7 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
 		}
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
-			strings.Join(workerBindings(item, active, dnsEnabled), ", "))
+			strings.Join(append(workerBindings(item, active, dnsEnabled), wfpSocketBindings(item, options.WFPSockets)...), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(code.CompatibilityDate))
 		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(code.CompatibilityFlags))
 
