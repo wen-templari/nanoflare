@@ -26,11 +26,6 @@ func (o WFPSocketOptions) clone() WFPSocketOptions {
 func (w *Writer) SetWFPSockets(o WFPSocketOptions)        { w.wfpSockets = o.clone() }
 func (w *RuntimeWriter) SetWFPSockets(o WFPSocketOptions) { w.wfpSockets = o.clone() }
 
-// LoadWFPSocketOptions validates settings without inheriting general outbound defaults.
-func LoadWFPSocketOptions(allow, files string) (WFPSocketOptions, error) {
-	return LoadWFPSocketPolicy(allow, "", files, false)
-}
-
 // LoadWFPSocketPolicy validates the explicit destination policy and CA files.
 func LoadWFPSocketPolicy(allow, deny, files string, allowLocal bool) (WFPSocketOptions, error) {
 	var o WFPSocketOptions
@@ -106,12 +101,14 @@ func parseWFPSocketRules(value string) ([]string, error) {
 func (o WFPSocketOptions) effectiveDeny() []string {
 	deny := append([]string(nil), o.Deny...)
 	if !o.AllowLocal {
-		deny = append(deny, "local", "127.0.0.0/8", "::1/128")
+		localRanges := []string{"127.0.0.0/8", "::1/128", "169.254.0.0/16", "fe80::/10"}
+		deny = append(deny, "local")
+		deny = append(deny, localRanges...)
 		// workerd uses longest-prefix matching. Match any narrower allow prefix
-		// so an explicit loopback address cannot override the default deny.
+		// so explicit loopback or link-local addresses cannot override the default deny.
 		for _, rule := range o.Allow {
 			if prefix, err := netip.ParsePrefix(rule); err == nil {
-				for _, blocked := range []string{"127.0.0.0/8", "::1/128", "169.254.0.0/16", "fe80::/10"} {
+				for _, blocked := range localRanges {
 					if netip.MustParsePrefix(blocked).Contains(prefix.Addr()) {
 						deny = append(deny, rule)
 						break

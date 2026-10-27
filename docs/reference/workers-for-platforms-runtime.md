@@ -99,16 +99,26 @@ through proxy egress is outside this configuration's scope.
 ### Protecting platform networks
 
 `NANOFLARE_WFP_SOCKET_DENY` (`--wfp-socket-deny`) adds comma-separated destination
-rules to the service's workerd `deny` list. The `local` category is denied by
-default, including when the allow list contains explicit loopback addresses.
+rules to the service's workerd `deny` list. The `local` category, loopback ranges
+`127.0.0.0/8` and `::1/128`, and link-local ranges `169.254.0.0/16` and `fe80::/10`
+are denied by default, including when the allow list contains narrower addresses.
+Link-local denial protects cloud metadata endpoints such as `169.254.169.254`
+and link-local container or VM services even when `private` is allowed.
 Allowing `local` requires the unsafe administrator opt-in
 `NANOFLARE_WFP_SOCKET_ALLOW_LOCAL=true` (`--wfp-socket-allow-local`); this also
-removes the automatic local deny. Explicit deny rules remain configured. Custom allow/deny rules otherwise follow
+removes the automatic loopback and link-local denies. Explicit deny rules remain configured. Custom allow/deny rules otherwise follow
 workerd's longest-prefix matching: a more specific allow can override a broader
 custom deny, so avoid such overlaps. The automatic local guard adds matching
 denies for narrower local allow CIDRs to prevent that bypass. The
 native test fixture opts into local access solely to reach its isolated test
 servers, and separately verifies default loopback denial and explicit denies.
+
+Allow and deny entries filter destination IP addresses only; they do not filter
+ports. An allowed address is reachable on every TCP port. Prefer individual
+database hosts (`/32` for IPv4 or `/128` for IPv6). When broader corporate ranges
+are necessary, explicitly deny the Nanoflare host's own IP, the corporate proxy
+host's IP, and platform subnets. A future database binding or port-aware adapter
+is needed for port-level controls.
 
 Allowed CIDRs must not overlap the platform's own networks. In particular,
 `private` includes Docker bridge networks and potentially Nanoflare's Postgres,

@@ -21,29 +21,29 @@ import (
 
 func TestWFPSocketSettings(t *testing.T) {
 	for _, input := range []string{"", " , "} {
-		o, err := LoadWFPSocketOptions(input, "")
+		o, err := LoadWFPSocketPolicy(input, "", "", false)
 		if err != nil || len(o.Allow) != 0 {
 			t.Fatalf("empty policy enables sockets: %+v %v", o, err)
 		}
 	}
-	o, err := LoadWFPSocketOptions("public, 10.20.0.0/16, ::1", "")
+	o, err := LoadWFPSocketPolicy("public, 10.20.0.0/16, ::1", "", "", false)
 	if err != nil || len(o.Allow) != 3 {
 		t.Fatalf("explicit public policy: %+v %v", o, err)
 	}
 	for _, input := range []string{"pubic", "10.0.0.0/99", "database.example:5432", "fe80::1%eth0"} {
-		if _, err := LoadWFPSocketOptions(input, ""); err == nil {
+		if _, err := LoadWFPSocketPolicy(input, "", "", false); err == nil {
 			t.Fatalf("accepted %q", input)
 		}
 	}
 	file := filepath.Join(t.TempDir(), "ca.pem")
-	if _, err := LoadWFPSocketOptions("", file); err == nil {
+	if _, err := LoadWFPSocketPolicy("", "", file, false); err == nil {
 		t.Fatal("accepted missing CA")
 	}
 	for _, data := range []string{"", "bad PEM", "-----BEGIN CERTIFICATE-----\nYmFk\n-----END CERTIFICATE-----\n"} {
 		if err := os.WriteFile(file, []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := LoadWFPSocketOptions("public", file); err == nil {
+		if _, err := LoadWFPSocketPolicy("public", "", file, false); err == nil {
 			t.Fatal("accepted invalid CA")
 		}
 	}
@@ -60,7 +60,7 @@ func TestWFPSocketSettings(t *testing.T) {
 	if err := os.WriteFile(file, cert, 0600); err != nil {
 		t.Fatal(err)
 	}
-	o, err = LoadWFPSocketOptions("", file)
+	o, err = LoadWFPSocketPolicy("", "", file, false)
 	if err != nil || len(o.Allow) != 0 || len(o.Certificates) != 1 {
 		t.Fatalf("CA alone: %+v %v", o, err)
 	}
@@ -132,7 +132,7 @@ func TestWorkerdWFPSockets(t *testing.T) {
 }
 
 func TestWFPSocketLocalGuard(t *testing.T) {
-	if _, err := LoadWFPSocketOptions("local", ""); err == nil {
+	if _, err := LoadWFPSocketPolicy("local", "", "", false); err == nil {
 		t.Fatal("local accepted without unsafe opt-in")
 	}
 	for _, allowLocal := range []bool{false, true} {
@@ -175,5 +175,30 @@ func TestWFPSocketPolicyLogging(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "secret-certificate-content") {
 		t.Fatal("logged certificate contents")
+	}
+}
+
+func TestWFPSocketDefaultLinkLocalDeny(t *testing.T) {
+	for _, allow := range []string{"private", "169.254.169.254,fe80::1"} {
+		for _, unsafe := range []bool{false, true} {
+			o, err := LoadWFPSocketPolicy(allow, "", "", unsafe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var generated strings.Builder
+			writeWFPSocketService(&generated, o)
+			for _, prefix := range []string{"169.254.0.0/16", "fe80::/10"} {
+				if strings.Contains(generated.String(), quote(prefix)) == unsafe {
+					t.Fatalf("unsafe=%t allow=%q: incorrect default deny %s", unsafe, allow, prefix)
+				}
+			}
+			if !unsafe && allow != "private" {
+				for _, prefix := range []string{"169.254.169.254/32", "fe80::1/128"} {
+					if !strings.Contains(strings.Join(o.effectiveDeny(), ","), prefix) {
+						t.Fatalf("missing narrower deny %s", prefix)
+					}
+				}
+			}
+		}
 	}
 }
