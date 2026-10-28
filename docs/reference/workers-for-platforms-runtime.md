@@ -65,9 +65,18 @@ The equivalent flags are `--wfp-socket-allow` and `--wfp-socket-ca-files`.
 Allow entries are comma-separated IP addresses, CIDRs, or workerd categories
 `public` and `private`. Explicit `public` is supported; it is never
 implied. Empty or whitespace-only input disables sockets. CA files alone do not
-enable networking. Invalid destinations, unreadable files, and invalid certificate
-PEM fail startup. Certificates are loaded at startup; restart to rotate them.
+enable networking. On executors using the feature, invalid destinations,
+unreadable files, and invalid certificate PEM fail startup. Standard bundle comments and Subject/Issuer
+annotations are accepted; malformed or truncated certificate blocks are rejected.
+Certificates are loaded at startup; restart to rotate them. Socket policy and CA
+contents stay local to the executor and are excluded from customer snapshot
+compilation metadata, registrations, and snapshot identity hashes.
 Browser CAs remain trusted alongside configured PEM certificates.
+
+Nanoflared ignores these settings with a warning when platform dispatch is
+disabled or a remote runner is selected. In those modes it does not read or
+validate unused CA paths and policy strings. Remote runners validate and log
+their own settings when they start.
 
 A dedicated `nanoflare-wfp-sockets` network service supplies namespace
 `globalOutbound` on both static hosts and the dynamic dispatcher. It dials directly,
@@ -103,16 +112,20 @@ through proxy egress is outside this configuration's scope.
 `NANOFLARE_WFP_SOCKET_DENY` (`--wfp-socket-deny`) adds comma-separated destination
 rules to the service's workerd `deny` list. The `local` category, loopback ranges
 `127.0.0.0/8` and `::1/128`, and link-local ranges `169.254.0.0/16` and `fe80::/10`
-are denied by default, including when the allow list contains narrower addresses.
+and their IPv4-mapped IPv6 forms are denied by default. Explicit allow CIDRs
+that overlap these ranges fail startup unless local access is opted into.
+Mapped IPv4 rules are normalized to IPv4 before validation, including broad
+mapped prefixes such as `::ffff:0:0/96`.
 Link-local denial protects cloud metadata endpoints such as `169.254.169.254`
 and link-local container or VM services even when `private` is allowed.
 Allowing `local` requires the unsafe administrator opt-in
 `NANOFLARE_WFP_SOCKET_ALLOW_LOCAL=true` (`--wfp-socket-allow-local`); this also
-removes the automatic loopback and link-local denies. Explicit deny rules remain configured. Custom allow/deny rules otherwise follow
+removes the automatic loopback and link-local denies. Explicit deny rules remain
+configured. Custom allow/deny rules otherwise follow
 workerd's longest-prefix matching: a more specific allow can override a broader
 custom deny, so avoid such overlaps. The automatic local guard adds matching
-denies for narrower local allow CIDRs to prevent that bypass. The
-native test fixture opts into local access solely to reach its isolated test
+denies for narrower local allow CIDRs as a defensive backstop in generated
+configurations. The native test fixture opts into local access solely to reach its isolated test
 servers, and separately verifies default loopback denial and explicit denies.
 
 Allow and deny entries filter destination IP addresses only; they do not filter
@@ -136,8 +149,10 @@ On static hosts, the platform host Worker itself also receives the internal sock
 binding and loader capability. Its code can use them to make direct connections
 under this socket policy, bypassing the general outbound allow list and corporate
 proxy. Internal binding names are not a security boundary: only trusted platform
-host code may run with these capabilities. The native dispatcher keeps the binding
+host code may run with these capabilities. The dynamic dispatcher keeps the binding
 on its internal bridge, rather than passing it to the dynamically loaded host.
+This difference is intentional for the existing static host architecture; a
+wrapped env object does not revoke capabilities available to trusted host code.
 
 Each nanoflared and remote runner logs its own effective enabled state, allow/deny
 rules, and additional certificate count at startup, plus a warning if local access
@@ -147,3 +162,18 @@ these logs make mismatches visible but do not enforce cross-process equality.
 The `WFP native sockets` GitHub Actions job installs the repository-pinned
 `workerd@1.20260911.1` and runs the native contract tests, including TLS trust and
 hostname rejection, destination denial, nested dispatch, and brokered fetch.
+
+
+### Native outbound API limits
+
+Namespace `WebSocket` construction is explicitly rejected, for both `ws:` and
+`wss:` URLs, before a native outbound request can bypass the broker.
+`WebSocketPair` is also unavailable, preventing access to native socket objects
+and their original constructor through the unsupported server API. Brokered
+`fetch()` also rejects WebSocket upgrades. The pinned native tests verify these
+rejections with sockets enabled and disabled. Enabling a network global outbound
+is still a broad capability: raw TCP can implement HTTP, WebSocket, or other
+protocols itself and remains outside broker admission, budgets, and logging.
+This feature does not provide per-invocation enforcement for those protocols;
+use narrow network grants and trusted scripts until a port-aware, brokered
+socket/database service supplies that boundary.

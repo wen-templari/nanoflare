@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
@@ -901,5 +902,22 @@ func TestDynamicPrepareRetriesMissingSessionAfterFailedReconnect(t *testing.T) {
 		if m.session != "" || m.process != nil {
 			t.Fatal("failed reconnect enabled admission")
 		}
+	}
+}
+
+func TestDynamicCompileOptionsExcludeSocketPolicy(t *testing.T) {
+	writer := config.NewRuntimeWriter("", nil)
+	writer.SetWFPSockets(config.WFPSocketOptions{Allow: []string{"private"}, Certificates: []string{"first-private-ca"}})
+	first := NewDynamicManager(writer, nil, "", "", "", time.Second, time.Second)
+	writer.SetWFPSockets(config.WFPSocketOptions{Allow: []string{"public"}, Certificates: []string{"rotated-private-ca"}})
+	second := NewDynamicManager(writer, nil, "", "", "", time.Second, time.Second)
+	if first.compileOptions != second.compileOptions {
+		t.Fatal("socket policy rotation changes snapshot compilation identity")
+	}
+	if strings.Contains(first.compileOptions, "private-ca") {
+		t.Fatal("certificate sent in compile options")
+	}
+	if first.options.WFPSockets.Certificates[0] != "first-private-ca" {
+		t.Fatal("executor lost its actual CA configuration")
 	}
 }

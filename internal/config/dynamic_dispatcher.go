@@ -24,7 +24,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
   compatibilityFlags = ["experimental", "enable_abortsignal_rpc"],
   modules = [(name = "dispatcher.js", esModule = %s), (name = "dispatch.js", esModule = %s)],
   bindings = [
-%s    (name = "LOADER", workerLoader = (id = "nanoflare-publications")),
+    %s(name = "LOADER", workerLoader = (id = "nanoflare-publications")),
     (name = "BROKER", service = "broker"),
     (name = "OUTBOUND", service = %s),
     (name = "DISPATCHER_TOKEN", text = %s)
@@ -33,7 +33,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
  ],
  sockets = [(name = "dispatcher", address = %s, http = (forwardedProtoHeader = "X-Forwarded-Proto"), service = "dispatcher")],
 );
-`, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(runtimeassets.DispatchModule), wfpSocketBindingLine(options.WFPSockets), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
+`, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(runtimeassets.DispatchModule), strings.Join(append(wfpSocketBindings(options.WFPSockets), ""), ",\n    "), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
 	return out.String()
 }
 

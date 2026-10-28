@@ -244,8 +244,11 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		if strings.TrimSpace(options.EgressAddr) != "" {
 			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
 		}
-		fmt.Fprintf(&out, "  bindings = [%s],\n",
-			strings.Join(append(workerBindings(item, active, dnsEnabled), wfpSocketBindings(item, options.WFPSockets)...), ", "))
+		bindings := workerBindings(item, active, dnsEnabled)
+		if len(item.Deployment.DispatchNamespaces) > 0 {
+			bindings = append(bindings, wfpSocketBindings(options.WFPSockets)...)
+		}
+		fmt.Fprintf(&out, "  bindings = [%s],\n", strings.Join(bindings, ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(code.CompatibilityDate))
 		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(code.CompatibilityFlags))
 

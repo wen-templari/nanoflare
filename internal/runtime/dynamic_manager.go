@@ -96,7 +96,11 @@ func NewDynamicManager(writer ConfigWriter, launcher Launcher, configDir, canoni
 	if w, ok := writer.(interface{ RuntimeOptions() config.WorkerdOptions }); ok {
 		m.options = w.RuntimeOptions()
 	}
-	encoded, _ := json.Marshal(m.options)
+	// Socket policy is executor-local runtime configuration, not customer code.
+	// Keep certificate contents and rotations out of registrations and snapshot IDs.
+	compileOptions := m.options
+	compileOptions.WFPSockets = config.WFPSocketOptions{}
+	encoded, _ := json.Marshal(compileOptions)
 	m.compileOptions = string(encoded)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	ConfigureTransport(transport)

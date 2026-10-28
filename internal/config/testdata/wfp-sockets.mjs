@@ -3,6 +3,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -65,10 +66,23 @@ try {
       });
     }),
   );
+  let websocketRequests = 0;
+  const websocketServer = createServer((req, res) => {
+    websocketRequests++;
+    res.end("unexpected native outbound");
+  });
+  websocketServer.on("upgrade", (req, socket) => {
+    websocketRequests++;
+    socket.destroy();
+  });
+  const websocketPort = await listen(websocketServer);
   const source = `import {connect} from 'cloudflare:sockets';
  export default {async fetch(request,env,ctx){
   const url=new URL(request.url), mode=url.searchParams.get('mode');
   if(mode==='fetch') { const a=await fetch('http://outside.invalid/'); const b=await fetch('http://outside.invalid/'); return new Response(a.status+':'+b.status); }
+  if(mode==='websocketpair') { try { new WebSocketPair(); return new Response('native pair accepted'); } catch(error) { return new Response(error.message); } }
+  if(mode==='websocket') { try { const socket = new WebSocket((url.searchParams.has('secure')?'wss':'ws')+'://127.0.0.1:${websocketPort}'); return new Response('native constructor accepted'); } catch(error) { return new Response(error.message); } }
+  if(mode==='mapped') { const socket=connect({hostname:'::ffff:127.0.0.1',port:${plain}}); try { await socket.opened; return new Response('mapped connection opened'); } finally { await socket.close(); } }
   if(mode==='nested') return env.CHILD.fetch('http://customer/?mode=plain');
   const port=mode==='plain'?${plain}:mode==='starttls'?${upgrade}:${direct};
   let socket=connect({hostname:url.searchParams.get('wrong')?'127.0.0.1':'localhost',port},{secureTransport:mode==='plain'?'off':mode==='starttls'?'starttls':'on'});
@@ -89,7 +103,7 @@ try {
     digest: "v1",
     lease: "lease",
     values: {},
-    wrapper: `import user from './worker.js'; import {dynamicEnv,withInvocation} from 'nanoflare-internal:dynamic-env.js'; export default {fetch(r,e,c){return withInvocation(c,()=>user.fetch(r,dynamicEnv(e,c,{services:[{binding:'CHILD'}]}),c));}};`,
+    wrapper: `import {dynamicEnv,withInvocation} from 'nanoflare-internal:dynamic-env.js'; import user from './worker.js'; export default {fetch(r,e,c){return withInvocation(c,()=>user.fetch(r,dynamicEnv(e,c,{services:[{binding:'CHILD'}]}),c));}};`,
     runtime_bindings: fixture.bindings,
     dynamic_env: fixture.dynamicEnv,
   };
@@ -153,6 +167,22 @@ try {
           return { status: 500, body: String(e) + " " + logs };
         }
       };
+      for (const query of ["mode=websocket", "mode=websocket&secure=1", "mode=websocketpair"])
+        assert.deepEqual(await get(query), {
+          status: 200,
+          body: "Outbound WebSockets are unavailable",
+        });
+      assert.equal(
+        websocketRequests,
+        0,
+        "native WebSocket reached destination",
+      );
+      if (policy === "loopback-denied")
+        assert.equal(
+          (await get("mode=mapped")).status,
+          500,
+          "mapped loopback bypassed local guard",
+        );
       for (const mode of ["plain", "tls", "starttls", "nested"]) {
         const r = await get("mode=" + mode);
         const succeeds =

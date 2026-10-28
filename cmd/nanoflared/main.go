@@ -44,11 +44,11 @@ func main() {
 
 	var (
 		wfpSocketDeny                  = flag.String("wfp-socket-deny", envOrDefault("NANOFLARE_WFP_SOCKET_DENY", ""), "additional WFP socket destination deny list; local is denied by default")
-		wfpSocketAllowLocal            = flag.Bool("wfp-socket-allow-local", envBoolOrDefault("NANOFLARE_WFP_SOCKET_ALLOW_LOCAL", false), "unsafe opt-in to WFP access to local platform services")
+		wfpSocketAllowLocal            = flag.Bool("wfp-socket-allow-local", config.EnvBoolOrDefault("NANOFLARE_WFP_SOCKET_ALLOW_LOCAL", false), "unsafe opt-in to WFP access to local platform services")
 		wfpSocketAllow                 = flag.String("wfp-socket-allow", envOrDefault("NANOFLARE_WFP_SOCKET_ALLOW", ""), "opt-in WFP socket destination allow list (including explicit public)")
 		wfpSocketCAFiles               = flag.String("wfp-socket-ca-files", envOrDefault("NANOFLARE_WFP_SOCKET_CA_FILES", ""), "comma-separated PEM CA files for WFP sockets")
-		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", envBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "administrator opt-in to trusted_shared_workerd dispatch; namespaces share a runtime without CPU interruption or hardened untrusted isolation")
-		cloudflareCompatibilityEnabled = flag.Bool("enable-cloudflare-compatibility", envBoolOrDefault("NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED", false), "enable the experimental trusted Cloudflare management adapter; requires platform dispatch")
+		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", config.EnvBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "administrator opt-in to trusted_shared_workerd dispatch; namespaces share a runtime without CPU interruption or hardened untrusted isolation")
+		cloudflareCompatibilityEnabled = flag.Bool("enable-cloudflare-compatibility", config.EnvBoolOrDefault("NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED", false), "enable the experimental trusted Cloudflare management adapter; requires platform dispatch")
 		addr                           = flag.String("addr", ":8080", "HTTP listen address")
 		runtimeAddr                    = flag.String("runtime-addr", "127.0.0.1:8081", "private runtime KV API listen address")
 		configDir                      = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
@@ -93,16 +93,22 @@ func main() {
 		controlOIDCClientID            = flag.String("control-oidc-client-id", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_ID"), "OIDC client ID for console login")
 		controlOIDCSecret              = flag.String("control-oidc-client-secret", os.Getenv("NANOFLARE_CONTROL_OIDC_CLIENT_SECRET"), "OIDC client secret for console login")
 		controlOIDCPublic              = flag.String("control-oidc-public-url", os.Getenv("NANOFLARE_CONTROL_OIDC_PUBLIC_URL"), "Public console base URL for OIDC login callbacks, for example https://console.example.com")
-		controlOIDCDirect              = flag.Bool("control-oidc-direct-login", envBoolOrDefault("NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN", false), "start console OIDC login directly instead of showing the login form first")
+		controlOIDCDirect              = flag.Bool("control-oidc-direct-login", config.EnvBoolOrDefault("NANOFLARE_CONTROL_OIDC_DIRECT_LOGIN", false), "start console OIDC login directly instead of showing the login form first")
 		otelEndpoint                   = flag.String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "optional OTLP/gRPC endpoint URL for distributed traces")
 		otelSampleRatio                = flag.Float64("otel-sample-ratio", envFloatOrDefault("NANOFLARE_OTEL_SAMPLE_RATIO", 0.1), "fraction of root traces to sample, from 0 to 1")
 	)
 	flag.Parse()
-	wfpSockets, err := config.LoadWFPSocketPolicy(*wfpSocketAllow, *wfpSocketDeny, *wfpSocketCAFiles, *wfpSocketAllowLocal)
-	if err != nil {
-		log.Fatal(err)
+	var wfpSockets config.WFPSocketOptions
+	if *platformDispatchEnabled && *runnerURL == "" {
+		var err error
+		wfpSockets, err = config.LoadWFPSocketPolicy(*wfpSocketAllow, *wfpSocketDeny, *wfpSocketCAFiles, *wfpSocketAllowLocal)
+		if err != nil {
+			log.Fatal(err)
+		}
+		config.LogWFPSocketPolicy(wfpSockets)
+	} else if strings.TrimSpace(*wfpSocketAllow+*wfpSocketDeny+*wfpSocketCAFiles) != "" || *wfpSocketAllowLocal {
+		log.Print("WFP socket configuration ignored: requires enabled platform dispatch and local execution; configure remote runners separately")
 	}
-	config.LogWFPSocketPolicy(wfpSockets)
 	if *cloudflareCompatibilityEnabled && !*platformDispatchEnabled {
 		log.Fatal("Cloudflare compatibility requires --enable-platform-dispatch (or NANOFLARE_PLATFORM_DISPATCH_ENABLED=true)")
 	}
@@ -432,18 +438,6 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func envBoolOrDefault(name string, fallback bool) bool {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return parsed
 }
 
 func envFloatOrDefault(name string, fallback float64) float64 {
