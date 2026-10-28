@@ -1,11 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Compatibility notes
-
-* With WFP dispatch and its default DNS access enabled, split deployments now validate `NANOFLARE_DNS_CONFIG` on **nanoflared** at startup. Invalid configuration prevents startup; the runner's DNS configuration still applies to ordinary Workers. When using a file path, make that file available to both services. Set `NANOFLARE_WFP_DNS=false` (`--wfp-dns=false`) to reject namespace JSON DNS requests without public DoH fallback and skip the otherwise unused resolver configuration in split mode.
-
 ## [0.6.1](https://github.com/wen-templari/nanoflare/compare/v0.6.0...v0.6.1) (2026-10-26)
 
 

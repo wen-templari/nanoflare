@@ -13,37 +13,19 @@ import (
 )
 
 func TestSystemLookupReturnsAllAddressesAndFamilyFilter(t *testing.T) {
-	server, err := New(Config{}, "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	addresses, err := lookup(context.Background(), Profile{}, "localhost", 4)
+	if err != nil || len(addresses) == 0 {
+		t.Fatalf("addresses=%v err=%v", addresses, err)
 	}
-	if err := server.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close(context.Background())
-
-	response, err := http.Post("http://"+server.Addr()+"/lookup", "application/json", strings.NewReader(`{"hostname":"localhost","family":4}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	var body lookupResponse
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusOK || len(body.Addresses) == 0 {
-		t.Fatalf("status=%d body=%#v", response.StatusCode, body)
-	}
-	for _, address := range body.Addresses {
+	for _, address := range addresses {
 		if address.Family != 4 {
-			t.Fatalf("address=%#v, want IPv4", address)
+			t.Fatalf("unexpected family: %+v", address)
 		}
 	}
 }
 
-func TestUnknownProfileAndTimeoutReturnUsefulCodes(t *testing.T) {
-	blackhole := startBlackholeDNSServer(t)
-	server, err := New(Config{Profiles: map[string]Profile{"slow": {Servers: []string{blackhole}, Timeout: "10ms"}}}, "127.0.0.1:0")
+func TestDoHUnknownProfileAndTimeout(t *testing.T) {
+	server, err := New(Config{Profiles: map[string]Profile{"slow": {Servers: []string{startBlackholeDNSServer(t)}, Timeout: "10ms"}}}, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,49 +33,37 @@ func TestUnknownProfileAndTimeoutReturnUsefulCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close(context.Background())
-
-	for _, test := range []struct{ profile, code string }{{"missing", "EBADPROFILE"}, {"slow", "ETIMEOUT"}} {
-		req, _ := http.NewRequest(http.MethodPost, "http://"+server.Addr()+"/lookup", strings.NewReader(`{"hostname":"example.invalid"}`))
-		req.Header.Set("X-Nanoflare-DNS-Profile", test.profile)
+	for _, profile := range []string{"missing", "slow"} {
+		req, _ := http.NewRequest("GET", "http://"+server.Addr()+DoHPath+"?name=example.invalid&type=TXT", nil)
+		req.Header.Set("X-Nanoflare-DNS-Profile", profile)
 		response, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var body lookupResponse
-		_ = json.NewDecoder(response.Body).Decode(&body)
+		var body dohResponse
+		err = json.NewDecoder(response.Body).Decode(&body)
 		response.Body.Close()
-		if body.Code != test.code {
-			t.Fatalf("profile %s: code=%q error=%q", test.profile, body.Code, body.Error)
+		if err != nil || body.Status != 2 {
+			t.Fatalf("profile %s: %+v %v", profile, body, err)
 		}
 	}
-}
-
-func TestCustomResolverReturnsMultipleAddresses(t *testing.T) {
-	dnsAddr := startTestDNSServer(t)
-	blackhole := startBlackholeDNSServer(t)
-	server, err := New(Config{DefaultProfile: "corporate", Profiles: map[string]Profile{"corporate": {Servers: []string{blackhole, dnsAddr}, Timeout: "1s"}}}, "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := server.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close(context.Background())
-
-	response, err := http.Post("http://"+server.Addr()+"/lookup", "application/json", strings.NewReader(`{"hostname":"rac.internal","family":4}`))
+	response, err := http.Post("http://"+server.Addr()+"/lookup", "application/json", strings.NewReader(`{"hostname":"localhost"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	var body lookupResponse
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		t.Fatal(err)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("obsolete lookup endpoint: %d", response.StatusCode)
 	}
-	if response.StatusCode != http.StatusOK || len(body.Addresses) != 2 {
-		t.Fatalf("status=%d body=%#v", response.StatusCode, body)
+}
+
+func TestCustomResolverReturnsMultipleAddresses(t *testing.T) {
+	addresses, err := lookup(context.Background(), Profile{Servers: []string{startBlackholeDNSServer(t), startTestDNSServer(t)}, Timeout: "1s"}, "rac.internal", 4)
+	if err != nil || len(addresses) != 2 {
+		t.Fatalf("addresses=%v err=%v", addresses, err)
 	}
-	if body.Addresses[0].Address != "10.20.30.40" || body.Addresses[1].Address != "10.20.30.41" {
-		t.Fatalf("addresses=%#v", body.Addresses)
+	if addresses[0].Address != "10.20.30.40" || addresses[1].Address != "10.20.30.41" {
+		t.Fatalf("addresses=%v", addresses)
 	}
 }
 

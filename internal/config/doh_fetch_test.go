@@ -75,6 +75,18 @@ assert.equal(seen.at(-1)[0],'native');
 assert.equal(seen.at(-1)[1],input);
 assert.equal(seen.at(-1)[2],options);
 assert.equal(input.bodyUsed,false);
+// Missing importable env must preserve native fetch inputs and options.
+const binding=env.__NANOFLARE_DNS;
+delete env.__NANOFLARE_DNS;
+for (const input of [url,new URL(url),new Request(url)]) {
+ const options={redirect:'manual'};
+ assert.equal(await (await fetch(input,options)).text(),'native');
+ assert.equal(seen.at(-1)[1],input);
+ assert.equal(seen.at(-1)[2],options);
+}
+env.__NANOFLARE_DNS={fetch(){throw new Error('resolver failed')}};
+await assert.rejects(fetch(url),/resolver failed/);
+env.__NANOFLARE_DNS=binding;
 ` + "\nfor (const test of " + string(encoded) + `) {
  await fetch(test.URL,{method:test.Method});
  assert.equal(seen.at(-1)[0]==='dns',test.Intercepted,JSON.stringify(test));

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/clas/nanoflare/internal/dnsresolver"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -643,7 +644,7 @@ func TestDynamicLostAdmissionResponseCancelsKnownPin(t *testing.T) {
 
 func TestDynamicSyntheticBindingsFreezeDNSAndTelemetryAttribution(t *testing.T) {
 	m, state, _, key := newDynamicControlFixture(t)
-	r := httptest.NewRequest(http.MethodPost, "/resource/"+key+"/caller-path?caller-query=true", strings.NewReader(`{"name":"example.com"}`))
+	r := httptest.NewRequest(http.MethodGet, "/resource/"+key+"/caller-path?name=example.com&type=A", nil)
 	r.Header.Set("X-Nanoflare-Broker-Token", m.brokerToken)
 	r.Header.Set("X-Nanoflare-Binding-Name", "__NANOFLARE_DNS")
 	r.Header.Set("X-Nanoflare-DNS-Profile", "forged-profile")
@@ -664,7 +665,7 @@ func TestDynamicSyntheticBindingsFreezeDNSAndTelemetryAttribution(t *testing.T) 
 		t.Fatalf("forwarded requests: %d", len(state.requests))
 	}
 	dns := state.requests[0]
-	if dns.path != "/lookup" || dns.query != "" || dns.headers.Get("X-Nanoflare-DNS-Profile") != "frozen-profile" {
+	if dns.path != dnsresolver.DoHPath || dns.query != "name=example.com&type=A" || dns.headers.Get("X-Nanoflare-DNS-Profile") != "frozen-profile" {
 		t.Fatalf("DNS authority not frozen: %#v", dns)
 	}
 	telemetry := state.requests[1]

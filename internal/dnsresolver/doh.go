@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 const (
@@ -16,8 +18,18 @@ const (
 	DoHPath = "/dns-query"
 )
 
-var dohRecordTypes = map[string]int{
-	"A": 1, "AAAA": 28, "TXT": 16, "MX": 15, "SRV": 33, "NS": 2, "CNAME": 5, "SOA": 6, "PTR": 12, "ANY": 255, "CAA": 257, "NAPTR": 35,
+// Keep parsing and support decisions in one table. Unsupported wire types are
+// recognized so workerd receives a valid Question alongside NOTIMP.
+var dohRecordTypes = map[string]struct {
+	code      dnsmessage.Type
+	supported bool
+}{
+	"A": {dnsmessage.TypeA, true}, "AAAA": {dnsmessage.TypeAAAA, true},
+	"TXT": {dnsmessage.TypeTXT, true}, "MX": {dnsmessage.TypeMX, true},
+	"SRV": {dnsmessage.TypeSRV, true}, "NS": {dnsmessage.TypeNS, true},
+	"CNAME": {dnsmessage.TypeCNAME, true}, "PTR": {dnsmessage.TypePTR, true},
+	"SOA": {dnsmessage.TypeSOA, false}, "ANY": {dnsmessage.TypeALL, false},
+	"CAA": {257, false}, "NAPTR": {35, false},
 }
 
 type dohAnswer struct {
@@ -46,8 +58,8 @@ func (s *Server) serveDoH(w http.ResponseWriter, r *http.Request) {
 	hostname := strings.TrimSpace(r.URL.Query().Get("name"))
 	typeName := strings.ToUpper(r.URL.Query().Get("type"))
 	typeCode, _ := strconv.Atoi(typeName)
-	if value := dohRecordTypes[typeName]; value != 0 {
-		typeCode = value
+	if value, ok := dohRecordTypes[typeName]; ok {
+		typeCode = int(value.code)
 	}
 	// workerd validates Question even for errors before examining Answer.
 	response := dohResponse{Question: []dohQuestion{{Name: hostname, Type: typeCode}}}
@@ -65,7 +77,11 @@ func (s *Server) serveDoH(w http.ResponseWriter, r *http.Request) {
 			if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 				response.Status = 3
 			}
-		} else if len(response.Answer) == 0 {
+			var responseErr *recordResponseError
+			if errors.As(err, &responseErr) {
+				response.Status = int(responseErr.code)
+			}
+		} else if len(response.Answer) == 0 && (typeCode == int(dnsmessage.TypeA) || typeCode == int(dnsmessage.TypeAAAA)) {
 			// Avoid workerd's undefined result on an empty successful A answer.
 			response.Status = 3
 		}

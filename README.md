@@ -348,7 +348,7 @@ Namespace DNS is enabled for authorized trusted scripts by default. Set
 `NANOFLARE_WFP_DNS=false` or `--wfp-dns=false` on nanoflared to reject their JSON
 DNS requests without public DoH fallback; ordinary Worker DNS is unchanged.
 In split mode, enabling namespace DNS validates nanoflared's DNS config at
-startup and invalid configuration prevents startup (see [release notes](CHANGELOG.md#unreleased)).
+startup and invalid configuration prevents startup (see [DNS upgrade notes](docs/guides/dns-upgrade.md)).
 Persistent background connection pools, including the node-oracledb thin
 pool, are unsupported in this pilot because they retain the creating
 invocation's lease. Use request-scoped connections; see the
@@ -370,6 +370,20 @@ v2. SOA, CAA, NAPTR and ANY remain unsupported and return NOTIMP without public
 DoH fallback. Explicit JSON fetches with a `name` parameter to the same
 `https://cloudflare-dns.com/dns-query` endpoint also use this adapter; binary
 DoH requests using `?dns=` retain ordinary outbound behavior.
+TXT chunks retain their boundaries and literal quotes/backslashes; PTR queries
+accept arbitrary DNS names, and CNAME queries return the immediate target.
+Record queries use explicit profile servers, or the nameservers in
+`/etc/resolv.conf` for a system profile, with UDP-to-TCP retry on truncation.
+They query absolute names without applying the host search list. Hosts without
+that file, or with per-domain system resolver routing, should configure explicit
+profile servers. A/AAAA lookups retain Go's host resolver behavior.
+The pinned runtime still reports NODATA as `ENOTFOUND`, even though the DoH
+response distinguishes it from NXDOMAIN. Some unusual TXT quote sequences cannot
+be represented by its chunk parser and return NOTIMP; see the
+[DNS upgrade notes](docs/guides/dns-upgrade.md#record-compatibility).
+With `disallow_importable_env`, ordinary Workers cannot access the private DNS
+binding and retain native workerd DNS through their normal outbound policy;
+`dns.profile` does not apply in that mode.
 Raw outbound socket hostname resolution remains workerd-managed; clients such as
 node-oracledb that enumerate addresses with `lookup()` use the private resolver
 before opening their sockets, including subsequent listener redirects.

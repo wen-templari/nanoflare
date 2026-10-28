@@ -1196,10 +1196,7 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 	}
 	if binding == "__NANOFLARE_DNS" && m.options.DNSAddr != "" {
 		destination = m.options.DNSAddr
-		if path != dnsresolver.DoHPath {
-			path = "/lookup"
-			query = ""
-		}
+		path = dnsresolver.DoHPath
 		headers.Set("X-Nanoflare-DNS-Profile", active.Deployment.DNS.Profile)
 		allowed = true
 	}
