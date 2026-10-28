@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -130,5 +131,39 @@ func TestPlatformDNSRemoteConfiguration(t *testing.T) {
 	}
 	if _, _, err := platformDNS("", "0.0.0.0:8083", false, false); err == nil {
 		t.Fatal("local adapter accepted non-loopback listener")
+	}
+}
+
+type dnsOutboundTestTransport func(*http.Request) (*http.Response, error)
+
+func (f dnsOutboundTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPlatformDNSOutboundLocalAndRemote(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		server, _, err := platformDNS("", "127.0.0.1:0", remote, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Use the same production wiring with an unstarted server. Remote mode
+		// must not depend on a listener existing in nanoflared or the runner.
+		next := dnsOutboundTestTransport(func(r *http.Request) (*http.Response, error) {
+			t.Fatalf("remote=%t: DNS reached public egress: %s", remote, r.URL)
+			return nil, nil
+		})
+		r, _ := http.NewRequest("GET", "https://cloudflare-dns.com/dns-query?name=127.0.0.1&type=A", nil)
+		response, err := platformDNSOutbound(next, server).RoundTrip(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != 200 || !strings.Contains(string(body), `"data":"127.0.0.1"`) {
+			t.Fatalf("remote=%t: %d %s", remote, response.StatusCode, body)
+		}
+		response, err = platformDNSOutbound(next, nil).RoundTrip(r)
+		if err != nil || response.StatusCode != 503 {
+			t.Fatalf("missing DNS failed open: %v %v", response, err)
+		}
+		response.Body.Close()
 	}
 }

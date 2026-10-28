@@ -36,9 +36,6 @@ func (module WorkerCodeModule) MarshalJSON() ([]byte, error) {
 // MarshalJSON must not turn a statically invalid duplicate module list into a
 // valid map which silently replaces Nanoflare's instrumentation or adapters.
 func (code WorkerCodeSnapshot) MarshalJSON() ([]byte, error) {
-	if code.compileErr != nil {
-		return nil, code.compileErr
-	}
 	seen := make(map[string]bool, len(code.moduleOrder))
 	for _, name := range code.moduleOrder {
 		if seen[name] {
@@ -59,7 +56,6 @@ type WorkerCodeSnapshot struct {
 	MainModule         string                      `json:"mainModule"`
 	Modules            map[string]WorkerCodeModule `json:"modules"`
 	moduleOrder        []string
-	compileErr         error
 }
 
 // SnapshotWorkerCode is the shared compiler for static config and dynamic
@@ -102,23 +98,10 @@ export { DispatchBroker };
 			if addWasm(file) {
 				continue
 			}
-			source := file.Content
-			if dnsEnabled {
-				source, snapshot.compileErr = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
-				if snapshot.compileErr != nil {
-					return snapshot
-				}
-			}
-			add(file.Path, source)
+			add(file.Path, file.Content)
 		}
 	} else if deploymentFormat(deployment) == "service-worker" {
 		source := deployment.Files[0].Content
-		if dnsEnabled {
-			source, snapshot.compileErr = rewriteDNSImports(source, nodeCompatibility.v2)
-			if snapshot.compileErr != nil {
-				return snapshot
-			}
-		}
 		add(mainModule, serviceWorkerWrapper(source, deployment.Databases, deployment.ObjectStorageBuckets))
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 	} else {
@@ -133,66 +116,14 @@ export { DispatchBroker };
 				continue
 			}
 			source := file.Content
-			if dnsEnabled {
-				source, snapshot.compileErr = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
-				if snapshot.compileErr != nil {
-					return snapshot
-				}
-			}
 			add(file.Path, source)
 		}
 	}
 	if dnsEnabled {
-		add("nanoflare-internal:dns", dnsShimSource())
-		add("nanoflare-internal:dns/promises", dnsPromisesShimSource())
+		module := snapshot.Modules[mainModule]
+		module.JS = `import "nanoflare-internal:doh-fetch";` + "\n" + module.JS
+		snapshot.Modules[mainModule] = module
+		add("nanoflare-internal:doh-fetch", dohFetchSource())
 	}
 	return snapshot
-}
-
-// NamespaceWorkerModules compiles namespace code without storing invocation
-// capabilities. DNS transport is selected from AsyncLocalStorage at lookup time.
-func NamespaceWorkerModules(deployment nanoflare.Deployment) (map[string]WorkerCodeModule, error) {
-	node := effectiveNodeCompatibility(deployment)
-	modules := make(map[string]WorkerCodeModule, len(deployment.Files)+2)
-	for _, file := range deployment.Files {
-		if strings.HasPrefix(file.Path, "nanoflare-internal:") || strings.HasPrefix(file.Path, "__nanoflare_") {
-			return nil, fmt.Errorf("worker file %q uses a reserved runtime module name", file.Path)
-		}
-		if _, exists := modules[file.Path]; exists {
-			return nil, fmt.Errorf("duplicate compiled Worker module %q", file.Path)
-		}
-		if file.Wasm != nil {
-			modules[file.Path] = WorkerCodeModule{Wasm: bytes.Clone(file.Wasm)}
-			continue
-		}
-		source := file.Content
-		if node.runtime {
-			var err error
-			source, err = rewriteDNSImportsForModule(source, node.v2, file.Path)
-			if err != nil {
-				return nil, err
-			}
-		}
-		modules[file.Path] = WorkerCodeModule{JS: source}
-	}
-	if node.runtime {
-		modules["nanoflare-internal:dns"] = WorkerCodeModule{JS: dnsShimWithBinding(`import { invocationDNS } from "nanoflare-internal:dynamic-env.js";`, "invocationDNS()")}
-		modules["nanoflare-internal:dns/promises"] = WorkerCodeModule{JS: dnsPromisesShimSource()}
-	}
-	return modules, nil
-}
-
-// AuditNamespaceCode identifies persisted scripts incompatible with the current
-// compiler before request traffic is admitted. Invalid scripts stay fail-closed.
-func AuditNamespaceCode(active []nanoflare.ActiveDeployment) []error {
-	var failures []error
-	for _, item := range active {
-		if item.App.Platform == nil || item.App.Platform.NamespaceID == "" {
-			continue
-		}
-		if _, err := NamespaceWorkerModules(item.Deployment); err != nil {
-			failures = append(failures, fmt.Errorf("app=%s revision=%s: %w", item.App.ID, item.Deployment.ID, err))
-		}
-	}
-	return failures
 }

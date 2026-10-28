@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 func TestWorkerdPreservesNonBreakingSpaceValues(t *testing.T) {
@@ -25,16 +23,12 @@ func TestWorkerdPreservesNonBreakingSpaceValues(t *testing.T) {
 	const source = "export default {fetch(){return Response.json(['a\u00a0b', /\u00a0/.test('a\u00a0b'), String.raw`\u00a0`, String.raw`\\u00a0`, '\u200b', '\ufeff', '\u2028', '\u2029', '汉字'])}}"
 	for _, date := range []string{"2025-12-10", "2026-09-11"} {
 		t.Run(date, func(t *testing.T) {
-			modules, err := NamespaceWorkerModules(nanoflare.Deployment{CompatibilityDate: date, Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: source}}})
-			if err != nil {
-				t.Fatal(err)
-			}
 			dir := t.TempDir()
 			socket := filepath.Join(dir, "http.sock")
 			config := fmt.Sprintf(`using Workerd = import "/workerd/workerd.capnp";
 const config :Workerd.Config = (
  services=[(name="test",worker=(compatibilityDate="2026-09-11",modules=[(name="worker.js",esModule=%s)]))],
- sockets=[(name="http",address=%s,http=(),service="test")]);`, capnpQuote(modules["worker.js"].JS), quote("unix:"+socket))
+ sockets=[(name="http",address=%s,http=(),service="test")]);`, capnpQuote(source), quote("unix:"+socket))
 			file := filepath.Join(dir, "workerd.capnp")
 			if err := os.WriteFile(file, []byte(config), 0600); err != nil {
 				t.Fatal(err)

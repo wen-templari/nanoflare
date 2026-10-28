@@ -351,16 +351,19 @@ invocation's lease. Use request-scoped connections; see the
 [namespace DNS contract](docs/reference/workers-for-platforms-runtime.md#namespace-dns-lookup).
 
 Workers without `dns.profile` inherit `defaultProfile`. Unknown profiles fail
-deployment, and lookup errors retain Node-style codes such as `ENOTFOUND`,
-`ETIMEOUT`, and `EAI_AGAIN`. The adapter is private and listens on
+deployment. Native `lookup()` maps failures to `ENOTFOUND`, including timeouts
+and invocation admission failures. Other DNS APIs may expose native transport
+errors; detailed shim error codes are no longer exposed. The adapter is private and listens on
 `127.0.0.1:8083` by default; change that with `NANOFLARE_DNS_ADDR` only when the
 runtime topology requires it.
 
-Nanoflare transparently redirects `node:dns` and `node:dns/promises` imports
-when Node.js compatibility is enabled. Bare `dns` imports are redirected only
-when Node.js compatibility v2 is enabled. Other DNS methods continue to use
-workerd's built-in public DNS-over-HTTPS implementation. Raw
-outbound socket hostname resolution remains workerd-managed; clients such as
+Nanoflare answers the pinned workerd runtime's DNS-over-HTTPS fetches through
+the private resolver without rewriting uploaded source. Callback and promise
+`lookup()`, `resolve4()`, `resolve6()` and A/AAAA `resolve()` requests are covered,
+including bare DNS imports under Node.js compatibility v2. Other record types
+return NOTIMP without a public DoH fallback. Explicit fetches to the same
+`https://cloudflare-dns.com/dns-query` endpoint also use this adapter.
+Raw outbound socket hostname resolution remains workerd-managed; clients such as
 node-oracledb that enumerate addresses with `lookup()` use the private resolver
 before opening their sockets, including subsequent listener redirects.
 

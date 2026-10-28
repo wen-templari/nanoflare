@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -122,7 +121,7 @@ func (w *Writer) Write(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *Writer) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	if err := validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions()); err != nil {
+	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
 		return err
 	}
 	return writeAtomic(path, []byte(WorkerdWithOptions(active, w.RuntimeOptions())))
@@ -133,22 +132,10 @@ func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *RuntimeWriter) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	if err := validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions()); err != nil {
+	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
 		return err
 	}
 	return writeAtomic(path, []byte(WorkerdWithOptions(active, w.RuntimeOptions())))
-}
-
-func validateRuntimeCompilation(active []nanoflare.ActiveDeployment, profiles map[string]bool, options WorkerdOptions) error {
-	if err := validateDNSProfiles(active, profiles); err != nil {
-		return err
-	}
-	for _, item := range active {
-		if err := SnapshotWorkerCode(item, options).compileErr; err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func profileSet(profiles []string) map[string]bool {
@@ -476,106 +463,6 @@ func dnsCompatibilityEnabled(deployment nanoflare.Deployment) bool {
 	return effectiveNodeCompatibility(deployment).runtime
 }
 
-func relativeModuleSpecifier(modulePath, target string) string {
-	moduleDir := path.Dir(path.Clean(modulePath))
-	if moduleDir == "." {
-		return target
-	}
-	relativeRoot, err := filepath.Rel(filepath.FromSlash(moduleDir), ".")
-	if err != nil {
-		return target
-	}
-	return path.Join(filepath.ToSlash(relativeRoot), target)
-}
-
-func dnsShimSource() string {
-	return dnsShimWithBinding(`import { env } from "cloudflare:workers";`, "env.__NANOFLARE_DNS")
-}
-
-func dnsShimWithBinding(imports, binding string) string {
-	return imports + `
-import nativeDNS from "node:dns";
-
-function normalizeOptions(options) {
-  if (typeof options === "number") return { family: options, all: false };
-  if (options == null) return { family: 0, all: false };
-  let family = options.family || 0;
-  if (family === "IPv4") family = 4;
-  if (family === "IPv6") family = 6;
-  return { family: Number(family), all: Boolean(options.all) };
-}
-
-async function lookupResult(hostname, options) {
-  const normalized = normalizeOptions(options);
-  if (![0, 4, 6].includes(normalized.family)) {
-    const error = new TypeError("family must be 0, 4, or 6");
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
-  }
-  const response = await ` + binding + `.fetch("http://nanoflare.dns/lookup", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ hostname: String(hostname), family: normalized.family }),
-  });
-  const text = await response.text();
-  let body;
-  let invalidJSON = false;
-  try { body = JSON.parse(text); } catch { invalidJSON = true; }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    invalidJSON = true;
-    body = { detail: text || "invalid DNS adapter response" };
-  }
-  if (!response.ok || invalidJSON) {
-    const error = new Error(body.error || body.detail || "hostname lookup failed");
-    const brokerCodes = {
-      401: "ERR_NANOFLARE_ACCESS_DENIED",
-      403: "ERR_NANOFLARE_ACCESS_DENIED",
-      404: "ERR_NANOFLARE_DNS_UNAVAILABLE",
-      405: "ERR_NANOFLARE_DNS_UNAVAILABLE",
-      410: "ERR_NANOFLARE_INVOCATION_EXPIRED",
-      429: "ERR_NANOFLARE_EFFECT_LIMIT",
-    };
-    error.code = body.code || brokerCodes[response.status] || (invalidJSON ? "ERR_NANOFLARE_DNS_RESPONSE" : "EAI_AGAIN");
-    error.status = response.status;
-    error.detail = body.detail || body.error;
-    error.hostname = hostname;
-    error.syscall = "getaddrinfo";
-    throw error;
-  }
-  if (!body.addresses?.length) {
-    const error = new Error("hostname lookup returned no addresses");
-    error.code = "ENOTFOUND";
-    throw error;
-  }
-  return normalized.all ? body.addresses : body.addresses[0];
-}
-
-export function lookup(hostname, options, callback) {
-  if (typeof options === "function") { callback = options; options = undefined; }
-  if (typeof callback !== "function") throw new TypeError("callback must be a function");
-  const normalized = normalizeOptions(options);
-  lookupResult(hostname, options).then(
-    (result) => normalized.all ? callback(null, result) : callback(null, result.address, result.family),
-    (error) => callback(error),
-  );
-}
-
-export const promises = { ...nativeDNS.promises, lookup: lookupResult };
-export * from "node:dns";
-export default { ...nativeDNS, lookup, promises };`
-}
-
-func dnsPromisesShimSource() string {
-	dnsModule := relativeModuleSpecifier("nanoflare-internal:dns/promises", "nanoflare-internal:dns")
-	return `import { promises } from "` + dnsModule + `";
-export * from "node:dns/promises";
-export const lookup = promises.lookup;
-export default promises;`
-}
-
-// Keep a WorkerEntrypoint class as the default export so native RPC remains
-// available. The subclass passes adapted bindings into user construction, while
-// prototype instrumentation preserves method receivers and private fields.
 func workerEntrypointModule(deployment nanoflare.Deployment) bool {
 	if deploymentFormat(deployment) != "modules" {
 		return false

@@ -172,6 +172,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == DoHPath {
+		s.serveDoH(w, r)
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Path != "/lookup" {
 		http.NotFound(w, r)
 		return
@@ -188,13 +192,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EINVAL", Error: "hostname and family (0, 4, or 6) are required"})
 		return
 	}
-	profileName := strings.TrimSpace(r.Header.Get("X-Nanoflare-DNS-Profile"))
-	if profileName == "" {
-		profileName = s.config.DefaultProfile
-	}
-	profile, ok := s.config.Profiles[profileName]
+	profile, ok := s.profile(r)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EBADPROFILE", Error: fmt.Sprintf("DNS profile %q is not configured", profileName)})
+		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EBADPROFILE", Error: fmt.Sprintf("DNS profile %q is not configured", strings.TrimSpace(r.Header.Get("X-Nanoflare-DNS-Profile")))})
 		return
 	}
 	addresses, err := lookup(r.Context(), profile, request.Hostname, request.Family)
@@ -258,6 +258,7 @@ func lookup(ctx context.Context, profile Profile, hostname string, family int) (
 		result := make([]lookupAddress, 0, len(ips))
 		seen := make(map[string]bool, len(ips))
 		for _, ip := range ips {
+			ip = ip.Unmap()
 			value := ip.String()
 			if seen[value] {
 				continue

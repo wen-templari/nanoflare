@@ -21,7 +21,6 @@ type RuntimeDispatchServer struct {
 	mux      *http.ServeMux
 	outbound http.RoundTripper
 	output   RuntimeLogAppender
-	dns      http.Handler
 }
 
 func NewRuntimeDispatchServer(service *nanoflare.Service, objects *Server, transports ...http.RoundTripper) *RuntimeDispatchServer {
@@ -31,7 +30,6 @@ func NewRuntimeDispatchServer(service *nanoflare.Service, objects *Server, trans
 	} else {
 		server.outbound = defaultDispatchOutbound
 	}
-	server.mux.HandleFunc("POST /internal/runtime/dispatch/dns", server.lookupDNS)
 	server.mux.HandleFunc("POST /internal/runtime/dispatch/log", server.log)
 	server.mux.HandleFunc("/internal/runtime/dispatch/outbound", server.forwardOutbound)
 	server.mux.HandleFunc("POST /internal/runtime/dispatch/acquire", server.acquire)
@@ -62,7 +60,7 @@ func (s *RuntimeDispatchServer) acquire(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	s.writeDispatchArtifact(w, r, artifact)
+	writeDispatchArtifact(w, artifact)
 }
 func (s *RuntimeDispatchServer) finish(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -163,20 +161,13 @@ func (s *RuntimeDispatchServer) effect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *RuntimeDispatchServer) writeDispatchArtifact(w http.ResponseWriter, r *http.Request, artifact nanoflare.DispatchArtifact) {
-	modules, err := config.NamespaceWorkerModules(artifact.Deployment)
-	if err != nil {
-		_ = s.service.FinishDispatch(r.Context(), bearerToken(r), artifact.Lease, true)
-		writeError(w, http.StatusUnprocessableEntity, err)
-		return
-	}
+func writeDispatchArtifact(w http.ResponseWriter, artifact nanoflare.DispatchArtifact) {
 	writeJSON(w, 200, struct {
 		nanoflare.DispatchArtifact
-		Wrapper         string                             `json:"wrapper"`
-		RuntimeBindings string                             `json:"runtime_bindings"`
-		DynamicEnv      string                             `json:"dynamic_env"`
-		Modules         map[string]config.WorkerCodeModule `json:"modules"`
-	}{artifact, config.DynamicEntrypoint(artifact.Deployment), runtimeassets.BindingsModule, runtimeassets.DynamicEnvModule, modules})
+		Wrapper         string `json:"wrapper"`
+		RuntimeBindings string `json:"runtime_bindings"`
+		DynamicEnv      string `json:"dynamic_env"`
+	}{artifact, config.DynamicEntrypoint(artifact.Deployment), runtimeassets.BindingsModule, runtimeassets.DynamicEnvModule})
 }
 func (s *RuntimeDispatchServer) nested(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -193,7 +184,7 @@ func (s *RuntimeDispatchServer) nested(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	s.writeDispatchArtifact(w, r, artifact)
+	writeDispatchArtifact(w, artifact)
 }
 
 func (s *RuntimeDispatchServer) forwardOutbound(w http.ResponseWriter, r *http.Request) {
@@ -292,88 +283,4 @@ func (s *RuntimeDispatchServer) log(w http.ResponseWriter, r *http.Request) {
 		appendRuntimeLog(s.output, line)
 	}
 	w.WriteHeader(204)
-}
-
-// SetDNSHandler supplies the platform resolver, including its default profile.
-// No caller headers or URL parameters are forwarded to the resolver.
-func (s *RuntimeDispatchServer) SetDNSHandler(handler http.Handler) *RuntimeDispatchServer {
-	s.dns = handler
-	return s
-}
-func (s *RuntimeDispatchServer) lookupDNS(w http.ResponseWriter, r *http.Request) {
-	if s.dns == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "EAI_AGAIN", "error": "platform DNS unavailable"})
-		return
-	}
-	lease := r.Header.Get("X-Nanoflare-Invocation")
-	if _, err := s.service.DispatchEffect(r.Context(), bearerToken(r), lease, nanoflare.RuntimeDNS, "", 1); err != nil {
-		writeDNSBrokerError(w, err)
-		return
-	}
-	ctx, cancel, err := s.service.DispatchEffectContext(r.Context(), lease)
-	if err != nil {
-		writeDNSBrokerError(w, err)
-		return
-	}
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://nanoflare.dns/lookup", http.MaxBytesReader(w, r.Body, 64<<10))
-	if err != nil {
-		writeError(w, 400, err)
-		return
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response := &dnsResponse{header: make(http.Header)}
-	s.dns.ServeHTTP(response, request)
-	if ctx.Err() != nil {
-		writeDNSBrokerError(w, nanoflare.ErrInvocationExpired)
-		return
-	}
-	for name, values := range response.header {
-		w.Header()[name] = values
-	}
-	status := response.status
-	if status == 0 {
-		status = http.StatusOK
-	}
-	w.WriteHeader(status)
-	_, _ = w.Write(response.body.Bytes())
-}
-
-// Broker admission failures are terminal invocation errors, not resolver retries.
-func writeDNSBrokerError(w http.ResponseWriter, err error) {
-	status, code := runtimeErrorStatus(err), "ERR_NANOFLARE_DNS_BROKER"
-	switch {
-	case errors.Is(err, nanoflare.ErrInvocationExpired):
-		code = "ERR_NANOFLARE_INVOCATION_EXPIRED"
-	case errors.Is(err, nanoflare.ErrSubrequestLimit), errors.Is(err, nanoflare.ErrDispatchDepth):
-		code = "ERR_NANOFLARE_EFFECT_LIMIT"
-	case errors.Is(err, nanoflare.ErrRuntimeGrantDenied), errors.Is(err, nanoflare.ErrNamespaceGrantDenied):
-		code = "ERR_NANOFLARE_ACCESS_DENIED"
-	case errors.Is(err, nanoflare.ErrInvalidCapability):
-		code = "ERR_NANOFLARE_ACCESS_DENIED"
-	case errors.Is(err, nanoflare.ErrDispatchUnavailable):
-		code = "ERR_NANOFLARE_DISPATCH_UNAVAILABLE"
-	case errors.Is(err, nanoflare.ErrDispatchOverloaded):
-		code = "ERR_NANOFLARE_DISPATCH_OVERLOADED"
-	}
-	writeJSON(w, status, map[string]any{"code": code, "error": err.Error(), "detail": err.Error(), "status": status})
-}
-
-// DNS responses are small JSON documents. Buffer until resolution completes so
-// invocation cancellation can override a resolver timeout response.
-type dnsResponse struct {
-	header http.Header
-	status int
-	body   bytes.Buffer
-}
-
-func (r *dnsResponse) Header() http.Header { return r.header }
-func (r *dnsResponse) WriteHeader(status int) {
-	if r.status == 0 {
-		r.status = status
-	}
-}
-func (r *dnsResponse) Write(value []byte) (int, error) {
-	r.WriteHeader(http.StatusOK)
-	return r.body.Write(value)
 }

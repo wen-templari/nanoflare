@@ -52,6 +52,13 @@ export default { async fetch(request,env,ctx) {
 } };`}}}
 	programs := map[string]map[string]any{}
 	for key, source := range map[string]string{
+		"dns": `import dns from "node:dns";
+const capturedFetch = globalThis.fetch;
+export default {async fetch(){
+ const addresses=await dns.promises.lookup("private.internal",{all:true,family:4});
+ const response=await capturedFetch("https://cloudflare-dns.com/dns-query?name=private.internal&type=A");
+ return Response.json({addresses,doh:await response.json()});
+}};`,
 		"dispatcher": `import {RpcTarget,WorkerEntrypoint} from "cloudflare:workers";
 class AI extends RpcTarget {run(value){return {response:"AI_OK",value};}}
 export class Other extends WorkerEntrypoint {ping(){return "OTHER_OK";}}
@@ -60,7 +67,7 @@ export class Capability extends WorkerEntrypoint {
  readOther(){return this.ctx.props.other.ping();}
  getAI(){return new AI();} get broken(){throw new Error("getter failed");}
 }
-export default {fetch(request,env,ctx){return env.DISPATCHER.get(new URL(request.url).searchParams.has("legacy")?"legacy":new URL(request.url).searchParams.has("class")?"class":"customer",{props:{nested:[{capability:ctx.exports.Capability({props:{prefix:"P",other:ctx.exports.Other({props:{}})}})}]}}).fetch(request);}};`,
+export default {fetch(request,env,ctx){return env.DISPATCHER.get(new URL(request.url).searchParams.has("class")?"class":"customer",{props:{nested:[{capability:ctx.exports.Capability({props:{prefix:"P",other:ctx.exports.Other({props:{}})}})}]}}).fetch(request);}};`,
 		"invalid": `export default {fetch(request: Request){}}`,
 		"throws":  `throw new Error("private-initialization-detail"); export default {fetch(){}}`,
 		"a": `import { env as importedEnv } from "cloudflare:workers";
@@ -100,7 +107,11 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 		if key == "b" {
 			active.Deployment.KVNamespaces = []nanoflare.KVBinding{{Binding: "KV", ID: "kv-b"}}
 		}
-		code := InstrumentLoaderInvocation(SnapshotWorkerCodeForLoader(active, WorkerdOptions{}), active)
+		options := WorkerdOptions{}
+		if key == "dns" {
+			options.DNSAddr = "127.0.0.1:8083"
+		}
+		code := InstrumentLoaderInvocation(SnapshotWorkerCodeForLoader(active, options), active)
 		wire, err := json.Marshal(code)
 		if err != nil {
 			t.Fatal(err)
@@ -126,6 +137,12 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 			return
 		}
 		switch {
+		case r.URL.Path == "/resource/dns/dns-query":
+			if r.URL.Query().Get("name") != "private.internal" || r.URL.Query().Get("type") != "A" || r.Header.Get("X-Nanoflare-Binding-Name") != "__NANOFLARE_DNS" {
+				t.Errorf("DoH resource bridge: %s %v", r.URL, r.Header)
+			}
+			w.Header().Set("Content-Type", "application/dns-json")
+			io.WriteString(w, `{"Status":0,"Question":[{"name":"private.internal","type":1}],"Answer":[{"name":"private.internal","type":1,"TTL":30,"data":"10.20.30.40"}]}`)
 		case strings.HasPrefix(r.URL.Path, "/start/"):
 			if r.Header.Get("X-Nanoflare-Invocation") == "invocation-denied" {
 				http.Error(w, "revoked", 403)
@@ -192,20 +209,7 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 				deployment.ID = "class-v1"
 				deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: strings.Replace(customer.Files[0].Content, `export default { async fetch(request,env,ctx) {`, `import {WorkerEntrypoint} from "cloudflare:workers"; export default class extends WorkerEntrypoint { async fetch(request) { const env=this.env,ctx=this.ctx;`, 1)}}
 			}
-			if input.Script == "legacy" {
-				deployment.ID = "legacy-v1"
-				deployment.Files = append([]nanoflare.WorkerFile(nil), deployment.Files...)
-				deployment.Files[0].Content = `import wasm from './empty.wasm'; if (!(wasm instanceof WebAssembly.Module)) throw new Error('legacy Wasm missing');` + deployment.Files[0].Content
-				deployment.Files = append(deployment.Files, nanoflare.WorkerFile{Path: "empty.wasm", Wasm: []byte{0, 97, 115, 109, 1, 0, 0, 0}})
-				_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "legacy-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
-				return
-			}
-			modules, err := NamespaceWorkerModules(deployment)
-			if err != nil {
-				http.Error(w, err.Error(), 422)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "customer-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "modules": modules, "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
+			_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "customer-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
 		case r.URL.Path == "/resource/dispatcher/internal/runtime/dispatch/finish":
 			w.WriteHeader(204)
 		case strings.HasPrefix(r.URL.Path, "/resource/"):
@@ -334,6 +338,14 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 	if unauthorized.StatusCode != 401 {
 		t.Fatalf("unauthorized status=%d", unauthorized.StatusCode)
 	}
+	for _, token := range []string{"invocation-dns-1", "invocation-dns-2"} {
+		response := call("/", "dispatcher-secret", token, "dns")
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != 200 || strings.Count(string(body), "10.20.30.40") != 2 {
+			t.Fatalf("ordinary dynamic Worker DNS: %d %s", response.StatusCode, body)
+		}
+	}
 	for _, execution := range []string{"invalid", "throws", "invalid", "throws", "missing"} {
 		response := call("/__nanoflare_validate", "dispatcher-secret", "", execution)
 		body, _ := io.ReadAll(response.Body)
@@ -422,14 +434,6 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 			if response.StatusCode != probe.status || string(body) != probe.want {
 				t.Fatalf("round %d probe %s: status=%d body=%s", round, probe.path, response.StatusCode, body)
 			}
-		}
-	}
-	for i := 0; i < 2; i++ {
-		response := call("/method?legacy=1", "dispatcher-secret", "invocation-dispatcher", "dispatcher")
-		body, _ := io.ReadAll(response.Body)
-		response.Body.Close()
-		if response.StatusCode != 200 || string(body) != `{"result":"PONG"}` {
-			t.Fatalf("legacy artifact: %d %s", response.StatusCode, body)
 		}
 	}
 	denied := call("/", "dispatcher-secret", "invocation-denied")

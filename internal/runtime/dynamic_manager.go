@@ -412,14 +412,12 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment, restore bool
 		m.mu.Unlock()
 		if existing == nil {
 			code := config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(snapshot.ActiveDeployment(), m.options), snapshot.ActiveDeployment())
-			_, compileErr := json.Marshal(code)
+			if _, err := json.Marshal(code); err != nil {
+				return nil, err
+			}
 			registration := rand.Text()
 			key = nanoflare.ResourceGrantID(session, registration)
 			existing = &dynamicSnapshot{frozen: snapshot, code: code, registration: registration, registeredSession: session}
-			if compileErr != nil {
-				existing.validated, existing.validationFailed = true, true
-				log.Printf("Worker unavailable: app=%s revision=%s reason=worker_compilation error=%v", item.App.ID, item.Deployment.ID, compileErr)
-			}
 			m.mu.Lock()
 			m.snapshots[key] = existing
 			m.mu.Unlock()
@@ -435,7 +433,7 @@ func (m *DynamicManager) build(active []nanoflare.ActiveDeployment, restore bool
 		m.mu.Lock()
 		validated := existing.validated
 		previous := m.snapshots[m.committed[dynamicIdentity(item)]]
-		allowFailure := restore || (strictAppID != "" && item.App.ID != strictAppID) || (strictAppID == "" && previous != nil && previous.validationFailed && previous.frozen.ID() == snapshot.ID())
+		allowFailure := restore || (strictAppID != "" && item.App.ID != strictAppID && previous != nil && previous.validationFailed && previous.frozen.ID() == snapshot.ID())
 		m.mu.Unlock()
 		if !validated {
 			request, _ := http.NewRequest(http.MethodPost, "http://"+SocketHost(m.socketPath)+"/__nanoflare_validate", nil)
@@ -1197,8 +1195,10 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 	}
 	if binding == "__NANOFLARE_DNS" && m.options.DNSAddr != "" {
 		destination = m.options.DNSAddr
-		path = "/lookup"
-		query = ""
+		if path != "/dns-query" {
+			path = "/lookup"
+			query = ""
+		}
 		headers.Set("X-Nanoflare-DNS-Profile", active.Deployment.DNS.Profile)
 		allowed = true
 	}

@@ -43,18 +43,25 @@ func TestWorkerCodeSnapshotCapturesCodeWithoutEnvironmentOrAliasing(t *testing.T
 	}
 }
 
-func TestWorkerCodeSnapshotPreservesPrivateDNSRewrite(t *testing.T) {
+func TestWorkerCodeSnapshotInstallsPrivateDNSHookWithoutRewritingSource(t *testing.T) {
 	active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{
 		Format: "modules", Entrypoint: "worker.js", CompatibilityDate: "2026-09-08",
 		Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import dns from "node:dns"; export default { fetch() { return dns.lookup("private.test"); } };`}},
 	}}
 	withDNS := SnapshotWorkerCode(active, WorkerdOptions{DNSAddr: "127.0.0.1:8083"})
 	withoutDNS := SnapshotWorkerCode(active, WorkerdOptions{})
-	if !strings.Contains(withDNS.Modules["worker.js"].JS, `"nanoflare-internal:dns"`) || withDNS.Modules["nanoflare-internal:dns"].JS == "" {
-		t.Fatal("private DNS rewriting or shim was omitted")
+	if withDNS.Modules["worker.js"].JS != active.Deployment.Files[0].Content || withDNS.Modules["nanoflare-internal:doh-fetch"].JS == "" {
+		t.Fatal("DNS hook was omitted or user source changed")
 	}
-	if !strings.Contains(withoutDNS.Modules["worker.js"].JS, `"node:dns"`) || withoutDNS.Modules["nanoflare-internal:dns"].JS != "" {
-		t.Fatal("private DNS rewriting was enabled without its backend")
+	if !strings.HasPrefix(withDNS.Modules[withDNS.MainModule].JS, `import "nanoflare-internal:doh-fetch";`) {
+		t.Fatal("hook must evaluate before user modules")
+	}
+	if withoutDNS.Modules["worker.js"].JS != active.Deployment.Files[0].Content || withoutDNS.Modules["nanoflare-internal:doh-fetch"].JS != "" {
+		t.Fatal("DNS hook enabled without its backend")
+	}
+	active.Deployment.CompatibilityFlags = []string{"no_nodejs_compat"}
+	if SnapshotWorkerCode(active, WorkerdOptions{DNSAddr: "127.0.0.1:8083"}).Modules["nanoflare-internal:doh-fetch"].JS != "" {
+		t.Fatal("DNS hook enabled without Node compatibility")
 	}
 }
 
@@ -105,87 +112,5 @@ func TestWasmCodeSnapshotStaticAndWireTypes(t *testing.T) {
 	}
 	if _, err := json.Marshal(WorkerCodeModule{JS: "mixed", Wasm: []byte{1}}); err == nil {
 		t.Fatal("mixed module union accepted")
-	}
-}
-
-func TestDNSCompilerNamespaceAndHostCompatibility(t *testing.T) {
-	for _, tc := range []struct {
-		date          string
-		flags         []string
-		enabled, bare bool
-	}{
-		{"2026-09-11", []string{"nodejs_compat"}, true, true},
-		{"2025-12-10", nil, false, false},
-		{"2026-09-11", []string{"no_nodejs_compat"}, false, false},
-		{"2024-01-01", []string{"nodejs_compat"}, true, false},
-	} {
-		t.Run(tc.date+strings.Join(tc.flags, ","), func(t *testing.T) {
-			d := nanoflare.Deployment{Format: "modules", Entrypoint: "dist/worker.js", CompatibilityDate: tc.date, CompatibilityFlags: tc.flags,
-				DispatchNamespaces: []nanoflare.DispatchBinding{{Binding: "NS", NamespaceID: "ns"}},
-				Files:              []nanoflare.WorkerFile{{Path: "dist/worker.js", Content: `import dns from "node:dns"; import promises from "dns/promises"; export default {};`}, {Path: "lib.wasm", Wasm: []byte{0, 97, 115, 109}}},
-			}
-			ns, err := NamespaceWorkerModules(d)
-			if err != nil {
-				t.Fatal(err)
-			}
-			host := SnapshotWorkerCode(nanoflare.ActiveDeployment{Deployment: d}, WorkerdOptions{DNSAddr: "127.0.0.1:1234"}).Modules
-			for name, modules := range map[string]map[string]WorkerCodeModule{"namespace": ns, "host": host} {
-				if strings.Contains(modules["dist/worker.js"].JS, `"../nanoflare-internal:dns"`) != tc.enabled {
-					t.Fatalf("%s DNS compatibility: %s", name, modules["dist/worker.js"].JS)
-				}
-				if strings.Contains(modules["dist/worker.js"].JS, `"../nanoflare-internal:dns/promises"`) != tc.bare {
-					t.Fatalf("%s bare import compatibility: %s", name, modules["dist/worker.js"].JS)
-				}
-				if (modules["nanoflare-internal:dns"].JS != "") != tc.enabled {
-					t.Fatalf("%s shim compatibility", name)
-				}
-				if len(modules["lib.wasm"].Wasm) != 4 {
-					t.Fatal("lost Wasm module")
-				}
-			}
-			if !strings.Contains(d.Files[0].Content, `"node:dns"`) {
-				t.Fatal("mutated deployment")
-			}
-			if tc.enabled && (!strings.Contains(ns["nanoflare-internal:dns"].JS, "invocationDNS()") || strings.Contains(ns["nanoflare-internal:dns"].JS, "env.__NANOFLARE_DNS")) {
-				t.Fatal("namespace shim uses cached environment")
-			}
-		})
-	}
-}
-
-func TestNamespaceCompilerRejectsReservedAndDuplicateModules(t *testing.T) {
-	for _, name := range []string{"nanoflare-internal:dns", "nanoflare-internal:dns/promises", "nanoflare-internal:dynamic-env.js", "__nanoflare_dynamic_entrypoint__.js", "worker.js"} {
-		d := nanoflare.Deployment{CompatibilityDate: "2026-09-11", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: "export default {}"}, {Path: name, Content: "export default {}"}}}
-		if _, err := NamespaceWorkerModules(d); err == nil {
-			t.Fatalf("accepted collision %q", name)
-		}
-	}
-}
-
-func TestNamespaceCompilerPreservesNonBreakingSpace(t *testing.T) {
-	const source = "export const value = 'a\u00a0b'; export const pattern = /\u00a0/; export const raw = String.raw`\u00a0`;"
-	for _, date := range []string{"2025-12-10", "2026-09-11"} {
-		d := nanoflare.Deployment{CompatibilityDate: date, Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: source}}}
-		modules, err := NamespaceWorkerModules(d)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(modules["worker.js"].JS, "a b") {
-			t.Fatal("changed string value")
-		}
-		if date == "2025-12-10" && modules["worker.js"].JS != source {
-			t.Fatal("changed source without Node adaptation")
-		}
-	}
-}
-
-func TestNamespaceUpgradeAuditIdentifiesIncompatibleRevisions(t *testing.T) {
-	active := []nanoflare.ActiveDeployment{
-		{App: nanoflare.App{ID: "good", Platform: &nanoflare.WorkerPlatform{NamespaceID: "ns"}}, Deployment: nanoflare.Deployment{ID: "good-v1", CompatibilityDate: "2026-09-11", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `const dns = await import('node:dns');`}}}},
-		{App: nanoflare.App{ID: "bad", Platform: &nanoflare.WorkerPlatform{NamespaceID: "ns"}}, Deployment: nanoflare.Deployment{ID: "bad-v1", Files: []nanoflare.WorkerFile{{Path: "__nanoflare_legacy.js", Content: `export default {}`}}}},
-	}
-	failures := AuditNamespaceCode(active)
-	if len(failures) != 1 || !strings.Contains(failures[0].Error(), "bad-v1") {
-		t.Fatalf("upgrade audit: %v", failures)
 	}
 }

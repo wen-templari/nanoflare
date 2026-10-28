@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/dnsresolver"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"golang.org/x/net/dns/dnsmessage"
@@ -53,6 +52,9 @@ func privateDNSFixture(t *testing.T) (http.Handler, *atomic.Int32) {
 			b.StartAnswers()
 			if q.Name.String() == "database.corporate.invalid." && q.Type == dnsmessage.TypeA {
 				b.AResource(dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 1}, dnsmessage.AResource{A: [4]byte{10, 20, 30, 40}})
+			}
+			if q.Name.String() == "database.corporate.invalid." && q.Type == dnsmessage.TypeAAAA {
+				b.AAAAResource(dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 1}, dnsmessage.AAAAResource{AAAA: [16]byte{0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}})
 			}
 			response, err := b.Finish()
 			if err == nil {
@@ -98,86 +100,6 @@ func dnsDispatchLease(t *testing.T) (*nanoflare.Service, string, string) {
 	return service, token, artifact.Lease
 }
 
-func TestDispatchDNSDefaultProfileAndAdmission(t *testing.T) {
-	resolver, queries := privateDNSFixture(t)
-	service, token, lease := dnsDispatchLease(t)
-	var calls int
-	handler := NewRuntimeDispatchServer(service, nil).SetDNSHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if r.URL.Path != "/lookup" || r.URL.RawQuery != "" || r.Header.Get("Authorization") != "" || r.Header.Get("X-Nanoflare-DNS-Profile") != "" {
-			t.Errorf("caller data reached resolver: %v %v", r.URL, r.Header)
-		}
-		resolver.ServeHTTP(w, r)
-	}))
-	request := func(auth, invocation string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "http://runtime/internal/runtime/dispatch/dns?profile=system", strings.NewReader(`{"hostname":"database.corporate.invalid","family":4}`))
-		r.Header.Set("Authorization", "Bearer "+auth)
-		r.Header.Set("X-Nanoflare-Invocation", invocation)
-		r.Header.Set("X-Nanoflare-DNS-Profile", "system")
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
-		return w
-	}
-	if w := request("wrong", lease); w.Code == 200 {
-		t.Fatal("accepted wrong transport")
-	}
-	if w := request(token, "nfi1.invalid"); w.Code == 200 {
-		t.Fatal("accepted missing lease")
-	}
-	if calls != 0 {
-		t.Fatal("unauthorized DNS reached adapter")
-	}
-	for i := 0; i < 100; i++ {
-		if w := request(token, lease); w.Code != 200 || !strings.Contains(w.Body.String(), "10.20.30.40") {
-			t.Fatalf("lookup %d: %d %s", i, w.Code, w.Body)
-		}
-	}
-	if w := request(token, lease); w.Code != 429 || !strings.Contains(w.Body.String(), "ERR_NANOFLARE_EFFECT_LIMIT") {
-		t.Fatalf("budget: %d %s", w.Code, w.Body)
-	}
-	if calls != 100 || queries.Load() == 0 {
-		t.Fatalf("adapter calls=%d DNS queries=%d", calls, queries.Load())
-	}
-	if err := service.FinishDispatch(context.Background(), token, lease, true); err != nil {
-		t.Fatal(err)
-	}
-	if w := request(token, lease); w.Code != 410 || !strings.Contains(w.Body.String(), "ERR_NANOFLARE_INVOCATION_EXPIRED") {
-		t.Fatalf("expired lease: %d %s", w.Code, w.Body)
-	}
-	if calls != 100 {
-		t.Fatal("expired DNS reached adapter")
-	}
-}
-
-func TestDispatchDNSCancellation(t *testing.T) {
-	service, token, lease := dnsDispatchLease(t)
-	started, done := make(chan struct{}), make(chan struct{})
-	handler := NewRuntimeDispatchServer(service, nil).SetDNSHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(started); <-r.Context().Done(); close(done) }))
-	request := httptest.NewRequest("POST", "/internal/runtime/dispatch/dns", strings.NewReader(`{}`))
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("X-Nanoflare-Invocation", lease)
-	completed := make(chan struct{})
-	response := httptest.NewRecorder()
-	go func() { handler.ServeHTTP(response, request); close(completed) }()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("lookup did not start")
-	}
-	if err := service.FinishDispatch(context.Background(), token, lease, true); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("DNS did not cancel with lease")
-	}
-	<-completed
-	if response.Code != 410 || !strings.Contains(response.Body.String(), "ERR_NANOFLARE_INVOCATION_EXPIRED") {
-		t.Fatalf("cancellation: %d %s", response.Code, response.Body)
-	}
-}
-
 func TestWorkerdDynamicNamespacePrivateDNS(t *testing.T) {
 	if os.Getenv("NANOFLARE_TEST_WORKERD") == "" {
 		t.Skip("set NANOFLARE_TEST_WORKERD to pinned workerd")
@@ -206,13 +128,18 @@ func TestWorkerdDynamicNamespacePrivateDNS(t *testing.T) {
 							{Path: "dist/worker.js", Content: source},
 							{Path: "dist/lib/probe.js", Content: `const initializedDNS = await import('node:dns');
 import dns from 'node:dns'; import {lookup} from 'node:dns/promises'; import bare from 'dns'; import barePromises from 'dns/promises';
-export async function probe(){
+export async function probe(){ try {
  if ('a b'.charCodeAt(1)!==160 || !/ /.test('a b')) throw new Error('namespace Unicode changed');
  const host='database.corporate.invalid',options={all:true,family:4};
  await scheduler.wait(Math.floor(Math.random()*15));
  const callback=await new Promise((resolve,reject)=>dns.lookup(host,options,(err,value)=>err?reject(err):resolve(value)));
- return Response.json([callback,await dns.promises.lookup(host,options),await lookup(host,options),await bare.promises.lookup(host,options),await barePromises.lookup(host,options)]);
-}`},
+ const missing = await dns.promises.lookup('missing.corporate.invalid',options).then(()=>false,e=>e.code==='ENOTFOUND');
+ const unsupported = await dns.promises.resolveTxt(host).then(()=>false,e=>e.code==='ENOTFOUND');
+ if (!missing || !unsupported) throw new Error('DNS failure contract changed: '+JSON.stringify({missing,unsupported}));
+ return Response.json([callback,await dns.promises.lookup(host,options),await lookup(host,options),await bare.promises.lookup(host,options),await barePromises.lookup(host,options),
+ (await dns.promises.resolve4(host)).map(address=>({address,family:4})),(await dns.promises.resolve6(host)).map(address=>({address,family:6})),
+ await dns.promises.lookup(host,{all:true}),await dns.promises.lookup(host,{all:true,family:6})]);
+} catch(error) {return Response.json({message:error.message,code:error.code,stack:error.stack},{status:500})}}`},
 						}})
 						must(err)
 					}
@@ -246,12 +173,26 @@ export async function probe(){
 									Address string `json:"address"`
 									Family  int    `json:"family"`
 								}
-								if response.StatusCode != 200 || json.Unmarshal(body, &result) != nil || len(result) != 5 {
+								if response.StatusCode != 200 || json.Unmarshal(body, &result) != nil || len(result) != 9 {
 									t.Errorf("DNS dispatch: %d %s", response.StatusCode, body)
 									return
 								}
-								for _, addresses := range result {
-									if len(addresses) != 1 || addresses[0].Address != "10.20.30.40" || addresses[0].Family != 4 {
+								for index, addresses := range result {
+									if index == 7 {
+										seen := map[string]int{}
+										for _, address := range addresses {
+											seen[address.Address] = address.Family
+										}
+										if len(addresses) != 2 || seen["10.20.30.40"] != 4 || seen["fd00::1"] != 6 {
+											t.Errorf("dual-stack DNS: %s", body)
+										}
+										continue
+									}
+									wantAddress, wantFamily := "10.20.30.40", 4
+									if index == 6 || index == 8 {
+										wantAddress, wantFamily = "fd00::1", 6
+									}
+									if len(addresses) != 1 || addresses[0].Address != wantAddress || addresses[0].Family != wantFamily {
 										t.Errorf("private DNS answer: %s", body)
 									}
 								}
@@ -268,126 +209,95 @@ export async function probe(){
 	}
 }
 
-func TestDispatchDNSUnavailableDoesNotConsumeBudget(t *testing.T) {
+type dnsTestTransport func(*http.Request) (*http.Response, error)
+
+func (f dnsTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func dispatchDoHRequest(token, lease string) *http.Request {
+	r := httptest.NewRequest("GET", "/internal/runtime/dispatch/outbound", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("X-Nanoflare-Invocation", lease)
+	r.Header.Set("X-Nanoflare-Outbound-URL", "https://cloudflare-dns.com/dns-query?name=database.corporate.invalid&type=A&profile=system")
+	r.Header.Set("X-Nanoflare-DNS-Profile", "system")
+	r.Header.Set("X-Nanoflare-Outbound-Authorization", "caller-secret")
+	return r
+}
+
+func TestDispatchDNSDefaultProfileAndAdmission(t *testing.T) {
+	resolver, queries := privateDNSFixture(t)
 	service, token, lease := dnsDispatchLease(t)
-	handler := NewRuntimeDispatchServer(service, nil)
-	request := func() *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/internal/runtime/dispatch/dns", strings.NewReader(`{"hostname":"example.com"}`))
-		r.Header.Set("Authorization", "Bearer "+token)
-		r.Header.Set("X-Nanoflare-Invocation", lease)
+	calls := 0
+	denyNetwork := dnsTestTransport(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("DNS escaped to egress: %s", r.URL)
+		return nil, nil
+	})
+	transport := dnsresolver.DoHTransport(denyNetwork, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/dns-query" || r.URL.Query().Get("profile") != "" || r.Header.Get("Authorization") != "" || r.Header.Get("X-Nanoflare-DNS-Profile") != "" {
+			t.Errorf("caller authority reached resolver: %s %v", r.URL, r.Header)
+		}
+		resolver.ServeHTTP(w, r)
+	}))
+	handler := NewRuntimeDispatchServer(service, nil, transport)
+	request := func(auth, invocation string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
+		handler.ServeHTTP(w, dispatchDoHRequest(auth, invocation))
 		return w
 	}
-	for i := 0; i < 101; i++ {
-		w := request()
-		var body struct {
-			Code string `json:"code"`
-		}
-		if w.Code != 503 || json.Unmarshal(w.Body.Bytes(), &body) != nil || body.Code != "EAI_AGAIN" {
-			t.Fatalf("unavailable: %d %s", w.Code, w.Body)
-		}
+	if w := request("wrong", lease); w.Code == 200 {
+		t.Fatal("wrong transport accepted")
 	}
-	handler.SetDNSHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	if w := request(token, "nfi1.invalid"); w.Code == 200 {
+		t.Fatal("invalid lease accepted")
+	}
+	if calls != 0 {
+		t.Fatal("unauthorized DNS reached resolver")
+	}
 	for i := 0; i < 100; i++ {
-		if w := request(); w.Code != 204 {
+		if w := request(token, lease); w.Code != 200 || !strings.Contains(w.Body.String(), "10.20.30.40") {
 			t.Fatalf("lookup %d: %d %s", i, w.Code, w.Body)
 		}
 	}
-	if w := request(); w.Code != 429 {
-		t.Fatalf("budget: %d", w.Code)
+	if w := request(token, lease); w.Code != 429 {
+		t.Fatalf("effect budget: %d %s", w.Code, w.Body)
 	}
-}
-
-func TestDispatchDNSBrokerErrorsAreDistinct(t *testing.T) {
-	for _, tc := range []struct {
-		err    error
-		status int
-		code   string
-	}{
-		{nanoflare.ErrInvocationExpired, 410, "ERR_NANOFLARE_INVOCATION_EXPIRED"},
-		{nanoflare.ErrSubrequestLimit, 429, "ERR_NANOFLARE_EFFECT_LIMIT"},
-		{nanoflare.ErrRuntimeGrantDenied, 403, "ERR_NANOFLARE_ACCESS_DENIED"},
-		{nanoflare.ErrInvalidCapability, 401, "ERR_NANOFLARE_ACCESS_DENIED"},
-	} {
-		w := httptest.NewRecorder()
-		writeDNSBrokerError(w, tc.err)
-		var body struct {
-			Code, Detail string
-			Status       int
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-			t.Fatal(err)
-		}
-		if w.Code != tc.status || body.Code != tc.code || body.Detail != tc.err.Error() || body.Status != tc.status {
-			t.Fatalf("broker error: %d %s", w.Code, w.Body)
-		}
+	if calls != 100 || queries.Load() == 0 {
+		t.Fatalf("resolver calls=%d DNS queries=%d", calls, queries.Load())
 	}
-}
-
-func TestDispatchArtifactRejectsCollisionAndFinishesLease(t *testing.T) {
-	service, token, lease := dnsDispatchLease(t)
-	artifact := nanoflare.DispatchArtifact{Lease: lease, Deployment: nanoflare.Deployment{Files: []nanoflare.WorkerFile{{Path: "nanoflare-internal:dns", Content: "export default {}"}}}}
-	r := httptest.NewRequest("POST", "/internal/runtime/dispatch/acquire", nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	NewRuntimeDispatchServer(service, nil).writeDispatchArtifact(w, r, artifact)
-	if w.Code != 422 {
-		t.Fatalf("collision: %d %s", w.Code, w.Body)
-	}
-	if _, err := service.DispatchEffect(context.Background(), token, lease, nanoflare.RuntimeDNS, "", 1); err != nanoflare.ErrInvocationExpired {
-		t.Fatalf("lease not finished: %v", err)
-	}
-}
-
-func TestDispatchDNSDeadlineOverridesResolverTimeout(t *testing.T) {
-	service, token, lease := dnsDispatchLease(t)
-	handler := NewRuntimeDispatchServer(service, nil).SetDNSHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-		writeJSON(w, 502, map[string]string{"code": "ETIMEOUT", "error": "resolver deadline"})
-	}))
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	r := httptest.NewRequest("POST", "/internal/runtime/dispatch/dns", strings.NewReader(`{}`)).WithContext(ctx)
-	r.Header.Set("Authorization", "Bearer "+token)
-	r.Header.Set("X-Nanoflare-Invocation", lease)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
-	if w.Code != 410 || !strings.Contains(w.Body.String(), "ERR_NANOFLARE_INVOCATION_EXPIRED") {
-		t.Fatalf("deadline disguised as resolver timeout: %d %s", w.Code, w.Body)
-	}
-}
-
-func TestDispatchDNSStatusMatchesRuntimeStatus(t *testing.T) {
-	for _, err := range []error{nanoflare.ErrInvocationExpired, nanoflare.ErrRuntimeGrantDenied, nanoflare.ErrInvalidCapability, nanoflare.ErrSubrequestLimit, nanoflare.ErrArtifactNotFound, nanoflare.ErrUsageLimitExceeded} {
-		runtime, dns := httptest.NewRecorder(), httptest.NewRecorder()
-		writeRuntimeError(runtime, err)
-		writeDNSBrokerError(dns, err)
-		if runtime.Code != dns.Code {
-			t.Fatalf("status drift for %v: %d vs %d", err, runtime.Code, dns.Code)
-		}
-	}
-}
-
-func TestNamespaceDeploymentRejectsDNSParseFailure(t *testing.T) {
-	service, _, _ := dnsDispatchLease(t)
-	service.SetNamespaceCodeValidator(func(deployment nanoflare.Deployment) error {
-		_, err := config.NamespaceWorkerModules(deployment)
-		return err
-	})
-	active, err := service.ActiveDeployments()
-	if err != nil {
+	if err := service.FinishDispatch(context.Background(), token, lease, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, item := range active {
-		if item.App.Platform == nil || item.App.Platform.NamespaceID == "" {
-			continue
-		}
-		_, err := service.Deploy(item.App.ID, nanoflare.DeployInput{Format: "modules", CompatibilityDate: "2026-09-11", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import dns from 'node:dns'; export default <div/>;`}}})
-		if err == nil || !strings.Contains(err.Error(), "DNS import analysis") {
-			t.Fatalf("deployment accepted parse failure: %v", err)
-		}
-		return
+	if w := request(token, lease); w.Code != 410 {
+		t.Fatalf("expired lease: %d %s", w.Code, w.Body)
 	}
-	t.Fatal("namespace fixture missing")
+	if calls != 100 {
+		t.Fatal("expired DNS reached resolver")
+	}
+}
+
+func TestDispatchDNSCancellation(t *testing.T) {
+	service, token, lease := dnsDispatchLease(t)
+	started, done := make(chan struct{}), make(chan struct{})
+	transport := dnsresolver.DoHTransport(nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(done)
+	}))
+	handler := NewRuntimeDispatchServer(service, nil, transport)
+	completed := make(chan struct{})
+	go func() { handler.ServeHTTP(httptest.NewRecorder(), dispatchDoHRequest(token, lease)); close(completed) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("lookup did not start")
+	}
+	if err := service.FinishDispatch(context.Background(), token, lease, true); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("DNS did not cancel with invocation")
+	}
+	<-completed
 }

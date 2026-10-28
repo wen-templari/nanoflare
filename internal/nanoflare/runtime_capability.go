@@ -13,7 +13,6 @@ import (
 
 const (
 	RuntimeOutbound         = "outbound"
-	RuntimeDNS              = "dns"
 	RuntimeKV               = "kv"
 	RuntimeDatabase         = "db"
 	RuntimeObjects          = "objects"
@@ -196,7 +195,7 @@ func (s *Service) authorizeBoundRuntime(p RuntimePrincipal, kind string) (Runtim
 				break
 			}
 		}
-	case RuntimeOutbound, RuntimeDNS:
+	case RuntimeOutbound:
 		bound = app.IsDynamic() && grant.ResourceID == ""
 	case RuntimeKV:
 		resource, e := s.store.GetKVNamespace(grant.ResourceID)

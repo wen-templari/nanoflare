@@ -146,8 +146,8 @@ func TestWorkerdAddsPrivateDNSLookupAdapter(t *testing.T) {
 		`(name = "dns-oracle-v1", external = (address = "127.0.0.1:8083"`,
 		`(name = "X-Nanoflare-DNS-Profile", value = "corporate")`,
 		`(name = "__NANOFLARE_DNS", service = "dns-oracle-v1")`,
-		`import dns from \"nanoflare-internal:dns\"`,
-		`export function lookup(hostname, options, callback)`,
+		`import dns from \"node:dns\"`,
+		`nanoflare-internal:doh-fetch`,
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, generated)
@@ -155,7 +155,7 @@ func TestWorkerdAddsPrivateDNSLookupAdapter(t *testing.T) {
 	}
 }
 
-func TestWorkerdRewritesDNSImportsRelativeToNestedModules(t *testing.T) {
+func TestWorkerdPreservesDNSImportsInNestedModules(t *testing.T) {
 	active := []nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "oracle"},
 		Deployment: nanoflare.Deployment{
@@ -166,11 +166,9 @@ func TestWorkerdRewritesDNSImportsRelativeToNestedModules(t *testing.T) {
 
 	generated := WorkerdWithOptions(active, WorkerdOptions{DNSAddr: "127.0.0.1:8083"})
 	for _, expected := range []string{
-		`(name = "nanoflare-internal:dns", esModule = `,
-		`(name = "nanoflare-internal:dns/promises", esModule = `,
-		`import dns from \"../nanoflare-internal:dns\"`,
-		`import promises from \"../nanoflare-internal:dns/promises\"`,
-		`import { promises } from \"../nanoflare-internal:dns\"`,
+		`(name = "nanoflare-internal:doh-fetch", esModule = `,
+		`import dns from \"node:dns\"`,
+		`import promises from \"node:dns/promises\"`,
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, generated)
@@ -231,21 +229,16 @@ func TestNodeCompatibilityV2FollowsDateAndFlags(t *testing.T) {
 	}
 }
 
-func TestDNSImportRewriteRequiresV2ForBareSpecifiers(t *testing.T) {
+func TestDNSHookPreservesBareAndPrefixedSpecifiers(t *testing.T) {
 	source := `import nodeDNS from "node:dns"; import bareDNS from "dns";`
-	withoutV2, err := rewriteDNSImports(source, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(withoutV2, `"nanoflare-internal:dns"`) || !strings.Contains(withoutV2, `from "dns"`) {
-		t.Fatalf("v1 rewrite = %q", withoutV2)
-	}
-	withV2, err := rewriteDNSImports(source, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(withV2, `from "node:dns"`) || strings.Contains(withV2, `from "dns"`) {
-		t.Fatalf("v2 rewrite left a DNS import unchanged: %q", withV2)
+	for _, date := range []string{"2024-01-01", "2026-09-11"} {
+		code := SnapshotWorkerCode(nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{
+			Format: "modules", Entrypoint: "worker.js", CompatibilityDate: date,
+			CompatibilityFlags: []string{"nodejs_compat"}, Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: source}},
+		}}, WorkerdOptions{DNSAddr: "127.0.0.1:8083"})
+		if code.Modules["worker.js"].JS != source {
+			t.Fatal("DNS hook changed import specifiers")
+		}
 	}
 }
 
@@ -602,20 +595,18 @@ func TestOutputIdentityCompatibilityFlagsPreserveNodeCompatibility(t *testing.T)
 	}
 }
 
-func TestDNSImportRewritePreservesData(t *testing.T) {
+func TestDNSHookPreservesData(t *testing.T) {
 	source := `import dns from 'node:dns';
 export {lookup} from "dns/promises";
 const data = ["dns", 'node:dns', "dns/promises", 'node:dns/promises'];
 const match = record.type === "dns";
 const template = ` + "`dns ${'dns'}`" + `;
 const load = () => import('dns');`
-	got, err := rewriteDNSImportsForModule(source, true, "lib/worker.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`'../nanoflare-internal:dns'`, `"../nanoflare-internal:dns/promises"`, `record.type === "dns"`, `"dns", 'node:dns', "dns/promises", 'node:dns/promises'`} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("missing %s in:\n%s", want, got)
-		}
+	code := SnapshotWorkerCode(nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{
+		Format: "modules", Entrypoint: "lib/worker.js", CompatibilityDate: "2026-09-11",
+		Files: []nanoflare.WorkerFile{{Path: "lib/worker.js", Content: source}},
+	}}, WorkerdOptions{DNSAddr: "127.0.0.1:8083"})
+	if code.Modules["lib/worker.js"].JS != source {
+		t.Fatal("DNS hook changed user source")
 	}
 }

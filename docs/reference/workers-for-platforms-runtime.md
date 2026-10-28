@@ -53,13 +53,14 @@ Developer tools, effective-capability reporting and customer telemetry are imple
 ## Namespace DNS lookup
 
 With effective Node.js compatibility, dynamic namespace scripts use Nanoflare's
-adapter for callback `dns.lookup()`, `dns.promises.lookup()` and
-`node:dns/promises` (including bare imports under Node.js compatibility v2).
+adapter for callback and promise `lookup()`, `resolve4()`, `resolve6()` and
+A/AAAA `resolve()` requests (including bare imports under Node.js compatibility v2).
 The invocation broker resolves through `nanoflared`'s configured `defaultProfile`,
 including with a remote runner. Configure `NANOFLARE_DNS_CONFIG` on `nanoflared`
-for private/corporate names. Scripts cannot select another profile. Each lookup
-consumes one shared effect unit and is canceled with the invocation's deadline
-or cancellation. Revision reuse does not retain invocation capabilities.
+for private/corporate names. Scripts cannot select another profile. Each DoH
+fetch consumes one shared outbound effect unit; an A+AAAA lookup can consume two.
+Resolution is canceled with the invocation's deadline or cancellation. Revision
+reuse does not retain invocation capabilities.
 
 Namespace DNS uses the platform default resolver for all authorized trusted
 namespace scripts with Node.js compatibility; it has no separate DNS opt-in.
@@ -70,28 +71,27 @@ Persistent pools that create or reconnect connections in a background task
 started by an earlier invocation are unsupported in this pilot. This includes
 the node-oracledb thin pool background connection loop: waking it from a later
 request does not change its async context or refresh the original lease. Use
-request-scoped connections and close them within the invocation. Do not retry
-`ERR_NANOFLARE_INVOCATION_EXPIRED`, `ERR_NANOFLARE_EFFECT_LIMIT`, or
-`ERR_NANOFLARE_ACCESS_DENIED` as temporary DNS failures. These errors retain the
-broker HTTP status and diagnostic detail.
+request-scoped connections and close them within the invocation.
 
-This adapts lookup methods only; other native DNS methods such as `resolve()`
-keep workerd's behavior. DNS resolution does not grant socket access: TCP/TLS
-connections remain subject to the executor's separate socket policy below.
+The adapter answers the pinned workerd `node:dns` implementation's JSON DoH
+fetches at `https://cloudflare-dns.com/dns-query`. Uploaded modules and the
+dispatch artifact format are unchanged. Unsupported record types return NOTIMP
+locally without contacting public DoH. Explicit fetches to that same endpoint
+also receive platform DNS answers. `lookup()` maps resolver failures and broker
+admission errors to `ENOTFOUND`; other DNS APIs may expose native transport
+errors such as `EBADRESP`. Timeout and terminal invocation codes from the former
+shim are not preserved. Retry policies must be bounded.
+The host lookup adapter uses a synthetic TTL of 30 seconds and maps an absent
+address family to NXDOMAIN to avoid workerd's empty-success result behavior.
+Native CI tests pin these implementation details for workerd upgrades.
 
-Namespace DNS import adaptation changes only module-specifier source ranges;
-it does not reprint or bundle uploaded JavaScript. Modules with no DNS candidate
-skip analysis, and immutable analysis results have a bounded cache. Syntax
-errors encountered during adaptation reject publication rather than reverting
-to native DNS. Split deployments with WFP disabled ignore nanoflared DNS
+DNS resolution does not grant socket access: TCP/TLS connections remain subject
+to the executor's separate socket policy below. Split deployments with WFP disabled ignore nanoflared DNS
 settings; with WFP enabled, nanoflared validates its active resolver config but
-does not validate or bind the local DNS adapter listen address.
-Startup audits persisted namespace scripts against the current compiler and
-logs incompatible app and revision IDs. Such scripts remain unavailable until
-corrected and redeployed; reserved legacy module names must be renamed. Valid
-module syntax, including top-level await, is preserved. Dynamic-runner restore
-isolates compiler failures per revision and rejects a failed target without
-blocking a healthy peer's publication.
+does not validate or bind the local DNS adapter listen address. The outbound
+transport calls that resolver in-process, so private DoH does not traverse the
+HTTP proxy. Missing resolver configuration fails closed at the intercepted
+endpoint rather than falling back to public DoH.
 
 
 ## Opt-in namespace TCP and TLS sockets

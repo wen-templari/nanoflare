@@ -309,10 +309,6 @@ func main() {
 		log.Print("using Litestream for SQLite backup replication")
 	}
 	service.SetPlatformDispatchEnabled(*platformDispatchEnabled)
-	service.SetNamespaceCodeValidator(func(deployment nanoflare.Deployment) error {
-		_, err := config.NamespaceWorkerModules(deployment)
-		return err
-	})
 	var redactions []string
 	if err := json.Unmarshal([]byte(*workerLogPatterns), &redactions); err != nil {
 		log.Fatal(err)
@@ -382,10 +378,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, dispatchTransport, *runnerToken, output)
-	if dnsServer != nil {
-		runtimeMux.dispatch.SetDNSHandler(dnsServer)
-	}
+	// The platform resolver also exists with a remote runner. Dispatch DNS uses
+	// nanoflared's default profile, while ordinary Workers use their runner's.
+	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, platformDNSOutbound(dispatchTransport, dnsServer), *runnerToken, output)
 	defer runtimeMux.Close()
 
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
@@ -401,13 +396,6 @@ func main() {
 		}
 	}()
 
-	if active, err := service.ActiveDeployments(); err != nil {
-		log.Printf("namespace DNS upgrade audit unavailable: %v", err)
-	} else {
-		for _, failure := range config.AuditNamespaceCode(active) {
-			log.Printf("namespace DNS upgrade audit: %v", failure)
-		}
-	}
 	if err := service.ReconcileRuntime(); err != nil {
 		log.Fatal(err)
 	}
@@ -492,8 +480,7 @@ func newRuntimeMuxWithControl(service *nanoflare.Service, server *api.Server, du
 	if len(outputs) > 0 {
 		output = outputs[0]
 	}
-	dispatch := api.NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(output)
-	runtimeMux.Handle("/internal/runtime/dispatch/", dispatch)
+	runtimeMux.Handle("/internal/runtime/dispatch/", api.NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(output))
 	runtimeMux.Handle("/internal/runtime/access", server.RuntimeAccessHandler())
 	runtimeMux.Handle("/internal/runtime/logs", api.NewRuntimeLogServer(service, output))
 	runtimeMux.Handle("/internal/runtime/objects/", server)
@@ -516,14 +503,13 @@ func newRuntimeMuxWithControl(service *nanoflare.Service, server *api.Server, du
 	runtimeMux.Handle("/", resourceHandler)
 	runtimeMux.Handle("/internal/runtime/resources/", http.StripPrefix("/internal/runtime/resources", resourceHandler))
 	runtimeMux.Handle("/internal/runtime/assets/", runtimeAssets)
-	return &privateRuntimeMux{ServeMux: runtimeMux, executions: executions, dispatch: dispatch}
+	return &privateRuntimeMux{ServeMux: runtimeMux, executions: executions}
 }
 
 // privateRuntimeMux owns control sessions for the lifetime of the private server.
 type privateRuntimeMux struct {
 	*http.ServeMux
 	executions *api.RuntimeExecutionServer
-	dispatch   *api.RuntimeDispatchServer
 }
 
 func (m *privateRuntimeMux) Close() error { return m.executions.Close() }
@@ -543,4 +529,12 @@ func platformDNS(value, addr string, remote, dispatch bool) (*dnsresolver.Server
 	}
 	server, err := dnsresolver.New(config, addr)
 	return server, config, err
+}
+
+// A missing resolver still intercepts DoH and fails closed.
+func platformDNSOutbound(next http.RoundTripper, server *dnsresolver.Server) http.RoundTripper {
+	if server == nil {
+		return dnsresolver.DoHTransport(next, nil)
+	}
+	return dnsresolver.DoHTransport(next, server)
 }

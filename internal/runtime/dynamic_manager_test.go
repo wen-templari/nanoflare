@@ -679,6 +679,28 @@ func TestDynamicSyntheticBindingsFreezeDNSAndTelemetryAttribution(t *testing.T) 
 	}
 }
 
+func TestDynamicDNSBridgePreservesDoHQueryAndFrozenProfile(t *testing.T) {
+	m, state, _, key := newDynamicControlFixture(t)
+	r := httptest.NewRequest(http.MethodGet, "/resource/"+key+"/dns-query?name=private.internal&type=AAAA", nil)
+	r.Header.Set("X-Nanoflare-Broker-Token", m.brokerToken)
+	r.Header.Set("X-Nanoflare-Binding-Name", "__NANOFLARE_DNS")
+	r.Header.Set("X-Nanoflare-DNS-Profile", "forged")
+	w := httptest.NewRecorder()
+	m.serveBroker(w, r)
+	if w.Code != 204 {
+		t.Fatalf("DNS bridge: %d %s", w.Code, w.Body)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.requests) != 1 {
+		t.Fatalf("forwarded requests: %d", len(state.requests))
+	}
+	request := state.requests[0]
+	if request.path != "/dns-query" || request.query != "name=private.internal&type=AAAA" || request.headers.Get("X-Nanoflare-DNS-Profile") != "frozen-profile" {
+		t.Fatalf("DoH query or profile changed: %#v", request)
+	}
+}
+
 func dynamicGrantRegistrationResponse(t *testing.T, r *http.Request) string {
 	t.Helper()
 	var input struct {
