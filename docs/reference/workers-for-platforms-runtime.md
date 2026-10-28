@@ -61,6 +61,20 @@ for private/corporate names. Scripts cannot select another profile. Each lookup
 consumes one shared effect unit and is canceled with the invocation's deadline
 or cancellation. Revision reuse does not retain invocation capabilities.
 
+Namespace DNS uses the platform default resolver for all authorized trusted
+namespace scripts with Node.js compatibility; it has no separate DNS opt-in.
+Enable this pilot only for code trusted to query that resolver, including its
+private names. Socket opt-in does not restrict DNS queries.
+
+Persistent pools that create or reconnect connections in a background task
+started by an earlier invocation are unsupported in this pilot. This includes
+the node-oracledb thin pool background connection loop: waking it from a later
+request does not change its async context or refresh the original lease. Use
+request-scoped connections and close them within the invocation. Do not retry
+`ERR_NANOFLARE_INVOCATION_EXPIRED`, `ERR_NANOFLARE_EFFECT_LIMIT`, or
+`ERR_NANOFLARE_ACCESS_DENIED` as temporary DNS failures. These errors retain the
+broker HTTP status and diagnostic detail.
+
 This adapts lookup methods only; other native DNS methods such as `resolve()`
 keep workerd's behavior. DNS resolution does not grant socket access: TCP/TLS
 connections remain subject to the executor's separate socket policy below.

@@ -53,7 +53,8 @@ jobs:
           export NANOFLARE_TEST_WORKERD="$RUNNER_TEMP/wfp-tools/node_modules/.bin/workerd"
           "$NANOFLARE_TEST_WORKERD" --version
           go test -count=1 -v ./internal/config ./cmd/nanoflared ./cmd/nanoflare-runner
-          go test -count=1 -v ./internal/api -run 'TestIssue78RuntimeRestrictionObservations|TestStableRuntimePrivateDynamicDispatch|TestWorkerdDynamicLoaderContracts|TestDispatchDNS|TestWorkerdDynamicNamespacePrivateDNS'
+          go test -count=1 -v ./internal/api -run 'TestIssue78RuntimeRestrictionObservations|TestStableRuntimePrivateDynamicDispatch|TestWorkerdDynamicLoaderContracts|TestDispatchDNS|TestDispatchArtifactRejectsCollisionAndFinishesLease|TestWorkerdDynamicNamespacePrivateDNS'
           go test -count=1 ./internal/nanoflare ./internal/cli
+          node internal/runtimeassets/testdata/dns-context.mjs
           node scripts/update-runtime-profile.mjs --check
           node --test packages/cli/test/*.cjs packages/cli/test/*.mjs

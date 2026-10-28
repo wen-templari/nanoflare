@@ -206,7 +206,13 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
       codeBytes -= cached.bytes;
     } else {
       const modules = Object.create(null);
-      for (const [name, module] of Object.entries(artifact.modules)) {
+      const compiledModules = artifact.modules ?? Object.fromEntries(
+        artifact.deployment.files.map((file) => [
+          file.path,
+          file.wasm !== undefined ? { wasm: file.wasm } : { js: file.content },
+        ]),
+      );
+      for (const [name, module] of Object.entries(compiledModules)) {
         if (module.wasm !== undefined) {
           const bytes = Uint8Array.from(atob(module.wasm), (byte) => byte.charCodeAt(0));
           modules[name] = { wasm: bytes.buffer };

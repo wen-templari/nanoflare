@@ -62,7 +62,7 @@ func (s *RuntimeDispatchServer) acquire(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeDispatchArtifact(w, artifact)
+	s.writeDispatchArtifact(w, r, artifact)
 }
 func (s *RuntimeDispatchServer) finish(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -163,14 +163,20 @@ func (s *RuntimeDispatchServer) effect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeDispatchArtifact(w http.ResponseWriter, artifact nanoflare.DispatchArtifact) {
+func (s *RuntimeDispatchServer) writeDispatchArtifact(w http.ResponseWriter, r *http.Request, artifact nanoflare.DispatchArtifact) {
+	modules, err := config.NamespaceWorkerModules(artifact.Deployment)
+	if err != nil {
+		_ = s.service.FinishDispatch(r.Context(), bearerToken(r), artifact.Lease, true)
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
 	writeJSON(w, 200, struct {
 		nanoflare.DispatchArtifact
 		Wrapper         string                             `json:"wrapper"`
 		RuntimeBindings string                             `json:"runtime_bindings"`
 		DynamicEnv      string                             `json:"dynamic_env"`
 		Modules         map[string]config.WorkerCodeModule `json:"modules"`
-	}{artifact, config.DynamicEntrypoint(artifact.Deployment), runtimeassets.BindingsModule, runtimeassets.DynamicEnvModule, config.NamespaceWorkerModules(artifact.Deployment)})
+	}{artifact, config.DynamicEntrypoint(artifact.Deployment), runtimeassets.BindingsModule, runtimeassets.DynamicEnvModule, modules})
 }
 func (s *RuntimeDispatchServer) nested(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -187,7 +193,7 @@ func (s *RuntimeDispatchServer) nested(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeDispatchArtifact(w, artifact)
+	s.writeDispatchArtifact(w, r, artifact)
 }
 
 func (s *RuntimeDispatchServer) forwardOutbound(w http.ResponseWriter, r *http.Request) {
@@ -295,21 +301,21 @@ func (s *RuntimeDispatchServer) SetDNSHandler(handler http.Handler) *RuntimeDisp
 	return s
 }
 func (s *RuntimeDispatchServer) lookupDNS(w http.ResponseWriter, r *http.Request) {
+	if s.dns == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "EAI_AGAIN", "error": "platform DNS unavailable"})
+		return
+	}
 	lease := r.Header.Get("X-Nanoflare-Invocation")
 	if _, err := s.service.DispatchEffect(r.Context(), bearerToken(r), lease, nanoflare.RuntimeDNS, "", 1); err != nil {
-		writeRuntimeError(w, err)
+		writeDNSBrokerError(w, err)
 		return
 	}
 	ctx, cancel, err := s.service.DispatchEffectContext(r.Context(), lease)
 	if err != nil {
-		writeRuntimeError(w, err)
+		writeDNSBrokerError(w, err)
 		return
 	}
 	defer cancel()
-	if s.dns == nil {
-		http.Error(w, "platform DNS unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://nanoflare.dns/lookup", http.MaxBytesReader(w, r.Body, 64<<10))
 	if err != nil {
 		writeError(w, 400, err)
@@ -317,4 +323,24 @@ func (s *RuntimeDispatchServer) lookupDNS(w http.ResponseWriter, r *http.Request
 	}
 	request.Header.Set("Content-Type", "application/json")
 	s.dns.ServeHTTP(w, request)
+}
+
+// Broker admission failures are terminal invocation errors, not resolver retries.
+func writeDNSBrokerError(w http.ResponseWriter, err error) {
+	status, code := http.StatusInternalServerError, "ERR_NANOFLARE_DNS_BROKER"
+	switch {
+	case errors.Is(err, nanoflare.ErrInvocationExpired):
+		status, code = http.StatusGone, "ERR_NANOFLARE_INVOCATION_EXPIRED"
+	case errors.Is(err, nanoflare.ErrSubrequestLimit), errors.Is(err, nanoflare.ErrDispatchDepth):
+		status, code = http.StatusTooManyRequests, "ERR_NANOFLARE_EFFECT_LIMIT"
+	case errors.Is(err, nanoflare.ErrRuntimeGrantDenied), errors.Is(err, nanoflare.ErrNamespaceGrantDenied):
+		status, code = http.StatusForbidden, "ERR_NANOFLARE_ACCESS_DENIED"
+	case errors.Is(err, nanoflare.ErrInvalidCapability):
+		status, code = http.StatusUnauthorized, "ERR_NANOFLARE_ACCESS_DENIED"
+	case errors.Is(err, nanoflare.ErrDispatchUnavailable):
+		status, code = http.StatusServiceUnavailable, "ERR_NANOFLARE_DISPATCH_UNAVAILABLE"
+	case errors.Is(err, nanoflare.ErrDispatchOverloaded):
+		status, code = http.StatusTooManyRequests, "ERR_NANOFLARE_DISPATCH_OVERLOADED"
+	}
+	writeJSON(w, status, map[string]any{"code": code, "error": err.Error(), "detail": err.Error(), "status": status})
 }

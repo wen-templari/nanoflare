@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
+	"github.com/evanw/esbuild/pkg/api"
 )
 
 type Writer struct {
@@ -330,7 +331,7 @@ func durationTelemetryServices(runtimeAddr string, active []nanoflare.ActiveDepl
     method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(events)
   });
 }};`
-		fmt.Fprintf(&out, "    (name = %s, worker = (compatibilityDate = \"2025-01-01\", modules = [(name = \"tail.js\", esModule = %s)], bindings = [(name = \"COLLECTOR\", service = %s)])),\n", quote(telemetryServiceName(item, "tail")), quote(source), quote(telemetryServiceName(item, nanoflare.RuntimeLogs)))
+		fmt.Fprintf(&out, "    (name = %s, worker = (compatibilityDate = \"2025-01-01\", modules = [(name = \"tail.js\", esModule = %s)], bindings = [(name = \"COLLECTOR\", service = %s)])),\n", quote(telemetryServiceName(item, "tail")), capnpSourceQuote(source), quote(telemetryServiceName(item, nanoflare.RuntimeLogs)))
 	}
 	return out.String()
 }
@@ -419,7 +420,7 @@ func writeWorkerSource(out *strings.Builder, code WorkerCodeSnapshot) {
 		if module.Wasm != nil {
 			fmt.Fprintf(out, "    (name = %s, wasm = 0x\"%x\"),\n", quote(name), module.Wasm)
 		} else {
-			fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(name), quote(code.Modules[name].JS))
+			fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(name), capnpSourceQuote(code.Modules[name].JS))
 		}
 	}
 	out.WriteString("  ],\n")
@@ -469,26 +470,37 @@ func rewriteDNSImports(source string, includeBareImports bool) string {
 }
 
 func rewriteDNSImportsForModule(source string, includeBareImports bool, modulePath string) string {
-	dnsModule := relativeModuleSpecifier(modulePath, "nanoflare-internal:dns")
-	dnsPromisesModule := relativeModuleSpecifier(modulePath, "nanoflare-internal:dns/promises")
-	replacements := []struct{ old, new string }{
-		{`"node:dns/promises"`, `"` + dnsPromisesModule + `"`},
-		{`'node:dns/promises'`, `'` + dnsPromisesModule + `'`},
-		{`"node:dns"`, `"` + dnsModule + `"`},
-		{`'node:dns'`, `'` + dnsModule + `'`},
+	// Let the JavaScript parser distinguish module specifiers from ordinary
+	// strings, comments, regular expressions, and template literals. Every module
+	// remains external: this pass never loads or bundles customer dependencies.
+	result := api.Build(api.BuildOptions{
+		Stdin:  &api.StdinOptions{Contents: source, Sourcefile: "worker.js", Loader: api.LoaderJS},
+		Bundle: true, Write: false, Format: api.FormatESModule, Platform: api.PlatformNeutral,
+		TreeShaking: api.TreeShakingFalse, LogLevel: api.LogLevelSilent,
+		Plugins: []api.Plugin{{Name: "dns-imports", Setup: func(build api.PluginBuild) {
+			build.OnResolve(api.OnResolveOptions{Filter: ".*"}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+				target := args.Path
+				switch target {
+				case "node:dns", "node:dns/promises":
+					target = "nanoflare-internal:" + strings.TrimPrefix(target, "node:")
+				case "dns", "dns/promises":
+					if includeBareImports {
+						target = "nanoflare-internal:" + target
+					}
+				}
+				if target != args.Path {
+					target = relativeModuleSpecifier(modulePath, target)
+				}
+				return api.OnResolveResult{Path: target, External: true}, nil
+			})
+		}}},
+	})
+	// Preserve invalid source so the existing deployment/runtime validation can
+	// report it; never substitute a partial compilation.
+	if len(result.Errors) != 0 || len(result.OutputFiles) != 1 {
+		return source
 	}
-	if includeBareImports {
-		replacements = append(replacements,
-			struct{ old, new string }{`"dns/promises"`, `"` + dnsPromisesModule + `"`},
-			struct{ old, new string }{`'dns/promises'`, `'` + dnsPromisesModule + `'`},
-			struct{ old, new string }{`"dns"`, `"` + dnsModule + `"`},
-			struct{ old, new string }{`'dns'`, `'` + dnsModule + `'`},
-		)
-	}
-	for _, replacement := range replacements {
-		source = strings.ReplaceAll(source, replacement.old, replacement.new)
-	}
-	return source
+	return string(result.OutputFiles[0].Contents)
 }
 
 func relativeModuleSpecifier(modulePath, target string) string {
@@ -534,8 +546,16 @@ async function lookupResult(hostname, options) {
   });
   const body = await response.json();
   if (!response.ok) {
-    const error = new Error(body.error || "hostname lookup failed");
-    error.code = body.code || "EAI_AGAIN";
+    const error = new Error(body.error || body.detail || "hostname lookup failed");
+    const brokerCodes = {
+      401: "ERR_NANOFLARE_ACCESS_DENIED",
+      403: "ERR_NANOFLARE_ACCESS_DENIED",
+      410: "ERR_NANOFLARE_INVOCATION_EXPIRED",
+      429: "ERR_NANOFLARE_EFFECT_LIMIT",
+    };
+    error.code = body.code || brokerCodes[response.status] || "EAI_AGAIN";
+    error.status = response.status;
+    error.detail = body.detail || body.error;
     error.hostname = hostname;
     error.syscall = "getaddrinfo";
     throw error;
@@ -654,14 +674,6 @@ export default class extends userWorker {
     super(ctx, wrapEnv(env, assetBindingName, dbBindingNames, objectBindingNames));
   }
 }`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(assetBinding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
-}
-
-// workerd rejects U+00A0 in module text before it evaluates the Worker. JSX
-// compilers can emit that character from an &nbsp; entity, including in code
-// paths that are never executed. Treat it as ordinary whitespace at the
-// workerd-config boundary while preserving the uploaded deployment source.
-func workerdSafeSource(source string) string {
-	return strings.ReplaceAll(source, "\u00a0", " ")
 }
 
 func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
@@ -1053,6 +1065,19 @@ func workerName(value string) string {
 		out.WriteRune(char)
 	}
 	return out.String()
+}
+
+// Escape UTF-8 bytes at the Cap'n Proto boundary without changing JavaScript
+// values (including tagged template raw strings). Dynamic JSON modules need no
+// such escaping.
+func capnpSourceQuote(source string) string {
+	parts := strings.Split(source, "\u00a0")
+	for i, part := range parts {
+		quoted := strconv.Quote(part)
+		parts[i] = quoted[1 : len(quoted)-1]
+	}
+	return `"` + strings.Join(parts, `\xc2\xa0`) + `"`
+
 }
 
 func quote(value string) string {

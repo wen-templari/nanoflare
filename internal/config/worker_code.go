@@ -102,14 +102,14 @@ export { DispatchBroker };
 			if dnsEnabled {
 				source = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
 			}
-			add(file.Path, workerdSafeSource(source))
+			add(file.Path, source)
 		}
 	} else if deploymentFormat(deployment) == "service-worker" {
 		source := deployment.Files[0].Content
 		if dnsEnabled {
 			source = rewriteDNSImports(source, nodeCompatibility.v2)
 		}
-		add(mainModule, serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets))
+		add(mainModule, serviceWorkerWrapper(source, deployment.Databases, deployment.ObjectStorageBuckets))
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 	} else {
 		if workerEntrypointModule(deployment) {
@@ -126,7 +126,7 @@ export { DispatchBroker };
 			if dnsEnabled {
 				source = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
 			}
-			add(file.Path, workerdSafeSource(source))
+			add(file.Path, source)
 		}
 	}
 	if dnsEnabled {
@@ -138,10 +138,16 @@ export { DispatchBroker };
 
 // NamespaceWorkerModules compiles namespace code without storing invocation
 // capabilities. DNS transport is selected from AsyncLocalStorage at lookup time.
-func NamespaceWorkerModules(deployment nanoflare.Deployment) map[string]WorkerCodeModule {
+func NamespaceWorkerModules(deployment nanoflare.Deployment) (map[string]WorkerCodeModule, error) {
 	node := effectiveNodeCompatibility(deployment)
 	modules := make(map[string]WorkerCodeModule, len(deployment.Files)+2)
 	for _, file := range deployment.Files {
+		if strings.HasPrefix(file.Path, "nanoflare-internal:") || strings.HasPrefix(file.Path, "__nanoflare_") {
+			return nil, fmt.Errorf("worker file %q uses a reserved runtime module name", file.Path)
+		}
+		if _, exists := modules[file.Path]; exists {
+			return nil, fmt.Errorf("duplicate compiled Worker module %q", file.Path)
+		}
 		if file.Wasm != nil {
 			modules[file.Path] = WorkerCodeModule{Wasm: bytes.Clone(file.Wasm)}
 			continue
@@ -150,11 +156,11 @@ func NamespaceWorkerModules(deployment nanoflare.Deployment) map[string]WorkerCo
 		if node.runtime {
 			source = rewriteDNSImportsForModule(source, node.v2, file.Path)
 		}
-		modules[file.Path] = WorkerCodeModule{JS: workerdSafeSource(source)}
+		modules[file.Path] = WorkerCodeModule{JS: source}
 	}
 	if node.runtime {
 		modules["nanoflare-internal:dns"] = WorkerCodeModule{JS: dnsShimWithBinding(`import { invocationDNS } from "nanoflare-internal:dynamic-env.js";`, "invocationDNS()")}
 		modules["nanoflare-internal:dns/promises"] = WorkerCodeModule{JS: dnsPromisesShimSource()}
 	}
-	return modules
+	return modules, nil
 }

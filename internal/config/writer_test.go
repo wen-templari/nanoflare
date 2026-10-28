@@ -358,7 +358,7 @@ func TestWorkerdGeneratesSingleFileModuleWorker(t *testing.T) {
 	}
 }
 
-func TestWorkerdReplacesNonBreakingSpacesInWorkerSource(t *testing.T) {
+func TestWorkerdEscapesNonBreakingSpacesWithoutChangingSource(t *testing.T) {
 	const source = `export default { fetch() { if (false) { return new Response("never runs"); } return new Response("ok"); } };`
 	config := Workerd([]nanoflare.ActiveDeployment{{
 		App: nanoflare.App{ID: "hello-app", RuntimeToken: "secret"},
@@ -373,8 +373,8 @@ func TestWorkerdReplacesNonBreakingSpacesInWorkerSource(t *testing.T) {
 	if strings.ContainsRune(config, '\u00a0') {
 		t.Fatalf("workerd config retains a non-breaking space:\n%s", config)
 	}
-	if !strings.Contains(config, `never runs`) {
-		t.Fatalf("workerd config did not preserve the worker source with a normal space:\n%s", config)
+	if !strings.Contains(config, `never\xc2\xa0runs`) {
+		t.Fatalf("workerd config did not escape UTF-8 at the config boundary:\n%s", config)
 	}
 }
 
@@ -593,5 +593,20 @@ func TestOutputIdentityCompatibilityFlagsPreserveNodeCompatibility(t *testing.T)
 	flags := outputIdentityCompatibilityFlags([]string{"nodejs_compat", "custom"})
 	if got := strings.Join(flags, ","); got != "nodejs_compat,custom" {
 		t.Fatalf("nodejs_compat should provide AsyncLocalStorage without adding a redundant flag: %s", got)
+	}
+}
+
+func TestDNSImportRewritePreservesData(t *testing.T) {
+	source := `import dns from 'node:dns';
+export {lookup} from "dns/promises";
+const data = ["dns", 'node:dns', "dns/promises", 'node:dns/promises'];
+const match = record.type === "dns";
+const template = ` + "`dns ${'dns'}`" + `;
+const load = () => import('dns');`
+	got := rewriteDNSImportsForModule(source, true, "lib/worker.js")
+	for _, want := range []string{`"../nanoflare-internal:dns"`, `"../nanoflare-internal:dns/promises"`, `record.type === "dns"`, `"dns", "node:dns", "dns/promises", "node:dns/promises"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %s in:\n%s", want, got)
+		}
 	}
 }

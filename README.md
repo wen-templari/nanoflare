@@ -344,6 +344,11 @@ lookups run through the invocation broker and share its effect budget and
 deadline. Per-script profile selection remains unavailable. Configure the
 corporate default on `nanoflared` when namespace scripts need private DNS; the
 runner's resolver configuration still applies to ordinary Workers.
+Namespace DNS is available to authorized trusted scripts without a separate DNS
+opt-in. Persistent background connection pools, including the node-oracledb thin
+pool, are unsupported in this pilot because they retain the creating
+invocation's lease. Use request-scoped connections; see the
+[namespace DNS contract](docs/reference/workers-for-platforms-runtime.md#namespace-dns-lookup).
 
 Workers without `dns.profile` inherit `defaultProfile`. Unknown profiles fail
 deployment, and lookup errors retain Node-style codes such as `ENOTFOUND`,

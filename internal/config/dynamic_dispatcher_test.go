@@ -60,7 +60,7 @@ export class Capability extends WorkerEntrypoint {
  readOther(){return this.ctx.props.other.ping();}
  getAI(){return new AI();} get broken(){throw new Error("getter failed");}
 }
-export default {fetch(request,env,ctx){return env.DISPATCHER.get(new URL(request.url).searchParams.has("class")?"class":"customer",{props:{nested:[{capability:ctx.exports.Capability({props:{prefix:"P",other:ctx.exports.Other({props:{}})}})}]}}).fetch(request);}};`,
+export default {fetch(request,env,ctx){return env.DISPATCHER.get(new URL(request.url).searchParams.has("legacy")?"legacy":new URL(request.url).searchParams.has("class")?"class":"customer",{props:{nested:[{capability:ctx.exports.Capability({props:{prefix:"P",other:ctx.exports.Other({props:{}})}})}]}}).fetch(request);}};`,
 		"invalid": `export default {fetch(request: Request){}}`,
 		"throws":  `throw new Error("private-initialization-detail"); export default {fetch(){}}`,
 		"a": `import { env as importedEnv } from "cloudflare:workers";
@@ -192,7 +192,20 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 				deployment.ID = "class-v1"
 				deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: strings.Replace(customer.Files[0].Content, `export default { async fetch(request,env,ctx) {`, `import {WorkerEntrypoint} from "cloudflare:workers"; export default class extends WorkerEntrypoint { async fetch(request) { const env=this.env,ctx=this.ctx;`, 1)}}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "customer-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "modules": NamespaceWorkerModules(deployment), "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
+			if input.Script == "legacy" {
+				deployment.ID = "legacy-v1"
+				deployment.Files = append([]nanoflare.WorkerFile(nil), deployment.Files...)
+				deployment.Files[0].Content = `import wasm from './empty.wasm'; if (!(wasm instanceof WebAssembly.Module)) throw new Error('legacy Wasm missing');` + deployment.Files[0].Content
+				deployment.Files = append(deployment.Files, nanoflare.WorkerFile{Path: "empty.wasm", Wasm: []byte{0, 97, 115, 109, 1, 0, 0, 0}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "legacy-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
+				return
+			}
+			modules, err := NamespaceWorkerModules(deployment)
+			if err != nil {
+				http.Error(w, err.Error(), 422)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "customer-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "modules": modules, "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
 		case r.URL.Path == "/resource/dispatcher/internal/runtime/dispatch/finish":
 			w.WriteHeader(204)
 		case strings.HasPrefix(r.URL.Path, "/resource/"):
@@ -409,6 +422,14 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 			if response.StatusCode != probe.status || string(body) != probe.want {
 				t.Fatalf("round %d probe %s: status=%d body=%s", round, probe.path, response.StatusCode, body)
 			}
+		}
+	}
+	for i := 0; i < 2; i++ {
+		response := call("/method?legacy=1", "dispatcher-secret", "invocation-dispatcher", "dispatcher")
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != 200 || string(body) != `{"result":"PONG"}` {
+			t.Fatalf("legacy artifact: %d %s", response.StatusCode, body)
 		}
 	}
 	denied := call("/", "dispatcher-secret", "invocation-denied")

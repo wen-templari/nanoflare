@@ -124,7 +124,10 @@ func TestDNSCompilerNamespaceAndHostCompatibility(t *testing.T) {
 				DispatchNamespaces: []nanoflare.DispatchBinding{{Binding: "NS", NamespaceID: "ns"}},
 				Files:              []nanoflare.WorkerFile{{Path: "dist/worker.js", Content: `import dns from "node:dns"; import promises from "dns/promises"; export default {};`}, {Path: "lib.wasm", Wasm: []byte{0, 97, 115, 109}}},
 			}
-			ns := NamespaceWorkerModules(d)
+			ns, err := NamespaceWorkerModules(d)
+			if err != nil {
+				t.Fatal(err)
+			}
 			host := SnapshotWorkerCode(nanoflare.ActiveDeployment{Deployment: d}, WorkerdOptions{DNSAddr: "127.0.0.1:1234"}).Modules
 			for name, modules := range map[string]map[string]WorkerCodeModule{"namespace": ns, "host": host} {
 				if strings.Contains(modules["dist/worker.js"].JS, `"../nanoflare-internal:dns"`) != tc.enabled {
@@ -147,5 +150,31 @@ func TestDNSCompilerNamespaceAndHostCompatibility(t *testing.T) {
 				t.Fatal("namespace shim uses cached environment")
 			}
 		})
+	}
+}
+
+func TestNamespaceCompilerRejectsReservedAndDuplicateModules(t *testing.T) {
+	for _, name := range []string{"nanoflare-internal:dns", "nanoflare-internal:dns/promises", "nanoflare-internal:dynamic-env.js", "__nanoflare_dynamic_entrypoint__.js", "worker.js"} {
+		d := nanoflare.Deployment{CompatibilityDate: "2026-09-11", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: "export default {}"}, {Path: name, Content: "export default {}"}}}
+		if _, err := NamespaceWorkerModules(d); err == nil {
+			t.Fatalf("accepted collision %q", name)
+		}
+	}
+}
+
+func TestNamespaceCompilerPreservesNonBreakingSpace(t *testing.T) {
+	const source = "export const value = 'a\u00a0b'; export const pattern = /\u00a0/; export const raw = String.raw`\u00a0`;"
+	for _, date := range []string{"2025-12-10", "2026-09-11"} {
+		d := nanoflare.Deployment{CompatibilityDate: date, Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: source}}}
+		modules, err := NamespaceWorkerModules(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(modules["worker.js"].JS, "a b") {
+			t.Fatal("changed string value")
+		}
+		if date == "2025-12-10" && modules["worker.js"].JS != source {
+			t.Fatal("changed source without Node adaptation")
+		}
 	}
 }
