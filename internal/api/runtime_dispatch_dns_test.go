@@ -204,7 +204,8 @@ func TestWorkerdDynamicNamespacePrivateDNS(t *testing.T) {
 						}
 						_, err = service.Deploy(app.ID, nanoflare.DeployInput{Format: "modules", Entrypoint: "dist/worker.js", CompatibilityDate: "2026-09-11", CompatibilityFlags: []string{"nodejs_compat"}, Files: []nanoflare.WorkerFile{
 							{Path: "dist/worker.js", Content: source},
-							{Path: "dist/lib/probe.js", Content: `import dns from 'node:dns'; import {lookup} from 'node:dns/promises'; import bare from 'dns'; import barePromises from 'dns/promises';
+							{Path: "dist/lib/probe.js", Content: `const initializedDNS = await import('node:dns');
+import dns from 'node:dns'; import {lookup} from 'node:dns/promises'; import bare from 'dns'; import barePromises from 'dns/promises';
 export async function probe(){
  if ('a b'.charCodeAt(1)!==160 || !/ /.test('a b')) throw new Error('namespace Unicode changed');
  const host='database.corporate.invalid',options={all:true,family:4};

@@ -73,10 +73,10 @@ func (w *RuntimeWriter) SetDNSProfiles(profiles []string) { w.dnsProfiles = prof
 
 // ValidateRuntime checks configuration before compiling a publication.
 func (w *Writer) ValidateRuntime(active []nanoflare.ActiveDeployment) error {
-	return validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions())
+	return validateDNSProfiles(active, w.dnsProfiles)
 }
 func (w *RuntimeWriter) ValidateRuntime(active []nanoflare.ActiveDeployment) error {
-	return validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions())
+	return validateDNSProfiles(active, w.dnsProfiles)
 }
 
 // RuntimeOptions returns a detached snapshot of the runtime compiler options.

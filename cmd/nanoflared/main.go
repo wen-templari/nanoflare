@@ -401,6 +401,13 @@ func main() {
 		}
 	}()
 
+	if active, err := service.ActiveDeployments(); err != nil {
+		log.Printf("namespace DNS upgrade audit unavailable: %v", err)
+	} else {
+		for _, failure := range config.AuditNamespaceCode(active) {
+			log.Printf("namespace DNS upgrade audit: %v", failure)
+		}
+	}
 	if err := service.ReconcileRuntime(); err != nil {
 		log.Fatal(err)
 	}

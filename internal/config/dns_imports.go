@@ -1,6 +1,7 @@
 package config
 
 import (
+	"container/list"
 	"crypto/sha256"
 	"fmt"
 	"sort"
@@ -22,9 +23,16 @@ type dnsRewriteResult struct {
 
 var dnsRewriteCache = struct {
 	sync.Mutex
-	entries map[dnsRewriteKey]dnsRewriteResult
+	entries map[dnsRewriteKey]*list.Element
+	order   list.List
 	bytes   int
-}{entries: make(map[dnsRewriteKey]dnsRewriteResult)}
+}{entries: make(map[dnsRewriteKey]*list.Element)}
+
+type dnsCachedRewrite struct {
+	key    dnsRewriteKey
+	result dnsRewriteResult
+	size   int
+}
 
 type dnsImportTarget string
 type dnsAnalysisComplete struct{}
@@ -48,21 +56,29 @@ func rewriteDNSImportsForModule(source string, bare bool, module string) (string
 	key := dnsRewriteKey{sha256.Sum256([]byte(source)), module, bare}
 	dnsRewriteCache.Lock()
 	cached, ok := dnsRewriteCache.entries[key]
-	dnsRewriteCache.Unlock()
 	if ok {
-		return cached.source, cached.err
+		dnsRewriteCache.order.MoveToFront(cached)
+		result := cached.Value.(dnsCachedRewrite).result
+		dnsRewriteCache.Unlock()
+		return result.source, result.err
 	}
+	dnsRewriteCache.Unlock()
 	rewritten, err := rewriteDNSImportRanges(source, bare, module)
 	dnsRewriteCache.Lock()
 	const limit = 32 << 20
-	if len(rewritten) <= limit {
-		if len(dnsRewriteCache.entries) >= 256 || dnsRewriteCache.bytes+len(rewritten) > limit {
-			dnsRewriteCache.entries = make(map[dnsRewriteKey]dnsRewriteResult)
-			dnsRewriteCache.bytes = 0
-		}
+	size := len(rewritten) + len(module) + 256
+	if size <= limit {
 		if _, exists := dnsRewriteCache.entries[key]; !exists {
-			dnsRewriteCache.entries[key] = dnsRewriteResult{rewritten, err}
-			dnsRewriteCache.bytes += len(rewritten)
+			for len(dnsRewriteCache.entries) >= 4096 || dnsRewriteCache.bytes+size > limit {
+				oldest := dnsRewriteCache.order.Back()
+				entry := oldest.Value.(dnsCachedRewrite)
+				delete(dnsRewriteCache.entries, entry.key)
+				dnsRewriteCache.bytes -= entry.size
+				dnsRewriteCache.order.Remove(oldest)
+			}
+			entry := dnsCachedRewrite{key, dnsRewriteResult{rewritten, err}, size}
+			dnsRewriteCache.entries[key] = dnsRewriteCache.order.PushFront(entry)
+			dnsRewriteCache.bytes += size
 		}
 	}
 	dnsRewriteCache.Unlock()
@@ -77,7 +93,7 @@ func rewriteDNSImportRanges(source string, bare bool, module string) (string, er
 		result := api.Build(api.BuildOptions{
 			Stdin: &api.StdinOptions{Contents: source + `
 import "nanoflare-internal:dns-analysis-complete";`, Sourcefile: "worker.js", Loader: api.LoaderJS},
-			Bundle: true, Write: false, LogLevel: api.LogLevelSilent,
+			Bundle: true, Format: api.FormatESModule, Write: false, LogLevel: api.LogLevelSilent,
 			Plugins: []api.Plugin{{Name: "dns-import-ranges", Setup: func(build api.PluginBuild) {
 				build.OnResolve(api.OnResolveOptions{Filter: ".*"}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
 					if args.Path == "nanoflare-internal:dns-analysis-complete" {

@@ -178,3 +178,14 @@ func TestNamespaceCompilerPreservesNonBreakingSpace(t *testing.T) {
 		}
 	}
 }
+
+func TestNamespaceUpgradeAuditIdentifiesIncompatibleRevisions(t *testing.T) {
+	active := []nanoflare.ActiveDeployment{
+		{App: nanoflare.App{ID: "good", Platform: &nanoflare.WorkerPlatform{NamespaceID: "ns"}}, Deployment: nanoflare.Deployment{ID: "good-v1", CompatibilityDate: "2026-09-11", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `const dns = await import('node:dns');`}}}},
+		{App: nanoflare.App{ID: "bad", Platform: &nanoflare.WorkerPlatform{NamespaceID: "ns"}}, Deployment: nanoflare.Deployment{ID: "bad-v1", Files: []nanoflare.WorkerFile{{Path: "__nanoflare_legacy.js", Content: `export default {}`}}}},
+	}
+	failures := AuditNamespaceCode(active)
+	if len(failures) != 1 || !strings.Contains(failures[0].Error(), "bad-v1") {
+		t.Fatalf("upgrade audit: %v", failures)
+	}
+}

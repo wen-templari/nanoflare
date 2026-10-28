@@ -1,7 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -96,5 +98,45 @@ func TestDNSImportRewriteCaughtAndConditionalLookups(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("lookup not rewritten: %v\ngot %s\nwant %s", err, got, want)
 		}
+	}
+}
+
+func TestDNSImportRewriteSupportsModuleSyntax(t *testing.T) {
+	for _, source := range []string{
+		`import dns from 'node:dns'; await Promise.resolve(); export const value = 1;`,
+		`const dns = await import('node:dns');`,
+		`import source wasm from './lib.wasm'; import dns from 'node:dns';`,
+	} {
+		want := strings.ReplaceAll(source, "'node:dns'", "'nanoflare-internal:dns'")
+		got, err := rewriteDNSImports(source, true)
+		if err != nil || got != want {
+			t.Fatalf("valid module rejected: %v\n%s", err, got)
+		}
+	}
+}
+
+func TestDNSRewriteCacheKeepsWorkingSetOver256Modules(t *testing.T) {
+	const source = `import dns from 'node:dns'; export default dns;`
+	for i := 0; i < 300; i++ {
+		if _, err := rewriteDNSImportsForModule(source, true, fmt.Sprintf("module-%d.js", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dnsRewriteCache.Lock()
+	defer dnsRewriteCache.Unlock()
+	for i := 0; i < 300; i++ {
+		key := dnsRewriteKey{sha256.Sum256([]byte(source)), fmt.Sprintf("module-%d.js", i), true}
+		if _, ok := dnsRewriteCache.entries[key]; !ok {
+			t.Fatalf("working set lost module %d", i)
+		}
+	}
+}
+
+func TestRuntimeValidationDoesNotCompileUnrelatedRevisions(t *testing.T) {
+	writer := NewRuntimeWriter(filepath.Join(t.TempDir(), "workerd.capnp"), nil)
+	writer.SetWorkerdDNSAddr("127.0.0.1:1")
+	bad := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{CompatibilityDate: "2026-09-11", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import dns from 'node:dns'; export default <div/>;`}}}}
+	if err := writer.ValidateRuntime([]nanoflare.ActiveDeployment{bad}); err != nil {
+		t.Fatalf("global validation blocked per-revision isolation: %v", err)
 	}
 }

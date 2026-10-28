@@ -86,6 +86,12 @@ errors encountered during adaptation reject publication rather than reverting
 to native DNS. Split deployments with WFP disabled ignore nanoflared DNS
 settings; with WFP enabled, nanoflared validates its active resolver config but
 does not validate or bind the local DNS adapter listen address.
+Startup audits persisted namespace scripts against the current compiler and
+logs incompatible app and revision IDs. Such scripts remain unavailable until
+corrected and redeployed; reserved legacy module names must be renamed. Valid
+module syntax, including top-level await, is preserved. Dynamic-runner restore
+isolates compiler failures per revision and rejects a failed target without
+blocking a healthy peer's publication.
 
 
 ## Opt-in namespace TCP and TLS sockets

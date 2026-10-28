@@ -181,3 +181,18 @@ func NamespaceWorkerModules(deployment nanoflare.Deployment) (map[string]WorkerC
 	}
 	return modules, nil
 }
+
+// AuditNamespaceCode identifies persisted scripts incompatible with the current
+// compiler before request traffic is admitted. Invalid scripts stay fail-closed.
+func AuditNamespaceCode(active []nanoflare.ActiveDeployment) []error {
+	var failures []error
+	for _, item := range active {
+		if item.App.Platform == nil || item.App.Platform.NamespaceID == "" {
+			continue
+		}
+		if _, err := NamespaceWorkerModules(item.Deployment); err != nil {
+			failures = append(failures, fmt.Errorf("app=%s revision=%s: %w", item.App.ID, item.Deployment.ID, err))
+		}
+	}
+	return failures
+}
