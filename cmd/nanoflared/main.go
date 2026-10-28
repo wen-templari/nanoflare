@@ -69,6 +69,7 @@ func main() {
 		egressAddr                     = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
 		dnsConfigValue                 = flag.String("dns-config", os.Getenv("NANOFLARE_DNS_CONFIG"), "inline JSON or path to the platform DNS profile configuration")
 		dnsAddr                        = flag.String("dns-addr", envOrDefault("NANOFLARE_DNS_ADDR", "127.0.0.1:8083"), "private Worker DNS adapter address")
+		wfpDNS                         = flag.Bool("wfp-dns", envBoolOrDefault("NANOFLARE_WFP_DNS", true), "allow trusted WFP scripts to query the platform default resolver; disabling rejects JSON DoH without public fallback")
 		socketDir                      = flag.String("runtime-socket-dir", "/tmp/nanoflare-sockets", "private directory for Worker Unix sockets")
 		prometheus                     = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
 		lokiURL                        = flag.String("loki-url", os.Getenv("NANOFLARE_LOKI_URL"), "Loki base URL for persistent worker output")
@@ -212,7 +213,7 @@ func main() {
 	if *runnerToken == "" {
 		*runnerToken = rand.Text()
 	}
-	dnsServer, dnsConfig, err := platformDNS(*dnsConfigValue, *dnsAddr, *runnerURL != "", *platformDispatchEnabled)
+	dnsServer, dnsConfig, err := platformDNS(*dnsConfigValue, *dnsAddr, *runnerURL != "", *platformDispatchEnabled && *wfpDNS)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -380,7 +381,7 @@ func main() {
 	}
 	// The platform resolver also exists with a remote runner. Dispatch DNS uses
 	// nanoflared's default profile, while ordinary Workers use their runner's.
-	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, platformDNSOutbound(dispatchTransport, dnsServer), *runnerToken, output)
+	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, platformDNSOutbound(dispatchTransport, dnsServer, *wfpDNS), *runnerToken, output)
 	defer runtimeMux.Close()
 
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
@@ -532,8 +533,8 @@ func platformDNS(value, addr string, remote, dispatch bool) (*dnsresolver.Server
 }
 
 // A missing resolver still intercepts DoH and fails closed.
-func platformDNSOutbound(next http.RoundTripper, server *dnsresolver.Server) http.RoundTripper {
-	if server == nil {
+func platformDNSOutbound(next http.RoundTripper, server *dnsresolver.Server, enabled bool) http.RoundTripper {
+	if !enabled || server == nil {
 		return dnsresolver.DoHTransport(next, nil)
 	}
 	return dnsresolver.DoHTransport(next, server)

@@ -53,8 +53,10 @@ Developer tools, effective-capability reporting and customer telemetry are imple
 ## Namespace DNS lookup
 
 With effective Node.js compatibility, dynamic namespace scripts use Nanoflare's
-adapter for callback and promise `lookup()`, `resolve4()`, `resolve6()` and
-A/AAAA `resolve()` requests (including bare imports under Node.js compatibility v2).
+adapter for callback and promise `lookup()`, A/AAAA `resolve()`, `resolve4()`,
+`resolve6()`, `resolveTxt()`, `resolveMx()`, `resolveCname()`, `resolveSrv()`,
+`resolveNs()`, `resolvePtr()` and `reverse()` requests (including bare imports
+under Node.js compatibility v2).
 The invocation broker resolves through `nanoflared`'s configured `defaultProfile`,
 including with a remote runner. Configure `NANOFLARE_DNS_CONFIG` on `nanoflared`
 for private/corporate names. Scripts cannot select another profile. Each DoH
@@ -63,7 +65,10 @@ Resolution is canceled with the invocation's deadline or cancellation. Revision
 reuse does not retain invocation capabilities.
 
 Namespace DNS uses the platform default resolver for all authorized trusted
-namespace scripts with Node.js compatibility; it has no separate DNS opt-in.
+namespace scripts with Node.js compatibility by default. Set
+`NANOFLARE_WFP_DNS=false` (`--wfp-dns=false`) on nanoflared to reject their JSON
+DoH requests without contacting either the corporate resolver or public DoH.
+This switch does not change ordinary Worker DNS or arbitrary outbound fetch policy.
 Enable this pilot only for code trusted to query that resolver, including its
 private names. Socket opt-in does not restrict DNS queries.
 
@@ -75,9 +80,14 @@ request-scoped connections and close them within the invocation.
 
 The adapter answers the pinned workerd `node:dns` implementation's JSON DoH
 fetches at `https://cloudflare-dns.com/dns-query`. Uploaded modules and the
-dispatch artifact format are unchanged. Unsupported record types return NOTIMP
-locally without contacting public DoH. Explicit fetches to that same endpoint
-also receive platform DNS answers. `lookup()` maps resolver failures and broker
+dispatch artifact format are unchanged. The profile's Go resolver answers
+TXT, MX, CNAME, SRV, NS and PTR as well as address lookups, sharing configured
+server selection, timeout and cancellation. SOA, CAA, NAPTR and ANY remain
+unsupported and return NOTIMP locally. Explicit JSON fetches with a `name`
+parameter to that same endpoint also receive platform DNS answers; binary
+DoH (`?dns=`) and requests without `name` retain ordinary outbound behavior.
+Trailing-dot hostnames and the default HTTPS port are normalized in both adapters.
+`lookup()` maps resolver failures and broker
 admission errors to `ENOTFOUND`; other DNS APIs may expose native transport
 errors such as `EBADRESP`. Timeout and terminal invocation codes from the former
 shim are not preserved. Retry policies must be bounded.
@@ -86,8 +96,10 @@ address family to NXDOMAIN to avoid workerd's empty-success result behavior.
 Native CI tests pin these implementation details for workerd upgrades.
 
 DNS resolution does not grant socket access: TCP/TLS connections remain subject
-to the executor's separate socket policy below. Split deployments with WFP disabled ignore nanoflared DNS
-settings; with WFP enabled, nanoflared validates its active resolver config but
+to the executor's separate socket policy below. Split deployments with WFP or
+namespace DNS disabled ignore nanoflared DNS settings. With both enabled,
+nanoflared validates its active resolver config at startup and exits on invalid
+configuration (see [release notes](../../CHANGELOG.md#unreleased)), but
 does not validate or bind the local DNS adapter listen address. The outbound
 transport calls that resolver in-process, so private DoH does not traverse the
 HTTP proxy. Missing resolver configuration fails closed at the intercepted

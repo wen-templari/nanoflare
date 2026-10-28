@@ -56,6 +56,22 @@ func privateDNSFixture(t *testing.T) (http.Handler, *atomic.Int32) {
 			if q.Name.String() == "database.corporate.invalid." && q.Type == dnsmessage.TypeAAAA {
 				b.AAAAResource(dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 1}, dnsmessage.AAAAResource{AAAA: [16]byte{0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}})
 			}
+			resource := dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 30}
+			switch q.Type {
+			case dnsmessage.TypeTXT:
+				b.TXTResource(resource, dnsmessage.TXTResource{TXT: []string{"private-text"}})
+			case dnsmessage.TypeMX:
+				b.MXResource(resource, dnsmessage.MXResource{Pref: 10, MX: dnsmessage.MustNewName("mail.corporate.invalid.")})
+			case dnsmessage.TypeNS:
+				b.NSResource(resource, dnsmessage.NSResource{NS: dnsmessage.MustNewName("ns.corporate.invalid.")})
+			case dnsmessage.TypeSRV:
+				b.SRVResource(resource, dnsmessage.SRVResource{Priority: 1, Weight: 5, Port: 5432, Target: dnsmessage.MustNewName("database.corporate.invalid.")})
+			case dnsmessage.TypePTR:
+				b.PTRResource(resource, dnsmessage.PTRResource{PTR: dnsmessage.MustNewName("database.corporate.invalid.")})
+			}
+			if q.Name.String() == "alias.corporate.invalid." {
+				b.CNAMEResource(resource, dnsmessage.CNAMEResource{CNAME: dnsmessage.MustNewName("database.corporate.invalid.")})
+			}
 			response, err := b.Finish()
 			if err == nil {
 				conn.WriteTo(response, client)
@@ -134,8 +150,16 @@ export async function probe(){ try {
  await scheduler.wait(Math.floor(Math.random()*15));
  const callback=await new Promise((resolve,reject)=>dns.lookup(host,options,(err,value)=>err?reject(err):resolve(value)));
  const missing = await dns.promises.lookup('missing.corporate.invalid',options).then(()=>false,e=>e.code==='ENOTFOUND');
- const unsupported = await dns.promises.resolveTxt(host).then(()=>false,e=>e.code==='ENOTFOUND');
+ const unsupported = await dns.promises.resolveCaa(host).then(()=>false,e=>e.code==='ENOTFOUND');
  if (!missing || !unsupported) throw new Error('DNS failure contract changed: '+JSON.stringify({missing,unsupported}));
+ const [txt,mx,cname,srv,ns,reverse,ptr,mapped]=await Promise.all([
+ dns.promises.resolveTxt(host),dns.promises.resolveMx(host),dns.promises.resolveCname('alias.corporate.invalid'),
+ dns.promises.resolveSrv('_db._tcp.'+host),dns.promises.resolveNs(host),dns.promises.reverse('10.20.30.40'),
+ dns.promises.resolvePtr('40.30.20.10.in-addr.arpa'),dns.promises.resolve6('::ffff:10.0.0.1')]);
+ if (txt[0]?.[0]!=='private-text' || mx[0]?.exchange!=='mail.corporate.invalid' || mx[0]?.priority!==10 ||
+ cname[0]!==host || srv[0]?.name!==host || srv[0]?.port!==5432 || srv[0]?.priority!==1 || srv[0]?.weight!==5 ||
+ ns[0]!=='ns.corporate.invalid' || reverse[0]!==host || ptr[0]!==host || mapped[0]!=='::ffff:10.0.0.1')
+ throw new Error('record answers: '+JSON.stringify({txt,mx,cname,srv,ns,reverse,ptr,mapped}));
  return Response.json([callback,await dns.promises.lookup(host,options),await lookup(host,options),await bare.promises.lookup(host,options),await barePromises.lookup(host,options),
  (await dns.promises.resolve4(host)).map(address=>({address,family:4})),(await dns.promises.resolve6(host)).map(address=>({address,family:6})),
  await dns.promises.lookup(host,{all:true}),await dns.promises.lookup(host,{all:true,family:6})]);

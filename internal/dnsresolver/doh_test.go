@@ -28,8 +28,11 @@ func TestDoHAnswersAndFailures(t *testing.T) {
 		{"name=rac.internal&type=AAAA", "", 3, 0, 0},
 		{"name=fd00::1&type=28", "", 0, 1, 28},
 		{"name=fd00::1&type=A", "", 3, 0, 0},
-		{"name=rac.internal&type=TXT", "", 4, 0, 0},
-		{"name=rac.internal&type=MX", "", 4, 0, 0},
+		{"name=rac.internal&type=TXT", "", 3, 0, 0},
+		{"name=rac.internal&type=MX", "", 3, 0, 0},
+		{"name=rac.internal&type=CAA", "", 4, 0, 0},
+		{"name=::ffff:10.0.0.1&type=AAAA", "", 0, 1, 28},
+		{"name=::ffff:10.0.0.1&type=A", "", 3, 0, 0},
 		{"name=rac.internal&type=A", "unknown", 2, 0, 0},
 		{"name=rac.internal&type=A", "slow", 2, 0, 0},
 		{"type=A", "", 2, 0, 0},
@@ -80,6 +83,10 @@ func TestDoHTransportIsolationAndMatching(t *testing.T) {
 	}{
 		{"GET", "https://cloudflare-dns.com/dns-query?name=private.internal&type=A&profile=other", true},
 		{"GET", "https://CLOUDFLARE-DNS.COM/dns-query?name=private.internal&type=TXT", true},
+		{"GET", "https://cloudflare-dns.com./dns-query?name=private.internal&type=A", true},
+		{"GET", "https://cloudflare-dns.com.:443/dns-query?name=private.internal&type=A", true},
+		{"GET", "https://cloudflare-dns.com/dns-query?dns=AAAB", false},
+		{"GET", "https://cloudflare-dns.com/dns-query", false},
 		{"POST", "https://cloudflare-dns.com/dns-query", false},
 		{"GET", "http://cloudflare-dns.com/dns-query", false},
 		{"GET", "https://cloudflare-dns.com/other", false},
@@ -108,7 +115,7 @@ func TestDoHTransportIsolationAndMatching(t *testing.T) {
 			t.Fatal("mutated caller request")
 		}
 	}
-	if calls != 2 {
+	if calls != 4 {
 		t.Fatalf("resolver calls %d", calls)
 	}
 	r, _ := http.NewRequest("GET", "https://cloudflare-dns.com/dns-query?name=private.internal&type=A", nil)

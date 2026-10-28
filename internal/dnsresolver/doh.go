@@ -6,13 +6,19 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 )
 
-const DoHPath = "/dns-query"
+const (
+	DoHHost = "cloudflare-dns.com"
+	DoHPath = "/dns-query"
+)
+
+var dohRecordTypes = map[string]int{
+	"A": 1, "AAAA": 28, "TXT": 16, "MX": 15, "SRV": 33, "NS": 2, "CNAME": 5, "SOA": 6, "PTR": 12, "ANY": 255, "CAA": 257, "NAPTR": 35,
+}
 
 type dohAnswer struct {
 	Name string `json:"name"`
@@ -40,51 +46,31 @@ func (s *Server) serveDoH(w http.ResponseWriter, r *http.Request) {
 	hostname := strings.TrimSpace(r.URL.Query().Get("name"))
 	typeName := strings.ToUpper(r.URL.Query().Get("type"))
 	typeCode, _ := strconv.Atoi(typeName)
-	if value := map[string]int{"A": 1, "AAAA": 28, "TXT": 16, "MX": 15, "SRV": 33, "NS": 2, "CNAME": 5, "SOA": 6, "PTR": 12, "ANY": 255, "CAA": 257, "NAPTR": 35}[typeName]; value != 0 {
+	if value := dohRecordTypes[typeName]; value != 0 {
 		typeCode = value
 	}
 	// workerd validates Question even for errors before examining Answer.
 	response := dohResponse{Question: []dohQuestion{{Name: hostname, Type: typeCode}}}
-	family, recordType := 0, 0
-	switch typeName {
-	case "A", "1":
-		family, recordType = 4, 1
-	case "AAAA", "28":
-		family, recordType = 6, 28
-	default:
-		response.Status = 4 // NOTIMP: never fall back to public DoH.
-		writeJSON(w, http.StatusOK, response)
-		return
-	}
 	profile, ok := s.profile(r)
 	if hostname == "" || !ok {
 		response.Status = 2
-	} else if ip, err := netip.ParseAddr(hostname); err == nil && (ip.Unmap().Is4() != (family == 4)) {
-		response.Status = 3
+	} else if !supportedDoHType(typeCode) {
+		response.Status = 4
 	} else {
-		addresses, err := lookup(r.Context(), profile, hostname, family)
-		if r.Context().Err() != nil {
-			return
-		}
+		var err error
+		response.Answer, err = lookupDoH(r.Context(), profile, hostname, typeCode)
 		if err != nil {
-			response.Status = 2 // SERVFAIL
+			response.Status = 2
 			var dnsErr *net.DNSError
 			if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 				response.Status = 3
 			}
-		} else {
-			for _, address := range addresses {
-				if address.Family == family {
-					response.Answer = append(response.Answer, dohAnswer{Name: hostname, Type: recordType, TTL: 30, Data: address.Address})
-				}
-			}
-			// workerd can return undefined without error for an empty successful A
-			// response. Use NXDOMAIN for a missing family, per the native contract.
-			if len(response.Answer) == 0 {
-				response.Status = 3
-			}
+		} else if len(response.Answer) == 0 {
+			// Avoid workerd's undefined result on an empty successful A answer.
+			response.Status = 3
 		}
 	}
+
 	if r.Context().Err() != nil {
 		return
 	}
@@ -102,7 +88,9 @@ func (s *Server) profile(r *http.Request) (Profile, bool) {
 
 func IsDoHRequest(r *http.Request) bool {
 	return r.Method == http.MethodGet && r.URL.Scheme == "https" &&
-		strings.EqualFold(r.URL.Host, "cloudflare-dns.com") && r.URL.User == nil && r.URL.Path == DoHPath
+		strings.EqualFold(strings.TrimSuffix(r.URL.Hostname(), "."), DoHHost) &&
+		(r.URL.Port() == "" || r.URL.Port() == "443") && r.URL.User == nil &&
+		r.URL.EscapedPath() == DoHPath && r.URL.Query().Has("name")
 }
 
 type dohTransport struct {

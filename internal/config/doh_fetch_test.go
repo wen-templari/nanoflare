@@ -1,9 +1,13 @@
 package config
 
 import (
+	"encoding/json"
+	"net/http"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/clas/nanoflare/internal/dnsresolver"
 )
 
 func TestDoHFetchHookPreservesFetchSemantics(t *testing.T) {
@@ -12,6 +16,32 @@ func TestDoHFetchHookPreservesFetchSemantics(t *testing.T) {
 		t.Skip("node is not installed")
 	}
 	// Execute the production hook with instrumented native fetch and binding.
+	// The same cases go through the actual Go matcher and production JS hook.
+	type matchCase struct {
+		Method, URL string
+		Intercepted bool
+	}
+	var cases []matchCase
+	for _, value := range []struct{ method, url string }{
+		{"GET", "https://cloudflare-dns.com/dns-query?name=private&type=A"},
+		{"GET", "https://CLOUDFLARE-DNS.COM./dns-query?name=private&type=TXT"},
+		{"GET", "https://cloudflare-dns.com.:443/dns-query?name=private&type=MX"},
+		{"GET", "https://cloudflare-dns.com:444/dns-query?name=private&type=A"},
+		{"GET", "https://cloudflare-dns.com/dns-query?dns=AAAB"},
+		{"GET", "https://cloudflare-dns.com/dns-query"},
+		{"GET", "https://cloudflare-dns.com/dns-query?name="},
+		{"GET", "https://cloudflare-dns.com/%64ns-query?name=private"},
+		{"GET", "https://cloudflare-dns.com.attacker.test/dns-query?name=private"},
+		{"GET", "http://cloudflare-dns.com/dns-query?name=private"},
+		{"POST", "https://cloudflare-dns.com/dns-query?name=private"},
+	} {
+		r, err := http.NewRequest(value.method, value.url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases = append(cases, matchCase{value.method, value.url, dnsresolver.IsDoHRequest(r)})
+	}
+	encoded, _ := json.Marshal(cases)
 	program := `import assert from 'node:assert/strict';
 const seen=[];
 globalThis.fetch=(...args)=>{seen.push(['native',...args]);return Promise.resolve(new Response('native'))};
@@ -45,6 +75,10 @@ assert.equal(seen.at(-1)[0],'native');
 assert.equal(seen.at(-1)[1],input);
 assert.equal(seen.at(-1)[2],options);
 assert.equal(input.bodyUsed,false);
+` + "\nfor (const test of " + string(encoded) + `) {
+ await fetch(test.URL,{method:test.Method});
+ assert.equal(seen.at(-1)[0]==='dns',test.Intercepted,JSON.stringify(test));
+}
 `
 	if output, err := exec.Command(node, "--input-type=module", "-e", program).CombinedOutput(); err != nil {
 		t.Fatalf("fetch hook: %v\n%s", err, output)

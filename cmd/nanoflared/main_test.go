@@ -151,7 +151,7 @@ func TestPlatformDNSOutboundLocalAndRemote(t *testing.T) {
 			return nil, nil
 		})
 		r, _ := http.NewRequest("GET", "https://cloudflare-dns.com/dns-query?name=127.0.0.1&type=A", nil)
-		response, err := platformDNSOutbound(next, server).RoundTrip(r)
+		response, err := platformDNSOutbound(next, server, true).RoundTrip(r)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,9 +160,14 @@ func TestPlatformDNSOutboundLocalAndRemote(t *testing.T) {
 		if response.StatusCode != 200 || !strings.Contains(string(body), `"data":"127.0.0.1"`) {
 			t.Fatalf("remote=%t: %d %s", remote, response.StatusCode, body)
 		}
-		response, err = platformDNSOutbound(next, nil).RoundTrip(r)
+		response, err = platformDNSOutbound(next, nil, true).RoundTrip(r)
 		if err != nil || response.StatusCode != 503 {
 			t.Fatalf("missing DNS failed open: %v %v", response, err)
+		}
+		response.Body.Close()
+		response, err = platformDNSOutbound(next, server, false).RoundTrip(r)
+		if err != nil || response.StatusCode != 503 {
+			t.Fatalf("disabled DNS reached resolver or public egress: %v %v", response, err)
 		}
 		response.Body.Close()
 	}
