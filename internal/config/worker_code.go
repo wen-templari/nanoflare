@@ -98,14 +98,11 @@ export { DispatchBroker };
 			if addWasm(file) {
 				continue
 			}
-			add(file.Path, workerdSafeSource(file.Content))
+			add(file.Path, file.Content)
 		}
 	} else if deploymentFormat(deployment) == "service-worker" {
 		source := deployment.Files[0].Content
-		if dnsEnabled {
-			source = rewriteDNSImports(source, nodeCompatibility.v2)
-		}
-		add(mainModule, serviceWorkerWrapper(workerdSafeSource(source), deployment.Databases, deployment.ObjectStorageBuckets))
+		add(mainModule, serviceWorkerWrapper(source, deployment.Databases, deployment.ObjectStorageBuckets))
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 	} else {
 		if workerEntrypointModule(deployment) {
@@ -119,15 +116,14 @@ export { DispatchBroker };
 				continue
 			}
 			source := file.Content
-			if dnsEnabled {
-				source = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
-			}
-			add(file.Path, workerdSafeSource(source))
+			add(file.Path, source)
 		}
 	}
 	if dnsEnabled {
-		add("nanoflare-internal:dns", dnsShimSource())
-		add("nanoflare-internal:dns/promises", dnsPromisesShimSource())
+		module := snapshot.Modules[mainModule]
+		module.JS = `import "nanoflare-internal:doh-fetch";` + "\n" + module.JS
+		snapshot.Modules[mainModule] = module
+		add("nanoflare-internal:doh-fetch", dohFetchSource())
 	}
 	return snapshot
 }

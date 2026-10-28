@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/dnsresolver"
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
@@ -1195,8 +1196,10 @@ func (m *DynamicManager) forwardResource(w http.ResponseWriter, r *http.Request,
 	}
 	if binding == "__NANOFLARE_DNS" && m.options.DNSAddr != "" {
 		destination = m.options.DNSAddr
-		path = "/lookup"
-		query = ""
+		if path != dnsresolver.DoHPath {
+			path = "/lookup"
+			query = ""
+		}
 		headers.Set("X-Nanoflare-DNS-Profile", active.Deployment.DNS.Profile)
 		allowed = true
 	}

@@ -338,17 +338,39 @@ Node.js compatibility is enabled by the compatibility date starting with
 ["nodejs_compat"]`. If Node.js compatibility is explicitly disabled with
 `no_nodejs_compat`, Nanoflare does not install the DNS lookup adapter.
 
+Dynamic Workers for Platforms namespace scripts use the `defaultProfile` from
+`nanoflared`'s `NANOFLARE_DNS_CONFIG`, including in split deployments. Their
+lookups run through the invocation broker and share its effect budget and
+deadline. Per-script profile selection remains unavailable. Configure the
+corporate default on `nanoflared` when namespace scripts need private DNS; the
+runner's resolver configuration still applies to ordinary Workers.
+Namespace DNS is enabled for authorized trusted scripts by default. Set
+`NANOFLARE_WFP_DNS=false` or `--wfp-dns=false` on nanoflared to reject their JSON
+DNS requests without public DoH fallback; ordinary Worker DNS is unchanged.
+In split mode, enabling namespace DNS validates nanoflared's DNS config at
+startup and invalid configuration prevents startup (see [release notes](CHANGELOG.md#unreleased)).
+Persistent background connection pools, including the node-oracledb thin
+pool, are unsupported in this pilot because they retain the creating
+invocation's lease. Use request-scoped connections; see the
+[namespace DNS contract](docs/reference/workers-for-platforms-runtime.md#namespace-dns-lookup).
+
 Workers without `dns.profile` inherit `defaultProfile`. Unknown profiles fail
-deployment, and lookup errors retain Node-style codes such as `ENOTFOUND`,
-`ETIMEOUT`, and `EAI_AGAIN`. The adapter is private and listens on
+deployment. Native `lookup()` maps failures to `ENOTFOUND`, including timeouts
+and invocation admission failures. Other DNS APIs may expose native transport
+errors; detailed shim error codes are no longer exposed. The adapter is private and listens on
 `127.0.0.1:8083` by default; change that with `NANOFLARE_DNS_ADDR` only when the
 runtime topology requires it.
 
-Nanoflare transparently redirects `node:dns` and `node:dns/promises` imports
-when Node.js compatibility is enabled. Bare `dns` imports are redirected only
-when Node.js compatibility v2 is enabled. Other DNS methods continue to use
-workerd's built-in public DNS-over-HTTPS implementation. Raw
-outbound socket hostname resolution remains workerd-managed; clients such as
+Nanoflare answers the pinned workerd runtime's DNS-over-HTTPS fetches through
+the private resolver without rewriting uploaded source. Callback and promise
+`lookup()`, `resolve4()`, `resolve6()`, `resolveTxt()`, `resolveMx()`,
+`resolveCname()`, `resolveSrv()`, `resolveNs()`, `resolvePtr()` and `reverse()`
+use the configured profile, including bare DNS imports under Node.js compatibility
+v2. SOA, CAA, NAPTR and ANY remain unsupported and return NOTIMP without public
+DoH fallback. Explicit JSON fetches with a `name` parameter to the same
+`https://cloudflare-dns.com/dns-query` endpoint also use this adapter; binary
+DoH requests using `?dns=` retain ordinary outbound behavior.
+Raw outbound socket hostname resolution remains workerd-managed; clients such as
 node-oracledb that enumerate addresses with `lookup()` use the private resolver
 before opening their sockets, including subsequent listener redirects.
 

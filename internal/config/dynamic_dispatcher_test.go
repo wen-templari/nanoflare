@@ -52,6 +52,13 @@ export default { async fetch(request,env,ctx) {
 } };`}}}
 	programs := map[string]map[string]any{}
 	for key, source := range map[string]string{
+		"dns": `import dns from "node:dns";
+const capturedFetch = globalThis.fetch;
+export default {async fetch(){
+ const addresses=await dns.promises.lookup("private.internal",{all:true,family:4});
+ const response=await capturedFetch("https://cloudflare-dns.com/dns-query?name=private.internal&type=A");
+ return Response.json({addresses,doh:await response.json()});
+}};`,
 		"dispatcher": `import {RpcTarget,WorkerEntrypoint} from "cloudflare:workers";
 class AI extends RpcTarget {run(value){return {response:"AI_OK",value};}}
 export class Other extends WorkerEntrypoint {ping(){return "OTHER_OK";}}
@@ -100,7 +107,11 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 		if key == "b" {
 			active.Deployment.KVNamespaces = []nanoflare.KVBinding{{Binding: "KV", ID: "kv-b"}}
 		}
-		code := InstrumentLoaderInvocation(SnapshotWorkerCodeForLoader(active, WorkerdOptions{}), active)
+		options := WorkerdOptions{}
+		if key == "dns" {
+			options.DNSAddr = "127.0.0.1:8083"
+		}
+		code := InstrumentLoaderInvocation(SnapshotWorkerCodeForLoader(active, options), active)
 		wire, err := json.Marshal(code)
 		if err != nil {
 			t.Fatal(err)
@@ -126,6 +137,12 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 			return
 		}
 		switch {
+		case r.URL.Path == "/resource/dns/dns-query":
+			if r.URL.Query().Get("name") != "private.internal" || r.URL.Query().Get("type") != "A" || r.Header.Get("X-Nanoflare-Binding-Name") != "__NANOFLARE_DNS" {
+				t.Errorf("DoH resource bridge: %s %v", r.URL, r.Header)
+			}
+			w.Header().Set("Content-Type", "application/dns-json")
+			io.WriteString(w, `{"Status":0,"Question":[{"name":"private.internal","type":1}],"Answer":[{"name":"private.internal","type":1,"TTL":30,"data":"10.20.30.40"}]}`)
 		case strings.HasPrefix(r.URL.Path, "/start/"):
 			if r.Header.Get("X-Nanoflare-Invocation") == "invocation-denied" {
 				http.Error(w, "revoked", 403)
@@ -320,6 +337,14 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 	unauthorized.Body.Close()
 	if unauthorized.StatusCode != 401 {
 		t.Fatalf("unauthorized status=%d", unauthorized.StatusCode)
+	}
+	for _, token := range []string{"invocation-dns-1", "invocation-dns-2"} {
+		response := call("/", "dispatcher-secret", token, "dns")
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != 200 || strings.Count(string(body), "10.20.30.40") != 2 {
+			t.Fatalf("ordinary dynamic Worker DNS: %d %s", response.StatusCode, body)
+		}
 	}
 	for _, execution := range []string{"invalid", "throws", "invalid", "throws", "missing"} {
 		response := call("/__nanoflare_validate", "dispatcher-secret", "", execution)

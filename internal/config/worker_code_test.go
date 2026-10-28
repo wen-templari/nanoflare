@@ -43,18 +43,25 @@ func TestWorkerCodeSnapshotCapturesCodeWithoutEnvironmentOrAliasing(t *testing.T
 	}
 }
 
-func TestWorkerCodeSnapshotPreservesPrivateDNSRewrite(t *testing.T) {
+func TestWorkerCodeSnapshotInstallsPrivateDNSHookWithoutRewritingSource(t *testing.T) {
 	active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{
 		Format: "modules", Entrypoint: "worker.js", CompatibilityDate: "2026-09-08",
 		Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import dns from "node:dns"; export default { fetch() { return dns.lookup("private.test"); } };`}},
 	}}
 	withDNS := SnapshotWorkerCode(active, WorkerdOptions{DNSAddr: "127.0.0.1:8083"})
 	withoutDNS := SnapshotWorkerCode(active, WorkerdOptions{})
-	if !strings.Contains(withDNS.Modules["worker.js"].JS, `"nanoflare-internal:dns"`) || withDNS.Modules["nanoflare-internal:dns"].JS == "" {
-		t.Fatal("private DNS rewriting or shim was omitted")
+	if withDNS.Modules["worker.js"].JS != active.Deployment.Files[0].Content || withDNS.Modules["nanoflare-internal:doh-fetch"].JS == "" {
+		t.Fatal("DNS hook was omitted or user source changed")
 	}
-	if !strings.Contains(withoutDNS.Modules["worker.js"].JS, `"node:dns"`) || withoutDNS.Modules["nanoflare-internal:dns"].JS != "" {
-		t.Fatal("private DNS rewriting was enabled without its backend")
+	if !strings.HasPrefix(withDNS.Modules[withDNS.MainModule].JS, `import "nanoflare-internal:doh-fetch";`) {
+		t.Fatal("hook must evaluate before user modules")
+	}
+	if withoutDNS.Modules["worker.js"].JS != active.Deployment.Files[0].Content || withoutDNS.Modules["nanoflare-internal:doh-fetch"].JS != "" {
+		t.Fatal("DNS hook enabled without its backend")
+	}
+	active.Deployment.CompatibilityFlags = []string{"no_nodejs_compat"}
+	if SnapshotWorkerCode(active, WorkerdOptions{DNSAddr: "127.0.0.1:8083"}).Modules["nanoflare-internal:doh-fetch"].JS != "" {
+		t.Fatal("DNS hook enabled without Node compatibility")
 	}
 }
 

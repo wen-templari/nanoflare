@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -152,7 +151,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen for Worker DNS: %w", err)
 	}
 	s.ln = ln
-	s.server.Handler = http.HandlerFunc(s.serveHTTP)
+	s.server.Handler = s
 	go func() { _ = s.server.Serve(ln) }()
 	return nil
 }
@@ -166,7 +165,16 @@ func (s *Server) Addr() string {
 
 func (s *Server) Close(ctx context.Context) error { return s.server.Shutdown(ctx) }
 
+// ServeHTTP exposes the lookup adapter to trusted in-process runtime brokers.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.serveHTTP(w, r)
+}
+
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == DoHPath {
+		s.serveDoH(w, r)
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Path != "/lookup" {
 		http.NotFound(w, r)
 		return
@@ -183,13 +191,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EINVAL", Error: "hostname and family (0, 4, or 6) are required"})
 		return
 	}
-	profileName := strings.TrimSpace(r.Header.Get("X-Nanoflare-DNS-Profile"))
-	if profileName == "" {
-		profileName = s.config.DefaultProfile
-	}
-	profile, ok := s.config.Profiles[profileName]
+	profile, ok := s.profile(r)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EBADPROFILE", Error: fmt.Sprintf("DNS profile %q is not configured", profileName)})
+		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EBADPROFILE", Error: fmt.Sprintf("DNS profile %q is not configured", strings.TrimSpace(r.Header.Get("X-Nanoflare-DNS-Profile")))})
 		return
 	}
 	addresses, err := lookup(r.Context(), profile, request.Hostname, request.Family)
@@ -209,50 +213,21 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func lookup(ctx context.Context, profile Profile, hostname string, family int) ([]lookupAddress, error) {
-	timeout := 5 * time.Second
-	if profile.Timeout != "" {
-		timeout, _ = time.ParseDuration(profile.Timeout)
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	network := "ip"
 	if family == 4 {
 		network = "ip4"
 	} else if family == 6 {
 		network = "ip6"
 	}
-	resolvers := []*net.Resolver{net.DefaultResolver}
-	if len(profile.Servers) > 0 {
-		resolvers = resolvers[:0]
-		for _, server := range profile.Servers {
-			server := server
-			resolvers = append(resolvers, &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, server)
-			}})
+	return queryProfile(ctx, profile, hostname, func(ctx context.Context, resolver *net.Resolver) ([]lookupAddress, error) {
+		ips, err := resolver.LookupNetIP(ctx, network, hostname)
+		if err != nil {
+			return nil, err
 		}
-	}
-	type result struct {
-		ips []netip.Addr
-		err error
-	}
-	results := make(chan result, len(resolvers))
-	for _, resolver := range resolvers {
-		go func(resolver *net.Resolver) {
-			ips, err := resolver.LookupNetIP(ctx, network, hostname)
-			results <- result{ips: ips, err: err}
-		}(resolver)
-	}
-	var lastErr error
-	for range resolvers {
-		resolved := <-results
-		if resolved.err != nil {
-			lastErr = resolved.err
-			continue
-		}
-		ips := resolved.ips
-		result := make([]lookupAddress, 0, len(ips))
+		addresses := make([]lookupAddress, 0, len(ips))
 		seen := make(map[string]bool, len(ips))
 		for _, ip := range ips {
+			ip = ip.Unmap()
 			value := ip.String()
 			if seen[value] {
 				continue
@@ -262,12 +237,56 @@ func lookup(ctx context.Context, profile Profile, hostname string, family int) (
 			if ip.Is4() {
 				ipFamily = 4
 			}
-			result = append(result, lookupAddress{Address: value, Family: ipFamily})
+			addresses = append(addresses, lookupAddress{Address: value, Family: ipFamily})
 		}
-		if len(result) > 0 {
-			return result, nil
+		return addresses, nil
+	})
+}
+
+// All record types share profile servers, timeouts and first-success behavior.
+// A configured profile never falls back to the system or a public resolver.
+func queryProfile[T any](ctx context.Context, profile Profile, hostname string, query func(context.Context, *net.Resolver) ([]T, error)) ([]T, error) {
+	timeout := 5 * time.Second
+	if profile.Timeout != "" {
+		timeout, _ = time.ParseDuration(profile.Timeout)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	resolvers := []*net.Resolver{net.DefaultResolver}
+	if len(profile.Servers) > 0 {
+		resolvers = nil
+		for _, server := range profile.Servers {
+			resolvers = append(resolvers, &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, server)
+			}})
 		}
-		lastErr = &net.DNSError{Err: "no addresses", Name: hostname, IsNotFound: true}
+	}
+	type result struct {
+		values []T
+		err    error
+	}
+	results := make(chan result, len(resolvers))
+	for _, resolver := range resolvers {
+		go func() { values, err := query(ctx, resolver); results <- result{values, err} }()
+	}
+	var lastErr error
+	for range resolvers {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case resolved := <-results:
+			if resolved.err != nil {
+				lastErr = resolved.err
+				continue
+			}
+			if len(resolved.values) > 0 {
+				return resolved.values, nil
+			}
+			lastErr = &net.DNSError{Err: "no records", Name: hostname, IsNotFound: true}
+		}
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
