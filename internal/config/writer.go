@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
-	"github.com/evanw/esbuild/pkg/api"
 )
 
 type Writer struct {
@@ -74,10 +73,10 @@ func (w *RuntimeWriter) SetDNSProfiles(profiles []string) { w.dnsProfiles = prof
 
 // ValidateRuntime checks configuration before compiling a publication.
 func (w *Writer) ValidateRuntime(active []nanoflare.ActiveDeployment) error {
-	return validateDNSProfiles(active, w.dnsProfiles)
+	return validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions())
 }
 func (w *RuntimeWriter) ValidateRuntime(active []nanoflare.ActiveDeployment) error {
-	return validateDNSProfiles(active, w.dnsProfiles)
+	return validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions())
 }
 
 // RuntimeOptions returns a detached snapshot of the runtime compiler options.
@@ -123,7 +122,7 @@ func (w *Writer) Write(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *Writer) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
+	if err := validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions()); err != nil {
 		return err
 	}
 	return writeAtomic(path, []byte(WorkerdWithOptions(active, w.RuntimeOptions())))
@@ -134,10 +133,22 @@ func (w *Writer) WriteTraefik(active []nanoflare.ActiveDeployment) error {
 }
 
 func (w *RuntimeWriter) WriteWorkerd(path string, active []nanoflare.ActiveDeployment) error {
-	if err := validateDNSProfiles(active, w.dnsProfiles); err != nil {
+	if err := validateRuntimeCompilation(active, w.dnsProfiles, w.RuntimeOptions()); err != nil {
 		return err
 	}
 	return writeAtomic(path, []byte(WorkerdWithOptions(active, w.RuntimeOptions())))
+}
+
+func validateRuntimeCompilation(active []nanoflare.ActiveDeployment, profiles map[string]bool, options WorkerdOptions) error {
+	if err := validateDNSProfiles(active, profiles); err != nil {
+		return err
+	}
+	for _, item := range active {
+		if err := SnapshotWorkerCode(item, options).compileErr; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func profileSet(profiles []string) map[string]bool {
@@ -193,32 +204,32 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
 	fmt.Fprintf(&out, "    (name = \"internet\", network = (allow = [%s], tlsOptions = (trustBrowserCas = true))),\n", quotedList(networkAllow))
 	if egressAddr := strings.TrimSpace(options.EgressAddr); egressAddr != "" {
-		fmt.Fprintf(&out, "    (name = \"nanoflare-egress\", external = (address = %s, http = (style = proxy))),\n", quote(egressAddr))
+		fmt.Fprintf(&out, "    (name = \"nanoflare-egress\", external = (address = %s, http = (style = proxy))),\n", capnpQuote(egressAddr))
 	}
 	writeWFPSocketService(&out, options.WFPSockets)
 	out.WriteString(durationTelemetryServices(runtimeAddr, active))
 	writeDispatchServices(&out, runtimeAddr, active)
 	for _, item := range active {
-		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", quote(deploymentServiceName(item)), workerName(deploymentServiceName(item)))
+		fmt.Fprintf(&out, "    (name = %s, worker = .%s),\n", capnpQuote(deploymentServiceName(item)), workerName(deploymentServiceName(item)))
 	}
 	for _, item := range active {
 		if dnsAddr := strings.TrimSpace(options.DNSAddr); dnsAddr != "" && dnsCompatibilityEnabled(item.Deployment) {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"X-Nanoflare-DNS-Profile\", value = %s)]))),\n",
-				quote(dnsServiceName(item)), quote(dnsAddr), quote(item.Deployment.DNS.Profile))
+				capnpQuote(dnsServiceName(item)), capnpQuote(dnsAddr), capnpQuote(item.Deployment.DNS.Profile))
 		}
 		for index, binding := range item.Deployment.KVNamespaces {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-KV-Namespace-ID\", value = %s)]))),\n",
-				quote(kvServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeKV, binding.ID)), quote(binding.ID))
+				capnpQuote(kvServiceName(item, index)), capnpQuote(runtimeAddr), capnpQuote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeKV, binding.ID)), capnpQuote(binding.ID))
 		}
 		for index, binding := range item.Deployment.Databases {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"db\"), (name = \"X-Nanoflare-Database-ID\", value = %s)]))),\n",
-				quote(dbServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeDatabase, binding.DatabaseID)), quote(binding.DatabaseID))
+				capnpQuote(dbServiceName(item, index)), capnpQuote(runtimeAddr), capnpQuote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeDatabase, binding.DatabaseID)), capnpQuote(binding.DatabaseID))
 		}
 		fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Binding\", value = \"assets\"), (name = \"X-Nanoflare-Deployment-ID\", value = %s)]))),\n",
-			quote(assetServiceName(item)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeAssets, item.Deployment.ID)), quote(item.Deployment.ID))
+			capnpQuote(assetServiceName(item)), capnpQuote(runtimeAddr), capnpQuote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeAssets, item.Deployment.ID)), capnpQuote(item.Deployment.ID))
 		for index, binding := range item.Deployment.ObjectStorageBuckets {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Object-Bucket-ID\", value = %s)]))),\n",
-				quote(objectServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeObjects, binding.BucketID)), quote(binding.BucketID))
+				capnpQuote(objectServiceName(item, index)), capnpQuote(runtimeAddr), capnpQuote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeObjects, binding.BucketID)), capnpQuote(binding.BucketID))
 		}
 	}
 	out.WriteString("  ],\n\n  sockets = [\n")
@@ -231,7 +242,7 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 			address = "unix:" + item.SocketPath
 		}
 		fmt.Fprintf(&out, "    (name = %s, address = %s, http = (forwardedProtoHeader = \"X-Forwarded-Proto\"), service = %s),\n",
-			quote(deploymentServiceName(item)), quote(address), quote(deploymentServiceName(item)))
+			capnpQuote(deploymentServiceName(item)), capnpQuote(address), capnpQuote(deploymentServiceName(item)))
 	}
 	out.WriteString("  ]\n);\n")
 	for _, item := range active {
@@ -240,14 +251,14 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		fmt.Fprintf(&out, "\nconst %s :Workerd.Worker = (\n", workerName(deploymentServiceName(item)))
 		code := SnapshotWorkerCode(item, options)
 		writeWorkerSource(&out, code)
-		fmt.Fprintf(&out, "  tails = [%s],\n", quote(telemetryServiceName(item, "tail")))
+		fmt.Fprintf(&out, "  tails = [%s],\n", capnpQuote(telemetryServiceName(item, "tail")))
 
 		if strings.TrimSpace(options.EgressAddr) != "" {
 			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
 		}
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
 			strings.Join(append(workerBindings(item, active, dnsEnabled), wfpSocketBindings(item, options.WFPSockets)...), ", "))
-		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", quote(code.CompatibilityDate))
+		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", capnpQuote(code.CompatibilityDate))
 		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(code.CompatibilityFlags))
 
 		out.WriteString(");\n")
@@ -311,7 +322,7 @@ func normalizedNetworkAllow(allow []string) []string {
 func quotedList(values []string) string {
 	quoted := make([]string, 0, len(values))
 	for _, value := range values {
-		quoted = append(quoted, quote(value))
+		quoted = append(quoted, capnpQuote(value))
 	}
 	return strings.Join(quoted, ", ")
 }
@@ -324,14 +335,14 @@ func durationTelemetryServices(runtimeAddr string, active []nanoflare.ActiveDepl
 	var out strings.Builder
 	for _, item := range active {
 		for _, kind := range []string{nanoflare.RuntimeDurations, nanoflare.RuntimeLogs, nanoflare.RuntimeAccess} {
-			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n", quote(telemetryServiceName(item, kind)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, kind, "")))
+			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n", capnpQuote(telemetryServiceName(item, kind)), capnpQuote(runtimeAddr), capnpQuote("Bearer "+nanoflare.RuntimeCapability(item, kind, "")))
 		}
 		source := `export default { async tail(events, env) {
   await env.COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/logs", {
     method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(events)
   });
 }};`
-		fmt.Fprintf(&out, "    (name = %s, worker = (compatibilityDate = \"2025-01-01\", modules = [(name = \"tail.js\", esModule = %s)], bindings = [(name = \"COLLECTOR\", service = %s)])),\n", quote(telemetryServiceName(item, "tail")), capnpSourceQuote(source), quote(telemetryServiceName(item, nanoflare.RuntimeLogs)))
+		fmt.Fprintf(&out, "    (name = %s, worker = (compatibilityDate = \"2025-01-01\", modules = [(name = \"tail.js\", esModule = %s)], bindings = [(name = \"COLLECTOR\", service = %s)])),\n", capnpQuote(telemetryServiceName(item, "tail")), capnpQuote(source), capnpQuote(telemetryServiceName(item, nanoflare.RuntimeLogs)))
 	}
 	return out.String()
 }
@@ -339,14 +350,14 @@ func durationTelemetryServices(runtimeAddr string, active []nanoflare.ActiveDepl
 func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDeployment, dnsEnabled bool) []string {
 	bindings := make([]string, 0, len(item.Deployment.Vars)+len(item.App.SecretValues)+len(item.Deployment.KVNamespaces)+len(item.Deployment.Databases)+len(item.Deployment.ObjectStorageBuckets)+len(item.Deployment.Services)+3)
 	bindings = append(bindings,
-		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", quote(item.App.ID)),
-		fmt.Sprintf("(name = \"__NANOFLARE_DEPLOYMENT_ID\", text = %s)", quote(item.Deployment.ID)),
-		fmt.Sprintf("(name = \"__NANOFLARE_DURATION_COLLECTOR\", service = %s)", quote(telemetryServiceName(item, nanoflare.RuntimeDurations))),
+		fmt.Sprintf("(name = \"__NANOFLARE_APP_ID\", text = %s)", capnpQuote(item.App.ID)),
+		fmt.Sprintf("(name = \"__NANOFLARE_DEPLOYMENT_ID\", text = %s)", capnpQuote(item.Deployment.ID)),
+		fmt.Sprintf("(name = \"__NANOFLARE_DURATION_COLLECTOR\", service = %s)", capnpQuote(telemetryServiceName(item, nanoflare.RuntimeDurations))),
 	)
 	if dnsEnabled {
-		bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DNS\", service = %s)", quote(dnsServiceName(item))))
+		bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DNS\", service = %s)", capnpQuote(dnsServiceName(item))))
 	}
-	bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_ACCESS\", service = %s)", quote(telemetryServiceName(item, nanoflare.RuntimeAccess))))
+	bindings = append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_ACCESS\", service = %s)", capnpQuote(telemetryServiceName(item, nanoflare.RuntimeAccess))))
 	bindings = append(bindings, dispatchWorkerBindings(item)...)
 	varNames := make([]string, 0, len(item.Deployment.Vars))
 	for name := range item.Deployment.Vars {
@@ -358,11 +369,11 @@ func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDe
 		if len(value) > 0 && value[0] == '"' {
 			var text string
 			if err := json.Unmarshal(value, &text); err == nil {
-				bindings = append(bindings, fmt.Sprintf("(name = %s, text = %s)", quote(name), quote(text)))
+				bindings = append(bindings, fmt.Sprintf("(name = %s, text = %s)", capnpQuote(name), capnpQuote(text)))
 				continue
 			}
 		}
-		bindings = append(bindings, fmt.Sprintf("(name = %s, json = %s)", quote(name), quote(string(value))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, json = %s)", capnpQuote(name), capnpQuote(string(value))))
 	}
 	secretNames := make([]string, 0, len(item.App.SecretValues))
 	for name := range item.App.SecretValues {
@@ -371,21 +382,21 @@ func workerBindings(item nanoflare.ActiveDeployment, active []nanoflare.ActiveDe
 	sort.Strings(secretNames)
 	for _, name := range secretNames {
 		value := item.App.SecretValues[name]
-		bindings = append(bindings, fmt.Sprintf("(name = %s, text = %s)", quote(name), quote(value)))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, text = %s)", capnpQuote(name), capnpQuote(value)))
 	}
 	for index, binding := range item.Deployment.KVNamespaces {
-		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", quote(binding.Binding), quote(kvServiceName(item, index))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, kvNamespace = %s)", capnpQuote(binding.Binding), capnpQuote(kvServiceName(item, index))))
 	}
 	for index, binding := range item.Deployment.Databases {
-		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(dbServiceName(item, index))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", capnpQuote(binding.Binding), capnpQuote(dbServiceName(item, index))))
 	}
-	bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(assetBindingName(item.Deployment.AssetConfig)), quote(assetServiceName(item))))
+	bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", capnpQuote(assetBindingName(item.Deployment.AssetConfig)), capnpQuote(assetServiceName(item))))
 	for index, binding := range item.Deployment.ObjectStorageBuckets {
-		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(objectServiceName(item, index))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", capnpQuote(binding.Binding), capnpQuote(objectServiceName(item, index))))
 	}
 	for _, binding := range item.Deployment.Services {
 		if target, ok := activeServiceBinding(active, item.App, binding); ok {
-			bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(binding.Binding), quote(deploymentServiceName(target))))
+			bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", capnpQuote(binding.Binding), capnpQuote(deploymentServiceName(target))))
 		}
 	}
 	return bindings
@@ -418,9 +429,9 @@ func writeWorkerSource(out *strings.Builder, code WorkerCodeSnapshot) {
 	for _, name := range code.moduleOrder {
 		module := code.Modules[name]
 		if module.Wasm != nil {
-			fmt.Fprintf(out, "    (name = %s, wasm = 0x\"%x\"),\n", quote(name), module.Wasm)
+			fmt.Fprintf(out, "    (name = %s, wasm = 0x\"%x\"),\n", capnpQuote(name), module.Wasm)
 		} else {
-			fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", quote(name), capnpSourceQuote(code.Modules[name].JS))
+			fmt.Fprintf(out, "    (name = %s, esModule = %s),\n", capnpQuote(name), capnpQuote(code.Modules[name].JS))
 		}
 	}
 	out.WriteString("  ],\n")
@@ -465,44 +476,6 @@ func dnsCompatibilityEnabled(deployment nanoflare.Deployment) bool {
 	return effectiveNodeCompatibility(deployment).runtime
 }
 
-func rewriteDNSImports(source string, includeBareImports bool) string {
-	return rewriteDNSImportsForModule(source, includeBareImports, "")
-}
-
-func rewriteDNSImportsForModule(source string, includeBareImports bool, modulePath string) string {
-	// Let the JavaScript parser distinguish module specifiers from ordinary
-	// strings, comments, regular expressions, and template literals. Every module
-	// remains external: this pass never loads or bundles customer dependencies.
-	result := api.Build(api.BuildOptions{
-		Stdin:  &api.StdinOptions{Contents: source, Sourcefile: "worker.js", Loader: api.LoaderJS},
-		Bundle: true, Write: false, Format: api.FormatESModule, Platform: api.PlatformNeutral,
-		TreeShaking: api.TreeShakingFalse, LogLevel: api.LogLevelSilent,
-		Plugins: []api.Plugin{{Name: "dns-imports", Setup: func(build api.PluginBuild) {
-			build.OnResolve(api.OnResolveOptions{Filter: ".*"}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-				target := args.Path
-				switch target {
-				case "node:dns", "node:dns/promises":
-					target = "nanoflare-internal:" + strings.TrimPrefix(target, "node:")
-				case "dns", "dns/promises":
-					if includeBareImports {
-						target = "nanoflare-internal:" + target
-					}
-				}
-				if target != args.Path {
-					target = relativeModuleSpecifier(modulePath, target)
-				}
-				return api.OnResolveResult{Path: target, External: true}, nil
-			})
-		}}},
-	})
-	// Preserve invalid source so the existing deployment/runtime validation can
-	// report it; never substitute a partial compilation.
-	if len(result.Errors) != 0 || len(result.OutputFiles) != 1 {
-		return source
-	}
-	return string(result.OutputFiles[0].Contents)
-}
-
 func relativeModuleSpecifier(modulePath, target string) string {
 	moduleDir := path.Dir(path.Clean(modulePath))
 	if moduleDir == "." {
@@ -544,16 +517,25 @@ async function lookupResult(hostname, options) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ hostname: String(hostname), family: normalized.family }),
   });
-  const body = await response.json();
-  if (!response.ok) {
+  const text = await response.text();
+  let body;
+  let invalidJSON = false;
+  try { body = JSON.parse(text); } catch { invalidJSON = true; }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    invalidJSON = true;
+    body = { detail: text || "invalid DNS adapter response" };
+  }
+  if (!response.ok || invalidJSON) {
     const error = new Error(body.error || body.detail || "hostname lookup failed");
     const brokerCodes = {
       401: "ERR_NANOFLARE_ACCESS_DENIED",
       403: "ERR_NANOFLARE_ACCESS_DENIED",
+      404: "ERR_NANOFLARE_DNS_UNAVAILABLE",
+      405: "ERR_NANOFLARE_DNS_UNAVAILABLE",
       410: "ERR_NANOFLARE_INVOCATION_EXPIRED",
       429: "ERR_NANOFLARE_EFFECT_LIMIT",
     };
-    error.code = body.code || brokerCodes[response.status] || "EAI_AGAIN";
+    error.code = body.code || brokerCodes[response.status] || (invalidJSON ? "ERR_NANOFLARE_DNS_RESPONSE" : "EAI_AGAIN");
     error.status = response.status;
     error.detail = body.detail || body.error;
     error.hostname = hostname;
@@ -1067,17 +1049,28 @@ func workerName(value string) string {
 	return out.String()
 }
 
-// Escape UTF-8 bytes at the Cap'n Proto boundary without changing JavaScript
-// values (including tagged template raw strings). Dynamic JSON modules need no
-// such escaping.
-func capnpSourceQuote(source string) string {
-	parts := strings.Split(source, "\u00a0")
-	for i, part := range parts {
-		quoted := strconv.Quote(part)
-		parts[i] = quoted[1 : len(quoted)-1]
+// capnpQuote uses UTF-8 byte escapes for all non-ASCII text. Cap'n Proto
+// cannot read Go's Unicode escapes. Keep JavaScript/JSON quoting separate so
+// string values and tagged template raw text remain unchanged.
+func capnpQuote(source string) string {
+	var out strings.Builder
+	out.WriteByte('"')
+	start := 0
+	for i := 0; i < len(source); i++ {
+		if source[i] < 128 {
+			continue
+		}
+		quoted := strconv.Quote(source[start:i])
+		out.WriteString(quoted[1 : len(quoted)-1])
+		out.WriteString(`\x`)
+		out.WriteByte("0123456789abcdef"[source[i]>>4])
+		out.WriteByte("0123456789abcdef"[source[i]&15])
+		start = i + 1
 	}
-	return `"` + strings.Join(parts, `\xc2\xa0`) + `"`
-
+	quoted := strconv.Quote(source[start:])
+	out.WriteString(quoted[1 : len(quoted)-1])
+	out.WriteByte('"')
+	return out.String()
 }
 
 func quote(value string) string {

@@ -322,25 +322,58 @@ func (s *RuntimeDispatchServer) lookupDNS(w http.ResponseWriter, r *http.Request
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
-	s.dns.ServeHTTP(w, request)
+	response := &dnsResponse{header: make(http.Header)}
+	s.dns.ServeHTTP(response, request)
+	if ctx.Err() != nil {
+		writeDNSBrokerError(w, nanoflare.ErrInvocationExpired)
+		return
+	}
+	for name, values := range response.header {
+		w.Header()[name] = values
+	}
+	status := response.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(response.body.Bytes())
 }
 
 // Broker admission failures are terminal invocation errors, not resolver retries.
 func writeDNSBrokerError(w http.ResponseWriter, err error) {
-	status, code := http.StatusInternalServerError, "ERR_NANOFLARE_DNS_BROKER"
+	status, code := runtimeErrorStatus(err), "ERR_NANOFLARE_DNS_BROKER"
 	switch {
 	case errors.Is(err, nanoflare.ErrInvocationExpired):
-		status, code = http.StatusGone, "ERR_NANOFLARE_INVOCATION_EXPIRED"
+		code = "ERR_NANOFLARE_INVOCATION_EXPIRED"
 	case errors.Is(err, nanoflare.ErrSubrequestLimit), errors.Is(err, nanoflare.ErrDispatchDepth):
-		status, code = http.StatusTooManyRequests, "ERR_NANOFLARE_EFFECT_LIMIT"
+		code = "ERR_NANOFLARE_EFFECT_LIMIT"
 	case errors.Is(err, nanoflare.ErrRuntimeGrantDenied), errors.Is(err, nanoflare.ErrNamespaceGrantDenied):
-		status, code = http.StatusForbidden, "ERR_NANOFLARE_ACCESS_DENIED"
+		code = "ERR_NANOFLARE_ACCESS_DENIED"
 	case errors.Is(err, nanoflare.ErrInvalidCapability):
-		status, code = http.StatusUnauthorized, "ERR_NANOFLARE_ACCESS_DENIED"
+		code = "ERR_NANOFLARE_ACCESS_DENIED"
 	case errors.Is(err, nanoflare.ErrDispatchUnavailable):
-		status, code = http.StatusServiceUnavailable, "ERR_NANOFLARE_DISPATCH_UNAVAILABLE"
+		code = "ERR_NANOFLARE_DISPATCH_UNAVAILABLE"
 	case errors.Is(err, nanoflare.ErrDispatchOverloaded):
-		status, code = http.StatusTooManyRequests, "ERR_NANOFLARE_DISPATCH_OVERLOADED"
+		code = "ERR_NANOFLARE_DISPATCH_OVERLOADED"
 	}
 	writeJSON(w, status, map[string]any{"code": code, "error": err.Error(), "detail": err.Error(), "status": status})
+}
+
+// DNS responses are small JSON documents. Buffer until resolution completes so
+// invocation cancellation can override a resolver timeout response.
+type dnsResponse struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (r *dnsResponse) Header() http.Header { return r.header }
+func (r *dnsResponse) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+}
+func (r *dnsResponse) Write(value []byte) (int, error) {
+	r.WriteHeader(http.StatusOK)
+	return r.body.Write(value)
 }

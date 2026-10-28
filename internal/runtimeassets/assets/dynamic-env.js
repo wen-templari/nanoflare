@@ -40,9 +40,13 @@ export function invocationContext(ctx) {
   contexts.set(state.ctx, state);
   return state.ctx;
 }
-export function invocationDNS() {
+function invocationBroker(operation) {
   const broker = invocation.getStore()?.broker;
-  if (!broker) throw new TypeError("DNS lookup requires a live invocation");
+  if (!broker) throw new TypeError(`${operation} requires a live invocation`);
+  return broker;
+}
+export function invocationDNS() {
+  const broker = invocationBroker("DNS lookup");
   return {
     fetch(input, init) {
       return broker.dns(new Request(input, init));
@@ -64,8 +68,7 @@ export async function withInvocation(ctx, run) {
   });
 }
 async function scopedFetch(input, init) {
-  const broker = invocation.getStore()?.broker;
-  if (!broker) throw new TypeError("Outbound fetch requires a live invocation");
+  const broker = invocationBroker("Outbound fetch");
   if (init?.cf) throw new TypeError("Custom fetch/cache options are unavailable");
   let request = new Request(input, init);
   const signal = request.signal;

@@ -94,10 +94,11 @@ type kvOrgUsageCacheDisabler interface {
 }
 
 type Service struct {
-	executions           *ExecutionRegistry
-	dispatch             dispatchRuntime
-	telemetry            telemetryState
-	runtimeAuthorization runtimeAuthorization
+	namespaceCodeValidator func(Deployment) error
+	executions             *ExecutionRegistry
+	dispatch               dispatchRuntime
+	telemetry              telemetryState
+	runtimeAuthorization   runtimeAuthorization
 	// Serialize configuration snapshots and publication, including rollbacks.
 	configMu             sync.Mutex
 	store                Repository
@@ -128,6 +129,12 @@ type AssetResponse struct {
 	Body        []byte
 	ContentType string
 	StatusCode  int
+}
+
+// SetNamespaceCodeValidator installs compiler validation before publications are
+// accepted. Configure it during startup, before admitting deployment requests.
+func (s *Service) SetNamespaceCodeValidator(validate func(Deployment) error) {
+	s.namespaceCodeValidator = validate
 }
 
 func NewService(store Repository, writer ConfigWriter) *Service {
@@ -1306,6 +1313,11 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 		AssetConfig:          assetConfig,
 		BundleSize:           bundleSize(files),
 		CreatedAt:            time.Now().UTC(),
+	}
+	if app.Platform != nil && app.Platform.NamespaceID != "" && s.namespaceCodeValidator != nil {
+		if err := s.namespaceCodeValidator(deployment); err != nil {
+			return Deployment{}, err
+		}
 	}
 	if managed == nil {
 		managed, err = s.nativeManagedPublication(app, deployment)

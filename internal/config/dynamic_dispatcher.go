@@ -15,7 +15,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
 	fmt.Fprintf(&out, "(name = \"internet\", network = (allow = [%s], tlsOptions = (trustBrowserCas = true))),\n", quotedList(normalizedNetworkAllow(options.NetworkAllow)))
 	if address := strings.TrimSpace(options.EgressAddr); address != "" {
 		outbound = "nanoflare-egress"
-		fmt.Fprintf(&out, "(name = %s, external = (address = %s, http = (style = proxy))),\n", quote(outbound), quote(address))
+		fmt.Fprintf(&out, "(name = %s, external = (address = %s, http = (style = proxy))),\n", capnpQuote(outbound), capnpQuote(address))
 	}
 	writeWFPSocketService(&out, options.WFPSockets)
 	fmt.Fprintf(&out, `(name = "broker", external = (address = %s, http = (injectRequestHeaders = [(name = "X-Nanoflare-Broker-Token", value = %s)]))),
@@ -33,7 +33,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
  ],
  sockets = [(name = "dispatcher", address = %s, http = (forwardedProtoHeader = "X-Forwarded-Proto"), service = "dispatcher")],
 );
-`, quote(brokerAddr), quote(brokerToken), quote(dynamicDispatcherSource), quote(runtimeassets.DispatchModule), wfpSocketBindingLine(options.WFPSockets), quote(outbound), quote(dispatcherToken), quote("unix:"+socketPath))
+`, capnpQuote(brokerAddr), capnpQuote(brokerToken), capnpQuote(dynamicDispatcherSource), capnpQuote(runtimeassets.DispatchModule), wfpSocketBindingLine(options.WFPSockets), capnpQuote(outbound), capnpQuote(dispatcherToken), capnpQuote("unix:"+socketPath))
 	return out.String()
 }
 

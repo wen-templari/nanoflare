@@ -23,7 +23,7 @@ func dispatchServiceName(item nanoflare.ActiveDeployment, index int) string {
 func writeDispatchServices(out *strings.Builder, runtimeAddr string, active []nanoflare.ActiveDeployment) {
 	for _, item := range active {
 		for index, binding := range item.Deployment.DispatchNamespaces {
-			fmt.Fprintf(out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Dispatch-Namespace-ID\", value = %s)]))),\n", quote(dispatchServiceName(item, index)), quote(runtimeAddr), quote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeDispatch, binding.NamespaceID)), quote(binding.NamespaceID))
+			fmt.Fprintf(out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s), (name = \"X-Nanoflare-Dispatch-Namespace-ID\", value = %s)]))),\n", capnpQuote(dispatchServiceName(item, index)), capnpQuote(runtimeAddr), capnpQuote("Bearer "+nanoflare.RuntimeCapability(item, nanoflare.RuntimeDispatch, binding.NamespaceID)), capnpQuote(binding.NamespaceID))
 		}
 	}
 }
@@ -36,10 +36,10 @@ func dispatchWorkerBindings(item nanoflare.ActiveDeployment) []string {
 	for index, binding := range item.Deployment.DispatchNamespaces {
 		control := fmt.Sprintf("__NANOFLARE_DISPATCH_CONTROL_%d", index)
 		mapping[binding.Binding] = control
-		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", quote(control), quote(dispatchServiceName(item, index))))
+		bindings = append(bindings, fmt.Sprintf("(name = %s, service = %s)", capnpQuote(control), capnpQuote(dispatchServiceName(item, index))))
 	}
 	data, _ := json.Marshal(mapping)
-	return append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DISPATCH_BINDINGS\", json = %s)", quote(string(data))))
+	return append(bindings, fmt.Sprintf("(name = \"__NANOFLARE_DISPATCH_BINDINGS\", json = %s)", capnpQuote(string(data))))
 }
 
 // DynamicEntrypoint wraps module handlers without capturing a request capability

@@ -15,52 +15,45 @@ import (
 const maxJSONBodySize = 10 << 20
 
 func writeRuntimeError(w http.ResponseWriter, err error) {
+	writeError(w, runtimeErrorStatus(err), err)
+}
+
+func runtimeErrorStatus(err error) int {
 	if errors.Is(err, nanoflare.ErrSQLPolicy) {
-		writeError(w, 422, err)
-		return
+		return 422
 	}
 	if errors.Is(err, nanoflare.ErrInvocationExpired) {
-		writeError(w, 410, err)
-		return
+		return 410
 	}
 	if errors.Is(err, nanoflare.ErrDispatchUnavailable) {
-		writeError(w, 503, err)
-		return
+		return 503
 	}
 	if errors.Is(err, nanoflare.ErrDispatchOverloaded) || errors.Is(err, nanoflare.ErrSubrequestLimit) || errors.Is(err, nanoflare.ErrDispatchDepth) {
-		writeError(w, 429, err)
-		return
+		return 429
 	}
 	if errors.Is(err, nanoflare.ErrArtifactNotFound) || errors.Is(err, nanoflare.ErrAppNotFound) {
-		writeError(w, 404, err)
-		return
+		return 404
 	}
 
 	if errors.Is(err, nanoflare.ErrRuntimeGrantDenied) || errors.Is(err, nanoflare.ErrNamespaceGrantDenied) {
-		writeError(w, http.StatusForbidden, err)
-		return
+		return http.StatusForbidden
 	}
 	if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
-		writeError(w, http.StatusPaymentRequired, err)
-		return
+		return http.StatusPaymentRequired
 	}
 	if errors.Is(err, nanoflare.ErrInvalidCapability) {
-		writeError(w, http.StatusUnauthorized, err)
-		return
+		return http.StatusUnauthorized
 	}
 	if errors.Is(err, nanoflare.ErrKVNamespaceNotFound) {
-		writeError(w, http.StatusNotFound, err)
-		return
+		return http.StatusNotFound
 	}
 	if errors.Is(err, nanoflare.ErrDatabaseNotFound) {
-		writeError(w, http.StatusNotFound, err)
-		return
+		return http.StatusNotFound
 	}
 	if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
-		writeError(w, http.StatusNotFound, err)
-		return
+		return http.StatusNotFound
 	}
-	writeError(w, http.StatusInternalServerError, err)
+	return http.StatusInternalServerError
 }
 
 func writeWorkerError(w http.ResponseWriter, err error) {

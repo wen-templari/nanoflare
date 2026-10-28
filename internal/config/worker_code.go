@@ -36,6 +36,9 @@ func (module WorkerCodeModule) MarshalJSON() ([]byte, error) {
 // MarshalJSON must not turn a statically invalid duplicate module list into a
 // valid map which silently replaces Nanoflare's instrumentation or adapters.
 func (code WorkerCodeSnapshot) MarshalJSON() ([]byte, error) {
+	if code.compileErr != nil {
+		return nil, code.compileErr
+	}
 	seen := make(map[string]bool, len(code.moduleOrder))
 	for _, name := range code.moduleOrder {
 		if seen[name] {
@@ -56,6 +59,7 @@ type WorkerCodeSnapshot struct {
 	MainModule         string                      `json:"mainModule"`
 	Modules            map[string]WorkerCodeModule `json:"modules"`
 	moduleOrder        []string
+	compileErr         error
 }
 
 // SnapshotWorkerCode is the shared compiler for static config and dynamic
@@ -100,14 +104,20 @@ export { DispatchBroker };
 			}
 			source := file.Content
 			if dnsEnabled {
-				source = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
+				source, snapshot.compileErr = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
+				if snapshot.compileErr != nil {
+					return snapshot
+				}
 			}
 			add(file.Path, source)
 		}
 	} else if deploymentFormat(deployment) == "service-worker" {
 		source := deployment.Files[0].Content
 		if dnsEnabled {
-			source = rewriteDNSImports(source, nodeCompatibility.v2)
+			source, snapshot.compileErr = rewriteDNSImports(source, nodeCompatibility.v2)
+			if snapshot.compileErr != nil {
+				return snapshot
+			}
 		}
 		add(mainModule, serviceWorkerWrapper(source, deployment.Databases, deployment.ObjectStorageBuckets))
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
@@ -124,7 +134,10 @@ export { DispatchBroker };
 			}
 			source := file.Content
 			if dnsEnabled {
-				source = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
+				source, snapshot.compileErr = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
+				if snapshot.compileErr != nil {
+					return snapshot
+				}
 			}
 			add(file.Path, source)
 		}
@@ -154,7 +167,11 @@ func NamespaceWorkerModules(deployment nanoflare.Deployment) (map[string]WorkerC
 		}
 		source := file.Content
 		if node.runtime {
-			source = rewriteDNSImportsForModule(source, node.v2, file.Path)
+			var err error
+			source, err = rewriteDNSImportsForModule(source, node.v2, file.Path)
+			if err != nil {
+				return nil, err
+			}
 		}
 		modules[file.Path] = WorkerCodeModule{JS: source}
 	}

@@ -233,11 +233,17 @@ func TestNodeCompatibilityV2FollowsDateAndFlags(t *testing.T) {
 
 func TestDNSImportRewriteRequiresV2ForBareSpecifiers(t *testing.T) {
 	source := `import nodeDNS from "node:dns"; import bareDNS from "dns";`
-	withoutV2 := rewriteDNSImports(source, false)
+	withoutV2, err := rewriteDNSImports(source, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(withoutV2, `"nanoflare-internal:dns"`) || !strings.Contains(withoutV2, `from "dns"`) {
 		t.Fatalf("v1 rewrite = %q", withoutV2)
 	}
-	withV2 := rewriteDNSImports(source, true)
+	withV2, err := rewriteDNSImports(source, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(withV2, `from "node:dns"`) || strings.Contains(withV2, `from "dns"`) {
 		t.Fatalf("v2 rewrite left a DNS import unchanged: %q", withV2)
 	}
@@ -603,8 +609,11 @@ const data = ["dns", 'node:dns', "dns/promises", 'node:dns/promises'];
 const match = record.type === "dns";
 const template = ` + "`dns ${'dns'}`" + `;
 const load = () => import('dns');`
-	got := rewriteDNSImportsForModule(source, true, "lib/worker.js")
-	for _, want := range []string{`"../nanoflare-internal:dns"`, `"../nanoflare-internal:dns/promises"`, `record.type === "dns"`, `"dns", "node:dns", "dns/promises", "node:dns/promises"`} {
+	got, err := rewriteDNSImportsForModule(source, true, "lib/worker.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`'../nanoflare-internal:dns'`, `"../nanoflare-internal:dns/promises"`, `record.type === "dns"`, `"dns", 'node:dns', "dns/promises", 'node:dns/promises'`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s in:\n%s", want, got)
 		}

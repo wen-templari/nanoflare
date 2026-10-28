@@ -212,11 +212,7 @@ func main() {
 	if *runnerToken == "" {
 		*runnerToken = rand.Text()
 	}
-	dnsConfig, err := dnsresolver.LoadConfig(*dnsConfigValue)
-	if err != nil {
-		log.Fatal(err)
-	}
-	dnsServer, err := dnsresolver.New(dnsConfig, *dnsAddr)
+	dnsServer, dnsConfig, err := platformDNS(*dnsConfigValue, *dnsAddr, *runnerURL != "", *platformDispatchEnabled)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -313,6 +309,10 @@ func main() {
 		log.Print("using Litestream for SQLite backup replication")
 	}
 	service.SetPlatformDispatchEnabled(*platformDispatchEnabled)
+	service.SetNamespaceCodeValidator(func(deployment nanoflare.Deployment) error {
+		_, err := config.NamespaceWorkerModules(deployment)
+		return err
+	})
 	var redactions []string
 	if err := json.Unmarshal([]byte(*workerLogPatterns), &redactions); err != nil {
 		log.Fatal(err)
@@ -383,7 +383,9 @@ func main() {
 		log.Fatal(err)
 	}
 	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, dispatchTransport, *runnerToken, output)
-	runtimeMux.dispatch.SetDNSHandler(dnsServer)
+	if dnsServer != nil {
+		runtimeMux.dispatch.SetDNSHandler(dnsServer)
+	}
 	defer runtimeMux.Close()
 
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
@@ -518,3 +520,20 @@ type privateRuntimeMux struct {
 }
 
 func (m *privateRuntimeMux) Close() error { return m.executions.Close() }
+
+// Split deployments need an in-process resolver only when WFP is enabled.
+// The local adapter listen address is irrelevant to that mode.
+func platformDNS(value, addr string, remote, dispatch bool) (*dnsresolver.Server, dnsresolver.Config, error) {
+	if remote && !dispatch {
+		return nil, dnsresolver.Config{}, nil
+	}
+	config, err := dnsresolver.LoadConfig(value)
+	if err != nil {
+		return nil, config, err
+	}
+	if remote {
+		addr = "127.0.0.1:0"
+	}
+	server, err := dnsresolver.New(config, addr)
+	return server, config, err
+}

@@ -117,3 +117,18 @@ func TestRuntimeResourcePrefixPreservesReservedKVKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestPlatformDNSRemoteConfiguration(t *testing.T) {
+	if server, _, err := platformDNS("invalid-json", "not-an-address", true, false); err != nil || server != nil {
+		t.Fatalf("unused remote DNS config: %v", err)
+	}
+	if _, _, err := platformDNS("", "0.0.0.0:8083", true, true); err != nil {
+		t.Fatalf("remote DNS validated an unused listen address: %v", err)
+	}
+	if _, _, err := platformDNS("invalid-json", "127.0.0.1:0", true, true); err == nil {
+		t.Fatal("enabled remote WFP DNS accepted invalid config")
+	}
+	if _, _, err := platformDNS("", "0.0.0.0:8083", false, false); err == nil {
+		t.Fatal("local adapter accepted non-loopback listener")
+	}
+}

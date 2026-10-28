@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/dnsresolver"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"golang.org/x/net/dns/dnsmessage"
@@ -156,7 +157,8 @@ func TestDispatchDNSCancellation(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("X-Nanoflare-Invocation", lease)
 	completed := make(chan struct{})
-	go func() { handler.ServeHTTP(httptest.NewRecorder(), request); close(completed) }()
+	response := httptest.NewRecorder()
+	go func() { handler.ServeHTTP(response, request); close(completed) }()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -171,6 +173,9 @@ func TestDispatchDNSCancellation(t *testing.T) {
 		t.Fatal("DNS did not cancel with lease")
 	}
 	<-completed
+	if response.Code != 410 || !strings.Contains(response.Body.String(), "ERR_NANOFLARE_INVOCATION_EXPIRED") {
+		t.Fatalf("cancellation: %d %s", response.Code, response.Body)
+	}
 }
 
 func TestWorkerdDynamicNamespacePrivateDNS(t *testing.T) {
@@ -332,4 +337,56 @@ func TestDispatchArtifactRejectsCollisionAndFinishesLease(t *testing.T) {
 	if _, err := service.DispatchEffect(context.Background(), token, lease, nanoflare.RuntimeDNS, "", 1); err != nanoflare.ErrInvocationExpired {
 		t.Fatalf("lease not finished: %v", err)
 	}
+}
+
+func TestDispatchDNSDeadlineOverridesResolverTimeout(t *testing.T) {
+	service, token, lease := dnsDispatchLease(t)
+	handler := NewRuntimeDispatchServer(service, nil).SetDNSHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		writeJSON(w, 502, map[string]string{"code": "ETIMEOUT", "error": "resolver deadline"})
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	r := httptest.NewRequest("POST", "/internal/runtime/dispatch/dns", strings.NewReader(`{}`)).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("X-Nanoflare-Invocation", lease)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != 410 || !strings.Contains(w.Body.String(), "ERR_NANOFLARE_INVOCATION_EXPIRED") {
+		t.Fatalf("deadline disguised as resolver timeout: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestDispatchDNSStatusMatchesRuntimeStatus(t *testing.T) {
+	for _, err := range []error{nanoflare.ErrInvocationExpired, nanoflare.ErrRuntimeGrantDenied, nanoflare.ErrInvalidCapability, nanoflare.ErrSubrequestLimit, nanoflare.ErrArtifactNotFound, nanoflare.ErrUsageLimitExceeded} {
+		runtime, dns := httptest.NewRecorder(), httptest.NewRecorder()
+		writeRuntimeError(runtime, err)
+		writeDNSBrokerError(dns, err)
+		if runtime.Code != dns.Code {
+			t.Fatalf("status drift for %v: %d vs %d", err, runtime.Code, dns.Code)
+		}
+	}
+}
+
+func TestNamespaceDeploymentRejectsDNSParseFailure(t *testing.T) {
+	service, _, _ := dnsDispatchLease(t)
+	service.SetNamespaceCodeValidator(func(deployment nanoflare.Deployment) error {
+		_, err := config.NamespaceWorkerModules(deployment)
+		return err
+	})
+	active, err := service.ActiveDeployments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range active {
+		if item.App.Platform == nil || item.App.Platform.NamespaceID == "" {
+			continue
+		}
+		_, err := service.Deploy(item.App.ID, nanoflare.DeployInput{Format: "modules", CompatibilityDate: "2026-09-11", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `import dns from 'node:dns'; export default <div/>;`}}})
+		if err == nil || !strings.Contains(err.Error(), "DNS import analysis") {
+			t.Fatalf("deployment accepted parse failure: %v", err)
+		}
+		return
+	}
+	t.Fatal("namespace fixture missing")
 }

@@ -79,6 +79,15 @@ This adapts lookup methods only; other native DNS methods such as `resolve()`
 keep workerd's behavior. DNS resolution does not grant socket access: TCP/TLS
 connections remain subject to the executor's separate socket policy below.
 
+Namespace DNS import adaptation changes only module-specifier source ranges;
+it does not reprint or bundle uploaded JavaScript. Modules with no DNS candidate
+skip analysis, and immutable analysis results have a bounded cache. Syntax
+errors encountered during adaptation reject publication rather than reverting
+to native DNS. Split deployments with WFP disabled ignore nanoflared DNS
+settings; with WFP enabled, nanoflared validates its active resolver config but
+does not validate or bind the local DNS adapter listen address.
+
+
 ## Opt-in namespace TCP and TLS sockets
 
 Namespace sockets are disabled by default (`globalOutbound: null`), independently
