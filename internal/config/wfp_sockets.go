@@ -97,7 +97,7 @@ func (o WFPSocketOptions) effectiveDeny() []string {
 		deny = append(deny, "local")
 		deny = append(deny, localRanges...)
 		// workerd uses longest-prefix matching. Match any narrower allow prefix
-		// so explicit loopback or link-local addresses cannot override the default deny.
+		// so explicit local or unspecified addresses cannot override the default deny.
 		for _, rule := range o.Allow {
 			if prefix, err := netip.ParsePrefix(rule); err == nil {
 				for _, blocked := range localRanges {
@@ -109,7 +109,41 @@ func (o WFPSocketOptions) effectiveDeny() []string {
 			}
 		}
 	}
-	return deny
+	return mirroredWFPSocketDenies(deny)
+}
+
+// Workerd may match a mapped destination as IPv6 even when the kernel dials
+// IPv4. Emit both representations for every IPv4 deny, including custom rules.
+func mirroredWFPSocketDenies(rules []string) []string {
+	var result []string
+	seen := make(map[string]bool)
+	add := func(rule string) {
+		if !seen[rule] {
+			seen[rule] = true
+			result = append(result, rule)
+		}
+	}
+	for _, rule := range rules {
+		prefix, err := netip.ParsePrefix(rule)
+		if err != nil {
+			add(rule)
+			continue
+		}
+		if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+		}
+		prefix = prefix.Masked()
+		add(prefix.String())
+		if !prefix.Addr().Is4() {
+			continue
+		}
+		var mapped [16]byte
+		mapped[10], mapped[11] = 0xff, 0xff
+		addr := prefix.Addr().As4()
+		copy(mapped[12:], addr[:])
+		add(netip.PrefixFrom(netip.AddrFrom16(mapped), 96+prefix.Bits()).String())
+	}
+	return result
 }
 
 // LogWFPSocketPolicy reports the executor-local policy, never certificate contents.
@@ -144,7 +178,7 @@ func wfpSocketBindings(o WFPSocketOptions) []string {
 }
 
 func wfpLocalRanges() []string {
-	return []string{"127.0.0.0/8", "::1/128", "169.254.0.0/16", "fe80::/10", "::ffff:127.0.0.0/104", "::ffff:169.254.0.0/112"}
+	return []string{"0.0.0.0/8", "::/128", "127.0.0.0/8", "::1/128", "169.254.0.0/16", "fe80::/10", "::ffff:0.0.0.0/104", "::ffff:127.0.0.0/104", "::ffff:169.254.0.0/112"}
 }
 func overlapsWFPLocalRange(rule string) bool {
 	prefix, err := netip.ParsePrefix(rule)

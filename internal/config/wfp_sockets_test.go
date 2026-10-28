@@ -111,10 +111,12 @@ func TestWorkerdWFPSockets(t *testing.T) {
 		t.Fatalf("requires pinned runtime: %s (%v)", version, err)
 	}
 	var service strings.Builder
-	writeWFPSocketService(&service, WFPSocketOptions{Allow: []string{"local"}, AllowLocal: true, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
+	writeWFPSocketService(&service, WFPSocketOptions{Allow: []string{"local", "::ffff:127.0.0.0/104", "::ffff:0.0.0.0/104", "0.0.0.0/8", "::/128"}, AllowLocal: true, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
 	var defaultDeny strings.Builder
-	writeWFPSocketService(&defaultDeny, WFPSocketOptions{Allow: []string{"127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128", "::ffff:0:0/96"}, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
-	fixture := map[string]string{"defaultDeny": defaultDeny.String(), "service": service.String(), "dispatch": runtimeassets.DispatchModule, "dynamicEnv": runtimeassets.DynamicEnvModule, "bindings": runtimeassets.BindingsModule}
+	writeWFPSocketService(&defaultDeny, WFPSocketOptions{Allow: []string{"127.0.0.1/32", "::1/128", "::ffff:127.0.0.1/128", "::ffff:0:0/96", "0.0.0.0/32", "::/128"}, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
+	var customDeny strings.Builder
+	writeWFPSocketService(&customDeny, WFPSocketOptions{Allow: []string{"local", "::ffff:127.0.0.0/104"}, Deny: []string{"127.0.0.0/8", "::1/128"}, AllowLocal: true, Certificates: []string{"CERTIFICATE_PLACEHOLDER"}})
+	fixture := map[string]string{"customDeny": customDeny.String(), "defaultDeny": defaultDeny.String(), "service": service.String(), "dispatch": runtimeassets.DispatchModule, "dynamicEnv": runtimeassets.DynamicEnvModule, "bindings": runtimeassets.BindingsModule}
 	data, err := json.Marshal(fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +212,7 @@ func TestWFPSocketDefaultLinkLocalDeny(t *testing.T) {
 }
 
 func TestWFPSocketMappedAndExplicitLocalRules(t *testing.T) {
-	for _, allow := range []string{"127.0.0.1", "127.0.0.1/32", "169.254.169.254", "fe80::/10", "::ffff:127.0.0.1", "::ffff:127.0.0.0/104", "::ffff:0:0/96", "::/0", "0.0.0.0/0"} {
+	for _, allow := range []string{"0.0.0.0", "0.1.2.3/32", "::", "::/128", "::ffff:0.0.0.0", "127.0.0.1", "127.0.0.1/32", "169.254.169.254", "fe80::/10", "::ffff:127.0.0.1", "::ffff:127.0.0.0/104", "::ffff:0:0/96", "::/0", "0.0.0.0/0"} {
 		if _, err := LoadWFPSocketPolicy(allow, "", "", false); err == nil || !strings.Contains(err.Error(), "ALLOW_LOCAL") {
 			t.Fatalf("%s: expected explicit unsafe opt-in error, got %v", allow, err)
 		}
@@ -243,6 +245,38 @@ func TestWFPCertificateAnnotations(t *testing.T) {
 	for _, bad := range []string{bundle + "-----BEGIN CERTIFICATE-----\n", bundle + "-----BEGIN PRIVATE KEY-----\n", bundle + "garbage\n", "-----BEGIN CERTIFICATE-----\nbad\n" + cert} {
 		if _, err := parseWFPCertificates([]byte(bad)); err == nil {
 			t.Fatal("accepted malformed trailing PEM")
+		}
+	}
+}
+
+func TestWFPSocketMirrorsCustomDenies(t *testing.T) {
+	for _, rule := range []string{"10.0.0.0/8", "::ffff:10.0.0.0/104"} {
+		o, err := LoadWFPSocketPolicy("private", rule, "", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Join(o.effectiveDeny(), ",")
+		if got != "10.0.0.0/8,::ffff:10.0.0.0/104" {
+			t.Fatalf("%s: %s", rule, got)
+		}
+	}
+	for _, test := range []struct{ rule, mapped string }{{"10.20.30.40/32", "::ffff:10.20.30.40/128"}, {"0.0.0.0/0", "::ffff:0.0.0.0/96"}, {"172.16.0.0/12", "::ffff:172.16.0.0/108"}} {
+		denies := mirroredWFPSocketDenies([]string{test.rule, test.rule})
+		if len(denies) != 2 || denies[1] != test.mapped {
+			t.Fatalf("%s: %v", test.rule, denies)
+		}
+	}
+}
+
+func TestWFPSocketUnspecifiedDefaultDenies(t *testing.T) {
+	o, err := LoadWFPSocketPolicy("private", "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := "," + strings.Join(o.effectiveDeny(), ",") + ","
+	for _, prefix := range []string{"0.0.0.0/8", "::/128", "::ffff:0.0.0.0/104"} {
+		if !strings.Contains(got, ","+prefix+",") {
+			t.Fatalf("missing unspecified deny %s: %s", prefix, got)
 		}
 	}
 }

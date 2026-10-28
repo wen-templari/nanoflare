@@ -110,17 +110,24 @@ through proxy egress is outside this configuration's scope.
 ### Protecting platform networks
 
 `NANOFLARE_WFP_SOCKET_DENY` (`--wfp-socket-deny`) adds comma-separated destination
-rules to the service's workerd `deny` list. The `local` category, loopback ranges
+rules to the service's workerd `deny` list. Every IPv4 deny CIDR is emitted in
+both IPv4 and IPv4-mapped IPv6 form (for example, `10.0.0.0/8` and
+`::ffff:10.0.0.0/104`) so mapped destination syntax cannot evade that deny.
+Custom category rules retain workerd's category semantics.
+
+The `local` category, unspecified ranges `0.0.0.0/8` and `::/128`, loopback ranges
 `127.0.0.0/8` and `::1/128`, and link-local ranges `169.254.0.0/16` and `fe80::/10`
 and their IPv4-mapped IPv6 forms are denied by default. Explicit allow CIDRs
 that overlap these ranges fail startup unless local access is opted into.
+Unspecified addresses can route to the local host on Linux and are protected
+like loopback destinations.
 Mapped IPv4 rules are normalized to IPv4 before validation, including broad
 mapped prefixes such as `::ffff:0:0/96`.
 Link-local denial protects cloud metadata endpoints such as `169.254.169.254`
 and link-local container or VM services even when `private` is allowed.
 Allowing `local` requires the unsafe administrator opt-in
 `NANOFLARE_WFP_SOCKET_ALLOW_LOCAL=true` (`--wfp-socket-allow-local`); this also
-removes the automatic loopback and link-local denies. Explicit deny rules remain
+removes the automatic unspecified-address, loopback, and link-local denies. Explicit deny rules remain
 configured. Custom allow/deny rules otherwise follow
 workerd's longest-prefix matching: a more specific allow can override a broader
 custom deny, so avoid such overlaps. The automatic local guard adds matching
