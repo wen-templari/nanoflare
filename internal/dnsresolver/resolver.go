@@ -152,7 +152,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen for Worker DNS: %w", err)
 	}
 	s.ln = ln
-	s.server.Handler = http.HandlerFunc(s.serveHTTP)
+	s.server.Handler = s
 	go func() { _ = s.server.Serve(ln) }()
 	return nil
 }
@@ -165,6 +165,11 @@ func (s *Server) Addr() string {
 }
 
 func (s *Server) Close(ctx context.Context) error { return s.server.Shutdown(ctx) }
+
+// ServeHTTP exposes the lookup adapter to trusted in-process runtime brokers.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.serveHTTP(w, r)
+}
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || r.URL.Path != "/lookup" {

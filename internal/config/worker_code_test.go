@@ -107,3 +107,45 @@ func TestWasmCodeSnapshotStaticAndWireTypes(t *testing.T) {
 		t.Fatal("mixed module union accepted")
 	}
 }
+
+func TestDNSCompilerNamespaceAndHostCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		date          string
+		flags         []string
+		enabled, bare bool
+	}{
+		{"2026-09-11", []string{"nodejs_compat"}, true, true},
+		{"2025-12-10", nil, false, false},
+		{"2026-09-11", []string{"no_nodejs_compat"}, false, false},
+		{"2024-01-01", []string{"nodejs_compat"}, true, false},
+	} {
+		t.Run(tc.date+strings.Join(tc.flags, ","), func(t *testing.T) {
+			d := nanoflare.Deployment{Format: "modules", Entrypoint: "dist/worker.js", CompatibilityDate: tc.date, CompatibilityFlags: tc.flags,
+				DispatchNamespaces: []nanoflare.DispatchBinding{{Binding: "NS", NamespaceID: "ns"}},
+				Files:              []nanoflare.WorkerFile{{Path: "dist/worker.js", Content: `import dns from "node:dns"; import promises from "dns/promises"; export default {};`}, {Path: "lib.wasm", Wasm: []byte{0, 97, 115, 109}}},
+			}
+			ns := NamespaceWorkerModules(d)
+			host := SnapshotWorkerCode(nanoflare.ActiveDeployment{Deployment: d}, WorkerdOptions{DNSAddr: "127.0.0.1:1234"}).Modules
+			for name, modules := range map[string]map[string]WorkerCodeModule{"namespace": ns, "host": host} {
+				if strings.Contains(modules["dist/worker.js"].JS, `"../nanoflare-internal:dns"`) != tc.enabled {
+					t.Fatalf("%s DNS compatibility: %s", name, modules["dist/worker.js"].JS)
+				}
+				if strings.Contains(modules["dist/worker.js"].JS, `"../nanoflare-internal:dns/promises"`) != tc.bare {
+					t.Fatalf("%s bare import compatibility: %s", name, modules["dist/worker.js"].JS)
+				}
+				if (modules["nanoflare-internal:dns"].JS != "") != tc.enabled {
+					t.Fatalf("%s shim compatibility", name)
+				}
+				if len(modules["lib.wasm"].Wasm) != 4 {
+					t.Fatal("lost Wasm module")
+				}
+			}
+			if !strings.Contains(d.Files[0].Content, `"node:dns"`) {
+				t.Fatal("mutated deployment")
+			}
+			if tc.enabled && (!strings.Contains(ns["nanoflare-internal:dns"].JS, "invocationDNS()") || strings.Contains(ns["nanoflare-internal:dns"].JS, "env.__NANOFLARE_DNS")) {
+				t.Fatal("namespace shim uses cached environment")
+			}
+		})
+	}
+}

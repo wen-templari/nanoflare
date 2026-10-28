@@ -504,7 +504,11 @@ func relativeModuleSpecifier(modulePath, target string) string {
 }
 
 func dnsShimSource() string {
-	return `import { env } from "cloudflare:workers";
+	return dnsShimWithBinding(`import { env } from "cloudflare:workers";`, "env.__NANOFLARE_DNS")
+}
+
+func dnsShimWithBinding(imports, binding string) string {
+	return imports + `
 import nativeDNS from "node:dns";
 
 function normalizeOptions(options) {
@@ -523,7 +527,7 @@ async function lookupResult(hostname, options) {
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
-  const response = await env.__NANOFLARE_DNS.fetch("http://nanoflare.dns/lookup", {
+  const response = await ` + binding + `.fetch("http://nanoflare.dns/lookup", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ hostname: String(hostname), family: normalized.family }),

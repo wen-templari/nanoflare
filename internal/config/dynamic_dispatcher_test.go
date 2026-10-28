@@ -192,7 +192,7 @@ export default class extends WorkerEntrypoint { session() { return new Session(K
 				deployment.ID = "class-v1"
 				deployment.Files = []nanoflare.WorkerFile{{Path: "worker.js", Content: strings.Replace(customer.Files[0].Content, `export default { async fetch(request,env,ctx) {`, `import {WorkerEntrypoint} from "cloudflare:workers"; export default class extends WorkerEntrypoint { async fetch(request) { const env=this.env,ctx=this.ctx;`, 1)}}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "customer-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
+			_ = json.NewEncoder(w).Encode(map[string]any{"deployment": deployment, "digest": "customer-digest", "lease": "customer-lease", "values": map[string]string{}, "wrapper": DynamicEntrypoint(deployment), "modules": NamespaceWorkerModules(deployment), "runtime_bindings": runtimeassets.BindingsModule, "dynamic_env": runtimeassets.DynamicEnvModule})
 		case r.URL.Path == "/resource/dispatcher/internal/runtime/dispatch/finish":
 			w.WriteHeader(204)
 		case strings.HasPrefix(r.URL.Path, "/resource/"):

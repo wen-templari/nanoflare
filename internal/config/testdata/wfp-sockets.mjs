@@ -86,6 +86,7 @@ try {
       compatibility_date: "2026-09-08",
       files: [{ path: "worker.js", content: source }],
     },
+    modules: { "worker.js": { js: source } },
     digest: "v1",
     lease: "lease",
     values: {},

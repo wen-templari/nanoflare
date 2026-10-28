@@ -98,7 +98,11 @@ export { DispatchBroker };
 			if addWasm(file) {
 				continue
 			}
-			add(file.Path, workerdSafeSource(file.Content))
+			source := file.Content
+			if dnsEnabled {
+				source = rewriteDNSImportsForModule(source, nodeCompatibility.v2, file.Path)
+			}
+			add(file.Path, workerdSafeSource(source))
 		}
 	} else if deploymentFormat(deployment) == "service-worker" {
 		source := deployment.Files[0].Content
@@ -130,4 +134,27 @@ export { DispatchBroker };
 		add("nanoflare-internal:dns/promises", dnsPromisesShimSource())
 	}
 	return snapshot
+}
+
+// NamespaceWorkerModules compiles namespace code without storing invocation
+// capabilities. DNS transport is selected from AsyncLocalStorage at lookup time.
+func NamespaceWorkerModules(deployment nanoflare.Deployment) map[string]WorkerCodeModule {
+	node := effectiveNodeCompatibility(deployment)
+	modules := make(map[string]WorkerCodeModule, len(deployment.Files)+2)
+	for _, file := range deployment.Files {
+		if file.Wasm != nil {
+			modules[file.Path] = WorkerCodeModule{Wasm: bytes.Clone(file.Wasm)}
+			continue
+		}
+		source := file.Content
+		if node.runtime {
+			source = rewriteDNSImportsForModule(source, node.v2, file.Path)
+		}
+		modules[file.Path] = WorkerCodeModule{JS: workerdSafeSource(source)}
+	}
+	if node.runtime {
+		modules["nanoflare-internal:dns"] = WorkerCodeModule{JS: dnsShimWithBinding(`import { invocationDNS } from "nanoflare-internal:dynamic-env.js";`, "invocationDNS()")}
+		modules["nanoflare-internal:dns/promises"] = WorkerCodeModule{JS: dnsPromisesShimSource()}
+	}
+	return modules
 }

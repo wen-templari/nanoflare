@@ -21,6 +21,7 @@ type RuntimeDispatchServer struct {
 	mux      *http.ServeMux
 	outbound http.RoundTripper
 	output   RuntimeLogAppender
+	dns      http.Handler
 }
 
 func NewRuntimeDispatchServer(service *nanoflare.Service, objects *Server, transports ...http.RoundTripper) *RuntimeDispatchServer {
@@ -30,6 +31,7 @@ func NewRuntimeDispatchServer(service *nanoflare.Service, objects *Server, trans
 	} else {
 		server.outbound = defaultDispatchOutbound
 	}
+	server.mux.HandleFunc("POST /internal/runtime/dispatch/dns", server.lookupDNS)
 	server.mux.HandleFunc("POST /internal/runtime/dispatch/log", server.log)
 	server.mux.HandleFunc("/internal/runtime/dispatch/outbound", server.forwardOutbound)
 	server.mux.HandleFunc("POST /internal/runtime/dispatch/acquire", server.acquire)
@@ -164,10 +166,11 @@ func (s *RuntimeDispatchServer) effect(w http.ResponseWriter, r *http.Request) {
 func writeDispatchArtifact(w http.ResponseWriter, artifact nanoflare.DispatchArtifact) {
 	writeJSON(w, 200, struct {
 		nanoflare.DispatchArtifact
-		Wrapper         string `json:"wrapper"`
-		RuntimeBindings string `json:"runtime_bindings"`
-		DynamicEnv      string `json:"dynamic_env"`
-	}{artifact, config.DynamicEntrypoint(artifact.Deployment), runtimeassets.BindingsModule, runtimeassets.DynamicEnvModule})
+		Wrapper         string                             `json:"wrapper"`
+		RuntimeBindings string                             `json:"runtime_bindings"`
+		DynamicEnv      string                             `json:"dynamic_env"`
+		Modules         map[string]config.WorkerCodeModule `json:"modules"`
+	}{artifact, config.DynamicEntrypoint(artifact.Deployment), runtimeassets.BindingsModule, runtimeassets.DynamicEnvModule, config.NamespaceWorkerModules(artifact.Deployment)})
 }
 func (s *RuntimeDispatchServer) nested(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -283,4 +286,35 @@ func (s *RuntimeDispatchServer) log(w http.ResponseWriter, r *http.Request) {
 		appendRuntimeLog(s.output, line)
 	}
 	w.WriteHeader(204)
+}
+
+// SetDNSHandler supplies the platform resolver, including its default profile.
+// No caller headers or URL parameters are forwarded to the resolver.
+func (s *RuntimeDispatchServer) SetDNSHandler(handler http.Handler) *RuntimeDispatchServer {
+	s.dns = handler
+	return s
+}
+func (s *RuntimeDispatchServer) lookupDNS(w http.ResponseWriter, r *http.Request) {
+	lease := r.Header.Get("X-Nanoflare-Invocation")
+	if _, err := s.service.DispatchEffect(r.Context(), bearerToken(r), lease, nanoflare.RuntimeDNS, "", 1); err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	ctx, cancel, err := s.service.DispatchEffectContext(r.Context(), lease)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	defer cancel()
+	if s.dns == nil {
+		http.Error(w, "platform DNS unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://nanoflare.dns/lookup", http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	request.Header.Set("Content-Type", "application/json")
+	s.dns.ServeHTTP(w, request)
 }

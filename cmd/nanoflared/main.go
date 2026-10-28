@@ -212,6 +212,14 @@ func main() {
 	if *runnerToken == "" {
 		*runnerToken = rand.Text()
 	}
+	dnsConfig, err := dnsresolver.LoadConfig(*dnsConfigValue)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dnsServer, err := dnsresolver.New(dnsConfig, *dnsAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *runnerURL != "" {
 		client := runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
 		remoteRunner = client
@@ -222,14 +230,6 @@ func main() {
 		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
 		writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
 		writer.SetWFPSockets(wfpSockets)
-		dnsConfig, err := dnsresolver.LoadConfig(*dnsConfigValue)
-		if err != nil {
-			log.Fatal(err)
-		}
-		dnsServer, err := dnsresolver.New(dnsConfig, *dnsAddr)
-		if err != nil {
-			log.Fatal(err)
-		}
 		if err := dnsServer.Start(); err != nil {
 			log.Fatal(err)
 		}
@@ -383,6 +383,7 @@ func main() {
 		log.Fatal(err)
 	}
 	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, dispatchTransport, *runnerToken, output)
+	runtimeMux.dispatch.SetDNSHandler(dnsServer)
 	defer runtimeMux.Close()
 
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
@@ -482,7 +483,8 @@ func newRuntimeMuxWithControl(service *nanoflare.Service, server *api.Server, du
 	if len(outputs) > 0 {
 		output = outputs[0]
 	}
-	runtimeMux.Handle("/internal/runtime/dispatch/", api.NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(output))
+	dispatch := api.NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(output)
+	runtimeMux.Handle("/internal/runtime/dispatch/", dispatch)
 	runtimeMux.Handle("/internal/runtime/access", server.RuntimeAccessHandler())
 	runtimeMux.Handle("/internal/runtime/logs", api.NewRuntimeLogServer(service, output))
 	runtimeMux.Handle("/internal/runtime/objects/", server)
@@ -505,13 +507,14 @@ func newRuntimeMuxWithControl(service *nanoflare.Service, server *api.Server, du
 	runtimeMux.Handle("/", resourceHandler)
 	runtimeMux.Handle("/internal/runtime/resources/", http.StripPrefix("/internal/runtime/resources", resourceHandler))
 	runtimeMux.Handle("/internal/runtime/assets/", runtimeAssets)
-	return &privateRuntimeMux{ServeMux: runtimeMux, executions: executions}
+	return &privateRuntimeMux{ServeMux: runtimeMux, executions: executions, dispatch: dispatch}
 }
 
 // privateRuntimeMux owns control sessions for the lifetime of the private server.
 type privateRuntimeMux struct {
 	*http.ServeMux
 	executions *api.RuntimeExecutionServer
+	dispatch   *api.RuntimeDispatchServer
 }
 
 func (m *privateRuntimeMux) Close() error { return m.executions.Close() }

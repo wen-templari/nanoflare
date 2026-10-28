@@ -40,6 +40,15 @@ export function invocationContext(ctx) {
   contexts.set(state.ctx, state);
   return state.ctx;
 }
+export function invocationDNS() {
+  const broker = invocation.getStore()?.broker;
+  if (!broker) throw new TypeError("DNS lookup requires a live invocation");
+  return {
+    fetch(input, init) {
+      return broker.dns(new Request(input, init));
+    },
+  };
+}
 export async function withInvocation(ctx, run) {
   invocationContext(ctx);
   const state = contexts.get(ctx);

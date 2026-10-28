@@ -68,6 +68,14 @@ export class DispatchBroker extends WorkerEntrypoint {
       }),
     );
   }
+  async dns(request) {
+    return dispatchControl(this).fetch("http://nanoflare.internal/internal/runtime/dispatch/dns", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Nanoflare-Invocation": this.ctx.props.lease },
+      body: request.body,
+      signal: request.signal,
+    });
+  }
   async log(level, message) {
     return dispatchControl(this).fetch("http://nanoflare.internal/internal/runtime/dispatch/log", {
       method: "POST",
@@ -198,13 +206,13 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
       codeBytes -= cached.bytes;
     } else {
       const modules = Object.create(null);
-      for (const file of artifact.deployment.files) {
-        if (file.wasm !== undefined) {
-          const bytes = Uint8Array.from(atob(file.wasm), (byte) => byte.charCodeAt(0));
-          modules[file.path] = { wasm: bytes.buffer };
+      for (const [name, module] of Object.entries(artifact.modules)) {
+        if (module.wasm !== undefined) {
+          const bytes = Uint8Array.from(atob(module.wasm), (byte) => byte.charCodeAt(0));
+          modules[name] = { wasm: bytes.buffer };
           wasmBytes += bytes.byteLength;
         } else {
-          modules[file.path] = { js: file.content };
+          modules[name] = { js: module.js };
         }
       }
       modules["__nanoflare_dynamic_entrypoint__.js"] = { js: artifact.wrapper };

@@ -338,6 +338,13 @@ Node.js compatibility is enabled by the compatibility date starting with
 ["nodejs_compat"]`. If Node.js compatibility is explicitly disabled with
 `no_nodejs_compat`, Nanoflare does not install the DNS lookup adapter.
 
+Dynamic Workers for Platforms namespace scripts use the `defaultProfile` from
+`nanoflared`'s `NANOFLARE_DNS_CONFIG`, including in split deployments. Their
+lookups run through the invocation broker and share its effect budget and
+deadline. Per-script profile selection remains unavailable. Configure the
+corporate default on `nanoflared` when namespace scripts need private DNS; the
+runner's resolver configuration still applies to ordinary Workers.
+
 Workers without `dns.profile` inherit `defaultProfile`. Unknown profiles fail
 deployment, and lookup errors retain Node-style codes such as `ENOTFOUND`,
 `ETIMEOUT`, and `EAI_AGAIN`. The adapter is private and listens on

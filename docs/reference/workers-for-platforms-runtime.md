@@ -50,6 +50,21 @@ Real CPU accounting/interruption is the user's [separate workstream](../plans/wo
 
 Developer tools, effective-capability reporting and customer telemetry are implemented. The [management adapter](cloudflare-management-api.md) provides a separate Cloudflare-shaped subset over this native contract. Bounded local capacity, storage/recovery and rollback qualification and independent review are recorded in the [archive](../archive/workers-for-platforms/README.md). Live comparison remains blocked by account entitlement; broad Wrangler/SDK, runtime/security equivalence and production expansion remain unqualified.
 
+## Namespace DNS lookup
+
+With effective Node.js compatibility, dynamic namespace scripts use Nanoflare's
+adapter for callback `dns.lookup()`, `dns.promises.lookup()` and
+`node:dns/promises` (including bare imports under Node.js compatibility v2).
+The invocation broker resolves through `nanoflared`'s configured `defaultProfile`,
+including with a remote runner. Configure `NANOFLARE_DNS_CONFIG` on `nanoflared`
+for private/corporate names. Scripts cannot select another profile. Each lookup
+consumes one shared effect unit and is canceled with the invocation's deadline
+or cancellation. Revision reuse does not retain invocation capabilities.
+
+This adapts lookup methods only; other native DNS methods such as `resolve()`
+keep workerd's behavior. DNS resolution does not grant socket access: TCP/TLS
+connections remain subject to the executor's separate socket policy below.
+
 ## Opt-in namespace TCP and TLS sockets
 
 Namespace sockets are disabled by default (`globalOutbound: null`), independently

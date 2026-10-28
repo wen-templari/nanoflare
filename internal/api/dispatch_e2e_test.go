@@ -115,6 +115,7 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 }
 
 type dispatchFixtureObservations struct {
+	DNS              http.Handler
 	Output           *runtime.OutputBuffer
 	OutboundCanceled func(string)
 }
@@ -238,7 +239,11 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/internal/runtime/dispatch/") {
-			NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(logOutput).ServeHTTP(w, r)
+			dispatch := NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(logOutput)
+			if len(observations) > 0 {
+				dispatch.SetDNSHandler(observations[0].DNS)
+			}
+			dispatch.ServeHTTP(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/internal/runtime/durations") {
