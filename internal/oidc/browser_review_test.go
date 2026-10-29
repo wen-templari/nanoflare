@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"math/big"
 	"net/http"
@@ -205,64 +204,5 @@ func TestCorruptBrowserSessionsRequireLogin(t *testing.T) {
 				t.Fatal("bad session was not deleted")
 			}
 		})
-	}
-}
-
-func TestForwardAuthProofSkipsLookupAndRejectsTampering(t *testing.T) {
-	store := &countedBrowserStore{Store: browserstore.NewMemory()}
-	v := NewBrowserVerifier("https://issuer", "aud", "email", "client", "", "https://auth", "", nil)
-	if err := v.ConfigureBrowserSessions(store, browserTestKey, time.Hour, time.Hour, DefaultBrowserScopes); err != nil {
-		t.Fatal(err)
-	}
-	expiry := time.Now().Add(time.Minute)
-	authRequest := httptest.NewRequest("GET", "https://auth/internal/auth/verify", nil)
-	authRequest.Header.Set("X-Forwarded-Proto", "https")
-	authRequest.Header.Set("X-Forwarded-Host", "worker.example.com")
-	authRequest.Header.Set("X-Forwarded-Uri", "/save?q=1")
-	authRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "cookie"})
-	proof := v.BrowserSessionProof(authRequest, api.AuthResult{Valid: true, Email: "user@example.com", ExpiresAt: &expiry}, "access")
-	gateway := httptest.NewRequest("GET", "https://worker.example.com/save?q=1", nil)
-	gateway.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "cookie"})
-	gateway.Header.Set("X-Nanoflare-User-JWT", "access")
-	gateway.Header.Set("X-Nanoflare-User-Email", "user@example.com")
-	gateway.Header.Set("X-Nanoflare-Session-Proof", proof)
-	if _, _, valid := v.ForwardedBrowserSession(gateway); !valid {
-		t.Fatal("valid proof rejected")
-	}
-	// Another replica, including one using a different supported key encoding,
-	// must accept the proof without consulting its store.
-	replica := NewBrowserVerifier("https://issuer", "aud", "email", "client", "", "https://auth", "", nil)
-	if err := replica.ConfigureBrowserSessions(store, hex.EncodeToString([]byte(browserTestKey)), time.Hour, time.Hour, DefaultBrowserScopes); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, valid := replica.ForwardedBrowserSession(gateway); !valid {
-		t.Fatal("replica rejected proof")
-	}
-	if store.reads.Load() != 0 || store.writes.Load() != 0 {
-		t.Fatal("proof accessed database")
-	}
-	for _, field := range []string{"cookie", "token", "email", "path", "signature"} {
-		changed := gateway.Clone(gateway.Context())
-		switch field {
-		case "cookie":
-			changed.Header.Set("Cookie", sessionCookieName+"=other")
-		case "token":
-			changed.Header.Set("X-Nanoflare-User-JWT", "other")
-		case "email":
-			changed.Header.Set("X-Nanoflare-User-Email", "admin@example.com")
-		case "path":
-			changed.URL.Path = "/different"
-			changed.Header.Set("X-Forwarded-Uri", "/save?q=1")
-		case "signature":
-			changed.Header.Set("X-Nanoflare-Session-Proof", proof+"bad")
-		}
-		if _, _, valid := v.ForwardedBrowserSession(changed); valid {
-			t.Errorf("tampered %s accepted", field)
-		}
-	}
-	expired := time.Now().Add(-time.Second)
-	gateway.Header.Set("X-Nanoflare-Session-Proof", v.BrowserSessionProof(authRequest, api.AuthResult{Email: "user@example.com", ExpiresAt: &expired}, "access"))
-	if _, _, valid := v.ForwardedBrowserSession(gateway); valid {
-		t.Fatal("expired proof accepted")
 	}
 }

@@ -53,7 +53,6 @@ type Verifier struct {
 	idleTTL     time.Duration
 	absoluteTTL time.Duration
 	scopes      string
-	proofKey    []byte
 }
 
 type browserState struct {
@@ -72,6 +71,8 @@ type browserSession struct {
 	LastActivityAt  time.Time
 	IdentityPending bool
 	PendingIDToken  string
+	LeaseOwner      string
+	LeaseUntil      time.Time
 }
 
 type discoveryDocument struct {
@@ -728,6 +729,9 @@ func (v *Verifier) fetchUserInfo(ctx context.Context, token string) (map[string]
 		return nil, fmt.Errorf("userinfo request failed: %w", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, errIdentityRejected
+	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("userinfo request failed: status %d", response.StatusCode)
 	}

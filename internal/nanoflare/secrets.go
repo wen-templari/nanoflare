@@ -3,9 +3,7 @@ package nanoflare
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -75,11 +73,4 @@ func (c *SecretCodec) Decrypt(nonce, ciphertext []byte) (string, error) {
 		return "", err
 	}
 	return string(plaintext), nil
-}
-
-// DeriveKey returns a domain-separated subkey without exposing the master key.
-func (c *SecretCodec) DeriveKey(domain string) []byte {
-	mac := hmac.New(sha256.New, c.key)
-	mac.Write([]byte(domain))
-	return mac.Sum(nil)
 }

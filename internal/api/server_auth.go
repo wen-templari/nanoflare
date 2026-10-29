@@ -38,11 +38,7 @@ func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if ok {
-				if proof, ok := browserAuth.(interface {
-					BrowserSessionProof(*http.Request, AuthResult, string) string
-				}); ok {
-					w.Header().Set("X-Nanoflare-Session-Proof", proof.BrowserSessionProof(r, result, sessionToken))
-				}
+
 				w.Header().Set("X-Nanoflare-User-JWT", sessionToken)
 				w.Header().Set("X-Nanoflare-User-Email", result.Email)
 				w.WriteHeader(http.StatusOK)
@@ -168,25 +164,11 @@ func shouldRedirectToOIDC(r *http.Request) bool {
 	return true
 }
 
-// Error-aware browser authenticators preserve sessions during temporary IdP or
-// database outages instead of turning those failures into a login redirect.
+// Browser session errors are explicit in the interface; optional identity at
+// the gateway still uses a read-only lookup to observe cross-instance revocation.
 func browserSessionForRequest(auth BrowserAuthenticator, r *http.Request) (AuthResult, string, bool, error) {
-	if auth, ok := auth.(interface {
-		SessionWithError(*http.Request) (AuthResult, string, bool, error)
-	}); ok {
-		return auth.SessionWithError(r)
-	}
-	result, token, ok := auth.Session(r)
-	return result, token, ok, nil
+	return auth.SessionWithError(r)
 }
-
 func browserSessionForWorker(auth BrowserAuthenticator, r *http.Request) (AuthResult, string, bool, error) {
-	if forwarded, ok := auth.(interface {
-		ForwardedBrowserSession(*http.Request) (AuthResult, string, bool)
-	}); ok {
-		if result, token, valid := forwarded.ForwardedBrowserSession(r); valid {
-			return result, token, true, nil
-		}
-	}
-	return browserSessionForRequest(auth, r)
+	return auth.SessionWithError(r)
 }

@@ -151,6 +151,7 @@ func main() {
 	}
 
 	var store nanoflare.Repository = nanoflare.NewStore()
+	var persistentBrowserSessions browserstore.Store
 	var objectStore nanoflare.ObjectStore
 	if endpoint := os.Getenv("MINIO_ENDPOINT"); endpoint != "" {
 		secure, err := strconv.ParseBool(envOrDefault("MINIO_SECURE", "false"))
@@ -176,6 +177,7 @@ func main() {
 		}
 		defer postgres.Close()
 		store = postgres
+		persistentBrowserSessions = postgres
 		log.Print("using PostgreSQL repository")
 	}
 
@@ -353,12 +355,11 @@ func main() {
 		}
 		verifier := oidc.NewBrowserVerifier(*oidcIssuer, *oidcAudience, *oidcEmail, clientID, *oidcSecret, *oidcPublic, *oidcCookie, nil)
 		if verifier.BrowserFlowEnabled() {
-			var sessions browserstore.Store = browserstore.NewMemory()
-			if persistent, ok := store.(browserstore.Store); ok {
-				sessions = persistent
-			} else {
-				log.Print("OIDC browser sessions use memory and will not survive restart; configure DATABASE_URL for persistence")
+			sessions, warning := selectBrowserSessionStore(persistentBrowserSessions, os.Getenv("NANOFLARE_SECRET_KEY"))
+			if warning != "" {
+				log.Print(warning)
 			}
+
 			browserSessions = sessions
 			if err := verifier.ConfigureBrowserSessions(sessions, os.Getenv("NANOFLARE_SECRET_KEY"), *oidcSessionIdle, *oidcSessionAbsolute, *oidcScopes); err != nil {
 				log.Fatal(err)
@@ -584,4 +585,16 @@ func envDurationOrDefault(name string, fallback time.Duration) time.Duration {
 		return duration
 	}
 	return fallback
+}
+
+// Select the explicitly opened browser store, independently of repository wrappers.
+// Preserve existing keyless deployments without ever persisting plaintext tokens.
+func selectBrowserSessionStore(persistent browserstore.Store, key string) (browserstore.Store, string) {
+	if persistent == nil {
+		return browserstore.NewMemory(), "OIDC browser sessions use memory and will not survive restart; configure DATABASE_URL and NANOFLARE_SECRET_KEY for persistence"
+	}
+	if strings.TrimSpace(key) == "" {
+		return browserstore.NewMemory(), "WARNING: DATABASE_URL is configured but NANOFLARE_SECRET_KEY is empty; OIDC browser sessions remain process-local for upgrade compatibility and will not survive restart; set a stable NANOFLARE_SECRET_KEY to enable encrypted persistence"
+	}
+	return persistent, ""
 }

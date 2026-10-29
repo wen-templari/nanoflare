@@ -1567,3 +1567,10 @@ func TestVerifyAuthTemporaryBrowserFailureDoesNotRedirect(t *testing.T) {
 		})
 	}
 }
+
+func (f fakeAuthenticator) SessionWithError(r *http.Request) (AuthResult, string, bool, error) {
+	result, token, ok := f.Session(r)
+	return result, token, ok, nil
+}
+
+var _ BrowserAuthenticator = fakeAuthenticator{}

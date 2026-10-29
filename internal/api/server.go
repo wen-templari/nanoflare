@@ -68,7 +68,7 @@ type Authenticator interface {
 
 type BrowserAuthenticator interface {
 	Authenticator
-	Session(*http.Request) (AuthResult, string, bool)
+	SessionWithError(*http.Request) (AuthResult, string, bool, error)
 	BeginAuth(http.ResponseWriter, *http.Request) error
 	HandleCallback(http.ResponseWriter, *http.Request) error
 }

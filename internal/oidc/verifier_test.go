@@ -303,7 +303,6 @@ func TestVerifierBrowserFlowCreatesSessionWithoutIDToken(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "opaque-access-token",
 				"token_type":   "Bearer",
-				"expires_in":   1800,
 			})
 		case "/userinfo":
 			_ = json.NewEncoder(w).Encode(map[string]any{"sub": "user-123", "email": "person@example.com"})
@@ -336,6 +335,15 @@ func TestVerifierBrowserFlowCreatesSessionWithoutIDToken(t *testing.T) {
 	}
 	if callbackRecorder.Code != http.StatusFound {
 		t.Fatalf("callback status = %d body = %q", callbackRecorder.Code, callbackRecorder.Body.String())
+	}
+	cookies := callbackRecorder.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("missing cookie for opaque token without expires_in")
+	}
+	request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
+	request.AddCookie(cookies[0])
+	if _, token, ok, err := verifier.SessionWithError(request); err != nil || !ok || token != "opaque-access-token" {
+		t.Fatalf("expiry fallback login failed: valid=%v error=%v", ok, err)
 	}
 }
 

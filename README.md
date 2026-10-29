@@ -607,13 +607,18 @@ When `NANOFLARE_LOKI_URL` is configured, output is retained in Loki and can be
 filtered with `--deployment`, `--level`, `--search`, `--since`, and `--until`.
 
 Protected worker browser sessions use `NANOFLARE_OIDC_*`, independently of
-console and CLI authentication. For database-backed browser login, set a stable
-`NANOFLARE_SECRET_KEY` (32 raw bytes, 64 hex characters, or base64 for 32 bytes).
-With `DATABASE_URL`, browser sessions and pending PKCE login state are encrypted
-in PostgreSQL and shared across replicas and redeployments. Every replica must
-use the same key, issuer, client ID, and public callback URL. Without PostgreSQL,
-sessions remain process-local, do not require an encryption key, and are lost
-on restart. Existing in-memory sessions require one new login when upgrading to persistent sessions.
+console and CLI authentication. With `DATABASE_URL` and a stable
+`NANOFLARE_SECRET_KEY` (32 raw bytes, 64 hex characters, or base64 for 32 bytes),
+browser sessions and pending PKCE state are encrypted in PostgreSQL and shared
+across replicas and redeployments. Every replica must use the same key, issuer,
+client ID, and public callback URL. Session storage is selected explicitly when
+the database opens and does not depend on repository wrappers.
+
+Without PostgreSQL or an encryption key, sessions stay process-local and are lost
+on restart. In particular, existing Compose deployments with an empty key still
+start and support login; they emit an explicit warning identifying the missing
+key and loss of persistence. Set a stable key to enable encrypted persistence.
+Existing in-memory sessions require one new login when enabling persistence.
 
 Worker browser session policy can be configured using:
 
@@ -624,37 +629,46 @@ NANOFLARE_OIDC_SESSION_ABSOLUTE=24h
 ```
 
 The corresponding flags are `--oidc-scopes`, `--oidc-session-idle`, and
-`--oidc-session-absolute`. Configure the IdP client to issue refresh tokens;
-the default scopes preserve existing logins. Opt into `offline_access` only
-when your provider requires and supports it; other providers use consent or
-provider-specific settings. If no refresh token is issued, access-token expiry requires reauthentication. Opaque access tokens
-must have a positive `expires_in`; JWT access tokens can supply `exp`.
-An original ID token's expiry does not cap a refreshable browser session.
+`--oidc-session-absolute`. Existing scopes remain the default. Configure the IdP
+to issue refresh tokens; opt into `offline_access` only when supported and
+required, or use provider-specific consent settings. Without a refresh token,
+access-token expiry requires reauthentication. If `expires_in` is omitted, JWT
+access tokens can supply `exp`; otherwise the ID-token expiry or a one-hour
+fallback supplies the lifetime, preserving existing opaque-token logins. Providers
+should supply expiry metadata for precise refresh scheduling. An original ID
+token's expiry does not cap a refreshable browser session.
 
-Requests refresh access tokens on demand within 30 seconds of expiry.
-Refresh-token rotation is serialized per session across replicas and committed
-with the new access token before refreshing identity metadata. Browser disconnects
-do not cancel the bounded refresh transaction. Temporary IdP/network/database
-failures at the protected ForwardAuth endpoint return 502 without deleting the session; API requests requiring a new login return 401,
-while browser navigations redirect through OIDC. Public worker requests continue
-without identity headers when optional authentication fails. IdP SSO cookie
-lifetime and refresh-token validity are separate: logging out at the IdP only ends refresh
-when the provider revokes or expires that grant.
+Requests attempt refresh within 30 seconds of access-token expiry. Temporary
+early-refresh failure keeps serving the accepted token until it actually expires.
+Short persisted leases coordinate refreshes across replicas; token, userinfo,
+and key requests run outside database transactions and release the connection
+pool. Commits are fenced by lease ownership so stale refreshes cannot overwrite
+newer credentials or resurrect deleted records. Bounded independent contexts
+protect token write-back from browser disconnects. Rotated tokens are committed
+before identity metadata is fetched and validated.
 
-The browser cookie has the fixed absolute deadline; activity renews only the
-server-side idle deadline, so ForwardAuth does not need to propagate renewed
-cookies. Idle deadline writes are coalesced to at most once per minute (or half
-the idle limit for shorter limits); the idle deadline is measured from the last
-persisted activity sample. Normal requests only read the session record, and
-a short-lived, cookie/URL/identity-bound ForwardAuth proof avoids a second
-database lookup in the gateway. Proofs are stripped before forwarding to workers.
-Expired records are removed every minute. Keep the encryption key stable;
-changing it requires reauthentication: unreadable or corrupt records are deleted.
-A crash or lost response
-between IdP token rotation and database commit can still require reauthentication
-when the provider offers no refresh-token reuse grace period. PostgreSQL cannot
-atomically commit a transaction with the external IdP. Applications should still
-preserve drafts across legitimate authentication expiry.
+Transient identity failures retain pending credentials without extending the idle
+deadline. Expired pending access tokens can refresh again using the saved grant;
+invalid signatures, rejected identities, or missing required identity fields
+require login. Temporary provider/database failures return 502 only when the
+session cannot authenticate the request. APIs requiring reauthentication return
+401 and browser navigations redirect through OIDC. Public workers continue
+without optional identity headers on authentication failure. IdP SSO cookies and
+refresh-grant validity are separate policies.
+
+The cookie has the fixed absolute deadline. Activity renews the server-side idle
+deadline at most once per minute (half the idle limit for shorter limits), measured
+from the last persisted sample; failed authentication does not renew activity.
+Normal requests only read the record. The gateway performs a second read-only
+lookup to observe cross-instance session deletion; there is no signed-proof
+replay window or dependency on matching proxy URL encodings. Expired records are
+cleaned up every minute. Changing the key requires reauthentication: unreadable
+or corrupt records are deleted.
+
+A crash or lost response between IdP rotation and database commit can still
+require login if the provider offers no refresh-token reuse grace period.
+PostgreSQL and the external IdP cannot participate in one atomic commit.
+Applications should preserve drafts across legitimate authentication expiry.
 
 The browser console can also use an external OIDC provider for login. Configure
 the console-specific settings on `nanoflared`:

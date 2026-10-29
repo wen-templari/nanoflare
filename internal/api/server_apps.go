@@ -645,12 +645,7 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 			request.Header.Set("X-Nanoflare-User-Email", identity.Email)
 		}
 	} else if browser, ok := s.auth.(BrowserAuthenticator); ok {
-		// Traefik adds the gateway prefix after ForwardAuth. Verify its proof
-		// against the original worker URI, preserving escaping and query parameters.
-		identityRequest := r.Clone(r.Context())
-		identityRequest.URL.Path = requestPath
-		identityRequest.URL.RawPath = escapedRequestPath
-		identity, token, valid, err := browserSessionForWorker(browser, identityRequest)
+		identity, token, valid, err := browserSessionForWorker(browser, r)
 		if err == nil && valid {
 			request.Header.Set("X-Nanoflare-User-JWT", token)
 			request.Header.Set("X-Nanoflare-User-Email", identity.Email)

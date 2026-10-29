@@ -824,8 +824,8 @@ func entrypointFirst(files []nanoflare.WorkerFile, entrypoint string) []nanoflar
 func Traefik(active []nanoflare.ActiveDeployment, authURL, authHost, workerHost string) string {
 	var out strings.Builder
 	out.WriteString("http:\n  middlewares:\n    nanoflare-auth:\n      forwardAuth:\n")
-	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Nanoflare-User-JWT\n          - X-Nanoflare-User-Email\n          - X-Nanoflare-Session-Proof\n", yamlQuote(authURL))
-	out.WriteString("    nanoflare-public-url:\n      headers:\n        customRequestHeaders:\n          X-Nanoflare-User-JWT: \"\"\n          X-Nanoflare-User-Email: \"\"\n          X-Nanoflare-Session-Proof: \"\"\n          X-Forwarded-Proto: \"https\"\n")
+	fmt.Fprintf(&out, "        address: %s\n        authResponseHeaders:\n          - X-Nanoflare-User-JWT\n          - X-Nanoflare-User-Email\n", yamlQuote(authURL))
+	out.WriteString("    nanoflare-public-url:\n      headers:\n        customRequestHeaders:\n          X-Nanoflare-User-JWT: \"\"\n          X-Nanoflare-User-Email: \"\"\n          X-Forwarded-Proto: \"https\"\n")
 	backendBase := nanoflaredGatewayBase(authURL)
 	apps := uniqueActiveApps(active)
 	for _, item := range apps {
