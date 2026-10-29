@@ -194,6 +194,7 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 	defer cancel()
 	id := cookie.Value
 	refreshed := false
+	waitDelay := 25 * time.Millisecond
 	for {
 		session, found, err := v.readSession(ctx, id)
 		if err != nil {
@@ -249,12 +250,13 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 			if accepted, ok := acceptedSession(session, now); ok {
 				return sessionIdentity(accepted), accepted.AccessToken, true, nil
 			}
-			timer := time.NewTimer(25 * time.Millisecond)
+			timer := time.NewTimer(waitDelay)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
 				return api.AuthResult{}, "", false, errBrowserTemporary
 			case <-timer.C:
+				waitDelay = min(2*waitDelay, 250*time.Millisecond)
 				continue
 			}
 		}
