@@ -211,26 +211,8 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 		}
 		if !refreshDue && !session.IdentityPending {
 			if v.activityDue(session, now) {
-				accepted, retry := false, false
-				err = v.updateRecord(ctx, "session", id, func(data []byte) ([]byte, time.Time, error) {
-					var current browserSession
-					if len(data) == 0 || json.Unmarshal(data, &current) != nil || !browserSessionActive(current, time.Now()) {
-						return nil, time.Time{}, nil
-					}
-					if !sessionUsable(current, time.Now()) || current.AccessToken != session.AccessToken {
-						retry = true
-						return nil, time.Time{}, browserstore.ErrUnchanged
-					}
-					accepted = true
-					if v.activityDue(current, time.Now()) {
-						current.LastActivityAt = time.Now().UTC()
-						current.IdleExpiresAt = current.LastActivityAt.Add(v.idleTTL)
-						session = current
-						return encodeSession(current)
-					}
-					session = current
-					return nil, time.Time{}, browserstore.ErrUnchanged
-				})
+				var accepted, retry bool
+				session, accepted, retry, err = v.renewActivity(ctx, id, session)
 				if err != nil {
 					return api.AuthResult{}, "", false, errBrowserTemporary
 				}
@@ -264,85 +246,19 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 		if err != nil {
 			return api.AuthResult{}, "", false, errBrowserTemporary
 		}
-		claimed := false
-		err = v.updateRecord(ctx, "session", id, func(data []byte) ([]byte, time.Time, error) {
-			var current browserSession
-			if len(data) == 0 || json.Unmarshal(data, &current) != nil || !browserSessionActive(current, time.Now()) {
-				return nil, time.Time{}, nil
-			}
-			if current.AccessToken != session.AccessToken || current.RefreshToken != session.RefreshToken || current.IdentityPending != session.IdentityPending || !current.TokenExpiresAt.Equal(session.TokenExpiresAt) || (current.LeaseOwner != "" && current.LeaseUntil.After(time.Now())) {
-				return nil, time.Time{}, browserstore.ErrUnchanged
-			}
-			current.LeaseOwner = owner
-			current.LeaseUntil = time.Now().Add(30 * time.Second)
-			session = current
-			claimed = true
-			return encodeSession(current)
-		})
+		var claimed bool
+		session, claimed, err = v.claimLease(ctx, id, owner, session)
 		if err != nil {
 			return api.AuthResult{}, "", false, errBrowserTemporary
 		}
 		if !claimed {
 			continue
 		}
-		// No database transaction/connection is held during any IdP operation.
-		opCtx, opCancel := context.WithTimeout(ctx, 10*time.Second)
-		updated := session
-		permanent := false
-		if refreshDue {
-			var token tokenResponse
-			token, permanent, err = v.refresh(opCtx, session.RefreshToken)
-			if err == nil {
-				updated.AccessToken = token.AccessToken
-				if token.RefreshToken != "" {
-					updated.RefreshToken = token.RefreshToken
-				}
-				updated.TokenExpiresAt = accessTokenExpiry(token, now)
-				updated.PendingIDToken = token.IDToken
-				updated.IdentityPending = true
-				if !updated.TokenExpiresAt.After(time.Now()) {
-					permanent = true
-					err = errIdentityRejected
-				}
-				refreshed = true
-			}
-		} else {
-			var result api.AuthResult
-			result, permanent, err = v.refreshIdentity(opCtx, session)
-			if err == nil {
-				updated.Result = result
-				updated.AcceptedAccessToken = updated.AccessToken
-				updated.AcceptedTokenExpiresAt = updated.TokenExpiresAt
-				updated.IdentityPending = false
-				updated.PendingIDToken = ""
-			}
+		updated, permanent, err := v.runLeasedOperation(ctx, session, refreshDue, now)
+		if refreshDue && err == nil {
+			refreshed = true
 		}
-		opCancel()
-		// Commit using the lease as a fencing token. A stale owner cannot overwrite
-		// another refresh, resurrect a deleted session, or renew an expired browser.
-		committed := false
-		commitCtx, commitCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		commitErr := v.updateRecord(commitCtx, "session", id, func(data []byte) ([]byte, time.Time, error) {
-			var current browserSession
-			if len(data) == 0 || json.Unmarshal(data, &current) != nil {
-				return nil, time.Time{}, nil
-			}
-			if current.LeaseOwner != owner {
-				return nil, time.Time{}, browserstore.ErrUnchanged
-			}
-			if !browserSessionActive(current, time.Now()) || permanent {
-				committed = true
-				return nil, time.Time{}, nil
-			}
-			if err != nil {
-				updated = current
-			}
-			updated.LeaseOwner = ""
-			updated.LeaseUntil = time.Time{}
-			committed = true
-			return encodeSession(updated)
-		})
-		commitCancel()
+		committed, commitErr := v.commitLeased(ctx, id, owner, updated, permanent, err)
 		if commitErr != nil {
 			return api.AuthResult{}, "", false, errBrowserTemporary
 		}
@@ -363,6 +279,114 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 		// already durable new credentials. Expired pending tokens may refresh again.
 	}
 }
+func (v *Verifier) renewActivity(ctx context.Context, id string, session browserSession) (updated browserSession, accepted, retry bool, err error) {
+	accepted, retry = false, false
+	err = v.updateRecord(ctx, "session", id, func(data []byte) ([]byte, time.Time, error) {
+		var current browserSession
+		if len(data) == 0 || json.Unmarshal(data, &current) != nil || !browserSessionActive(current, time.Now()) {
+			return nil, time.Time{}, nil
+		}
+		if !sessionUsable(current, time.Now()) || current.AccessToken != session.AccessToken {
+			retry = true
+			return nil, time.Time{}, browserstore.ErrUnchanged
+		}
+		accepted = true
+		if v.activityDue(current, time.Now()) {
+			current.LastActivityAt = time.Now().UTC()
+			current.IdleExpiresAt = current.LastActivityAt.Add(v.idleTTL)
+			session = current
+			return encodeSession(current)
+		}
+		session = current
+		return nil, time.Time{}, browserstore.ErrUnchanged
+	})
+	return session, accepted, retry, err
+}
+
+func (v *Verifier) claimLease(ctx context.Context, id, owner string, session browserSession) (updated browserSession, claimed bool, err error) {
+	claimed = false
+	err = v.updateRecord(ctx, "session", id, func(data []byte) ([]byte, time.Time, error) {
+		var current browserSession
+		if len(data) == 0 || json.Unmarshal(data, &current) != nil || !browserSessionActive(current, time.Now()) {
+			return nil, time.Time{}, nil
+		}
+		if current.AccessToken != session.AccessToken || current.RefreshToken != session.RefreshToken || current.IdentityPending != session.IdentityPending || !current.TokenExpiresAt.Equal(session.TokenExpiresAt) || (current.LeaseOwner != "" && current.LeaseUntil.After(time.Now())) {
+			return nil, time.Time{}, browserstore.ErrUnchanged
+		}
+		current.LeaseOwner = owner
+		current.LeaseUntil = time.Now().Add(30 * time.Second)
+		session = current
+		claimed = true
+		return encodeSession(current)
+	})
+	return session, claimed, err
+}
+
+func (v *Verifier) runLeasedOperation(ctx context.Context, session browserSession, refreshDue bool, now time.Time) (updated browserSession, permanent bool, err error) {
+	// No database transaction/connection is held during any IdP operation.
+	opCtx, opCancel := context.WithTimeout(ctx, 10*time.Second)
+	updated = session
+	permanent = false
+	if refreshDue {
+		var token tokenResponse
+		token, permanent, err = v.refresh(opCtx, session.RefreshToken)
+		if err == nil {
+			updated.AccessToken = token.AccessToken
+			if token.RefreshToken != "" {
+				updated.RefreshToken = token.RefreshToken
+			}
+			updated.TokenExpiresAt = accessTokenExpiry(token, now)
+			updated.PendingIDToken = token.IDToken
+			updated.IdentityPending = true
+			if !updated.TokenExpiresAt.After(time.Now()) {
+				permanent = true
+				err = errIdentityRejected
+			}
+		}
+	} else {
+		var result api.AuthResult
+		result, permanent, err = v.refreshIdentity(opCtx, session)
+		if err == nil {
+			updated.Result = result
+			updated.AcceptedAccessToken = updated.AccessToken
+			updated.AcceptedTokenExpiresAt = updated.TokenExpiresAt
+			updated.IdentityPending = false
+			updated.PendingIDToken = ""
+		}
+	}
+	opCancel()
+	return updated, permanent, err
+}
+
+func (v *Verifier) commitLeased(ctx context.Context, id, owner string, updated browserSession, permanent bool, err error) (committed bool, commitErr error) {
+	// Commit using the lease as a fencing token. A stale owner cannot overwrite
+	// another refresh, resurrect a deleted session, or renew an expired browser.
+	committed = false
+	commitCtx, commitCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	commitErr = v.updateRecord(commitCtx, "session", id, func(data []byte) ([]byte, time.Time, error) {
+		var current browserSession
+		if len(data) == 0 || json.Unmarshal(data, &current) != nil {
+			return nil, time.Time{}, nil
+		}
+		if current.LeaseOwner != owner {
+			return nil, time.Time{}, browserstore.ErrUnchanged
+		}
+		if !browserSessionActive(current, time.Now()) || permanent {
+			committed = true
+			return nil, time.Time{}, nil
+		}
+		if err != nil {
+			updated = current
+		}
+		updated.LeaseOwner = ""
+		updated.LeaseUntil = time.Time{}
+		committed = true
+		return encodeSession(updated)
+	})
+	commitCancel()
+	return committed, commitErr
+}
+
 func (v *Verifier) deleteSession(ctx context.Context, id string, expected browserSession) error {
 	return v.updateRecord(ctx, "session", id, func(data []byte) ([]byte, time.Time, error) {
 		var current browserSession
