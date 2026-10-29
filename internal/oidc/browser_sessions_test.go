@@ -48,6 +48,8 @@ func TestBrowserSessionRefreshAcrossInstances(t *testing.T) {
 				switch r.URL.Path {
 				case "/.well-known/openid-configuration":
 					json.NewEncoder(w).Encode(map[string]string{"authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys", "userinfo_endpoint": issuer + "/userinfo"})
+				case "/userinfo":
+					json.NewEncoder(w).Encode(map[string]any{"sub": "user", "email": "user@example.com"})
 				case "/token":
 					calls.Add(1)
 					r.ParseForm()
@@ -208,8 +210,12 @@ func TestEncryptedBrowserRecordBinding(t *testing.T) {
 	if err := v.updateRecord(context.Background(), "session", "another-cookie", func(data []byte) ([]byte, time.Time, error) {
 		t.Fatal("swapped ciphertext was accepted")
 		return nil, time.Time{}, nil
-	}); err == nil {
-		t.Fatal("record binding was not checked")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := store.ReadBrowserRecord(context.Background(), otherKey)
+	if err != nil || len(payload) != 0 {
+		t.Fatal("invalid encrypted record was not deleted")
 	}
 	capture.key = originalKey
 

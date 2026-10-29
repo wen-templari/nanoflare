@@ -83,9 +83,9 @@ func main() {
 		runnerToken                    = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
 		traefikToken                   = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
 		authSecret                     = flag.String("control-auth-secret", envOrDefault("NANOFLARE_AUTH_SECRET", "nanoflare-development-control-secret"), "JWT signing secret for control-plane email/password auth")
-		oidcSessionIdle                = flag.Duration("oidc-session-idle", envDurationOrDefault("NANOFLARE_OIDC_SESSION_IDLE", time.Hour), "Worker browser session idle limit")
-		oidcSessionAbsolute            = flag.Duration("oidc-session-absolute", envDurationOrDefault("NANOFLARE_OIDC_SESSION_ABSOLUTE", 24*time.Hour), "Worker browser session absolute limit")
-		oidcScopes                     = flag.String("oidc-scopes", envOrDefault("NANOFLARE_OIDC_SCOPES", "openid email profile offline_access"), "Worker OIDC scopes; configure IdP refresh-token issuance")
+		oidcSessionIdle                = flag.Duration("oidc-session-idle", envDurationOrDefault("NANOFLARE_OIDC_SESSION_IDLE", oidc.DefaultBrowserIdleTTL), "Worker browser session idle limit")
+		oidcSessionAbsolute            = flag.Duration("oidc-session-absolute", envDurationOrDefault("NANOFLARE_OIDC_SESSION_ABSOLUTE", oidc.DefaultBrowserAbsoluteTTL), "Worker browser session absolute limit")
+		oidcScopes                     = flag.String("oidc-scopes", envOrDefault("NANOFLARE_OIDC_SCOPES", oidc.DefaultBrowserScopes), "Worker OIDC scopes; configure IdP refresh-token issuance")
 		oidcIssuer                     = flag.String("oidc-issuer", os.Getenv("NANOFLARE_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
 		oidcAudience                   = flag.String("oidc-audience", os.Getenv("NANOFLARE_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
 		oidcEmail                      = flag.String("oidc-email-claim", envOrDefault("NANOFLARE_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
@@ -434,7 +434,7 @@ func main() {
 				case <-ticker.C:
 					cleanupCtx, cancel := context.WithTimeout(shutdown, 10*time.Second)
 					if err := sessions.CleanupBrowserRecords(cleanupCtx); err != nil {
-						log.Print("OIDC browser record cleanup failed")
+						log.Printf("OIDC browser record cleanup failed: %v", err)
 					}
 					cancel()
 				}

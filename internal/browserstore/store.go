@@ -3,13 +3,20 @@ package browserstore
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
 
-// Store must serialize updates for a key across all clients. An error rolls back
-// the update; nil data deletes the record. Expired records are returned as absent.
+// ErrUnchanged lets an update callback preserve the record without writing it.
+var ErrUnchanged = errors.New("browser record unchanged")
+
+// Store serializes updates for a key across all clients. Errors roll back the
+// update; nil data deletes it. Expired records are returned as absent. Persistent
+// stores require encryption. ReadBrowserRecord never acquires a write lock.
 type Store interface {
+	Persistent() bool
+	ReadBrowserRecord(context.Context, string) ([]byte, error)
 	UpdateBrowserRecord(context.Context, string, func([]byte) ([]byte, time.Time, error)) error
 	CleanupBrowserRecords(context.Context) error
 }
@@ -35,6 +42,9 @@ func (m *Memory) UpdateBrowserRecord(ctx context.Context, key string, fn func([]
 		r.data = nil
 	}
 	data, expires, err := fn(r.data)
+	if errors.Is(err, ErrUnchanged) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -54,4 +64,18 @@ func (m *Memory) CleanupBrowserRecords(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func (m *Memory) Persistent() bool { return false }
+func (m *Memory) ReadBrowserRecord(ctx context.Context, key string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r := m.records[key]
+	if !r.expires.After(time.Now()) {
+		return nil, nil
+	}
+	return append([]byte(nil), r.data...), nil
 }

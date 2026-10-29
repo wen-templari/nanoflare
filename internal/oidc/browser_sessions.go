@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,12 +26,24 @@ func (v *Verifier) ConfigureBrowserSessions(store browserstore.Store, key string
 	if store == nil {
 		return errors.New("OIDC browser store is required")
 	}
-	codec, err := nanoflare.NewSecretCodec(key)
-	if err != nil {
-		return err
+	var codec *nanoflare.SecretCodec
+	if store.Persistent() || key != "" {
+		var err error
+		codec, err = nanoflare.NewSecretCodec(key)
+		if err != nil {
+			return err
+		}
 	}
 	if !strings.Contains(" "+scopes+" ", " openid ") {
 		return errors.New("OIDC scopes must include openid")
+	}
+	if codec != nil {
+		v.proofKey = codec.DeriveKey("nanoflare/browser-forwardauth/v1\x00" + v.issuer + "\x00" + v.clientID + "\x00" + v.redirectURL)
+	} else {
+		v.proofKey = make([]byte, 32)
+		if _, err := rand.Read(v.proofKey); err != nil {
+			return err
+		}
 	}
 	v.store = store
 	v.codec = codec
@@ -45,25 +58,40 @@ type encryptedRecord struct {
 	Data json.RawMessage
 }
 
-func (v *Verifier) updateRecord(ctx context.Context, kind, id string, fn func([]byte) ([]byte, time.Time, error)) error {
+var errInvalidBrowserRecord = errors.New("invalid OIDC browser record")
+
+func (v *Verifier) recordKey(kind, id string) string {
 	hash := sha256.Sum256([]byte(v.issuer + "\x00" + v.clientID + "\x00" + v.redirectURL + "\x00" + kind + "\x00" + id))
-	key := hex.EncodeToString(hash[:])
+	return hex.EncodeToString(hash[:])
+}
+func (v *Verifier) decodeRecord(key string, payload []byte) ([]byte, error) {
+	if len(payload) == 0 || v.codec == nil {
+		return payload, nil
+	}
+	if len(payload) < 12 {
+		return nil, errInvalidBrowserRecord
+	}
+	plaintext, err := v.codec.Decrypt(payload[:12], payload[12:])
+	if err != nil {
+		return nil, errInvalidBrowserRecord
+	}
+	var envelope encryptedRecord
+	if err := json.Unmarshal([]byte(plaintext), &envelope); err != nil || envelope.Key != key {
+		return nil, errInvalidBrowserRecord
+	}
+	return envelope.Data, nil
+}
+func (v *Verifier) updateRecord(ctx context.Context, kind, id string, fn func([]byte) ([]byte, time.Time, error)) error {
+	key := v.recordKey(kind, id)
 	return v.store.UpdateBrowserRecord(ctx, key, func(payload []byte) ([]byte, time.Time, error) {
-		if len(payload) > 0 && v.codec != nil {
-			if len(payload) < 12 {
-				return nil, time.Time{}, errors.New("invalid OIDC browser record")
-			}
-			plaintext, err := v.codec.Decrypt(payload[:12], payload[12:])
-			if err != nil {
-				return nil, time.Time{}, errors.New("cannot decrypt OIDC browser record")
-			}
-			var envelope encryptedRecord
-			if err := json.Unmarshal([]byte(plaintext), &envelope); err != nil || envelope.Key != key {
-				return nil, time.Time{}, errors.New("invalid OIDC browser record binding")
-			}
-			payload = envelope.Data
+		data, err := v.decodeRecord(key, payload)
+		if errors.Is(err, errInvalidBrowserRecord) {
+			return nil, time.Time{}, nil
 		}
-		data, expiry, err := fn(payload)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		data, expiry, err := fn(data)
 		if err != nil || data == nil || v.codec == nil {
 			return data, expiry, err
 		}
@@ -105,67 +133,131 @@ func accessTokenExpiry(token tokenResponse, now time.Time) time.Time {
 	return expiry
 }
 
+func (v *Verifier) sessionNeedsUpdate(session browserSession, now time.Time) bool {
+	interval := min(browserIdleWriteInterval, v.idleTTL/2)
+	return session.IdentityPending || !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) ||
+		!session.TokenExpiresAt.After(now) || (session.RefreshToken != "" && !session.TokenExpiresAt.After(now.Add(30*time.Second))) ||
+		!session.LastActivityAt.Add(interval).After(now)
+}
+func encodeSession(session browserSession) ([]byte, time.Time, error) {
+	data, err := json.Marshal(session)
+	return data, minTime(session.ExpiresAt, session.IdleExpiresAt), err
+}
 func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bool, error) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return api.AuthResult{}, "", false, nil
 	}
-	var result api.AuthResult
-	var access string
-	var valid bool
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// Disconnecting a browser must not roll back a refresh that the IdP has
+	// already rotated. Both the transaction and provider call have a bounded,
+	// independent lifetime.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Second)
 	defer cancel()
-	err = v.updateRecord(ctx, "session", cookie.Value, func(data []byte) ([]byte, time.Time, error) {
-		if len(data) == 0 {
-			return nil, time.Time{}, nil
+	key := v.recordKey("session", cookie.Value)
+	payload, err := v.store.ReadBrowserRecord(ctx, key)
+	var session browserSession
+	if err == nil {
+		data, decodeErr := v.decodeRecord(key, payload)
+		if decodeErr == nil && len(data) == 0 {
+			return api.AuthResult{}, "", false, nil
 		}
-		var session browserSession
-		if err := json.Unmarshal(data, &session); err != nil {
-			return nil, time.Time{}, err
+		if decodeErr == nil && json.Unmarshal(data, &session) == nil && !v.sessionNeedsUpdate(session, time.Now()) {
+			return sessionIdentity(session), session.AccessToken, true, nil
 		}
-		now := time.Now().UTC()
-		if !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) {
-			return nil, time.Time{}, nil
-		}
-		if !session.TokenExpiresAt.After(now.Add(30 * time.Second)) {
-			if session.RefreshToken == "" {
-				if !session.TokenExpiresAt.After(now) {
-					return nil, time.Time{}, nil
-				}
-			} else {
-				token, rejected, err := v.refresh(ctx, session.RefreshToken)
-				if rejected {
-					return nil, time.Time{}, nil
-				}
-				if err != nil {
-					return nil, time.Time{}, err
-				}
-				// Preserve the rotated credential before any subsequent network operation.
-				// Refresh responses need not include a new ID token or refresh token.
-				session.AccessToken = token.AccessToken
-				if token.RefreshToken != "" {
-					session.RefreshToken = token.RefreshToken
-				}
-				session.TokenExpiresAt = accessTokenExpiry(token, now)
-				if !session.TokenExpiresAt.After(time.Now()) {
-					return nil, time.Time{}, errors.New("OIDC refresh returned no usable access-token lifetime")
+	}
+	valid := false
+	if err == nil {
+		err = v.updateRecord(ctx, "session", cookie.Value, func(data []byte) ([]byte, time.Time, error) {
+			if len(data) == 0 || json.Unmarshal(data, &session) != nil {
+				return nil, time.Time{}, nil
+			}
+			now := time.Now().UTC()
+			if !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) {
+				return nil, time.Time{}, nil
+			}
+			valid = true
+			if !v.sessionNeedsUpdate(session, now) {
+				return nil, time.Time{}, browserstore.ErrUnchanged
+			}
+			if !session.IdentityPending && !session.TokenExpiresAt.After(now.Add(30*time.Second)) {
+				if session.RefreshToken == "" {
+					if !session.TokenExpiresAt.After(now) {
+						valid = false
+						return nil, time.Time{}, nil
+					}
+				} else {
+					token, rejected, err := v.refresh(ctx, session.RefreshToken)
+					if rejected {
+						valid = false
+						return nil, time.Time{}, nil
+					}
+					if err != nil {
+						return nil, time.Time{}, err
+					}
+					session.AccessToken = token.AccessToken
+					if token.RefreshToken != "" {
+						session.RefreshToken = token.RefreshToken
+					}
+					session.TokenExpiresAt = accessTokenExpiry(token, now)
+					session.IdentityPending = true
+					session.PendingIDToken = token.IDToken
 				}
 			}
-		}
-		if !session.ExpiresAt.After(time.Now()) {
-			return nil, time.Time{}, nil
-		}
-		session.IdleExpiresAt = time.Now().UTC().Add(v.idleTTL)
-		result = session.Result
-		access = session.AccessToken
-		valid = true
-		encoded, err := json.Marshal(session)
-		return encoded, minTime(session.ExpiresAt, session.IdleExpiresAt), err
-	})
+			if !session.ExpiresAt.After(time.Now()) {
+				valid = false
+				return nil, time.Time{}, nil
+			}
+			session.LastActivityAt = now
+			session.IdleExpiresAt = now.Add(v.idleTTL)
+			return encodeSession(session)
+		})
+	}
 	if err != nil {
 		return api.AuthResult{}, "", false, errors.New("OIDC browser authentication temporarily unavailable")
 	}
-	return result, access, valid, nil
+	if !valid {
+		return api.AuthResult{}, "", false, nil
+	}
+	if session.IdentityPending {
+		// Rotation is durable before fetching/verifying identity. A transient failure
+		// leaves the pending identity in storage for the next request to retry.
+		identityCtx, identityCancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Second)
+		defer identityCancel()
+		valid = false
+		err = v.updateRecord(identityCtx, "session", cookie.Value, func(data []byte) ([]byte, time.Time, error) {
+			if len(data) == 0 || json.Unmarshal(data, &session) != nil {
+				return nil, time.Time{}, nil
+			}
+			now := time.Now().UTC()
+			if !session.ExpiresAt.After(now) || !session.IdleExpiresAt.After(now) {
+				return nil, time.Time{}, nil
+			}
+			if session.IdentityPending {
+				result, _, err := v.callbackIdentity(identityCtx, tokenResponse{AccessToken: session.AccessToken, IDToken: session.PendingIDToken})
+				if err != nil {
+					return nil, time.Time{}, err
+				}
+				if result.Subject == "" || result.Subject != session.Result.Subject {
+					return nil, time.Time{}, nil
+				}
+				result.ExpiresAt = &session.TokenExpiresAt
+				session.Result = result
+				session.IdentityPending = false
+				session.PendingIDToken = ""
+				valid = true
+				return encodeSession(session)
+			}
+			valid = true
+			return nil, time.Time{}, browserstore.ErrUnchanged
+		})
+		if err != nil {
+			return api.AuthResult{}, "", false, errors.New("OIDC browser identity temporarily unavailable")
+		}
+	}
+	if !valid || !session.TokenExpiresAt.After(time.Now()) {
+		return api.AuthResult{}, "", false, nil
+	}
+	return sessionIdentity(session), session.AccessToken, true, nil
 }
 
 func (v *Verifier) refresh(ctx context.Context, refreshToken string) (tokenResponse, bool, error) {
@@ -202,4 +294,11 @@ func (v *Verifier) refresh(ctx context.Context, refreshToken string) (tokenRespo
 		return tokenResponse{}, false, errors.New("OIDC refresh returned empty access token")
 	}
 	return token, false, nil
+}
+
+func sessionIdentity(session browserSession) api.AuthResult {
+	result := session.Result
+	expiry := minTime(session.TokenExpiresAt, minTime(session.ExpiresAt, session.IdleExpiresAt))
+	result.ExpiresAt = &expiry
+	return result
 }

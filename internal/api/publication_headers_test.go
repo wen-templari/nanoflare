@@ -80,3 +80,73 @@ func TestWorkerGatewayRejectsForgedIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicWorkerSurvivesOptionalAuthenticationFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, header := range []string{"X-Nanoflare-User-JWT", "X-Nanoflare-User-Email", "X-Nanoflare-Session-Proof"} {
+			if r.Header.Get(header) != "" {
+				t.Errorf("untrusted %s forwarded", header)
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	server := NewServer(nanoflare.NewService(nanoflare.NewStore(), nil))
+	server.auth = unavailableBrowserAuthenticator{}
+	request := httptest.NewRequest("GET", "https://worker.example.com/public", nil)
+	request.AddCookie(&http.Cookie{Name: "nanoflare_oidc_session", Value: "session"})
+	request.Header.Set("X-Nanoflare-User-JWT", "forged")
+	request.Header.Set("X-Nanoflare-User-Email", "forged")
+	request.Header.Set("X-Nanoflare-Session-Proof", "forged")
+	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/public", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+}
+
+type forwardedTestAuthenticator struct {
+	fakeAuthenticator
+	t *testing.T
+}
+
+func (a forwardedTestAuthenticator) SessionWithError(*http.Request) (AuthResult, string, bool, error) {
+	a.t.Error("gateway repeated the session lookup")
+	return AuthResult{}, "", false, nil
+}
+func (a forwardedTestAuthenticator) ForwardedBrowserSession(r *http.Request) (AuthResult, string, bool) {
+	if r.URL.RequestURI() != "/hello?q=1" {
+		a.t.Errorf("proof checked wrong URI: %s", r.URL.RequestURI())
+	}
+	return AuthResult{Valid: true, Email: "user@example.com"}, "access", true
+}
+func TestGatewayReusesForwardAuthIdentityForOriginalWorkerPath(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanoflare-User-JWT") != "access" || r.Header.Get("X-Nanoflare-User-Email") != "user@example.com" {
+			t.Error("identity missing")
+		}
+		if r.Header.Get("X-Nanoflare-Session-Proof") != "" {
+			t.Error("proof leaked to worker")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	server := NewServer(nanoflare.NewService(nanoflare.NewStore(), nil))
+	server.auth = forwardedTestAuthenticator{t: t}
+	request := httptest.NewRequest("GET", "https://worker.example.com/internal/http/workers/worker/hello?q=1", nil)
+	request.Header.Set("X-Nanoflare-Session-Proof", "signed-proof")
+	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/hello", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatal(response.StatusCode)
+	}
+	if request.URL.Path != "/internal/http/workers/worker/hello" {
+		t.Fatal("gateway mutated incoming URL")
+	}
+}

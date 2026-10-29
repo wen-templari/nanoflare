@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/clas/nanoflare/internal/browserstore"
 	"time"
 )
 
@@ -24,6 +25,9 @@ func (p *Postgres) UpdateBrowserRecord(ctx context.Context, key string, fn func(
 		return err
 	}
 	data, expires, err := fn(data)
+	if errors.Is(err, browserstore.ErrUnchanged) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -40,4 +44,14 @@ func (p *Postgres) UpdateBrowserRecord(ctx context.Context, key string, fn func(
 func (p *Postgres) CleanupBrowserRecords(ctx context.Context) error {
 	_, err := p.db.ExecContext(ctx, `DELETE FROM oidc_browser_records WHERE expires_at <= now()`)
 	return err
+}
+
+func (p *Postgres) Persistent() bool { return true }
+func (p *Postgres) ReadBrowserRecord(ctx context.Context, key string) ([]byte, error) {
+	var data []byte
+	err := p.db.QueryRowContext(ctx, `SELECT payload FROM oidc_browser_records WHERE id=$1 AND expires_at > now()`, key).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return data, err
 }

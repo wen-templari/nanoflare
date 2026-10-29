@@ -38,6 +38,11 @@ func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if ok {
+				if proof, ok := browserAuth.(interface {
+					BrowserSessionProof(*http.Request, AuthResult, string) string
+				}); ok {
+					w.Header().Set("X-Nanoflare-Session-Proof", proof.BrowserSessionProof(r, result, sessionToken))
+				}
 				w.Header().Set("X-Nanoflare-User-JWT", sessionToken)
 				w.Header().Set("X-Nanoflare-User-Email", result.Email)
 				w.WriteHeader(http.StatusOK)
@@ -173,4 +178,15 @@ func browserSessionForRequest(auth BrowserAuthenticator, r *http.Request) (AuthR
 	}
 	result, token, ok := auth.Session(r)
 	return result, token, ok, nil
+}
+
+func browserSessionForWorker(auth BrowserAuthenticator, r *http.Request) (AuthResult, string, bool, error) {
+	if forwarded, ok := auth.(interface {
+		ForwardedBrowserSession(*http.Request) (AuthResult, string, bool)
+	}); ok {
+		if result, token, valid := forwarded.ForwardedBrowserSession(r); valid {
+			return result, token, true, nil
+		}
+	}
+	return browserSessionForRequest(auth, r)
 }

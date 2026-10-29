@@ -25,8 +25,12 @@ import (
 )
 
 const (
-	sessionCookieName = "nanoflare_oidc_session"
-	defaultStateTTL   = 10 * time.Minute
+	DefaultBrowserScopes      = "openid email profile"
+	DefaultBrowserIdleTTL     = time.Hour
+	DefaultBrowserAbsoluteTTL = 24 * time.Hour
+	browserIdleWriteInterval  = time.Minute
+	sessionCookieName         = "nanoflare_oidc_session"
+	defaultStateTTL           = 10 * time.Minute
 )
 
 type Verifier struct {
@@ -49,6 +53,7 @@ type Verifier struct {
 	idleTTL     time.Duration
 	absoluteTTL time.Duration
 	scopes      string
+	proofKey    []byte
 }
 
 type browserState struct {
@@ -58,12 +63,15 @@ type browserState struct {
 }
 
 type browserSession struct {
-	AccessToken    string
-	Result         api.AuthResult
-	ExpiresAt      time.Time
-	RefreshToken   string
-	TokenExpiresAt time.Time
-	IdleExpiresAt  time.Time
+	AccessToken     string
+	Result          api.AuthResult
+	ExpiresAt       time.Time
+	RefreshToken    string
+	TokenExpiresAt  time.Time
+	IdleExpiresAt   time.Time
+	LastActivityAt  time.Time
+	IdentityPending bool
+	PendingIDToken  string
 }
 
 type discoveryDocument struct {
@@ -117,7 +125,7 @@ func NewBrowserVerifier(issuer, audience, emailClaim, clientID, clientSecret, pu
 		cookieDomain: strings.TrimSpace(cookieDomain),
 		client:       client,
 		states:       make(map[string]browserState),
-		store:        browserstore.NewMemory(), idleTTL: time.Hour, absoluteTTL: 24 * time.Hour, scopes: "openid email profile",
+		store:        browserstore.NewMemory(), idleTTL: DefaultBrowserIdleTTL, absoluteTTL: DefaultBrowserAbsoluteTTL, scopes: DefaultBrowserScopes,
 	}
 }
 
@@ -139,7 +147,7 @@ func NewConsoleVerifier(issuer, emailClaim, clientID, clientSecret, publicURL st
 		redirectURL:  publicURL + "/v1/auth/oidc/callback",
 		client:       client,
 		states:       make(map[string]browserState),
-		store:        browserstore.NewMemory(), idleTTL: time.Hour, absoluteTTL: 24 * time.Hour, scopes: "openid email profile",
+		store:        browserstore.NewMemory(), idleTTL: DefaultBrowserIdleTTL, absoluteTTL: DefaultBrowserAbsoluteTTL, scopes: DefaultBrowserScopes,
 	}
 }
 
@@ -270,7 +278,7 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 
 	if err := v.saveRecord(r.Context(), "session", sessionID, browserSession{
 		AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, Result: result,
-		ExpiresAt: expiresAt, TokenExpiresAt: tokenExpiry, IdleExpiresAt: now.Add(v.idleTTL),
+		ExpiresAt: expiresAt, TokenExpiresAt: tokenExpiry, IdleExpiresAt: now.Add(v.idleTTL), LastActivityAt: now,
 	}, minTime(expiresAt, now.Add(v.idleTTL))); err != nil {
 		return err
 	}
@@ -490,7 +498,7 @@ type tokenResponse struct {
 }
 
 func authorizationURL(discovery discoveryDocument, clientID, redirectURL, state, verifier string) string {
-	return authorizationURLWithScopes(discovery, clientID, redirectURL, state, verifier, "openid email profile")
+	return authorizationURLWithScopes(discovery, clientID, redirectURL, state, verifier, DefaultBrowserScopes)
 }
 
 func authorizationURLWithScopes(discovery discoveryDocument, clientID, redirectURL, state, verifier, scopes string) string {
