@@ -255,6 +255,17 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 			continue
 		}
 		updated, permanent, err := v.runLeasedOperation(ctx, session, refreshDue, now)
+		if errors.Is(err, errIdentityTokenExpired) && session.RefreshToken != "" {
+			// An outage may outlast the pending ID token while its access token
+			// remains usable. Recover under the same lease, preserving rotation
+			// fencing and the commit-before-verification order. Bound recovery to
+			// one rotation per request if the provider keeps issuing expired IDs.
+			permanent = false
+			if !refreshed {
+				updated, permanent, err = v.runLeasedOperation(ctx, session, true, time.Now().UTC())
+				refreshDue = true
+			}
+		}
 		if refreshDue && err == nil {
 			refreshed = true
 		}

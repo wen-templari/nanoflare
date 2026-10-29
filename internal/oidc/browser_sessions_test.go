@@ -919,6 +919,112 @@ func TestExpiredRefreshResultDoesNotRotateInLoop(t *testing.T) {
 	}
 }
 
+func TestPendingIDTokenExpiryRecovery(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"recover", "expired-replacement", "no-refresh-grant", "invalid-issuer", "revoked-grant", "refresh-outage"} {
+		t.Run(mode, func(t *testing.T) {
+			var refreshes atomic.Int32
+			var outage atomic.Bool
+			outage.Store(true)
+			now := time.Now().UTC()
+			expiredClaims := map[string]any{"sub": "user", "exp": now.Add(-time.Minute).Unix()}
+			pendingIssuer := "https://issuer"
+			if mode == "invalid-issuer" {
+				pendingIssuer = "https://other-issuer"
+			}
+			pendingID := signedJWT(t, key, pendingIssuer, "client", expiredClaims)
+			replacementID := signedJWT(t, key, "https://issuer", "client", map[string]any{"sub": "user"})
+			if mode == "expired-replacement" {
+				replacementID = signedJWT(t, key, "https://issuer", "client", expiredClaims)
+			}
+			var v *Verifier
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/token":
+					refreshes.Add(1)
+					if err := r.ParseForm(); err != nil || r.Form.Get("refresh_token") != "saved-refresh" {
+						t.Error("recovery did not use the persisted refresh token")
+					}
+					if mode == "revoked-grant" {
+						w.WriteHeader(http.StatusBadRequest)
+						fmt.Fprint(w, `{"error":"invalid_grant"}`)
+						return
+					}
+					if mode == "refresh-outage" {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					json.NewEncoder(w).Encode(tokenResponse{AccessToken: "fresh-access", RefreshToken: "fresh-refresh", IDToken: replacementID, ExpiresIn: 3600})
+				case "/userinfo":
+					if outage.Load() {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					if r.Header.Get("Authorization") == "Bearer fresh-access" {
+						stored, found, err := v.readSession(r.Context(), "pending-expiry")
+						if err != nil || !found || stored.RefreshToken != "fresh-refresh" || !stored.IdentityPending {
+							t.Error("recovered credentials were not durable before identity verification")
+						}
+					}
+					json.NewEncoder(w).Encode(map[string]string{"sub": "user", "email": "user@example.com"})
+				default:
+					t.Errorf("unexpected provider request: %s", r.URL.Path)
+				}
+			}))
+			defer provider.Close()
+			v = NewBrowserVerifier("https://issuer", "aud", "email", "client", "", "https://auth", "", provider.Client())
+			v.discovery = discoveryDocument{AuthorizationEndpoint: provider.URL + "/authorize", TokenEndpoint: provider.URL + "/token", JWKSURI: provider.URL + "/keys", UserInfoEndpoint: provider.URL + "/userinfo"}
+			v.keys = map[string]any{"test-key": &key.PublicKey}
+			v.keysLoadedAt = now
+			s := browserSession{AccessToken: "pending-access", RefreshToken: "saved-refresh", IdentityPending: true, PendingIDToken: pendingID, Result: api.AuthResult{Valid: true, Subject: "user", Email: "user@example.com"}, TokenExpiresAt: now.Add(time.Hour), IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(24 * time.Hour), LastActivityAt: now}
+			if mode == "no-refresh-grant" {
+				s.RefreshToken = ""
+			}
+			if err := v.saveRecord(context.Background(), "session", "pending-expiry", s, s.IdleExpiresAt); err != nil {
+				t.Fatal(err)
+			}
+			r := httptest.NewRequest("GET", "/", nil)
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "pending-expiry"})
+			if _, _, ok, err := v.SessionWithError(r); ok || err == nil {
+				t.Fatal("initial identity outage should be temporary")
+			}
+			outage.Store(false)
+			result, token, ok, err := v.SessionWithError(r)
+			stored, found, readErr := v.readSession(context.Background(), "pending-expiry")
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			switch mode {
+			case "recover":
+				if err != nil || !ok || token != "fresh-access" || result.Subject != "user" || !found || stored.IdentityPending || stored.RefreshToken != "fresh-refresh" {
+					t.Fatalf("recovery failed: ok=%v token=%q found=%v err=%v", ok, token, found, err)
+				}
+			case "expired-replacement", "refresh-outage":
+				if ok || err == nil || !found || !stored.IdentityPending || !stored.IdleExpiresAt.Equal(s.IdleExpiresAt) || !stored.LastActivityAt.Equal(s.LastActivityAt) {
+					t.Fatalf("temporary recovery failure destroyed or renewed session: ok=%v found=%v err=%v", ok, found, err)
+				}
+				if mode == "expired-replacement" && stored.RefreshToken != "fresh-refresh" {
+					t.Fatal("replacement failure lost rotated refresh token")
+				}
+			default:
+				if ok || err != nil || found {
+					t.Fatalf("unrecoverable credentials did not require login: ok=%v found=%v err=%v", ok, found, err)
+				}
+			}
+			wantRefreshes := int32(1)
+			if mode == "invalid-issuer" || mode == "no-refresh-grant" {
+				wantRefreshes = 0
+			}
+			if refreshes.Load() != wantRefreshes {
+				t.Fatalf("refreshes=%d, want %d", refreshes.Load(), wantRefreshes)
+			}
+		})
+	}
+}
+
 type boundedLookupStore struct {
 	browserstore.Store
 	reads, updates atomic.Int32

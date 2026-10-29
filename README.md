@@ -648,8 +648,11 @@ protect token write-back from browser disconnects. Rotated tokens are committed
 before identity metadata is fetched and validated.
 
 Transient identity failures retain pending credentials without extending the idle
-deadline. Expired pending access tokens can refresh again using the saved grant;
-invalid signatures, rejected identities, or missing required identity fields
+deadline. Expired pending access tokens can refresh again using the saved grant.
+If an outage outlasts a pending ID token, a verified expiry can also trigger one
+recovery refresh per request. Repeated expired ID tokens remain temporary while
+the refresh grant and browser limits allow recovery.
+Invalid signatures, rejected identities, or missing required identity fields
 require login. Login rejects identities without a subject before creating a
 session. Refreshes without a replacement ID token retain login-time claims and
 overlay fresh userinfo fields. An already-expired refresh result requires login

@@ -588,7 +588,7 @@ func (v *Verifier) parseAndValidateForAudience(ctx context.Context, token string
 		return nil, fmt.Errorf("%w: audience mismatch", errInvalidIdentityToken)
 	}
 	if expiration, ok := numericDate(claims["exp"]); ok && !expiration.After(time.Now().UTC()) {
-		return nil, fmt.Errorf("%w: token expired", errInvalidIdentityToken)
+		return nil, errIdentityTokenExpired
 	}
 	return claims, nil
 }
@@ -622,6 +622,11 @@ func parseJWT(token string) (jwtHeader, string, []byte, map[string]any, error) {
 }
 
 var errInvalidIdentityToken = errors.New("invalid token")
+
+// Expiry is recoverable for pending browser identity when a refresh grant remains.
+// It is still invalid for bearer authentication and is checked after signature,
+// issuer and audience validation.
+var errIdentityTokenExpired = fmt.Errorf("%w: token expired", errInvalidIdentityToken)
 
 // A cooldown can defer checking newly rotated keys. Such failures must not end
 // browser sessions until a sufficiently recent key set can reject the token.
