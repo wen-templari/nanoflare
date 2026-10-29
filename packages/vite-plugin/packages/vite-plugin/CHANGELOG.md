@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.2.0...vite-plugin-v0.3.0) (2026-10-29)
+
+
+### Features
+
+* migrate to the Cloudflare Vite plugin ([5f280da](https://github.com/wen-templari/nanoflare/commit/5f280da4e669bebfd78aa89f4216614417de1e51))
+
+
+### Bug Fixes
+
+* surface dynamic runtime errors and preserve fetch cancellation ([94d779f](https://github.com/wen-templari/nanoflare/commit/94d779fa32bc8384f6f60eacb4a7e1f2861da591))
+* surface dynamic runtime errors and preserve fetch cancellation ([6237afb](https://github.com/wen-templari/nanoflare/commit/6237afbebc1a31a42f211bcb1722fa7d68fbb6b9))
+
 ## [0.2.0](https://github.com/wen-templari/nanoflare/compare/vite-plugin-v0.1.0...vite-plugin-v0.2.0) (2026-10-23)
 
 
