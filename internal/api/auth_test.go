@@ -1547,3 +1547,23 @@ func TestVerifyAuthRejectsInvalidToken(t *testing.T) {
 		t.Fatalf("status = %d body = %q", recorder.Code, recorder.Body.String())
 	}
 }
+
+type unavailableBrowserAuthenticator struct{ fakeAuthenticator }
+
+func (unavailableBrowserAuthenticator) SessionWithError(*http.Request) (AuthResult, string, bool, error) {
+	return AuthResult{}, "", false, errors.New("OIDC browser authentication temporarily unavailable")
+}
+func TestVerifyAuthTemporaryBrowserFailureDoesNotRedirect(t *testing.T) {
+	for _, accept := range []string{"application/json", "text/html"} {
+		t.Run(accept, func(t *testing.T) {
+			server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", unavailableBrowserAuthenticator{})
+			request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
+			request.Header.Set("Accept", accept)
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusBadGateway || recorder.Header().Get("Location") != "" || recorder.Header().Get("X-Nanoflare-User-JWT") != "" {
+				t.Fatalf("status=%d headers=%v", recorder.Code, recorder.Header())
+			}
+		})
+	}
+}

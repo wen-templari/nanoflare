@@ -32,7 +32,12 @@ func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(bearerToken(r))
 	if token == "" {
 		if browserAuth, ok := s.auth.(BrowserAuthenticator); ok {
-			if result, sessionToken, ok := browserAuth.Session(r); ok {
+			result, sessionToken, ok, err := browserSessionForRequest(browserAuth, r)
+			if err != nil {
+				writeAuthError(w, err)
+				return
+			}
+			if ok {
 				w.Header().Set("X-Nanoflare-User-JWT", sessionToken)
 				w.Header().Set("X-Nanoflare-User-Email", result.Email)
 				w.WriteHeader(http.StatusOK)
@@ -156,4 +161,16 @@ func shouldRedirectToOIDC(r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+// Error-aware browser authenticators preserve sessions during temporary IdP or
+// database outages instead of turning those failures into a login redirect.
+func browserSessionForRequest(auth BrowserAuthenticator, r *http.Request) (AuthResult, string, bool, error) {
+	if auth, ok := auth.(interface {
+		SessionWithError(*http.Request) (AuthResult, string, bool, error)
+	}); ok {
+		return auth.SessionWithError(r)
+	}
+	result, token, ok := auth.Session(r)
+	return result, token, ok, nil
 }

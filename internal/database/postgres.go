@@ -63,6 +63,12 @@ func (p *Postgres) PoolStats() nanoflare.RepositoryPoolStats {
 
 func (p *Postgres) migrate(ctx context.Context) error {
 	_, err := p.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS oidc_browser_records (
+ id TEXT PRIMARY KEY,
+ payload BYTEA NOT NULL,
+ expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS oidc_browser_records_expiry ON oidc_browser_records(expires_at);
 DO $$
 BEGIN
 	IF to_regclass('apps') IS NOT NULL AND to_regclass('workers') IS NULL THEN

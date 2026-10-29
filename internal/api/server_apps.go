@@ -645,7 +645,11 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 			request.Header.Set("X-Nanoflare-User-Email", identity.Email)
 		}
 	} else if browser, ok := s.auth.(BrowserAuthenticator); ok {
-		if identity, token, valid := browser.Session(r); valid {
+		identity, token, valid, err := browserSessionForRequest(browser, r)
+		if err != nil {
+			return nil, err
+		}
+		if valid {
 			request.Header.Set("X-Nanoflare-User-JWT", token)
 			request.Header.Set("X-Nanoflare-User-Email", identity.Email)
 		}

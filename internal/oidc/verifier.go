@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/api"
+	"github.com/clas/nanoflare/internal/browserstore"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 const (
@@ -38,11 +40,15 @@ type Verifier struct {
 	cookieDomain string
 	client       *http.Client
 
-	mu        sync.RWMutex
-	discovery discoveryDocument
-	keys      map[string]any
-	states    map[string]browserState
-	sessions  map[string]browserSession
+	mu          sync.RWMutex
+	discovery   discoveryDocument
+	keys        map[string]any
+	states      map[string]browserState
+	store       browserstore.Store
+	codec       *nanoflare.SecretCodec
+	idleTTL     time.Duration
+	absoluteTTL time.Duration
+	scopes      string
 }
 
 type browserState struct {
@@ -52,9 +58,12 @@ type browserState struct {
 }
 
 type browserSession struct {
-	AccessToken string
-	Result      api.AuthResult
-	ExpiresAt   time.Time
+	AccessToken    string
+	Result         api.AuthResult
+	ExpiresAt      time.Time
+	RefreshToken   string
+	TokenExpiresAt time.Time
+	IdleExpiresAt  time.Time
 }
 
 type discoveryDocument struct {
@@ -108,7 +117,7 @@ func NewBrowserVerifier(issuer, audience, emailClaim, clientID, clientSecret, pu
 		cookieDomain: strings.TrimSpace(cookieDomain),
 		client:       client,
 		states:       make(map[string]browserState),
-		sessions:     make(map[string]browserSession),
+		store:        browserstore.NewMemory(), idleTTL: time.Hour, absoluteTTL: 24 * time.Hour, scopes: "openid email profile",
 	}
 }
 
@@ -130,7 +139,7 @@ func NewConsoleVerifier(issuer, emailClaim, clientID, clientSecret, publicURL st
 		redirectURL:  publicURL + "/v1/auth/oidc/callback",
 		client:       client,
 		states:       make(map[string]browserState),
-		sessions:     make(map[string]browserSession),
+		store:        browserstore.NewMemory(), idleTTL: time.Hour, absoluteTTL: 24 * time.Hour, scopes: "openid email profile",
 	}
 }
 
@@ -142,26 +151,10 @@ func (v *Verifier) Issuer() string {
 	return v.issuer
 }
 
+// Session is retained for callers that do not support temporary authentication errors.
 func (v *Verifier) Session(r *http.Request) (api.AuthResult, string, bool) {
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil || strings.TrimSpace(cookie.Value) == "" {
-		return api.AuthResult{}, "", false
-	}
-	now := time.Now().UTC()
-
-	v.mu.RLock()
-	session, ok := v.sessions[cookie.Value]
-	v.mu.RUnlock()
-	if !ok {
-		return api.AuthResult{}, "", false
-	}
-	if !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(now) {
-		v.mu.Lock()
-		delete(v.sessions, cookie.Value)
-		v.mu.Unlock()
-		return api.AuthResult{}, "", false
-	}
-	return session.Result, session.AccessToken, true
+	result, token, ok, _ := v.SessionWithError(r)
+	return result, token, ok
 }
 
 func (v *Verifier) BeginAuth(w http.ResponseWriter, r *http.Request) error {
@@ -185,15 +178,11 @@ func (v *Verifier) BeginAuth(w http.ResponseWriter, r *http.Request) error {
 		returnURL = "/"
 	}
 
-	v.mu.Lock()
-	v.states[state] = browserState{
-		ReturnURL:    returnURL,
-		CodeVerifier: verifier,
-		ExpiresAt:    time.Now().UTC().Add(defaultStateTTL),
+	if err := v.saveRecord(r.Context(), "state", state, browserState{ReturnURL: returnURL, CodeVerifier: verifier, ExpiresAt: time.Now().UTC().Add(defaultStateTTL)}, time.Now().UTC().Add(defaultStateTTL)); err != nil {
+		return err
 	}
-	v.mu.Unlock()
 
-	http.Redirect(w, r, authorizationURL(discovery, v.clientID, v.redirectURL, state, verifier), http.StatusFound)
+	http.Redirect(w, r, authorizationURLWithScopes(discovery, v.clientID, v.redirectURL, state, verifier, v.scopes), http.StatusFound)
 	return nil
 }
 
@@ -234,16 +223,19 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 		return errors.New("oidc callback requires state and code")
 	}
 
-	v.mu.Lock()
-	state, ok := v.states[stateValue]
-	if ok {
-		delete(v.states, stateValue)
+	var state browserState
+	if err := v.updateRecord(r.Context(), "state", stateValue, func(data []byte) ([]byte, time.Time, error) {
+		if len(data) == 0 {
+			return nil, time.Time{}, errors.New("oidc callback state is invalid or expired")
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			return nil, time.Time{}, err
+		}
+		return nil, time.Time{}, nil
+	}); err != nil {
+		return err
 	}
-	v.mu.Unlock()
-	if !ok {
-		return errors.New("oidc callback state is invalid or expired")
-	}
-	if !state.ExpiresAt.After(time.Now().UTC()) {
+	if !state.ExpiresAt.After(time.Now()) {
 		return errors.New("oidc callback state is invalid or expired")
 	}
 
@@ -251,6 +243,7 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
+	tokenIssuedAt := time.Now().UTC()
 	token, err := v.exchangeCode(r.Context(), discovery, code, state.CodeVerifier)
 	if err != nil {
 		return err
@@ -263,28 +256,24 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	var expiresAt time.Time
-	if token.ExpiresIn > 0 {
-		expiresAt = time.Now().UTC().Add(time.Duration(token.ExpiresIn) * time.Second)
+	now := time.Now().UTC()
+	expiresAt := now.Add(v.absoluteTTL)
+	tokenExpiry := accessTokenExpiry(token, tokenIssuedAt)
+	if !tokenExpiry.After(now) {
+		return errors.New("oidc access token requires a usable expiry")
 	}
-	if result.ExpiresAt != nil && (expiresAt.IsZero() || result.ExpiresAt.Before(expiresAt)) {
-		expiresAt = result.ExpiresAt.UTC()
-	}
-	if expiresAt.IsZero() {
-		expiresAt = time.Now().UTC().Add(time.Hour)
-	}
+
 	sessionID, err := randomToken()
 	if err != nil {
 		return err
 	}
 
-	v.mu.Lock()
-	v.sessions[sessionID] = browserSession{
-		AccessToken: token.AccessToken,
-		Result:      result,
-		ExpiresAt:   expiresAt,
+	if err := v.saveRecord(r.Context(), "session", sessionID, browserSession{
+		AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, Result: result,
+		ExpiresAt: expiresAt, TokenExpiresAt: tokenExpiry, IdleExpiresAt: now.Add(v.idleTTL),
+	}, minTime(expiresAt, now.Add(v.idleTTL))); err != nil {
+		return err
 	}
-	v.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
@@ -493,18 +482,23 @@ func safeConsoleNext(next string) string {
 }
 
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
-	IDToken     string `json:"id_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int64  `json:"expires_in"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
 }
 
 func authorizationURL(discovery discoveryDocument, clientID, redirectURL, state, verifier string) string {
+	return authorizationURLWithScopes(discovery, clientID, redirectURL, state, verifier, "openid email profile")
+}
+
+func authorizationURLWithScopes(discovery discoveryDocument, clientID, redirectURL, state, verifier, scopes string) string {
 	query := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {clientID},
 		"redirect_uri":          {redirectURL},
-		"scope":                 {"openid email profile"},
+		"scope":                 {scopes},
 		"state":                 {state},
 		"code_challenge":        {pkceChallenge(verifier)},
 		"code_challenge_method": {"S256"},

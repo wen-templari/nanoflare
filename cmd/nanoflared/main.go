@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/api"
+	"github.com/clas/nanoflare/internal/browserstore"
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/database"
 	"github.com/clas/nanoflare/internal/dnsresolver"
@@ -82,6 +83,9 @@ func main() {
 		runnerToken                    = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
 		traefikToken                   = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
 		authSecret                     = flag.String("control-auth-secret", envOrDefault("NANOFLARE_AUTH_SECRET", "nanoflare-development-control-secret"), "JWT signing secret for control-plane email/password auth")
+		oidcSessionIdle                = flag.Duration("oidc-session-idle", envDurationOrDefault("NANOFLARE_OIDC_SESSION_IDLE", time.Hour), "Worker browser session idle limit")
+		oidcSessionAbsolute            = flag.Duration("oidc-session-absolute", envDurationOrDefault("NANOFLARE_OIDC_SESSION_ABSOLUTE", 24*time.Hour), "Worker browser session absolute limit")
+		oidcScopes                     = flag.String("oidc-scopes", envOrDefault("NANOFLARE_OIDC_SCOPES", "openid email profile offline_access"), "Worker OIDC scopes; configure IdP refresh-token issuance")
 		oidcIssuer                     = flag.String("oidc-issuer", os.Getenv("NANOFLARE_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
 		oidcAudience                   = flag.String("oidc-audience", os.Getenv("NANOFLARE_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
 		oidcEmail                      = flag.String("oidc-email-claim", envOrDefault("NANOFLARE_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
@@ -340,6 +344,7 @@ func main() {
 		service.SetRuntimeInstanceChecker(checker.RuntimeInstanceLive)
 	}
 
+	var browserSessions browserstore.Store
 	var authenticator api.Authenticator
 	if *oidcIssuer != "" && *oidcAudience != "" {
 		clientID := *oidcClientID
@@ -347,6 +352,18 @@ func main() {
 			clientID = *oidcAudience
 		}
 		verifier := oidc.NewBrowserVerifier(*oidcIssuer, *oidcAudience, *oidcEmail, clientID, *oidcSecret, *oidcPublic, *oidcCookie, nil)
+		if verifier.BrowserFlowEnabled() {
+			var sessions browserstore.Store = browserstore.NewMemory()
+			if persistent, ok := store.(browserstore.Store); ok {
+				sessions = persistent
+			} else {
+				log.Print("OIDC browser sessions use memory and will not survive restart; configure DATABASE_URL for persistence")
+			}
+			browserSessions = sessions
+			if err := verifier.ConfigureBrowserSessions(sessions, os.Getenv("NANOFLARE_SECRET_KEY"), *oidcSessionIdle, *oidcSessionAbsolute, *oidcScopes); err != nil {
+				log.Fatal(err)
+			}
+		}
 		if err := verifier.ValidateBrowserConfig(); err != nil {
 			log.Fatal(err)
 		}
@@ -406,6 +423,24 @@ func main() {
 	httpServer := &http.Server{Addr: *addr, Handler: server}
 	shutdown, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	if sessions := browserSessions; sessions != nil {
+		go func() {
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-shutdown.Done():
+					return
+				case <-ticker.C:
+					cleanupCtx, cancel := context.WithTimeout(shutdown, 10*time.Second)
+					if err := sessions.CleanupBrowserRecords(cleanupCtx); err != nil {
+						log.Print("OIDC browser record cleanup failed")
+					}
+					cancel()
+				}
+			}
+		}()
+	}
 	stopAssetCleanup := service.StartAssetUploadCleanup(shutdown, time.Minute, func(err error) { log.Printf("asset staging cleanup: %v", err) })
 	defer stopAssetCleanup()
 	if remoteRunner != nil {
@@ -538,4 +573,15 @@ func platformDNSOutbound(next http.RoundTripper, server *dnsresolver.Server, ena
 		return dnsresolver.DoHTransport(next, nil)
 	}
 	return dnsresolver.DoHTransport(next, server)
+}
+
+func envDurationOrDefault(name string, fallback time.Duration) time.Duration {
+	if value := os.Getenv(name); value != "" {
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			log.Fatalf("invalid duration for %s", name)
+		}
+		return duration
+	}
+	return fallback
 }
