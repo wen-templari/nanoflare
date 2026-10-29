@@ -49,6 +49,7 @@ type Verifier struct {
 	keys          map[string]any
 	keysMu        sync.Mutex
 	keysLoadedAt  time.Time
+	keysFetchedAt time.Time
 	forcedKeysAt  time.Time
 	forcedKeysErr error
 	states        map[string]browserState
@@ -576,7 +577,8 @@ func (v *Verifier) parseAndValidateForAudience(ctx context.Context, token string
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
 	}
-	if err := v.verifySignature(ctx, header, signingInput, signature); err != nil {
+	issuedAt, _ := numericDate(claims["iat"])
+	if err := v.verifySignature(ctx, header, signingInput, signature, issuedAt); err != nil {
 		return nil, err
 	}
 	if claimsIssuer, _ := claims["iss"].(string); claimsIssuer != v.issuer {
@@ -621,32 +623,60 @@ func parseJWT(token string) (jwtHeader, string, []byte, map[string]any, error) {
 
 var errInvalidIdentityToken = errors.New("invalid token")
 
-func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signingInput string, signature []byte) error {
+// A cooldown can defer checking newly rotated keys. Such failures must not end
+// browser sessions until a sufficiently recent key set can reject the token.
+var errSigningKeysStale = errors.New("OIDC signing key verification deferred until JWKS reload")
+
+// Keep fetch provenance with the exact key snapshot, including coalesced loads.
+// fetchedAt is the request start time of the last successful JWKS fetch.
+type signingKeys struct {
+	keys      map[string]any
+	fetchedAt time.Time
+}
+
+func (keys signingKeys) canReject(verificationStarted, issuedAt time.Time) bool {
+	// A fetch started during this verification necessarily follows token arrival.
+	// Otherwise, iat can establish that a cached set postdates issuance. Compare
+	// whole seconds conservatively: JWT NumericDate commonly has second precision.
+	return !keys.fetchedAt.Before(verificationStarted) ||
+		(!issuedAt.IsZero() && issuedAt.Before(keys.fetchedAt.Truncate(time.Second)))
+}
+
+func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signingInput string, signature []byte, issuedAt time.Time) error {
+	started := time.Now()
 	properties, err := jwtProperties(header.Alg)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
 	}
-	key, err := v.keyForToken(ctx, header.Kid)
-	if err != nil {
-		return err
-	} // Key/discovery failures are retriable, never invalid credentials.
-	if err := verifySignatureWithKey(properties, key, signingInput, signature); err == nil {
-		return nil
-	}
-	// Some providers rotate key material without changing kid. Retry verification
-	// against fresh JWKS before classifying the signature as permanently invalid.
-	keys, err := v.loadKeys(ctx, true)
+	keys, err := v.keysForContext(ctx)
 	if err != nil {
 		return err
 	}
-	key, ok := selectSigningKey(keys, header.Kid)
+	if key, ok := selectSigningKey(keys.keys, header.Kid); ok {
+		if verifySignatureWithKey(properties, key, signingInput, signature) == nil {
+			return nil
+		}
+	}
+	// Both unknown kids and same-ID rotation require a recent key set before
+	// classifying verification failure as permanently invalid credentials.
+	keys, err = v.loadKeys(ctx, true)
+	if err != nil {
+		return err
+	}
+	key, ok := selectSigningKey(keys.keys, header.Kid)
+	if ok {
+		err = verifySignatureWithKey(properties, key, signingInput, signature)
+		if err == nil {
+			return nil
+		}
+	}
+	if !keys.canReject(started, issuedAt) {
+		return errSigningKeysStale
+	}
 	if !ok {
 		return fmt.Errorf("%w: signing key not found", errInvalidIdentityToken)
 	}
-	if err := verifySignatureWithKey(properties, key, signingInput, signature); err != nil {
-		return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
-	}
-	return nil
+	return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
 }
 func verifySignatureWithKey(properties jwtAlgorithm, key any, signingInput string, signature []byte) error {
 	digest := properties.Hash.New()
@@ -731,24 +761,6 @@ func selectSigningKey(keys map[string]any, kid string) (any, bool) {
 	}
 	return nil, false
 }
-func (v *Verifier) keyForToken(ctx context.Context, kid string) (any, error) {
-	keys, err := v.keysForContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if key, ok := selectSigningKey(keys, kid); ok {
-		return key, nil
-	}
-	keys, err = v.loadKeys(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-	if key, ok := selectSigningKey(keys, kid); ok {
-		return key, nil
-	}
-	return nil, fmt.Errorf("%w: signing key not found", errInvalidIdentityToken)
-}
-
 func (v *Verifier) fetchUserInfo(ctx context.Context, token string) (map[string]any, error) {
 	discovery, err := v.discoveryForContext(ctx)
 	if err != nil {
@@ -812,13 +824,13 @@ func (v *Verifier) discoveryForContext(ctx context.Context) (discoveryDocument, 
 	return document, nil
 }
 
-func (v *Verifier) keysForContext(ctx context.Context) (map[string]any, error) {
+func (v *Verifier) keysForContext(ctx context.Context) (signingKeys, error) {
 	return v.loadKeys(ctx, false)
 }
 
 const forcedJWKSReloadInterval = 30 * time.Second
 
-func (v *Verifier) loadKeys(ctx context.Context, force bool) (result map[string]any, loadErr error) {
+func (v *Verifier) loadKeys(ctx context.Context, force bool) (result signingKeys, loadErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	started := time.Now()
@@ -829,7 +841,7 @@ func (v *Verifier) loadKeys(ctx context.Context, force bool) (result map[string]
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return signingKeys{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
@@ -838,7 +850,7 @@ func (v *Verifier) loadKeys(ctx context.Context, force bool) (result map[string]
 	// be flooded. Preserve the temporary error throughout the cooldown.
 	if force && time.Since(v.forcedKeysAt) < forcedJWKSReloadInterval {
 		v.mu.RLock()
-		keys := cloneKeys(v.keys)
+		keys := signingKeys{cloneKeys(v.keys), v.keysFetchedAt}
 		v.mu.RUnlock()
 		return keys, v.forcedKeysErr
 	}
@@ -848,46 +860,48 @@ func (v *Verifier) loadKeys(ctx context.Context, force bool) (result map[string]
 	}
 	v.mu.RLock()
 	if v.keys != nil && ((!force && time.Since(v.keysLoadedAt) < 5*time.Minute) || v.keysLoadedAt.After(started)) {
-		keys := cloneKeys(v.keys)
+		keys := signingKeys{cloneKeys(v.keys), v.keysFetchedAt}
 		v.mu.RUnlock()
 		return keys, nil
 	}
 	v.mu.RUnlock()
 	discovery, err := v.discoveryForContext(ctx)
 	if err != nil {
-		return nil, err
+		return signingKeys{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, discovery.JWKSURI, nil)
 	if err != nil {
-		return nil, err
+		return signingKeys{}, err
 	}
+	fetchedAt := time.Now()
 	response, err := v.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("jwks request failed: %w", err)
+		return signingKeys{}, fmt.Errorf("jwks request failed: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jwks request failed: status %d", response.StatusCode)
+		return signingKeys{}, fmt.Errorf("jwks request failed: status %d", response.StatusCode)
 	}
 	var document jwksDocument
 	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
-		return nil, fmt.Errorf("decode jwks response: %w", err)
+		return signingKeys{}, fmt.Errorf("decode jwks response: %w", err)
 	}
 	keys := make(map[string]any, len(document.Keys))
 	for _, item := range document.Keys {
 		key, err := keyFromJWK(item)
 		if err != nil {
-			return nil, err
+			return signingKeys{}, err
 		}
 		keys[item.Kid] = key
 	}
 	v.mu.Lock()
 	v.keys = keys
 	v.keysLoadedAt = time.Now()
+	v.keysFetchedAt = fetchedAt
 	v.forcedKeysAt = v.keysLoadedAt
 	v.forcedKeysErr = nil
 	v.mu.Unlock()
-	return cloneKeys(keys), nil
+	return signingKeys{cloneKeys(keys), fetchedAt}, nil
 }
 
 func cloneKeys(keys map[string]any) map[string]any {

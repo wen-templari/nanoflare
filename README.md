@@ -657,8 +657,13 @@ without repeated token rotation.
 
 Signing keys have a five-minute cache lifetime. Unknown key IDs and failed
 signatures (including same-ID key rotation) trigger a forced JWKS reload at most
-once every 30 seconds. Key-fetch/coalescing waits are bounded. Typed validation errors keep
-JWKS/discovery outages retriable rather than deleting sessions.
+once every 30 seconds. Key-fetch/coalescing waits are bounded. During the reload
+cooldown, an unknown key or failed signature remains temporary unless the key set
+was fetched during this verification attempt or the token's `iat` clearly predates
+the fetch. Missing, malformed, or same-second `iat` values cannot establish that a
+cached key set is recent enough to reject a token. This preserves browser sessions
+through rotations during the cooldown while retaining the reload rate limit.
+JWKS/discovery outages also remain temporary rather than deleting sessions.
 
 Temporary provider/database failures return 502 to API requests only when the
 session cannot authenticate. Browser navigations try to start OIDC login without
