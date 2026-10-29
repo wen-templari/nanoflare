@@ -44,17 +44,19 @@ type Verifier struct {
 	cookieDomain string
 	client       *http.Client
 
-	mu           sync.RWMutex
-	discovery    discoveryDocument
-	keys         map[string]any
-	keysMu       sync.Mutex
-	keysLoadedAt time.Time
-	states       map[string]browserState
-	store        browserstore.Store
-	codec        *nanoflare.SecretCodec
-	idleTTL      time.Duration
-	absoluteTTL  time.Duration
-	scopes       string
+	mu            sync.RWMutex
+	discovery     discoveryDocument
+	keys          map[string]any
+	keysMu        sync.Mutex
+	keysLoadedAt  time.Time
+	forcedKeysAt  time.Time
+	forcedKeysErr error
+	states        map[string]browserState
+	store         browserstore.Store
+	codec         *nanoflare.SecretCodec
+	idleTTL       time.Duration
+	absoluteTTL   time.Duration
+	scopes        string
 }
 
 type browserState struct {
@@ -813,7 +815,10 @@ func (v *Verifier) discoveryForContext(ctx context.Context) (discoveryDocument, 
 func (v *Verifier) keysForContext(ctx context.Context) (map[string]any, error) {
 	return v.loadKeys(ctx, false)
 }
-func (v *Verifier) loadKeys(ctx context.Context, force bool) (map[string]any, error) {
+
+const forcedJWKSReloadInterval = 30 * time.Second
+
+func (v *Verifier) loadKeys(ctx context.Context, force bool) (result map[string]any, loadErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	started := time.Now()
@@ -829,8 +834,20 @@ func (v *Verifier) loadKeys(ctx context.Context, force bool) (map[string]any, er
 		}
 	}
 	defer v.keysMu.Unlock()
+	// Rate-limit attempts as well as successful reloads, so a failing IdP cannot
+	// be flooded. Preserve the temporary error throughout the cooldown.
+	if force && time.Since(v.forcedKeysAt) < forcedJWKSReloadInterval {
+		v.mu.RLock()
+		keys := cloneKeys(v.keys)
+		v.mu.RUnlock()
+		return keys, v.forcedKeysErr
+	}
+	if force {
+		v.forcedKeysAt = time.Now()
+		defer func() { v.forcedKeysErr = loadErr }()
+	}
 	v.mu.RLock()
-	if len(v.keys) > 0 && ((!force && time.Since(v.keysLoadedAt) < 5*time.Minute) || v.keysLoadedAt.After(started)) {
+	if v.keys != nil && ((!force && time.Since(v.keysLoadedAt) < 5*time.Minute) || v.keysLoadedAt.After(started)) {
 		keys := cloneKeys(v.keys)
 		v.mu.RUnlock()
 		return keys, nil
@@ -867,6 +884,8 @@ func (v *Verifier) loadKeys(ctx context.Context, force bool) (map[string]any, er
 	v.mu.Lock()
 	v.keys = keys
 	v.keysLoadedAt = time.Now()
+	v.forcedKeysAt = v.keysLoadedAt
+	v.forcedKeysErr = nil
 	v.mu.Unlock()
 	return cloneKeys(keys), nil
 }

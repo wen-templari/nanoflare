@@ -79,6 +79,7 @@ func TestSigningKeyRotationAndOutagePreservePendingSession(t *testing.T) {
 				t.Fatal("JWKS outage deleted pending session")
 			}
 			outage.Store(false)
+			v.forcedKeysAt = time.Now().Add(-forcedJWKSReloadInterval)
 			if result, _, ok, err := v.SessionWithError(request); err != nil || !ok || result.Email != "new@example.com" {
 				t.Fatalf("rotation failed without restart: valid=%v error=%v", ok, err)
 			}
