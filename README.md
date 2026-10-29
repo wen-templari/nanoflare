@@ -338,17 +338,53 @@ Node.js compatibility is enabled by the compatibility date starting with
 ["nodejs_compat"]`. If Node.js compatibility is explicitly disabled with
 `no_nodejs_compat`, Nanoflare does not install the DNS lookup adapter.
 
+Dynamic Workers for Platforms namespace scripts use the `defaultProfile` from
+`nanoflared`'s `NANOFLARE_DNS_CONFIG`, including in split deployments. Their
+lookups run through the invocation broker and share its effect budget and
+deadline. Per-script profile selection remains unavailable. Configure the
+corporate default on `nanoflared` when namespace scripts need private DNS; the
+runner's resolver configuration still applies to ordinary Workers.
+Namespace DNS is enabled for authorized trusted scripts by default. Set
+`NANOFLARE_WFP_DNS=false` or `--wfp-dns=false` on nanoflared to reject their JSON
+DNS requests without public DoH fallback; ordinary Worker DNS is unchanged.
+In split mode, enabling namespace DNS validates nanoflared's DNS config at
+startup and invalid configuration prevents startup (see [DNS upgrade notes](docs/guides/dns-upgrade.md)).
+Persistent background connection pools, including the node-oracledb thin
+pool, are unsupported in this pilot because they retain the creating
+invocation's lease. Use request-scoped connections; see the
+[namespace DNS contract](docs/reference/workers-for-platforms-runtime.md#namespace-dns-lookup).
+
 Workers without `dns.profile` inherit `defaultProfile`. Unknown profiles fail
-deployment, and lookup errors retain Node-style codes such as `ENOTFOUND`,
-`ETIMEOUT`, and `EAI_AGAIN`. The adapter is private and listens on
+deployment. Native `lookup()` maps failures to `ENOTFOUND`, including timeouts
+and invocation admission failures. Other DNS APIs may expose native transport
+errors; detailed shim error codes are no longer exposed. The adapter is private and listens on
 `127.0.0.1:8083` by default; change that with `NANOFLARE_DNS_ADDR` only when the
 runtime topology requires it.
 
-Nanoflare transparently redirects `node:dns` and `node:dns/promises` imports
-when Node.js compatibility is enabled. Bare `dns` imports are redirected only
-when Node.js compatibility v2 is enabled. Other DNS methods continue to use
-workerd's built-in public DNS-over-HTTPS implementation. Raw
-outbound socket hostname resolution remains workerd-managed; clients such as
+Nanoflare answers the pinned workerd runtime's DNS-over-HTTPS fetches through
+the private resolver without rewriting uploaded source. Callback and promise
+`lookup()`, `resolve4()`, `resolve6()`, `resolveTxt()`, `resolveMx()`,
+`resolveCname()`, `resolveSrv()`, `resolveNs()`, `resolvePtr()` and `reverse()`
+use the configured profile, including bare DNS imports under Node.js compatibility
+v2. SOA, CAA, NAPTR and ANY remain unsupported and return NOTIMP without public
+DoH fallback. Explicit JSON fetches with a `name` parameter to the same
+`https://cloudflare-dns.com/dns-query` endpoint also use this adapter; binary
+DoH requests using `?dns=` retain ordinary outbound behavior.
+TXT chunks retain their boundaries and literal quotes/backslashes; PTR queries
+accept arbitrary DNS names, and CNAME queries return the immediate target.
+Record queries use explicit profile servers, or the nameservers in
+`/etc/resolv.conf` for a system profile, with UDP-to-TCP retry on truncation.
+They query absolute names without applying the host search list. Hosts without
+that file, or with per-domain system resolver routing, should configure explicit
+profile servers. A/AAAA lookups retain Go's host resolver behavior.
+The pinned runtime still reports NODATA as `ENOTFOUND`, even though the DoH
+response distinguishes it from NXDOMAIN. Some unusual TXT quote sequences cannot
+be represented by its chunk parser and return NOTIMP; see the
+[DNS upgrade notes](docs/guides/dns-upgrade.md#record-compatibility).
+With `disallow_importable_env`, ordinary Workers cannot access the private DNS
+binding and retain native workerd DNS through their normal outbound policy;
+`dns.profile` does not apply in that mode.
+Raw outbound socket hostname resolution remains workerd-managed; clients such as
 node-oracledb that enumerate addresses with `lookup()` use the private resolver
 before opening their sockets, including subsequent listener redirects.
 
@@ -569,6 +605,105 @@ Use `nanoflare deployment output` from a registered project to print captured
 worker output, or pass a worker ID with `nanoflare deployment output <worker-id>`.
 When `NANOFLARE_LOKI_URL` is configured, output is retained in Loki and can be
 filtered with `--deployment`, `--level`, `--search`, `--since`, and `--until`.
+
+Protected worker browser sessions use `NANOFLARE_OIDC_*`, independently of
+console and CLI authentication. With `DATABASE_URL` and a stable
+`NANOFLARE_SECRET_KEY` (32 raw bytes, 64 hex characters, or base64 for 32 bytes),
+browser sessions and pending PKCE state are encrypted in PostgreSQL and shared
+across replicas and redeployments. Every replica must use the same key, issuer,
+client ID, and public callback URL. Session storage is selected explicitly when
+the database opens and does not depend on repository wrappers.
+
+Without PostgreSQL or an encryption key, sessions stay process-local and are lost
+on restart. In particular, existing Compose deployments with an empty key still
+start and support login; they emit an explicit warning identifying the missing
+key and loss of persistence. Set a stable key to enable encrypted persistence.
+Existing in-memory sessions require one new login when enabling persistence.
+
+Worker browser session policy can be configured using:
+
+```sh
+NANOFLARE_OIDC_SCOPES="openid email profile"
+NANOFLARE_OIDC_SESSION_IDLE=1h
+NANOFLARE_OIDC_SESSION_ABSOLUTE=24h
+```
+
+The corresponding flags are `--oidc-scopes`, `--oidc-session-idle`, and
+`--oidc-session-absolute`. Existing scopes remain the default. Configure the IdP
+to issue refresh tokens; opt into `offline_access` only when supported and
+required, or use provider-specific consent settings. Without a refresh token,
+access-token expiry requires reauthentication. If `expires_in` is omitted, JWT
+access tokens can supply `exp`; otherwise the ID-token expiry or a one-hour
+fallback supplies the lifetime, preserving existing opaque-token logins. Providers
+should supply expiry metadata for precise refresh scheduling. An original ID
+token's expiry does not cap a refreshable browser session.
+
+Requests attempt refresh within 30 seconds of access-token expiry. Temporary
+early-refresh failure keeps serving the accepted token until it actually expires.
+Short persisted leases coordinate refreshes across replicas; token, userinfo,
+and key requests run outside database transactions and release the connection
+pool. Commits are fenced by lease ownership so stale refreshes cannot overwrite
+newer credentials or resurrect deleted records. Bounded independent contexts
+protect token write-back from browser disconnects. Rotated tokens are committed
+before identity metadata is fetched and validated.
+
+Transient identity failures retain pending credentials without extending the idle
+deadline. Expired pending access tokens can refresh again using the saved grant.
+If an outage outlasts a pending ID token, a verified expiry can also trigger one
+recovery refresh per request. Repeated expired ID tokens remain temporary while
+the refresh grant and browser limits allow recovery.
+Invalid signatures, rejected identities, or missing required identity fields
+require login. Login rejects identities without a subject before creating a
+session. Refreshes without a replacement ID token retain login-time claims and
+overlay fresh userinfo fields. An already-expired refresh result requires login
+without repeated token rotation.
+
+Signing keys have a five-minute cache lifetime. Unknown key IDs and failed
+signatures (including same-ID key rotation) trigger a forced JWKS reload at most
+once every 30 seconds. Key-fetch/coalescing waits are bounded. During the reload
+cooldown, an unknown key or failed signature remains temporary unless the key set
+was fetched during this verification attempt or the token's `iat` clearly predates
+the fetch. Missing, malformed, or same-second `iat` values cannot establish that a
+cached key set is recent enough to reject a token. This preserves browser sessions
+through rotations during the cooldown while retaining the reload rate limit.
+JWKS/discovery outages also remain temporary rather than deleting sessions.
+
+Temporary provider/database failures return 502 to API requests only when the
+session cannot authenticate. Browser navigations try to start OIDC login without
+deleting the session; if discovery or state storage prevents starting login, they
+receive a temporary error instead. APIs requiring reauthentication return 401.
+Public workers continue without optional identity headers on authentication failure. IdP SSO cookies and
+refresh-grant validity are separate policies.
+
+The cookie has the fixed absolute deadline. Activity renews the server-side idle
+deadline at most once per minute (half the idle limit for shorter limits), measured
+from the last persisted sample; failed authentication does not renew activity.
+Normal requests only read the record. Optional browser identity at the worker
+gateway uses a separate read-only lookup with a 100 ms store budget. It never
+refreshes tokens, fetches identity or keys, renews idle time, deletes records, or
+waits for a refresh lease. While refreshed identity is pending, the last accepted
+access token and identity remain available until that token expires and within
+the browser limits; unverified pending tokens are never forwarded as identity.
+Store lookup failures return 503 for protected routes. Public routes continue
+without optional identity headers. The fresh lookup observes cross-instance
+revocation.
+It has no dependency on proxy URL encodings. Expired records are cleaned up every
+minute. Changing the key requires reauthentication: unreadable
+or corrupt records are deleted.
+
+Refresh requires the IdP to issue refresh tokens. For Entra and Auth0, request
+`offline_access` in `NANOFLARE_OIDC_SCOPES`; Google requires the provider's offline
+access/consent equivalent. Keycloak issues refresh tokens by default. Check the
+provider's client policy as well as scopes. Without refresh tokens, persistence
+only preserves sessions across restarts until the access token expires.
+
+The session lookup key includes the issuer, client ID and redirect URL. Changing
+`NANOFLARE_OIDC_PUBLIC_URL` changes the redirect URL and logs existing sessions out.
+
+A crash or lost response between IdP rotation and database commit can still
+require login if the provider offers no refresh-token reuse grace period.
+PostgreSQL and the external IdP cannot participate in one atomic commit.
+Applications should preserve drafts across legitimate authentication expiry.
 
 The browser console can also use an external OIDC provider for login. Configure
 the console-specific settings on `nanoflared`:

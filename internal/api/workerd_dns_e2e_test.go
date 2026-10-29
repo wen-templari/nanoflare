@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,19 @@ import (
 )
 
 func TestWorkerdNestedNodeDNSImportsUseHostResolver(t *testing.T) {
-	workerd, err := exec.LookPath("workerd")
-	if err != nil {
-		t.Skip("workerd is not installed")
+	for _, egress := range []bool{false, true} {
+		t.Run(fmt.Sprintf("egress=%t", egress), func(t *testing.T) { testWorkerdDNSWithEgress(t, egress) })
+	}
+}
+
+func testWorkerdDNSWithEgress(t *testing.T, egress bool) {
+	workerd := os.Getenv("NANOFLARE_TEST_WORKERD")
+	if workerd == "" {
+		var err error
+		workerd, err = exec.LookPath("workerd")
+		if err != nil {
+			t.Skip("workerd is not installed")
+		}
 	}
 	resolver, err := dnsresolver.New(dnsresolver.Config{}, "127.0.0.1:0")
 	if err != nil {
@@ -48,8 +59,17 @@ export default { async fetch() {
 		},
 	}}
 	configPath := filepath.Join(t.TempDir(), "workerd.capnp")
-	generated := config.WorkerdWithOptions(active, config.WorkerdOptions{DNSAddr: resolver.Addr()})
-	if !strings.Contains(generated, `nanoflare-internal:dns`) || !strings.Contains(generated, `X-Nanoflare-DNS-Profile`) {
+	options := config.WorkerdOptions{DNSAddr: resolver.Addr()}
+	if egress {
+		adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("native DNS escaped to egress: %s", r.URL)
+			w.WriteHeader(502)
+		}))
+		defer adapter.Close()
+		options.EgressAddr = strings.TrimPrefix(adapter.URL, "http://")
+	}
+	generated := config.WorkerdWithOptions(active, options)
+	if !strings.Contains(generated, `nanoflare-internal:doh-fetch`) || !strings.Contains(generated, `X-Nanoflare-DNS-Profile`) {
 		t.Fatalf("generated config does not contain DNS adapter: %s", generated)
 	}
 	if err := os.WriteFile(configPath, []byte(generated), 0o600); err != nil {
@@ -58,10 +78,12 @@ export default { async fetch() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	command := exec.CommandContext(ctx, workerd, "serve", configPath)
-	stderr, err := command.StderrPipe()
+	stderr, err := os.Create(filepath.Join(t.TempDir(), "workerd.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer stderr.Close()
+	command.Stderr = stderr
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +98,9 @@ export default { async fetch() {
 		if response.StatusCode == http.StatusOK && strings.Contains(string(body), `"promise":[`) && strings.Contains(string(body), `"directPromise":[`) && strings.Contains(string(body), `"callback":[`) && strings.Count(string(body), `"family":4`) >= 3 {
 			return
 		}
-		t.Fatalf("worker response = %d %q", response.StatusCode, body)
+		output, _ := os.ReadFile(stderr.Name())
+		t.Fatalf("worker response = %d %q; workerd: %s", response.StatusCode, body, output)
 	}
-	output, _ := io.ReadAll(stderr)
+	output, _ := os.ReadFile(stderr.Name())
 	t.Fatalf("workerd did not become ready: %s", output)
 }

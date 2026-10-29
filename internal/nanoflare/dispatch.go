@@ -17,6 +17,10 @@ const RuntimeDispatch = "dispatch"
 const RuntimeServiceDispatch = "service-dispatch"
 const invocationCapabilityPrefix = "nfi1."
 
+// defaultInvocationSubrequestBudget is shared by dispatch leases, ingress roots,
+// and the advertised runtime limits. SQL statements each consume one unit.
+const defaultInvocationSubrequestBudget = 10_000
+
 var ErrDispatchDepth = errors.New("dispatch call depth limit exceeded")
 
 var (
@@ -303,7 +307,7 @@ func (s *Service) acquireResolvedDispatch(ctx context.Context, callerToken, tran
 		parentContext = parent.Context
 	}
 	leaseContext, leaseCancel := context.WithDeadline(parentContext, deadline)
-	s.dispatch.leases[token] = &dispatchLease{AdmittedAt: now, Context: leaseContext, Cancel: leaseCancel, CallerToken: callerToken, Caller: caller.Grant, Target: *selected, Deadline: deadline, Expires: deadline, Remaining: 100, Root: rootID, TransportToken: transportToken, Parent: parentID, Depth: depth}
+	s.dispatch.leases[token] = &dispatchLease{AdmittedAt: now, Context: leaseContext, Cancel: leaseCancel, CallerToken: callerToken, Caller: caller.Grant, Target: *selected, Deadline: deadline, Expires: deadline, Remaining: defaultInvocationSubrequestBudget, Root: rootID, TransportToken: transportToken, Parent: parentID, Depth: depth}
 	s.admitDispatchObservationLocked(app.ID)
 	return DispatchArtifact{Deployment: artifact.Deployment, Values: values, Digest: artifact.Digest, Lease: token, Deadline: deadline}, nil
 }

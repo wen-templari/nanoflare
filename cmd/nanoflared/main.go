@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/api"
+	"github.com/clas/nanoflare/internal/browserstore"
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/database"
 	"github.com/clas/nanoflare/internal/dnsresolver"
@@ -69,6 +70,7 @@ func main() {
 		egressAddr                     = flag.String("workerd-egress-addr", envOrDefault("NANOFLARE_WORKERD_EGRESS_ADDR", "127.0.0.1:8082"), "private Worker egress adapter address")
 		dnsConfigValue                 = flag.String("dns-config", os.Getenv("NANOFLARE_DNS_CONFIG"), "inline JSON or path to the platform DNS profile configuration")
 		dnsAddr                        = flag.String("dns-addr", envOrDefault("NANOFLARE_DNS_ADDR", "127.0.0.1:8083"), "private Worker DNS adapter address")
+		wfpDNS                         = flag.Bool("wfp-dns", config.EnvBoolOrDefault("NANOFLARE_WFP_DNS", true), "allow trusted WFP scripts to query the platform default resolver; disabling rejects JSON DoH without public fallback")
 		socketDir                      = flag.String("runtime-socket-dir", "/tmp/nanoflare-sockets", "private directory for Worker Unix sockets")
 		prometheus                     = flag.String("prometheus-url", "http://127.0.0.1:9090", "Prometheus base URL for worker traffic metrics")
 		lokiURL                        = flag.String("loki-url", os.Getenv("NANOFLARE_LOKI_URL"), "Loki base URL for persistent worker output")
@@ -81,6 +83,9 @@ func main() {
 		runnerToken                    = flag.String("runner-token", os.Getenv("NANOFLARE_RUNNER_TOKEN"), "nanoflare-runner authentication token")
 		traefikToken                   = flag.String("traefik-token", os.Getenv("NANOFLARE_TRAEFIK_TOKEN"), "Traefik HTTP provider authentication token")
 		authSecret                     = flag.String("control-auth-secret", envOrDefault("NANOFLARE_AUTH_SECRET", "nanoflare-development-control-secret"), "JWT signing secret for control-plane email/password auth")
+		oidcSessionIdle                = flag.Duration("oidc-session-idle", envDurationOrDefault("NANOFLARE_OIDC_SESSION_IDLE", oidc.DefaultBrowserIdleTTL), "Worker browser session idle limit")
+		oidcSessionAbsolute            = flag.Duration("oidc-session-absolute", envDurationOrDefault("NANOFLARE_OIDC_SESSION_ABSOLUTE", oidc.DefaultBrowserAbsoluteTTL), "Worker browser session absolute limit")
+		oidcScopes                     = flag.String("oidc-scopes", envOrDefault("NANOFLARE_OIDC_SCOPES", oidc.DefaultBrowserScopes), "Worker OIDC scopes; configure IdP refresh-token issuance")
 		oidcIssuer                     = flag.String("oidc-issuer", os.Getenv("NANOFLARE_OIDC_ISSUER"), "OIDC issuer URL for protected worker routes")
 		oidcAudience                   = flag.String("oidc-audience", os.Getenv("NANOFLARE_OIDC_AUDIENCE"), "OIDC audience expected in protected worker JWTs")
 		oidcEmail                      = flag.String("oidc-email-claim", envOrDefault("NANOFLARE_OIDC_EMAIL_CLAIM", "email"), "OIDC email claim fallback used when userinfo omits email")
@@ -152,6 +157,7 @@ func main() {
 	}
 
 	var store nanoflare.Repository = nanoflare.NewStore()
+	var persistentBrowserSessions browserstore.Store
 	var objectStore nanoflare.ObjectStore
 	if endpoint := os.Getenv("MINIO_ENDPOINT"); endpoint != "" {
 		secure, err := strconv.ParseBool(envOrDefault("MINIO_SECURE", "false"))
@@ -177,6 +183,7 @@ func main() {
 		}
 		defer postgres.Close()
 		store = postgres
+		persistentBrowserSessions = postgres
 		log.Print("using PostgreSQL repository")
 	}
 
@@ -218,6 +225,10 @@ func main() {
 	if *runnerToken == "" {
 		*runnerToken = rand.Text()
 	}
+	dnsServer, dnsConfig, err := platformDNS(*dnsConfigValue, *dnsAddr, *runnerURL != "", *platformDispatchEnabled && *wfpDNS)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *runnerURL != "" {
 		client := runner.NewClient(*runnerURL, *runnerToken, traefikWriter)
 		remoteRunner = client
@@ -228,14 +239,6 @@ func main() {
 		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
 		writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
 		writer.SetWFPSockets(wfpSockets)
-		dnsConfig, err := dnsresolver.LoadConfig(*dnsConfigValue)
-		if err != nil {
-			log.Fatal(err)
-		}
-		dnsServer, err := dnsresolver.New(dnsConfig, *dnsAddr)
-		if err != nil {
-			log.Fatal(err)
-		}
 		if err := dnsServer.Start(); err != nil {
 			log.Fatal(err)
 		}
@@ -349,6 +352,7 @@ func main() {
 		service.SetRuntimeInstanceChecker(checker.RuntimeInstanceLive)
 	}
 
+	var browserSessions browserstore.Store
 	var authenticator api.Authenticator
 	if *oidcIssuer != "" && *oidcAudience != "" {
 		clientID := *oidcClientID
@@ -356,6 +360,17 @@ func main() {
 			clientID = *oidcAudience
 		}
 		verifier := oidc.NewBrowserVerifier(*oidcIssuer, *oidcAudience, *oidcEmail, clientID, *oidcSecret, *oidcPublic, *oidcCookie, nil)
+		if verifier.BrowserFlowEnabled() {
+			sessions, warning := selectBrowserSessionStore(persistentBrowserSessions, os.Getenv("NANOFLARE_SECRET_KEY"))
+			if warning != "" {
+				log.Print(warning)
+			}
+
+			browserSessions = sessions
+			if err := verifier.ConfigureBrowserSessions(sessions, os.Getenv("NANOFLARE_SECRET_KEY"), *oidcSessionIdle, *oidcSessionAbsolute, *oidcScopes); err != nil {
+				log.Fatal(err)
+			}
+		}
 		if err := verifier.ValidateBrowserConfig(); err != nil {
 			log.Fatal(err)
 		}
@@ -388,7 +403,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, dispatchTransport, *runnerToken, output)
+	// The platform resolver also exists with a remote runner. Dispatch DNS uses
+	// nanoflared's default profile, while ordinary Workers use their runner's.
+	runtimeMux := newRuntimeMuxWithControl(service, server, durationTelemetry, platformDNSOutbound(dispatchTransport, dnsServer, *wfpDNS), *runnerToken, output)
 	defer runtimeMux.Close()
 
 	runtimeServer := &http.Server{Addr: *runtimeAddr, Handler: runtimeMux}
@@ -413,6 +430,24 @@ func main() {
 	httpServer := &http.Server{Addr: *addr, Handler: server}
 	shutdown, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	if sessions := browserSessions; sessions != nil {
+		go func() {
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-shutdown.Done():
+					return
+				case <-ticker.C:
+					cleanupCtx, cancel := context.WithTimeout(shutdown, 10*time.Second)
+					if err := sessions.CleanupBrowserRecords(cleanupCtx); err != nil {
+						log.Printf("OIDC browser record cleanup failed: %v", err)
+					}
+					cancel()
+				}
+			}
+		}()
+	}
 	stopAssetCleanup := service.StartAssetUploadCleanup(shutdown, time.Minute, func(err error) { log.Printf("asset staging cleanup: %v", err) })
 	defer stopAssetCleanup()
 	if remoteRunner != nil {
@@ -509,3 +544,51 @@ type privateRuntimeMux struct {
 }
 
 func (m *privateRuntimeMux) Close() error { return m.executions.Close() }
+
+// Split deployments need an in-process resolver only when WFP is enabled.
+// The local adapter listen address is irrelevant to that mode.
+func platformDNS(value, addr string, remote, dispatch bool) (*dnsresolver.Server, dnsresolver.Config, error) {
+	if remote && !dispatch {
+		return nil, dnsresolver.Config{}, nil
+	}
+	config, err := dnsresolver.LoadConfig(value)
+	if err != nil {
+		return nil, config, err
+	}
+	if remote {
+		addr = "127.0.0.1:0"
+	}
+	server, err := dnsresolver.New(config, addr)
+	return server, config, err
+}
+
+// A missing resolver still intercepts DoH and fails closed.
+func platformDNSOutbound(next http.RoundTripper, server *dnsresolver.Server, enabled bool) http.RoundTripper {
+	if !enabled || server == nil {
+		return dnsresolver.DoHTransport(next, nil)
+	}
+	return dnsresolver.DoHTransport(next, server)
+}
+
+func envDurationOrDefault(name string, fallback time.Duration) time.Duration {
+	if value := os.Getenv(name); value != "" {
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			log.Fatalf("invalid duration for %s", name)
+		}
+		return duration
+	}
+	return fallback
+}
+
+// Select the explicitly opened browser store, independently of repository wrappers.
+// Preserve existing keyless deployments without ever persisting plaintext tokens.
+func selectBrowserSessionStore(persistent browserstore.Store, key string) (browserstore.Store, string) {
+	if persistent == nil {
+		return browserstore.NewMemory(), "OIDC browser sessions use memory and will not survive restart; configure DATABASE_URL and NANOFLARE_SECRET_KEY for persistence"
+	}
+	if strings.TrimSpace(key) == "" {
+		return browserstore.NewMemory(), "WARNING: DATABASE_URL is configured but NANOFLARE_SECRET_KEY is empty; OIDC browser sessions remain process-local for upgrade compatibility and will not survive restart; set a stable NANOFLARE_SECRET_KEY to enable encrypted persistence"
+	}
+	return persistent, ""
+}

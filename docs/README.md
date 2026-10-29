@@ -14,6 +14,7 @@ trusted pilot.
 
 ## Run or develop Nanoflare
 
+- [DNS upgrade notes](guides/dns-upgrade.md) — split-deployment configuration and DNS compatibility.
 - [Operator guide](guides/workers-for-platforms-operator.md) — server setup, monitoring and recovery.
 - [Architecture](architecture/workers-for-platforms.md) — identity, authorization and publication, with the detailed [runtime contract](reference/workers-for-platforms-runtime.md).
 - [Archive and development records](archive/workers-for-platforms/README.md) — historical designs, evidence and links to remaining work.

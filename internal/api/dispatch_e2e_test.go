@@ -25,6 +25,7 @@ import (
 
 	"github.com/clas/nanoflare/internal/config"
 	"github.com/clas/nanoflare/internal/database"
+	"github.com/clas/nanoflare/internal/dnsresolver"
 	"github.com/clas/nanoflare/internal/egress"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runner"
@@ -115,6 +116,7 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 }
 
 type dispatchFixtureObservations struct {
+	DNS              http.Handler
 	Output           *runtime.OutputBuffer
 	OutboundCanceled func(string)
 }
@@ -238,7 +240,11 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/internal/runtime/dispatch/") {
-			NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(logOutput).ServeHTTP(w, r)
+			dispatch := NewRuntimeDispatchServer(service, server, outbound).SetLogOutput(logOutput)
+			if len(observations) > 0 {
+				dispatch.outbound = dnsresolver.DoHTransport(outbound, observations[0].DNS)
+			}
+			dispatch.ServeHTTP(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/internal/runtime/durations") {

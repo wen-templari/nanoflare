@@ -281,6 +281,8 @@
         "OTEL_SERVICE_NAME": "nanoflared",
         "NANOFLARE_WORKERD_EXECUTABLE": "/usr/local/bin/workerd-native",
         "NANOFLARE_PLATFORM_DISPATCH_ENABLED": "true",
+        "NANOFLARE_DNS_CONFIG": "${NANOFLARE_DNS_CONFIG:-}",
+        "NANOFLARE_WFP_DNS": "${NANOFLARE_WFP_DNS:-true}",
         "NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED": "true",
         "NANOFLARE_AUTH_SECRET": "${PILOT_AUTH_SECRET:?required}"
       },

@@ -55,7 +55,7 @@ func (s *Service) RuntimeCapabilitiesForOrg(org, worker string) (RuntimeCapabili
 		result.DurationMeasurement = "elapsed_dispatch"
 		result.Experimental = []string{"worker_loader", "native_props", "nodejs_als"}
 		result.Unavailable = append(result.Unavailable, "cache_api", "raw_tcp", "websockets", "classic_scripts", "custom_dispatch_limits", "custom_dispatch_outbound", "arbitrary_service_rpc", "customer_namespace_dispatch", "schedules", "custom_dns_profiles", "presigned_object_urls")
-		result.Limits = RuntimeLimits{WallMS: 30000, BackgroundMS: 2000, Subrequests: 100, Depth: 8, GlobalInvocations: 1024, NamespaceInvocations: 128, CustomerInvocations: 32, CodeDescriptors: 64, CodeDescriptorBytes: 32 << 20}
+		result.Limits = RuntimeLimits{WallMS: 30000, BackgroundMS: 2000, Subrequests: defaultInvocationSubrequestBudget, Depth: 8, GlobalInvocations: 1024, NamespaceInvocations: 128, CustomerInvocations: 32, CodeDescriptors: 64, CodeDescriptorBytes: 32 << 20}
 	}
 	return result, nil
 }
