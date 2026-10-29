@@ -1553,15 +1553,20 @@ type unavailableBrowserAuthenticator struct{ fakeAuthenticator }
 func (unavailableBrowserAuthenticator) SessionWithError(*http.Request) (AuthResult, string, bool, error) {
 	return AuthResult{}, "", false, errors.New("OIDC browser authentication temporarily unavailable")
 }
-func TestVerifyAuthTemporaryBrowserFailureDoesNotRedirect(t *testing.T) {
+func TestVerifyAuthTemporaryFailureRedirectsNavigationsOnly(t *testing.T) {
 	for _, accept := range []string{"application/json", "text/html"} {
 		t.Run(accept, func(t *testing.T) {
-			server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", unavailableBrowserAuthenticator{})
+			server := newTestServerWithAuth(nanoflare.NewService(nanoflare.NewStore(), &noopWriter{}), nil, "", unavailableBrowserAuthenticator{fakeAuthenticator{beginAuthURL: "https://issuer.example.com/authorize"}})
 			request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
 			request.Header.Set("Accept", accept)
 			recorder := httptest.NewRecorder()
 			server.ServeHTTP(recorder, request)
-			if recorder.Code != http.StatusBadGateway || recorder.Header().Get("Location") != "" || recorder.Header().Get("X-Nanoflare-User-JWT") != "" {
+			wantStatus, wantLocation := http.StatusBadGateway, ""
+			if accept == "text/html" {
+				wantStatus = http.StatusFound
+				wantLocation = "https://issuer.example.com/authorize"
+			}
+			if recorder.Code != wantStatus || recorder.Header().Get("Location") != wantLocation || recorder.Header().Get("X-Nanoflare-User-JWT") != "" {
 				t.Fatalf("status=%d headers=%v", recorder.Code, recorder.Header())
 			}
 		})
@@ -1574,3 +1579,7 @@ func (f fakeAuthenticator) SessionWithError(r *http.Request) (AuthResult, string
 }
 
 var _ BrowserAuthenticator = fakeAuthenticator{}
+
+func (f fakeAuthenticator) LookupSession(r *http.Request) (AuthResult, string, bool) {
+	return f.Session(r)
+}

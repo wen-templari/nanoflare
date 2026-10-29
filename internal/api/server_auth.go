@@ -32,13 +32,20 @@ func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(bearerToken(r))
 	if token == "" {
 		if browserAuth, ok := s.auth.(BrowserAuthenticator); ok {
-			result, sessionToken, ok, err := browserSessionForRequest(browserAuth, r)
+			result, sessionToken, ok, err := browserAuth.SessionWithError(r)
 			if err != nil {
+				if shouldRedirectToOIDC(r) {
+					beginCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+					defer cancel()
+					if beginErr := browserAuth.BeginAuth(w, r.WithContext(beginCtx)); beginErr != nil {
+						writeAuthError(w, beginErr)
+					}
+					return
+				}
 				writeAuthError(w, err)
 				return
 			}
 			if ok {
-
 				w.Header().Set("X-Nanoflare-User-JWT", sessionToken)
 				w.Header().Set("X-Nanoflare-User-Email", result.Email)
 				w.WriteHeader(http.StatusOK)
@@ -162,13 +169,4 @@ func shouldRedirectToOIDC(r *http.Request) bool {
 		return false
 	}
 	return true
-}
-
-// Browser session errors are explicit in the interface; optional identity at
-// the gateway still uses a read-only lookup to observe cross-instance revocation.
-func browserSessionForRequest(auth BrowserAuthenticator, r *http.Request) (AuthResult, string, bool, error) {
-	return auth.SessionWithError(r)
-}
-func browserSessionForWorker(auth BrowserAuthenticator, r *http.Request) (AuthResult, string, bool, error) {
-	return auth.SessionWithError(r)
 }

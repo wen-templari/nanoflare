@@ -266,7 +266,10 @@ func TestVerifierBrowserFlowCreatesSession(t *testing.T) {
 	// A third instance must resolve the session after a restart.
 	verifier = NewBrowserVerifier(issuer, "nanoflare", "email", "client-id", "secret", "https://nanoflare.example.com:8443", ".local.nbtca.space", server.Client())
 	configure(verifier)
-	result, token, ok := verifier.Session(sessionRequest)
+	result, token, ok, sessionErr := verifier.SessionWithError(sessionRequest)
+	if sessionErr != nil {
+		t.Fatal(sessionErr)
+	}
 	if !ok {
 		t.Fatal("session missing")
 	}

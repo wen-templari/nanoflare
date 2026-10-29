@@ -650,19 +650,34 @@ before identity metadata is fetched and validated.
 Transient identity failures retain pending credentials without extending the idle
 deadline. Expired pending access tokens can refresh again using the saved grant;
 invalid signatures, rejected identities, or missing required identity fields
-require login. Temporary provider/database failures return 502 only when the
-session cannot authenticate the request. APIs requiring reauthentication return
-401 and browser navigations redirect through OIDC. Public workers continue
-without optional identity headers on authentication failure. IdP SSO cookies and
+require login. Login rejects identities without a subject before creating a
+session. Refreshes without a replacement ID token retain login-time claims and
+overlay fresh userinfo fields. An already-expired refresh result requires login
+without repeated token rotation.
+
+Signing keys have a five-minute cache lifetime, with an immediate JWKS reload
+on an unknown key ID or failed signature verification (including same-ID key
+rotation). Key-fetch/coalescing waits are bounded. Typed validation errors keep
+JWKS/discovery outages retriable rather than deleting sessions.
+
+Temporary provider/database failures return 502 to API requests only when the
+session cannot authenticate. Browser navigations try to start OIDC login without
+deleting the session; if discovery or state storage prevents starting login, they
+receive a temporary error instead. APIs requiring reauthentication return 401.
+Public workers continue without optional identity headers on authentication failure. IdP SSO cookies and
 refresh-grant validity are separate policies.
 
 The cookie has the fixed absolute deadline. Activity renews the server-side idle
 deadline at most once per minute (half the idle limit for shorter limits), measured
 from the last persisted sample; failed authentication does not renew activity.
-Normal requests only read the record. The gateway performs a second read-only
-lookup to observe cross-instance session deletion; there is no signed-proof
-replay window or dependency on matching proxy URL encodings. Expired records are
-cleaned up every minute. Changing the key requires reauthentication: unreadable
+Normal requests only read the record. Optional browser identity at the worker
+gateway uses a separate read-only lookup with a 100 ms store budget. It never
+refreshes tokens, fetches identity or keys, renews idle time, deletes records, or
+waits for a refresh lease. Expired/pending identity and store failures simply omit
+identity headers. The second fresh read intentionally observes cross-instance
+revocation, instead of caching identity or using a signed-proof replay window.
+It has no dependency on proxy URL encodings. Expired records are cleaned up every
+minute. Changing the key requires reauthentication: unreadable
 or corrupt records are deleted.
 
 A crash or lost response between IdP rotation and database commit can still

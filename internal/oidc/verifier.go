@@ -44,15 +44,17 @@ type Verifier struct {
 	cookieDomain string
 	client       *http.Client
 
-	mu          sync.RWMutex
-	discovery   discoveryDocument
-	keys        map[string]any
-	states      map[string]browserState
-	store       browserstore.Store
-	codec       *nanoflare.SecretCodec
-	idleTTL     time.Duration
-	absoluteTTL time.Duration
-	scopes      string
+	mu           sync.RWMutex
+	discovery    discoveryDocument
+	keys         map[string]any
+	keysMu       sync.Mutex
+	keysLoadedAt time.Time
+	states       map[string]browserState
+	store        browserstore.Store
+	codec        *nanoflare.SecretCodec
+	idleTTL      time.Duration
+	absoluteTTL  time.Duration
+	scopes       string
 }
 
 type browserState struct {
@@ -158,12 +160,6 @@ func (v *Verifier) BrowserFlowEnabled() bool {
 
 func (v *Verifier) Issuer() string {
 	return v.issuer
-}
-
-// Session is retained for callers that do not support temporary authentication errors.
-func (v *Verifier) Session(r *http.Request) (api.AuthResult, string, bool) {
-	result, token, ok, _ := v.SessionWithError(r)
-	return result, token, ok
 }
 
 func (v *Verifier) BeginAuth(w http.ResponseWriter, r *http.Request) error {
@@ -443,6 +439,9 @@ func (v *Verifier) callbackIdentity(ctx context.Context, token tokenResponse) (a
 		if result.Subject == "" {
 			result.Subject, _ = raw["sub"].(string)
 		}
+		if strings.TrimSpace(result.Subject) == "" {
+			return api.AuthResult{}, nil, errors.New("oidc subject is required")
+		}
 		return result, raw, nil
 	}
 	result := api.AuthResult{Valid: true, Claims: raw}
@@ -453,6 +452,9 @@ func (v *Verifier) callbackIdentity(ctx context.Context, token tokenResponse) (a
 	}
 	if result.Email == "" {
 		return api.AuthResult{}, nil, errors.New("userinfo email is required")
+	}
+	if strings.TrimSpace(result.Subject) == "" {
+		return api.AuthResult{}, nil, errors.New("oidc subject is required")
 	}
 	return result, raw, nil
 }
@@ -567,19 +569,19 @@ func (v *Verifier) parseAndValidate(ctx context.Context, token string) (map[stri
 func (v *Verifier) parseAndValidateForAudience(ctx context.Context, token string, audience string) (map[string]any, error) {
 	header, signingInput, signature, claims, err := parseJWT(token)
 	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
+		return nil, fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
 	}
 	if err := v.verifySignature(ctx, header, signingInput, signature); err != nil {
 		return nil, err
 	}
 	if claimsIssuer, _ := claims["iss"].(string); claimsIssuer != v.issuer {
-		return nil, errors.New("invalid token: issuer mismatch")
+		return nil, fmt.Errorf("%w: issuer mismatch", errInvalidIdentityToken)
 	}
 	if !audienceMatches(claims["aud"], audience) {
-		return nil, errors.New("invalid token: audience mismatch")
+		return nil, fmt.Errorf("%w: audience mismatch", errInvalidIdentityToken)
 	}
 	if expiration, ok := numericDate(claims["exp"]); ok && !expiration.After(time.Now().UTC()) {
-		return nil, errors.New("token expired")
+		return nil, fmt.Errorf("%w: token expired", errInvalidIdentityToken)
 	}
 	return claims, nil
 }
@@ -612,37 +614,53 @@ func parseJWT(token string) (jwtHeader, string, []byte, map[string]any, error) {
 	return header, parts[0] + "." + parts[1], signature, claims, nil
 }
 
+var errInvalidIdentityToken = errors.New("invalid token")
+
 func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signingInput string, signature []byte) error {
 	properties, err := jwtProperties(header.Alg)
 	if err != nil {
-		return fmt.Errorf("invalid token: %w", err)
+		return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
 	}
 	key, err := v.keyForToken(ctx, header.Kid)
 	if err != nil {
 		return err
+	} // Key/discovery failures are retriable, never invalid credentials.
+	if err := verifySignatureWithKey(properties, key, signingInput, signature); err == nil {
+		return nil
 	}
+	// Some providers rotate key material without changing kid. Retry verification
+	// against fresh JWKS before classifying the signature as permanently invalid.
+	keys, err := v.loadKeys(ctx, true)
+	if err != nil {
+		return err
+	}
+	key, ok := selectSigningKey(keys, header.Kid)
+	if !ok {
+		return errors.New("OIDC signing key unavailable")
+	}
+	if err := verifySignatureWithKey(properties, key, signingInput, signature); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
+	}
+	return nil
+}
+func verifySignatureWithKey(properties jwtAlgorithm, key any, signingInput string, signature []byte) error {
 	digest := properties.Hash.New()
 	_, _ = digest.Write([]byte(signingInput))
 	sum := digest.Sum(nil)
-	switch typed := key.(type) {
+	switch key := key.(type) {
 	case *rsa.PublicKey:
 		if properties.KeyType != "RSA" {
-			return fmt.Errorf("invalid token: signing key type mismatch for %s", header.Alg)
+			return errors.New("signing key type mismatch")
 		}
-		if err := rsa.VerifyPKCS1v15(typed, properties.Hash, sum, signature); err != nil {
-			return fmt.Errorf("invalid token: %w", err)
-		}
+		return rsa.VerifyPKCS1v15(key, properties.Hash, sum, signature)
 	case *ecdsa.PublicKey:
 		if properties.KeyType != "EC" {
-			return fmt.Errorf("invalid token: signing key type mismatch for %s", header.Alg)
+			return errors.New("signing key type mismatch")
 		}
-		if err := verifyECDSASignature(typed, sum, signature); err != nil {
-			return fmt.Errorf("invalid token: %w", err)
-		}
+		return verifyECDSASignature(key, sum, signature)
 	default:
-		return errors.New("invalid token: unsupported signing key type")
+		return errors.New("unsupported signing key type")
 	}
-	return nil
 }
 
 type jwtAlgorithm struct {
@@ -696,22 +714,34 @@ func audienceMatches(value any, audience string) bool {
 	return false
 }
 
+func selectSigningKey(keys map[string]any, kid string) (any, bool) {
+	if kid != "" {
+		key, ok := keys[kid]
+		return key, ok
+	}
+	if len(keys) == 1 {
+		for _, key := range keys {
+			return key, true
+		}
+	}
+	return nil, false
+}
 func (v *Verifier) keyForToken(ctx context.Context, kid string) (any, error) {
 	keys, err := v.keysForContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if kid != "" {
-		if key, ok := keys[kid]; ok {
-			return key, nil
-		}
+	if key, ok := selectSigningKey(keys, kid); ok {
+		return key, nil
 	}
-	if len(keys) == 1 {
-		for _, key := range keys {
-			return key, nil
-		}
+	keys, err = v.loadKeys(ctx, true)
+	if err != nil {
+		return nil, err
 	}
-	return nil, errors.New("invalid token: signing key not found")
+	if key, ok := selectSigningKey(keys, kid); ok {
+		return key, nil
+	}
+	return nil, errors.New("OIDC signing key unavailable")
 }
 
 func (v *Verifier) fetchUserInfo(ctx context.Context, token string) (map[string]any, error) {
@@ -778,14 +808,31 @@ func (v *Verifier) discoveryForContext(ctx context.Context) (discoveryDocument, 
 }
 
 func (v *Verifier) keysForContext(ctx context.Context) (map[string]any, error) {
+	return v.loadKeys(ctx, false)
+}
+func (v *Verifier) loadKeys(ctx context.Context, force bool) (map[string]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	started := time.Now()
+	// Coalescing must respect cancellation even when another caller's JWKS
+	// request is stalled. Never wait unboundedly on a process-local mutex.
+	for !v.keysMu.TryLock() {
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	defer v.keysMu.Unlock()
 	v.mu.RLock()
-	if len(v.keys) > 0 {
+	if len(v.keys) > 0 && ((!force && time.Since(v.keysLoadedAt) < 5*time.Minute) || v.keysLoadedAt.After(started)) {
 		keys := cloneKeys(v.keys)
 		v.mu.RUnlock()
 		return keys, nil
 	}
 	v.mu.RUnlock()
-
 	discovery, err := v.discoveryForContext(ctx)
 	if err != nil {
 		return nil, err
@@ -816,6 +863,7 @@ func (v *Verifier) keysForContext(ctx context.Context) (map[string]any, error) {
 	}
 	v.mu.Lock()
 	v.keys = keys
+	v.keysLoadedAt = time.Now()
 	v.mu.Unlock()
 	return cloneKeys(keys), nil
 }

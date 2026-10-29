@@ -285,6 +285,10 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 				updated.TokenExpiresAt = accessTokenExpiry(token, now)
 				updated.PendingIDToken = token.IDToken
 				updated.IdentityPending = true
+				if !updated.TokenExpiresAt.After(time.Now()) {
+					permanent = true
+					err = errIdentityRejected
+				}
 				refreshed = true
 			}
 		} else {
@@ -360,15 +364,26 @@ func (v *Verifier) refreshIdentity(ctx context.Context, session browserSession) 
 	if session.PendingIDToken != "" {
 		claims, err := v.parseAndValidateForAudience(ctx, session.PendingIDToken, v.clientID)
 		if err != nil {
-			return api.AuthResult{}, strings.Contains(err.Error(), "invalid token") || strings.Contains(err.Error(), "token expired"), err
+			return api.AuthResult{}, errors.Is(err, errInvalidIdentityToken), err
 		}
 		result = claimsToResult(claims)
 		if sub, _ := raw["sub"].(string); sub != "" && sub != result.Subject {
 			return api.AuthResult{}, true, errIdentityRejected
 		}
 	} else {
-		result = api.AuthResult{Valid: true, Claims: raw}
-		result.Subject, _ = raw["sub"].(string)
+		// Without a replacement ID token, retain the authenticated login claims
+		// and overlay only fields actually supplied by fresh userinfo.
+		result = session.Result
+		result.Claims = make(map[string]any, len(session.Result.Claims)+len(raw))
+		for key, value := range session.Result.Claims {
+			result.Claims[key] = value
+		}
+		for key, value := range raw {
+			result.Claims[key] = value
+		}
+		if subject, ok := raw["sub"].(string); ok {
+			result.Subject = subject
+		}
 	}
 	result.Email, _ = raw["email"].(string)
 	if result.Email == "" {
@@ -430,3 +445,29 @@ func sessionIdentity(session browserSession) api.AuthResult {
 }
 
 var _ api.BrowserAuthenticator = (*Verifier)(nil)
+
+// LookupSession is optional worker identity only. It never renews activity,
+// refreshes a token, fetches identity/keys, deletes records or waits for a lease.
+// A slow store is allowed at most this small request-bound latency budget.
+func (v *Verifier) LookupSession(r *http.Request) (api.AuthResult, string, bool) {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return api.AuthResult{}, "", false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 100*time.Millisecond)
+	defer cancel()
+	key := v.recordKey("session", cookie.Value)
+	payload, err := v.store.ReadBrowserRecord(ctx, key)
+	if err != nil {
+		return api.AuthResult{}, "", false
+	}
+	data, err := v.decodeRecord(key, payload)
+	if err != nil {
+		return api.AuthResult{}, "", false
+	}
+	var session browserSession
+	if json.Unmarshal(data, &session) != nil || !sessionUsable(session, time.Now()) {
+		return api.AuthResult{}, "", false
+	}
+	return sessionIdentity(session), session.AccessToken, true
+}

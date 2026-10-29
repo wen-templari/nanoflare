@@ -21,6 +21,7 @@ import (
 
 func TestPendingIdentityRecoveryAndEarlyRefreshFallback(t *testing.T) {
 	var issuer string
+	var trustedKey *rsa.PublicKey
 	var mode atomic.Int32
 	var refreshes atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +39,12 @@ func TestPendingIdentityRecoveryAndEarlyRefreshFallback(t *testing.T) {
 				t.Error("pending session did not use durable rotated token")
 			}
 			json.NewEncoder(w).Encode(map[string]any{"access_token": "recovered-token", "refresh_token": "recovered-refresh"}) // No expires_in or ID token.
+		case "/keys":
+			if trustedKey == nil {
+				w.WriteHeader(503)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kid": "test-key", "kty": "RSA", "n": base64.RawURLEncoding.EncodeToString(trustedKey.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(trustedKey.E)).Bytes())}}})
 		case "/userinfo":
 			switch mode.Load() {
 			case 2:
@@ -129,7 +136,9 @@ func TestPendingIdentityRecoveryAndEarlyRefreshFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trustedKey = &trusted.PublicKey
 	v.keys = map[string]any{"test-key": &trusted.PublicKey}
+	v.keysLoadedAt = time.Now()
 	mode.Store(0)
 	pending.TokenExpiresAt = time.Now().Add(time.Hour)
 	pending.PendingIDToken = signedJWT(t, wrong, issuer, "client", map[string]any{"sub": "user", "email": "new@example.com"})
