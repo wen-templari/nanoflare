@@ -23,12 +23,16 @@ func TestWorkerdPreservesNonBreakingSpaceValues(t *testing.T) {
 	const source = "export default {fetch(){return Response.json(['a\u00a0b', /\u00a0/.test('a\u00a0b'), String.raw`\u00a0`, String.raw`\\u00a0`, '\u200b', '\ufeff', '\u2028', '\u2029', '汉字'])}}"
 	for _, date := range []string{"2025-12-10", "2026-09-11"} {
 		t.Run(date, func(t *testing.T) {
-			dir := t.TempDir()
+			dir, err := os.MkdirTemp("", "nf-doh-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(dir) })
 			socket := filepath.Join(dir, "http.sock")
 			config := fmt.Sprintf(`using Workerd = import "/workerd/workerd.capnp";
 const config :Workerd.Config = (
- services=[(name="test",worker=(compatibilityDate="2026-09-11",modules=[(name="worker.js",esModule=%s)]))],
- sockets=[(name="http",address=%s,http=(),service="test")]);`, capnpQuote(source), quote("unix:"+socket))
+ services=[(name="test",worker=(compatibilityDate=%s,modules=[(name="worker.js",esModule=%s)]))],
+ sockets=[(name="http",address=%s,http=(),service="test")]);`, quote(date), capnpQuote(source), quote("unix:"+socket))
 			file := filepath.Join(dir, "workerd.capnp")
 			if err := os.WriteFile(file, []byte(config), 0600); err != nil {
 				t.Fatal(err)

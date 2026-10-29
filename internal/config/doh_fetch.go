@@ -19,7 +19,7 @@ globalThis.fetch = async function fetch(input, init) {
     if (url?.protocol === "https:" && url.hostname.replace(/\.$/, "").toLowerCase() === "__DOH_HOST__" &&
         !url.port && !url.username && !url.password && url.pathname === "__DOH_PATH__" && url.searchParams.has("name")) {
       const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-      if (String(method).toUpperCase() === "GET") {
+      if (String(method).toUpperCase() === "GET" && env.__NANOFLARE_DNS) {
         const request = new Request(input, init);
         request.signal.throwIfAborted();
         return env.__NANOFLARE_DNS.fetch("http://nanoflare.dns__DOH_PATH__" + url.search, {

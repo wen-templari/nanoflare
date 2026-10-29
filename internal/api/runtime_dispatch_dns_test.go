@@ -59,7 +59,7 @@ func privateDNSFixture(t *testing.T) (http.Handler, *atomic.Int32) {
 			resource := dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 30}
 			switch q.Type {
 			case dnsmessage.TypeTXT:
-				b.TXTResource(resource, dnsmessage.TXTResource{TXT: []string{"private-text"}})
+				b.TXTResource(resource, dnsmessage.TXTResource{TXT: []string{"private-text", "second", `a"b\c`}})
 			case dnsmessage.TypeMX:
 				b.MXResource(resource, dnsmessage.MXResource{Pref: 10, MX: dnsmessage.MustNewName("mail.corporate.invalid.")})
 			case dnsmessage.TypeNS:
@@ -70,6 +70,8 @@ func privateDNSFixture(t *testing.T) (http.Handler, *atomic.Int32) {
 				b.PTRResource(resource, dnsmessage.PTRResource{PTR: dnsmessage.MustNewName("database.corporate.invalid.")})
 			}
 			if q.Name.String() == "alias.corporate.invalid." {
+				b.CNAMEResource(resource, dnsmessage.CNAMEResource{CNAME: dnsmessage.MustNewName("intermediate.corporate.invalid.")})
+				resource.Name = dnsmessage.MustNewName("intermediate.corporate.invalid.")
 				b.CNAMEResource(resource, dnsmessage.CNAMEResource{CNAME: dnsmessage.MustNewName("database.corporate.invalid.")})
 			}
 			response, err := b.Finish()
@@ -155,9 +157,9 @@ export async function probe(){ try {
  const [txt,mx,cname,srv,ns,reverse,ptr,mapped]=await Promise.all([
  dns.promises.resolveTxt(host),dns.promises.resolveMx(host),dns.promises.resolveCname('alias.corporate.invalid'),
  dns.promises.resolveSrv('_db._tcp.'+host),dns.promises.resolveNs(host),dns.promises.reverse('10.20.30.40'),
- dns.promises.resolvePtr('40.30.20.10.in-addr.arpa'),dns.promises.resolve6('::ffff:10.0.0.1')]);
- if (txt[0]?.[0]!=='private-text' || mx[0]?.exchange!=='mail.corporate.invalid' || mx[0]?.priority!==10 ||
- cname[0]!==host || srv[0]?.name!==host || srv[0]?.port!==5432 || srv[0]?.priority!==1 || srv[0]?.weight!==5 ||
+ dns.promises.resolvePtr('_http._tcp.example.invalid'),dns.promises.resolve6('::ffff:10.0.0.1')]);
+ if (JSON.stringify(txt)!==JSON.stringify([['private-text','second','a"b\\c']]) || mx[0]?.exchange!=='mail.corporate.invalid' || mx[0]?.priority!==10 ||
+ cname[0]!=='intermediate.corporate.invalid' || srv[0]?.name!==host || srv[0]?.port!==5432 || srv[0]?.priority!==1 || srv[0]?.weight!==5 ||
  ns[0]!=='ns.corporate.invalid' || reverse[0]!==host || ptr[0]!==host || mapped[0]!=='::ffff:10.0.0.1')
  throw new Error('record answers: '+JSON.stringify({txt,mx,cname,srv,ns,reverse,ptr,mapped}));
  return Response.json([callback,await dns.promises.lookup(host,options),await lookup(host,options),await bare.promises.lookup(host,options),await barePromises.lookup(host,options),

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -42,20 +41,9 @@ type Server struct {
 	ln     net.Listener
 }
 
-type lookupRequest struct {
-	Hostname string `json:"hostname"`
-	Family   int    `json:"family,omitempty"`
-}
-
 type lookupAddress struct {
-	Address string `json:"address"`
-	Family  int    `json:"family"`
-}
-
-type lookupResponse struct {
-	Addresses []lookupAddress `json:"addresses,omitempty"`
-	Code      string          `json:"code,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	Address string
+	Family  int
 }
 
 // LoadConfig accepts either inline JSON or the path to a JSON file. An empty
@@ -165,51 +153,13 @@ func (s *Server) Addr() string {
 
 func (s *Server) Close(ctx context.Context) error { return s.server.Shutdown(ctx) }
 
-// ServeHTTP exposes the lookup adapter to trusted in-process runtime brokers.
+// ServeHTTP exposes the DoH adapter to trusted in-process runtime brokers.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.serveHTTP(w, r)
-}
-
-func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && r.URL.Path == DoHPath {
 		s.serveDoH(w, r)
 		return
 	}
-	if r.Method != http.MethodPost || r.URL.Path != "/lookup" {
-		http.NotFound(w, r)
-		return
-	}
-	var request lookupRequest
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EINVAL", Error: "invalid lookup request: " + err.Error()})
-		return
-	}
-	request.Hostname = strings.TrimSpace(request.Hostname)
-	if request.Hostname == "" || (request.Family != 0 && request.Family != 4 && request.Family != 6) {
-		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EINVAL", Error: "hostname and family (0, 4, or 6) are required"})
-		return
-	}
-	profile, ok := s.profile(r)
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, lookupResponse{Code: "EBADPROFILE", Error: fmt.Sprintf("DNS profile %q is not configured", strings.TrimSpace(r.Header.Get("X-Nanoflare-DNS-Profile")))})
-		return
-	}
-	addresses, err := lookup(r.Context(), profile, request.Hostname, request.Family)
-	if err != nil {
-		code := "EAI_AGAIN"
-		var dnsErr *net.DNSError
-		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
-			code = "ENOTFOUND"
-		}
-		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &dnsErr) && dnsErr.IsTimeout) {
-			code = "ETIMEOUT"
-		}
-		writeJSON(w, http.StatusBadGateway, lookupResponse{Code: code, Error: err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, lookupResponse{Addresses: addresses})
+	http.NotFound(w, r)
 }
 
 func lookup(ctx context.Context, profile Profile, hostname string, family int) ([]lookupAddress, error) {
@@ -243,7 +193,7 @@ func lookup(ctx context.Context, profile Profile, hostname string, family int) (
 	})
 }
 
-// All record types share profile servers, timeouts and first-success behavior.
+// Address queries share profile servers, timeouts and first-success behavior.
 // A configured profile never falls back to the system or a public resolver.
 func queryProfile[T any](ctx context.Context, profile Profile, hostname string, query func(context.Context, *net.Resolver) ([]T, error)) ([]T, error) {
 	timeout := 5 * time.Second

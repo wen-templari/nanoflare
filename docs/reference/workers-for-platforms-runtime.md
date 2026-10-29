@@ -80,9 +80,15 @@ request-scoped connections and close them within the invocation.
 
 The adapter answers the pinned workerd `node:dns` implementation's JSON DoH
 fetches at `https://cloudflare-dns.com/dns-query`. Uploaded modules and the
-dispatch artifact format are unchanged. The profile's Go resolver answers
-TXT, MX, CNAME, SRV, NS and PTR as well as address lookups, sharing configured
-server selection, timeout and cancellation. SOA, CAA, NAPTR and ANY remain
+dispatch artifact format are unchanged. Address lookups use the profile's Go
+resolver. TXT, MX, CNAME, SRV, NS and PTR use raw DNS records from its configured servers, or `/etc/resolv.conf` nameservers
+for a system profile. These queries preserve TXT chunks, immediate CNAME targets,
+record TTLs, and arbitrary PTR owners. They use absolute names and retry truncated
+UDP answers over TCP, sharing profile timeouts and invocation cancellation.
+Configure explicit profile servers for hosts without `/etc/resolv.conf` or with
+per-domain system resolver routing. The pinned runtime still maps NODATA to
+`ENOTFOUND`; see [record compatibility](../guides/dns-upgrade.md#record-compatibility)
+for TXT parser limits. SOA, CAA, NAPTR and ANY remain
 unsupported and return NOTIMP locally. Explicit JSON fetches with a `name`
 parameter to that same endpoint also receive platform DNS answers; binary
 DoH (`?dns=`) and requests without `name` retain ordinary outbound behavior.
@@ -99,7 +105,7 @@ DNS resolution does not grant socket access: TCP/TLS connections remain subject
 to the executor's separate socket policy below. Split deployments with WFP or
 namespace DNS disabled ignore nanoflared DNS settings. With both enabled,
 nanoflared validates its active resolver config at startup and exits on invalid
-configuration (see [release notes](../../CHANGELOG.md#unreleased)), but
+configuration (see [DNS upgrade notes](../guides/dns-upgrade.md)), but
 does not validate or bind the local DNS adapter listen address. The outbound
 transport calls that resolver in-process, so private DoH does not traverse the
 HTTP proxy. Missing resolver configuration fails closed at the intercepted

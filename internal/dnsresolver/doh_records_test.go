@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"testing"
 
@@ -88,6 +89,7 @@ func TestDoHRecordsUseConfiguredProfile(t *testing.T) {
 		{"alias.corporate.invalid", "CNAME", "", "database.corporate.invalid.", 0},
 		{"_db._tcp.corporate.invalid", "SRV", "", "1 5 5432 database.corporate.invalid", 0},
 		{"corporate.invalid", "NS", "", "ns.corporate.invalid.", 0},
+		{"_http._tcp.corporate.invalid", "PTR", "", "database.corporate.invalid.", 0},
 		{"10.20.30.40", "PTR", "", "database.corporate.invalid.", 0},
 		{"40.30.20.10.in-addr.arpa.", "12", "", "database.corporate.invalid.", 0},
 		{"::ffff:10.0.0.1", "AAAA", "", "::ffff:10.0.0.1", 0},
@@ -115,20 +117,13 @@ func TestDoHRecordsUseConfiguredProfile(t *testing.T) {
 	}
 }
 
-func TestReverseLookupNames(t *testing.T) {
-	for name, want := range map[string]string{
-		"40.30.20.10.in-addr.arpa.": "10.20.30.40",
-		"1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.d.f.ip6.arpa.": "fd00::1",
-		"::ffff:10.0.0.1": "::ffff:10.0.0.1",
+func TestReverseNames(t *testing.T) {
+	for address, want := range map[string]string{
+		"10.20.30.40": "40.30.20.10.in-addr.arpa.",
+		"fd00::1":     "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.d.f.ip6.arpa.",
 	} {
-		got, err := reverseLookupAddress(name)
-		if err != nil || got != want {
-			t.Fatalf("%s -> %s %v, want %s", name, got, err, want)
-		}
-	}
-	for _, name := range []string{"999.30.20.10.in-addr.arpa", "abc.ip6.arpa", "not-an-ip", "x.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.d.f.ip6.arpa."} {
-		if _, err := reverseLookupAddress(name); err == nil {
-			t.Fatalf("accepted %s", name)
+		if got := reverseName(netip.MustParseAddr(address)); got != want {
+			t.Fatalf("%s -> %s, want %s", address, got, want)
 		}
 	}
 }
