@@ -991,3 +991,22 @@ func TestJWKSRefreshWaitRespectsCancellation(t *testing.T) {
 		t.Fatal("waiting for a peer's key refresh exceeded deadline")
 	}
 }
+
+func TestRefreshCapturesAcceptedCredentialsFromOlderRecord(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"access_token": "rotated", "expires_in": 3600})
+	}))
+	defer provider.Close()
+	v := NewBrowserVerifier("https://issuer", "aud", "email", "client", "", "https://auth", "", provider.Client())
+	v.discovery = discoveryDocument{AuthorizationEndpoint: "auth", TokenEndpoint: provider.URL, JWKSURI: "keys", UserInfoEndpoint: "userinfo"}
+	now := time.Now()
+	session := browserSession{AccessToken: "accepted-before-upgrade", RefreshToken: "refresh", TokenExpiresAt: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour), IdleExpiresAt: now.Add(time.Hour), Result: api.AuthResult{Valid: true, Email: "user@example.com"}}
+	updated, permanent, err := v.runLeasedOperation(context.Background(), session, true, now)
+	if err != nil || permanent || !updated.IdentityPending {
+		t.Fatalf("refresh failed: %v %v", permanent, err)
+	}
+	accepted, ok := acceptedSession(updated, time.Now())
+	if !ok || accepted.AccessToken != session.AccessToken || !accepted.TokenExpiresAt.Equal(session.TokenExpiresAt) {
+		t.Fatal("refresh dropped pre-upgrade accepted credentials")
+	}
+}

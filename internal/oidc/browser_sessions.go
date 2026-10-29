@@ -328,6 +328,12 @@ func (v *Verifier) runLeasedOperation(ctx context.Context, session browserSessio
 	updated = session
 	permanent = false
 	if refreshDue {
+		// Older persisted records may not yet have explicit accepted credentials.
+		// Capture the verified current token before replacing it with pending work.
+		if !session.IdentityPending {
+			updated.AcceptedAccessToken = session.AccessToken
+			updated.AcceptedTokenExpiresAt = session.TokenExpiresAt
+		}
 		var token tokenResponse
 		token, permanent, err = v.refresh(opCtx, session.RefreshToken)
 		if err == nil {
