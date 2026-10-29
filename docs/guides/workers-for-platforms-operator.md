@@ -113,7 +113,7 @@ bounded write deadline, and forwarder shutdown joins that operation.
 
 The current admission bounds are 32 live leases per customer, 128 per namespace
 and 1,024 globally. Each invocation has a 30-second root wall deadline, at most
-two seconds of background authority, 100 shared effects and nesting depth eight.
+two seconds of background authority, 10,000 shared effects and nesting depth eight.
 Background authority occupies admission slots even after a fast response.
 Handle 429 responses with backpressure and bounded retries. These are policy
 bounds, not CPU limits or a throughput guarantee.

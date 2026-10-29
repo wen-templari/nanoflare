@@ -83,6 +83,13 @@ func TestDispatchLeaseAuthorization(t *testing.T) {
 			if _, err = service.DispatchResource(ctx, acquired.Lease, "kv", "OTHER"); !errors.Is(err, nanoflare.ErrRuntimeGrantDenied) {
 				t.Fatalf("undeclared binding: %v", err)
 			}
+			capabilities, err := service.RuntimeCapabilitiesForOrg("org", customer.ID)
+			must(err)
+			if capabilities.Limits.Subrequests != 10_000 {
+				t.Fatalf("advertised subrequests: %d", capabilities.Limits.Subrequests)
+			}
+			// Spend the full default budget in parallel, using 100-unit effects
+			// to keep the number of goroutines bounded.
 			// Reservations are atomic across parallel resource effects.
 			var allowed, denied atomic.Int32
 			var wg sync.WaitGroup
@@ -90,7 +97,7 @@ func TestDispatchLeaseAuthorization(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					_, e := service.DispatchEffect(ctx, callerToken, acquired.Lease, "kv", a.ID, 1)
+					_, e := service.DispatchEffect(ctx, callerToken, acquired.Lease, "kv", a.ID, 100)
 					if e == nil {
 						allowed.Add(1)
 					} else if errors.Is(e, nanoflare.ErrSubrequestLimit) {
@@ -189,12 +196,20 @@ func TestDynamicServicesInheritAuthorityAndBudget(t *testing.T) {
 			if _, err = service.AuthorizeRuntime(ctx, parent.Lease, nanoflare.RuntimeDispatch, ns.ID); !errors.Is(err, nanoflare.ErrRuntimeGrantDenied) {
 				t.Fatalf("service grant broadened to namespace: %v", err)
 			}
-			_, err = service.DispatchEffect(ctx, token, child.Lease, "kv", kv.ID, 50)
+			_, err = service.DispatchEffect(ctx, token, child.Lease, "kv", kv.ID, 5_000)
 			must(err)
-			_, err = service.DispatchEffect(ctx, token, parent.Lease, "kv", kv.ID, 48)
+			// Parent and child acquisition each consumed one root unit. An
+			// oversized effect must be rejected without spending the remainder.
+			if _, err = service.DispatchEffect(ctx, token, parent.Lease, "kv", kv.ID, 4_999); !errors.Is(err, nanoflare.ErrSubrequestLimit) {
+				t.Fatalf("effect exceeded remaining root budget: %v", err)
+			}
+			_, err = service.DispatchEffect(ctx, token, parent.Lease, "kv", kv.ID, 4_998)
 			must(err)
 			if _, err = service.DispatchEffect(ctx, token, child.Lease, "kv", kv.ID, 1); !errors.Is(err, nanoflare.ErrSubrequestLimit) {
 				t.Fatalf("child bypassed shared root budget: %v", err)
+			}
+			if _, err = service.AcquireServiceDispatch(ctx, token, parent.Lease, "CHILD"); !errors.Is(err, nanoflare.ErrSubrequestLimit) {
+				t.Fatalf("new child bypassed exhausted root budget: %v", err)
 			}
 			must(service.FinishDispatch(ctx, token, parent.Lease, true))
 			if _, err = service.AuthorizeRuntime(ctx, child.Lease, "kv", kv.ID); !errors.Is(err, nanoflare.ErrInvocationExpired) {

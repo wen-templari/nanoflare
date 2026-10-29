@@ -40,7 +40,9 @@ Revisions retain native immutable deployment IDs and weighted traffic. Each invo
 | Accounting              | External atomic subrequest budget, SQL statement validation, wall/effect deadlines and admission bounds; no measured CPU limit                        |
 | Publication/readiness   | Immutable artifacts and phased publication; a stored dynamic revision is not a prewarmed isolate                                                      |
 
-The implementation uses a 30-second root wall/effect deadline, 100 shared effect units, maximum depth eight, and initial admission/descriptor/database/HTTP bounds detailed in the step records. These are implementation defaults for qualification, not measured tenant capacity or Cloudflare accounting parity. The runtime internally enables `nodejs_als` for invocation context.
+The implementation uses a 30-second root wall/effect deadline, 10,000 shared effect units, maximum depth eight, and initial admission/descriptor/database/HTTP bounds detailed in the step records. These are implementation defaults for qualification, not measured tenant capacity or Cloudflare accounting parity. The runtime internally enables `nodejs_als` for invocation context.
+
+Dispatch acquisitions consume one shared root unit each. Resource effects share the remaining root budget across parent and child dispatches; SQL statements consume units individually. Creating a child dispatch does not replenish the root budget.
 
 ## Rejected, deferred and independent work
 
