@@ -32,7 +32,20 @@ func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(bearerToken(r))
 	if token == "" {
 		if browserAuth, ok := s.auth.(BrowserAuthenticator); ok {
-			if result, sessionToken, ok := browserAuth.Session(r); ok {
+			result, sessionToken, ok, err := browserAuth.SessionWithError(r)
+			if err != nil {
+				if shouldRedirectToOIDC(r) {
+					beginCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+					defer cancel()
+					if beginErr := browserAuth.BeginAuth(w, r.WithContext(beginCtx)); beginErr != nil {
+						writeAuthError(w, beginErr)
+					}
+					return
+				}
+				writeAuthError(w, err)
+				return
+			}
+			if ok {
 				w.Header().Set("X-Nanoflare-User-JWT", sessionToken)
 				w.Header().Set("X-Nanoflare-User-Email", result.Email)
 				w.WriteHeader(http.StatusOK)

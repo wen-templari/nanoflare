@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/clas/nanoflare/internal/browserstore"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -199,6 +200,13 @@ func TestVerifierBrowserFlowCreatesSession(t *testing.T) {
 	issuer = server.URL
 
 	verifier := NewBrowserVerifier(issuer, "nanoflare", "email", "client-id", "secret", "https://nanoflare.example.com:8443", ".local.nbtca.space", server.Client())
+	shared := browserstore.NewMemory()
+	configure := func(v *Verifier) {
+		if err := v.ConfigureBrowserSessions(shared, browserTestKey, time.Hour, 24*time.Hour, "openid email profile offline_access"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configure(verifier)
 	verifyRequest := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
 	verifyRequest.Header.Set("X-Forwarded-Proto", "https")
 	verifyRequest.Header.Set("X-Forwarded-Host", "worker.example.com")
@@ -218,14 +226,23 @@ func TestVerifierBrowserFlowCreatesSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if parsed.Query().Get("scope") != "openid email profile offline_access" {
+		t.Fatal("refresh scope missing")
+	}
 	state := parsed.Query().Get("state")
 	if state == "" {
 		t.Fatal("missing state")
 	}
 	callbackRequest := httptest.NewRequest(http.MethodGet, "/internal/auth/callback?state="+url.QueryEscape(state)+"&code=oauth-code", nil)
+	// A different instance must be able to consume the pending PKCE state.
+	verifier = NewBrowserVerifier(issuer, "nanoflare", "email", "client-id", "secret", "https://nanoflare.example.com:8443", ".local.nbtca.space", server.Client())
+	configure(verifier)
 	callbackRecorder := httptest.NewRecorder()
 	if err := verifier.HandleCallback(callbackRecorder, callbackRequest); err != nil {
 		t.Fatal(err)
+	}
+	if err := verifier.HandleCallback(httptest.NewRecorder(), callbackRequest); err == nil {
+		t.Fatal("callback state replay accepted")
 	}
 	if callbackRecorder.Code != http.StatusFound {
 		t.Fatalf("callback status = %d body = %q", callbackRecorder.Code, callbackRecorder.Body.String())
@@ -243,7 +260,16 @@ func TestVerifierBrowserFlowCreatesSession(t *testing.T) {
 	}
 	sessionRequest := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
 	sessionRequest.AddCookie(cookies[0])
-	result, token, ok := verifier.Session(sessionRequest)
+	if !cookies[0].Expires.After(time.Now().Add(23 * time.Hour)) {
+		t.Fatal("cookie remains tied to access-token lifetime")
+	}
+	// A third instance must resolve the session after a restart.
+	verifier = NewBrowserVerifier(issuer, "nanoflare", "email", "client-id", "secret", "https://nanoflare.example.com:8443", ".local.nbtca.space", server.Client())
+	configure(verifier)
+	result, token, ok, sessionErr := verifier.SessionWithError(sessionRequest)
+	if sessionErr != nil {
+		t.Fatal(sessionErr)
+	}
 	if !ok {
 		t.Fatal("session missing")
 	}
@@ -280,7 +306,6 @@ func TestVerifierBrowserFlowCreatesSessionWithoutIDToken(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "opaque-access-token",
 				"token_type":   "Bearer",
-				"expires_in":   1800,
 			})
 		case "/userinfo":
 			_ = json.NewEncoder(w).Encode(map[string]any{"sub": "user-123", "email": "person@example.com"})
@@ -313,6 +338,15 @@ func TestVerifierBrowserFlowCreatesSessionWithoutIDToken(t *testing.T) {
 	}
 	if callbackRecorder.Code != http.StatusFound {
 		t.Fatalf("callback status = %d body = %q", callbackRecorder.Code, callbackRecorder.Body.String())
+	}
+	cookies := callbackRecorder.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("missing cookie for opaque token without expires_in")
+	}
+	request := httptest.NewRequest(http.MethodGet, "/internal/auth/verify", nil)
+	request.AddCookie(cookies[0])
+	if _, token, ok, err := verifier.SessionWithError(request); err != nil || !ok || token != "opaque-access-token" {
+		t.Fatalf("expiry fallback login failed: valid=%v error=%v", ok, err)
 	}
 }
 

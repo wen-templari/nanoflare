@@ -20,11 +20,17 @@ import (
 	"time"
 
 	"github.com/clas/nanoflare/internal/api"
+	"github.com/clas/nanoflare/internal/browserstore"
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 const (
-	sessionCookieName = "nanoflare_oidc_session"
-	defaultStateTTL   = 10 * time.Minute
+	DefaultBrowserScopes      = "openid email profile"
+	DefaultBrowserIdleTTL     = time.Hour
+	DefaultBrowserAbsoluteTTL = 24 * time.Hour
+	browserIdleWriteInterval  = time.Minute
+	sessionCookieName         = "nanoflare_oidc_session"
+	defaultStateTTL           = 10 * time.Minute
 )
 
 type Verifier struct {
@@ -38,11 +44,20 @@ type Verifier struct {
 	cookieDomain string
 	client       *http.Client
 
-	mu        sync.RWMutex
-	discovery discoveryDocument
-	keys      map[string]any
-	states    map[string]browserState
-	sessions  map[string]browserSession
+	mu            sync.RWMutex
+	discovery     discoveryDocument
+	keys          map[string]any
+	keysMu        sync.Mutex
+	keysLoadedAt  time.Time
+	keysFetchedAt time.Time
+	forcedKeysAt  time.Time
+	forcedKeysErr error
+	states        map[string]browserState
+	store         browserstore.Store
+	codec         *nanoflare.SecretCodec
+	idleTTL       time.Duration
+	absoluteTTL   time.Duration
+	scopes        string
 }
 
 type browserState struct {
@@ -52,9 +67,19 @@ type browserState struct {
 }
 
 type browserSession struct {
-	AccessToken string
-	Result      api.AuthResult
-	ExpiresAt   time.Time
+	AccessToken            string
+	AcceptedAccessToken    string
+	AcceptedTokenExpiresAt time.Time
+	Result                 api.AuthResult
+	ExpiresAt              time.Time
+	RefreshToken           string
+	TokenExpiresAt         time.Time
+	IdleExpiresAt          time.Time
+	LastActivityAt         time.Time
+	IdentityPending        bool
+	PendingIDToken         string
+	LeaseOwner             string
+	LeaseUntil             time.Time
 }
 
 type discoveryDocument struct {
@@ -108,7 +133,7 @@ func NewBrowserVerifier(issuer, audience, emailClaim, clientID, clientSecret, pu
 		cookieDomain: strings.TrimSpace(cookieDomain),
 		client:       client,
 		states:       make(map[string]browserState),
-		sessions:     make(map[string]browserSession),
+		store:        browserstore.NewMemory(), idleTTL: DefaultBrowserIdleTTL, absoluteTTL: DefaultBrowserAbsoluteTTL, scopes: DefaultBrowserScopes,
 	}
 }
 
@@ -130,7 +155,7 @@ func NewConsoleVerifier(issuer, emailClaim, clientID, clientSecret, publicURL st
 		redirectURL:  publicURL + "/v1/auth/oidc/callback",
 		client:       client,
 		states:       make(map[string]browserState),
-		sessions:     make(map[string]browserSession),
+		store:        browserstore.NewMemory(), idleTTL: DefaultBrowserIdleTTL, absoluteTTL: DefaultBrowserAbsoluteTTL, scopes: DefaultBrowserScopes,
 	}
 }
 
@@ -140,28 +165,6 @@ func (v *Verifier) BrowserFlowEnabled() bool {
 
 func (v *Verifier) Issuer() string {
 	return v.issuer
-}
-
-func (v *Verifier) Session(r *http.Request) (api.AuthResult, string, bool) {
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil || strings.TrimSpace(cookie.Value) == "" {
-		return api.AuthResult{}, "", false
-	}
-	now := time.Now().UTC()
-
-	v.mu.RLock()
-	session, ok := v.sessions[cookie.Value]
-	v.mu.RUnlock()
-	if !ok {
-		return api.AuthResult{}, "", false
-	}
-	if !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(now) {
-		v.mu.Lock()
-		delete(v.sessions, cookie.Value)
-		v.mu.Unlock()
-		return api.AuthResult{}, "", false
-	}
-	return session.Result, session.AccessToken, true
 }
 
 func (v *Verifier) BeginAuth(w http.ResponseWriter, r *http.Request) error {
@@ -185,15 +188,11 @@ func (v *Verifier) BeginAuth(w http.ResponseWriter, r *http.Request) error {
 		returnURL = "/"
 	}
 
-	v.mu.Lock()
-	v.states[state] = browserState{
-		ReturnURL:    returnURL,
-		CodeVerifier: verifier,
-		ExpiresAt:    time.Now().UTC().Add(defaultStateTTL),
+	if err := v.saveRecord(r.Context(), "state", state, browserState{ReturnURL: returnURL, CodeVerifier: verifier, ExpiresAt: time.Now().UTC().Add(defaultStateTTL)}, time.Now().UTC().Add(defaultStateTTL)); err != nil {
+		return err
 	}
-	v.mu.Unlock()
 
-	http.Redirect(w, r, authorizationURL(discovery, v.clientID, v.redirectURL, state, verifier), http.StatusFound)
+	http.Redirect(w, r, authorizationURLWithScopes(discovery, v.clientID, v.redirectURL, state, verifier, v.scopes), http.StatusFound)
 	return nil
 }
 
@@ -234,16 +233,19 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 		return errors.New("oidc callback requires state and code")
 	}
 
-	v.mu.Lock()
-	state, ok := v.states[stateValue]
-	if ok {
-		delete(v.states, stateValue)
+	var state browserState
+	if err := v.updateRecord(r.Context(), "state", stateValue, func(data []byte) ([]byte, time.Time, error) {
+		if len(data) == 0 {
+			return nil, time.Time{}, errors.New("oidc callback state is invalid or expired")
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			return nil, time.Time{}, err
+		}
+		return nil, time.Time{}, nil
+	}); err != nil {
+		return err
 	}
-	v.mu.Unlock()
-	if !ok {
-		return errors.New("oidc callback state is invalid or expired")
-	}
-	if !state.ExpiresAt.After(time.Now().UTC()) {
+	if !state.ExpiresAt.After(time.Now()) {
 		return errors.New("oidc callback state is invalid or expired")
 	}
 
@@ -251,6 +253,7 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
+	tokenIssuedAt := time.Now().UTC()
 	token, err := v.exchangeCode(r.Context(), discovery, code, state.CodeVerifier)
 	if err != nil {
 		return err
@@ -263,28 +266,25 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	var expiresAt time.Time
-	if token.ExpiresIn > 0 {
-		expiresAt = time.Now().UTC().Add(time.Duration(token.ExpiresIn) * time.Second)
+	now := time.Now().UTC()
+	expiresAt := now.Add(v.absoluteTTL)
+	tokenExpiry := accessTokenExpiry(token, tokenIssuedAt)
+	if !tokenExpiry.After(now) {
+		return errors.New("oidc access token requires a usable expiry")
 	}
-	if result.ExpiresAt != nil && (expiresAt.IsZero() || result.ExpiresAt.Before(expiresAt)) {
-		expiresAt = result.ExpiresAt.UTC()
-	}
-	if expiresAt.IsZero() {
-		expiresAt = time.Now().UTC().Add(time.Hour)
-	}
+
 	sessionID, err := randomToken()
 	if err != nil {
 		return err
 	}
 
-	v.mu.Lock()
-	v.sessions[sessionID] = browserSession{
-		AccessToken: token.AccessToken,
-		Result:      result,
-		ExpiresAt:   expiresAt,
+	if err := v.saveRecord(r.Context(), "session", sessionID, browserSession{
+		AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, Result: result,
+		AcceptedAccessToken: token.AccessToken, AcceptedTokenExpiresAt: tokenExpiry,
+		ExpiresAt: expiresAt, TokenExpiresAt: tokenExpiry, IdleExpiresAt: now.Add(v.idleTTL), LastActivityAt: now,
+	}, minTime(expiresAt, now.Add(v.idleTTL))); err != nil {
+		return err
 	}
-	v.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
@@ -445,6 +445,9 @@ func (v *Verifier) callbackIdentity(ctx context.Context, token tokenResponse) (a
 		if result.Subject == "" {
 			result.Subject, _ = raw["sub"].(string)
 		}
+		if strings.TrimSpace(result.Subject) == "" {
+			return api.AuthResult{}, nil, errors.New("oidc subject is required")
+		}
 		return result, raw, nil
 	}
 	result := api.AuthResult{Valid: true, Claims: raw}
@@ -455,6 +458,9 @@ func (v *Verifier) callbackIdentity(ctx context.Context, token tokenResponse) (a
 	}
 	if result.Email == "" {
 		return api.AuthResult{}, nil, errors.New("userinfo email is required")
+	}
+	if strings.TrimSpace(result.Subject) == "" {
+		return api.AuthResult{}, nil, errors.New("oidc subject is required")
 	}
 	return result, raw, nil
 }
@@ -493,18 +499,23 @@ func safeConsoleNext(next string) string {
 }
 
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
-	IDToken     string `json:"id_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int64  `json:"expires_in"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
 }
 
 func authorizationURL(discovery discoveryDocument, clientID, redirectURL, state, verifier string) string {
+	return authorizationURLWithScopes(discovery, clientID, redirectURL, state, verifier, DefaultBrowserScopes)
+}
+
+func authorizationURLWithScopes(discovery discoveryDocument, clientID, redirectURL, state, verifier, scopes string) string {
 	query := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {clientID},
 		"redirect_uri":          {redirectURL},
-		"scope":                 {"openid email profile"},
+		"scope":                 {scopes},
 		"state":                 {state},
 		"code_challenge":        {pkceChallenge(verifier)},
 		"code_challenge_method": {"S256"},
@@ -564,19 +575,20 @@ func (v *Verifier) parseAndValidate(ctx context.Context, token string) (map[stri
 func (v *Verifier) parseAndValidateForAudience(ctx context.Context, token string, audience string) (map[string]any, error) {
 	header, signingInput, signature, claims, err := parseJWT(token)
 	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
+		return nil, fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
 	}
-	if err := v.verifySignature(ctx, header, signingInput, signature); err != nil {
+	issuedAt, _ := numericDate(claims["iat"])
+	if err := v.verifySignature(ctx, header, signingInput, signature, issuedAt); err != nil {
 		return nil, err
 	}
 	if claimsIssuer, _ := claims["iss"].(string); claimsIssuer != v.issuer {
-		return nil, errors.New("invalid token: issuer mismatch")
+		return nil, fmt.Errorf("%w: issuer mismatch", errInvalidIdentityToken)
 	}
 	if !audienceMatches(claims["aud"], audience) {
-		return nil, errors.New("invalid token: audience mismatch")
+		return nil, fmt.Errorf("%w: audience mismatch", errInvalidIdentityToken)
 	}
 	if expiration, ok := numericDate(claims["exp"]); ok && !expiration.After(time.Now().UTC()) {
-		return nil, errors.New("token expired")
+		return nil, errIdentityTokenExpired
 	}
 	return claims, nil
 }
@@ -609,37 +621,86 @@ func parseJWT(token string) (jwtHeader, string, []byte, map[string]any, error) {
 	return header, parts[0] + "." + parts[1], signature, claims, nil
 }
 
-func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signingInput string, signature []byte) error {
+var errInvalidIdentityToken = errors.New("invalid token")
+
+// Expiry is recoverable for pending browser identity when a refresh grant remains.
+// It is still invalid for bearer authentication and is checked after signature,
+// issuer and audience validation.
+var errIdentityTokenExpired = fmt.Errorf("%w: token expired", errInvalidIdentityToken)
+
+// A cooldown can defer checking newly rotated keys. Such failures must not end
+// browser sessions until a sufficiently recent key set can reject the token.
+var errSigningKeysStale = errors.New("OIDC signing key verification deferred until JWKS reload")
+
+// Keep fetch provenance with the exact key snapshot, including coalesced loads.
+// fetchedAt is the request start time of the last successful JWKS fetch.
+type signingKeys struct {
+	keys      map[string]any
+	fetchedAt time.Time
+}
+
+func (keys signingKeys) canReject(verificationStarted, issuedAt time.Time) bool {
+	// A fetch started during this verification necessarily follows token arrival.
+	// Otherwise, iat can establish that a cached set postdates issuance. Compare
+	// whole seconds conservatively: JWT NumericDate commonly has second precision.
+	return !keys.fetchedAt.Before(verificationStarted) ||
+		(!issuedAt.IsZero() && issuedAt.Before(keys.fetchedAt.Truncate(time.Second)))
+}
+
+func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signingInput string, signature []byte, issuedAt time.Time) error {
+	started := time.Now()
 	properties, err := jwtProperties(header.Alg)
 	if err != nil {
-		return fmt.Errorf("invalid token: %w", err)
+		return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
 	}
-	key, err := v.keyForToken(ctx, header.Kid)
+	keys, err := v.keysForContext(ctx)
 	if err != nil {
 		return err
 	}
+	if key, ok := selectSigningKey(keys.keys, header.Kid); ok {
+		if verifySignatureWithKey(properties, key, signingInput, signature) == nil {
+			return nil
+		}
+	}
+	// Both unknown kids and same-ID rotation require a recent key set before
+	// classifying verification failure as permanently invalid credentials.
+	keys, err = v.loadKeys(ctx, true)
+	if err != nil {
+		return err
+	}
+	key, ok := selectSigningKey(keys.keys, header.Kid)
+	if ok {
+		err = verifySignatureWithKey(properties, key, signingInput, signature)
+		if err == nil {
+			return nil
+		}
+	}
+	if !keys.canReject(started, issuedAt) {
+		return errSigningKeysStale
+	}
+	if !ok {
+		return fmt.Errorf("%w: signing key not found", errInvalidIdentityToken)
+	}
+	return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
+}
+func verifySignatureWithKey(properties jwtAlgorithm, key any, signingInput string, signature []byte) error {
 	digest := properties.Hash.New()
 	_, _ = digest.Write([]byte(signingInput))
 	sum := digest.Sum(nil)
-	switch typed := key.(type) {
+	switch key := key.(type) {
 	case *rsa.PublicKey:
 		if properties.KeyType != "RSA" {
-			return fmt.Errorf("invalid token: signing key type mismatch for %s", header.Alg)
+			return errors.New("signing key type mismatch")
 		}
-		if err := rsa.VerifyPKCS1v15(typed, properties.Hash, sum, signature); err != nil {
-			return fmt.Errorf("invalid token: %w", err)
-		}
+		return rsa.VerifyPKCS1v15(key, properties.Hash, sum, signature)
 	case *ecdsa.PublicKey:
 		if properties.KeyType != "EC" {
-			return fmt.Errorf("invalid token: signing key type mismatch for %s", header.Alg)
+			return errors.New("signing key type mismatch")
 		}
-		if err := verifyECDSASignature(typed, sum, signature); err != nil {
-			return fmt.Errorf("invalid token: %w", err)
-		}
+		return verifyECDSASignature(key, sum, signature)
 	default:
-		return errors.New("invalid token: unsupported signing key type")
+		return errors.New("unsupported signing key type")
 	}
-	return nil
 }
 
 type jwtAlgorithm struct {
@@ -693,24 +754,18 @@ func audienceMatches(value any, audience string) bool {
 	return false
 }
 
-func (v *Verifier) keyForToken(ctx context.Context, kid string) (any, error) {
-	keys, err := v.keysForContext(ctx)
-	if err != nil {
-		return nil, err
-	}
+func selectSigningKey(keys map[string]any, kid string) (any, bool) {
 	if kid != "" {
-		if key, ok := keys[kid]; ok {
-			return key, nil
-		}
+		key, ok := keys[kid]
+		return key, ok
 	}
 	if len(keys) == 1 {
 		for _, key := range keys {
-			return key, nil
+			return key, true
 		}
 	}
-	return nil, errors.New("invalid token: signing key not found")
+	return nil, false
 }
-
 func (v *Verifier) fetchUserInfo(ctx context.Context, token string) (map[string]any, error) {
 	discovery, err := v.discoveryForContext(ctx)
 	if err != nil {
@@ -726,6 +781,9 @@ func (v *Verifier) fetchUserInfo(ctx context.Context, token string) (map[string]
 		return nil, fmt.Errorf("userinfo request failed: %w", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, errIdentityRejected
+	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("userinfo request failed: status %d", response.StatusCode)
 	}
@@ -771,47 +829,84 @@ func (v *Verifier) discoveryForContext(ctx context.Context) (discoveryDocument, 
 	return document, nil
 }
 
-func (v *Verifier) keysForContext(ctx context.Context) (map[string]any, error) {
+func (v *Verifier) keysForContext(ctx context.Context) (signingKeys, error) {
+	return v.loadKeys(ctx, false)
+}
+
+const forcedJWKSReloadInterval = 30 * time.Second
+
+func (v *Verifier) loadKeys(ctx context.Context, force bool) (result signingKeys, loadErr error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	started := time.Now()
+	// Coalescing must respect cancellation even when another caller's JWKS
+	// request is stalled. Never wait unboundedly on a process-local mutex.
+	for !v.keysMu.TryLock() {
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return signingKeys{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	defer v.keysMu.Unlock()
+	// Rate-limit attempts as well as successful reloads, so a failing IdP cannot
+	// be flooded. Preserve the temporary error throughout the cooldown.
+	if force && time.Since(v.forcedKeysAt) < forcedJWKSReloadInterval {
+		v.mu.RLock()
+		keys := signingKeys{cloneKeys(v.keys), v.keysFetchedAt}
+		v.mu.RUnlock()
+		return keys, v.forcedKeysErr
+	}
+	if force {
+		v.forcedKeysAt = time.Now()
+		defer func() { v.forcedKeysErr = loadErr }()
+	}
 	v.mu.RLock()
-	if len(v.keys) > 0 {
-		keys := cloneKeys(v.keys)
+	if v.keys != nil && ((!force && time.Since(v.keysLoadedAt) < 5*time.Minute) || v.keysLoadedAt.After(started)) {
+		keys := signingKeys{cloneKeys(v.keys), v.keysFetchedAt}
 		v.mu.RUnlock()
 		return keys, nil
 	}
 	v.mu.RUnlock()
-
 	discovery, err := v.discoveryForContext(ctx)
 	if err != nil {
-		return nil, err
+		return signingKeys{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, discovery.JWKSURI, nil)
 	if err != nil {
-		return nil, err
+		return signingKeys{}, err
 	}
+	fetchedAt := time.Now()
 	response, err := v.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("jwks request failed: %w", err)
+		return signingKeys{}, fmt.Errorf("jwks request failed: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jwks request failed: status %d", response.StatusCode)
+		return signingKeys{}, fmt.Errorf("jwks request failed: status %d", response.StatusCode)
 	}
 	var document jwksDocument
 	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
-		return nil, fmt.Errorf("decode jwks response: %w", err)
+		return signingKeys{}, fmt.Errorf("decode jwks response: %w", err)
 	}
 	keys := make(map[string]any, len(document.Keys))
 	for _, item := range document.Keys {
 		key, err := keyFromJWK(item)
 		if err != nil {
-			return nil, err
+			return signingKeys{}, err
 		}
 		keys[item.Kid] = key
 	}
 	v.mu.Lock()
 	v.keys = keys
+	v.keysLoadedAt = time.Now()
+	v.keysFetchedAt = fetchedAt
+	v.forcedKeysAt = v.keysLoadedAt
+	v.forcedKeysErr = nil
 	v.mu.Unlock()
-	return cloneKeys(keys), nil
+	return signingKeys{cloneKeys(keys), fetchedAt}, nil
 }
 
 func cloneKeys(keys map[string]any) map[string]any {
