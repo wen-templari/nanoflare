@@ -277,6 +277,11 @@ func TestDispatchDNSDefaultProfileAndAdmission(t *testing.T) {
 	if calls != 0 {
 		t.Fatal("unauthorized DNS reached resolver")
 	}
+	// Reserve most of the 10,000-unit default so the DNS boundary check
+	// needs only 100 resolver calls.
+	if _, err := service.DispatchEffect(context.Background(), token, lease, nanoflare.RuntimeOutbound, "", 9_900); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 100; i++ {
 		if w := request(token, lease); w.Code != 200 || !strings.Contains(w.Body.String(), "10.20.30.40") {
 			t.Fatalf("lookup %d: %d %s", i, w.Code, w.Body)

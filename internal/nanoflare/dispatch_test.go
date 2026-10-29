@@ -27,6 +27,9 @@ func TestIngressCompletionBoundsBackgroundAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if remaining := service.dispatch.roots[root].Remaining; remaining != 10_000 {
+		t.Fatalf("initial root budget: %d", remaining)
+	}
 	service.dispatch.leases = map[string]*dispatchLease{"nfi1.child": {Root: root, Deadline: deadline, Expires: deadline}}
 	service.EndDispatchRoot(root, false)
 	first := service.dispatch.leases["nfi1.child"].Expires

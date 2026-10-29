@@ -57,7 +57,7 @@ func TestPlatformCLIControlFlow(t *testing.T) {
 	if err = json.Unmarshal(run("capabilities", worker.ID), &capabilities); err != nil {
 		t.Fatal(err)
 	}
-	if !capabilities.Enabled || capabilities.CPUAccounting || capabilities.CPULimit || capabilities.CacheAPI != "unavailable" || capabilities.RawTCP != "unavailable" || capabilities.Limits.Subrequests != 100 {
+	if !capabilities.Enabled || capabilities.CPUAccounting || capabilities.CPULimit || capabilities.CacheAPI != "unavailable" || capabilities.RawTCP != "unavailable" || capabilities.Limits.Subrequests != 10_000 {
 		t.Fatalf("unsafe capability claim: %#v", capabilities)
 	}
 	service.SetPlatformDispatchEnabled(false)

@@ -48,7 +48,7 @@ func (s *Service) BeginDispatchRoot(active ActiveDeployment) (string, time.Time,
 		return "", time.Time{}, ErrDispatchOverloaded
 	}
 	rootContext, rootCancel := context.WithDeadline(context.Background(), deadline)
-	s.dispatch.roots[token] = &dispatchRoot{Context: rootContext, Cancel: rootCancel, AppID: active.App.ID, DeploymentID: active.Deployment.ID, Deadline: deadline, Expires: deadline, Remaining: 100}
+	s.dispatch.roots[token] = &dispatchRoot{Context: rootContext, Cancel: rootCancel, AppID: active.App.ID, DeploymentID: active.Deployment.ID, Deadline: deadline, Expires: deadline, Remaining: defaultInvocationSubrequestBudget}
 	return token, deadline, nil
 }
 func (s *Service) EndDispatchRoot(id string, cancel bool) {
