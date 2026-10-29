@@ -446,10 +446,10 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		} else {
 			defer endpoint.Release()
 		}
-		workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath)
+		workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath, active.App.Auth)
 		if err != nil {
 			gatewaySpan.SetStatus(codes.Error, err.Error())
-			writeError(w, http.StatusBadGateway, err)
+			writeWorkerIdentityError(w, err)
 			return
 		}
 		defer workerResponse.Body.Close()
@@ -478,10 +478,10 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 	} else {
 		defer endpoint.Release()
 	}
-	workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath)
+	workerResponse, err := s.workerResponse(r, endpoint, requestPath, escapedRequestPath, active.App.Auth)
 	if err != nil {
 		gatewaySpan.SetStatus(codes.Error, err.Error())
-		writeError(w, http.StatusBadGateway, err)
+		writeWorkerIdentityError(w, err)
 		return
 	}
 	defer workerResponse.Body.Close()
@@ -573,7 +573,7 @@ func (s *Server) ensureWorkerTraced(r *http.Request, active nanoflare.ActiveDepl
 	return endpoint, err
 }
 
-func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker, requestPath, escapedRequestPath string) (*http.Response, error) {
+func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker, requestPath, escapedRequestPath string, auth nanoflare.AuthConfig) (*http.Response, error) {
 	ctx, span := gatewayTracer.Start(r.Context(), "worker.upstream_ttfb", trace.WithAttributes(
 		attribute.Bool("nanoflare.runtime.unix_socket", endpoint.SocketPath != ""),
 	))
@@ -645,7 +645,10 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 			request.Header.Set("X-Nanoflare-User-Email", identity.Email)
 		}
 	} else if browser, ok := s.auth.(BrowserAuthenticator); ok {
-		identity, token, valid := browser.LookupSession(r)
+		identity, token, valid, err := browser.LookupSession(r)
+		if err != nil && protectedWorkerPath(auth, requestPath) {
+			return nil, errWorkerIdentityUnavailable
+		}
 		if valid {
 			request.Header.Set("X-Nanoflare-User-JWT", token)
 			request.Header.Set("X-Nanoflare-User-Email", identity.Email)
@@ -749,4 +752,28 @@ func (s *Server) activeWorkerBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, bindings)
+}
+
+var errWorkerIdentityUnavailable = errors.New("worker identity temporarily unavailable")
+
+func writeWorkerIdentityError(w http.ResponseWriter, err error) {
+	status := http.StatusBadGateway
+	if errors.Is(err, errWorkerIdentityUnavailable) {
+		status = http.StatusServiceUnavailable
+	}
+	writeError(w, status, err)
+}
+
+// Match the Path/PathPrefix rules used by config.Traefik before it adds the gateway prefix.
+func protectedWorkerPath(auth nanoflare.AuthConfig, path string) bool {
+	for _, route := range auth.ProtectedRoutes {
+		if route == "/" || strings.HasSuffix(route, "/*") {
+			if strings.HasPrefix(path, strings.TrimSuffix(route, "*")) {
+				return true
+			}
+		} else if path == route {
+			return true
+		}
+	}
+	return false
 }

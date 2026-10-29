@@ -64,17 +64,19 @@ type browserState struct {
 }
 
 type browserSession struct {
-	AccessToken     string
-	Result          api.AuthResult
-	ExpiresAt       time.Time
-	RefreshToken    string
-	TokenExpiresAt  time.Time
-	IdleExpiresAt   time.Time
-	LastActivityAt  time.Time
-	IdentityPending bool
-	PendingIDToken  string
-	LeaseOwner      string
-	LeaseUntil      time.Time
+	AccessToken            string
+	AcceptedAccessToken    string
+	AcceptedTokenExpiresAt time.Time
+	Result                 api.AuthResult
+	ExpiresAt              time.Time
+	RefreshToken           string
+	TokenExpiresAt         time.Time
+	IdleExpiresAt          time.Time
+	LastActivityAt         time.Time
+	IdentityPending        bool
+	PendingIDToken         string
+	LeaseOwner             string
+	LeaseUntil             time.Time
 }
 
 type discoveryDocument struct {
@@ -275,6 +277,7 @@ func (v *Verifier) HandleCallback(w http.ResponseWriter, r *http.Request) error 
 
 	if err := v.saveRecord(r.Context(), "session", sessionID, browserSession{
 		AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, Result: result,
+		AcceptedAccessToken: token.AccessToken, AcceptedTokenExpiresAt: tokenExpiry,
 		ExpiresAt: expiresAt, TokenExpiresAt: tokenExpiry, IdleExpiresAt: now.Add(v.idleTTL), LastActivityAt: now,
 	}, minTime(expiresAt, now.Add(v.idleTTL))); err != nil {
 		return err

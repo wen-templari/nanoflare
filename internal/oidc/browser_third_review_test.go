@@ -190,14 +190,14 @@ func TestOptionalWorkerLookupIsBoundedAndNeverRefreshes(t *testing.T) {
 		}
 		store.updates.Store(0)
 		started := time.Now()
-		_, _, ok := v.LookupSession(r)
+		_, _, ok, _ := v.LookupSession(r)
 		if ok != (state == "leased") || store.updates.Load() != 0 || time.Since(started) > time.Second {
 			t.Fatalf("worker %s path performed full auth", state)
 		}
 	}
 	store.slow = true
 	started := time.Now()
-	if _, _, ok := v.LookupSession(r); ok {
+	if _, _, ok, _ := v.LookupSession(r); ok {
 		t.Fatal("slow unavailable store returned identity")
 	}
 	if elapsed := time.Since(started); elapsed < 75*time.Millisecond || elapsed > 500*time.Millisecond {

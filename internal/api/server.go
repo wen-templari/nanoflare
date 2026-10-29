@@ -70,7 +70,7 @@ type BrowserAuthenticator interface {
 	Authenticator
 	SessionWithError(*http.Request) (AuthResult, string, bool, error)
 	// LookupSession is bounded, read-only optional identity. It must not call the IdP or wait for a refresh lease.
-	LookupSession(*http.Request) (AuthResult, string, bool)
+	LookupSession(*http.Request) (AuthResult, string, bool, error)
 	BeginAuth(http.ResponseWriter, *http.Request) error
 	HandleCallback(http.ResponseWriter, *http.Request) error
 }

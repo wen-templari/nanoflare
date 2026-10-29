@@ -38,7 +38,7 @@ func TestWorkerGatewayUsesOnlyTrustedRuntimeHeaders(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer user")
 	request.Header.Set("X-Nanoflare-User-JWT", "signed-assertion")
 	request.Header.Set("X-Nanoflare-User-Email", "user@example.com")
-	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL, Token: "trusted-runner", Headers: http.Header{"X-Nanoflare-Execution": []string{"trusted-execution"}}}, "/hello", "")
+	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL, Token: "trusted-runner", Headers: http.Header{"X-Nanoflare-Execution": []string{"trusted-execution"}}}, "/hello", "", nanoflare.AuthConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestWorkerGatewayRejectsForgedIdentity(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "http://worker.example.com/", nil)
 			request.Header.Set("X-Nanoflare-User-JWT", "not-a-jwt")
 			request.Header.Set("X-Nanoflare-User-Email", "admin@example.com")
-			response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/", "")
+			response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/", "", nanoflare.AuthConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,12 +98,44 @@ func TestPublicWorkerSurvivesOptionalAuthenticationFailure(t *testing.T) {
 	request.Header.Set("X-Nanoflare-User-JWT", "forged")
 	request.Header.Set("X-Nanoflare-User-Email", "forged")
 	request.Header.Set("X-Nanoflare-Session-Proof", "forged")
-	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/public", "")
+	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/public", "", nanoflare.AuthConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("status=%d", response.StatusCode)
+	}
+}
+
+func TestProtectedWorkerRejectsUnavailableIdentity(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("protected request reached worker")
+		w.WriteHeader(204)
+	}))
+	defer upstream.Close()
+	server := NewServer(nanoflare.NewService(nanoflare.NewStore(), nil))
+	server.auth = unavailableBrowserAuthenticator{}
+	for _, route := range []string{"/", "/private/*", "/private/save"} {
+		request := httptest.NewRequest("GET", "https://worker.example.com/private/save", nil)
+		request.AddCookie(&http.Cookie{Name: "nanoflare_oidc_session", Value: "session"})
+		_, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/private/save", "", nanoflare.AuthConfig{ProtectedRoutes: []string{route}})
+		if err == nil {
+			t.Fatal("unavailable identity accepted")
+		}
+		recorder := httptest.NewRecorder()
+		writeWorkerIdentityError(recorder, err)
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status=%d", recorder.Code)
+		}
+	}
+}
+
+func TestProtectedWorkerPathMatchesTraefikRules(t *testing.T) {
+	auth := nanoflare.AuthConfig{ProtectedRoutes: []string{"/admin/*", "/reports"}}
+	for path, want := range map[string]bool{"/admin/": true, "/admin/save": true, "/admin": false, "/administrator": false, "/reports": true, "/reports/": false, "/public": false} {
+		if got := protectedWorkerPath(auth, path); got != want {
+			t.Errorf("%s: protected=%v", path, got)
+		}
 	}
 }

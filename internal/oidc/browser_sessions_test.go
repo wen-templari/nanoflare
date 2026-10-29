@@ -271,3 +271,37 @@ func TestBrowserSessionWithoutRefreshToken(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingRefreshKeepsAcceptedIdentity(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-release
+		json.NewEncoder(w).Encode(map[string]string{"sub": "user", "email": "new@example.com"})
+	}))
+	defer provider.Close()
+	v := NewBrowserVerifier("https://issuer", "aud", "email", "client", "", "https://auth", "", provider.Client())
+	v.discovery = discoveryDocument{AuthorizationEndpoint: "https://issuer/auth", TokenEndpoint: "https://issuer/token", JWKSURI: "https://issuer/keys", UserInfoEndpoint: provider.URL}
+	now := time.Now()
+	session := browserSession{AccessToken: "pending", AcceptedAccessToken: "accepted", AcceptedTokenExpiresAt: now.Add(time.Minute), TokenExpiresAt: now.Add(time.Hour), IdentityPending: true, Result: api.AuthResult{Valid: true, Subject: "user", Email: "old@example.com"}, ExpiresAt: now.Add(time.Hour), IdleExpiresAt: now.Add(time.Hour), LastActivityAt: now}
+	if err := v.saveRecord(context.Background(), "session", "pending", session, session.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("GET", "/", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "pending"})
+	done := make(chan struct{})
+	go func() { defer close(done); v.SessionWithError(request) }()
+	defer func() { close(release); <-done }()
+	<-entered
+	for _, lookup := range []func(*http.Request) (api.AuthResult, string, bool, error){v.LookupSession, v.SessionWithError} {
+		result, token, ok, err := lookup(request)
+		if err != nil || !ok || token != "accepted" || result.Email != "old@example.com" {
+			t.Fatalf("lost accepted identity: %v %q %v %v", result, token, ok, err)
+		}
+	}
+	// Expired accepted credentials must never expose the pending token.
+	session.AcceptedTokenExpiresAt = now.Add(-time.Second)
+	if _, ok := acceptedSession(session, time.Now()); ok {
+		t.Fatal("expired accepted token forwarded")
+	}
+}

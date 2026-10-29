@@ -137,6 +137,19 @@ func browserSessionActive(s browserSession, now time.Time) bool {
 func sessionUsable(s browserSession, now time.Time) bool {
 	return browserSessionActive(s, now) && !s.IdentityPending && s.TokenExpiresAt.After(now)
 }
+
+// acceptedSession retains the last verified identity while rotated tokens await checks.
+// Records written before accepted credentials were introduced remain usable only
+// when their current credentials have already passed identity verification.
+func acceptedSession(s browserSession, now time.Time) (browserSession, bool) {
+	if s.AcceptedAccessToken != "" {
+		s.AccessToken = s.AcceptedAccessToken
+		s.TokenExpiresAt = s.AcceptedTokenExpiresAt
+	} else if s.IdentityPending {
+		return s, false
+	}
+	return s, browserSessionActive(s, now) && s.TokenExpiresAt.After(now)
+}
 func (v *Verifier) activityDue(s browserSession, now time.Time) bool {
 	return !s.LastActivityAt.Add(min(browserIdleWriteInterval, v.idleTTL/2)).After(now)
 }
@@ -233,8 +246,8 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 			continue
 		}
 		if session.LeaseOwner != "" && session.LeaseUntil.After(now) {
-			if sessionUsable(session, now) {
-				return sessionIdentity(session), session.AccessToken, true, nil
+			if accepted, ok := acceptedSession(session, now); ok {
+				return sessionIdentity(accepted), accepted.AccessToken, true, nil
 			}
 			timer := time.NewTimer(25 * time.Millisecond)
 			select {
@@ -296,6 +309,8 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 			result, permanent, err = v.refreshIdentity(opCtx, session)
 			if err == nil {
 				updated.Result = result
+				updated.AcceptedAccessToken = updated.AccessToken
+				updated.AcceptedTokenExpiresAt = updated.TokenExpiresAt
 				updated.IdentityPending = false
 				updated.PendingIDToken = ""
 			}
@@ -337,8 +352,8 @@ func (v *Verifier) SessionWithError(r *http.Request) (api.AuthResult, string, bo
 		}
 		if err != nil {
 			// Proactive refresh is best effort until the accepted token really expires.
-			if sessionUsable(session, time.Now()) {
-				return sessionIdentity(session), session.AccessToken, true, nil
+			if accepted, ok := acceptedSession(session, time.Now()); ok {
+				return sessionIdentity(accepted), accepted.AccessToken, true, nil
 			}
 			return api.AuthResult{}, "", false, errBrowserTemporary
 		}
@@ -449,25 +464,29 @@ var _ api.BrowserAuthenticator = (*Verifier)(nil)
 // LookupSession is optional worker identity only. It never renews activity,
 // refreshes a token, fetches identity/keys, deletes records or waits for a lease.
 // A slow store is allowed at most this small request-bound latency budget.
-func (v *Verifier) LookupSession(r *http.Request) (api.AuthResult, string, bool) {
+func (v *Verifier) LookupSession(r *http.Request) (api.AuthResult, string, bool, error) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
-		return api.AuthResult{}, "", false
+		return api.AuthResult{}, "", false, nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 100*time.Millisecond)
 	defer cancel()
 	key := v.recordKey("session", cookie.Value)
 	payload, err := v.store.ReadBrowserRecord(ctx, key)
 	if err != nil {
-		return api.AuthResult{}, "", false
+		return api.AuthResult{}, "", false, err
 	}
 	data, err := v.decodeRecord(key, payload)
 	if err != nil {
-		return api.AuthResult{}, "", false
+		return api.AuthResult{}, "", false, nil
 	}
 	var session browserSession
-	if json.Unmarshal(data, &session) != nil || !sessionUsable(session, time.Now()) {
-		return api.AuthResult{}, "", false
+	if json.Unmarshal(data, &session) != nil {
+		return api.AuthResult{}, "", false, nil
 	}
-	return sessionIdentity(session), session.AccessToken, true
+	accepted, ok := acceptedSession(session, time.Now())
+	if !ok {
+		return api.AuthResult{}, "", false, nil
+	}
+	return sessionIdentity(accepted), accepted.AccessToken, true, nil
 }

@@ -1580,6 +1580,11 @@ func (f fakeAuthenticator) SessionWithError(r *http.Request) (AuthResult, string
 
 var _ BrowserAuthenticator = fakeAuthenticator{}
 
-func (f fakeAuthenticator) LookupSession(r *http.Request) (AuthResult, string, bool) {
-	return f.Session(r)
+func (f fakeAuthenticator) LookupSession(r *http.Request) (AuthResult, string, bool, error) {
+	result, token, ok := f.Session(r)
+	return result, token, ok, nil
+}
+
+func (unavailableBrowserAuthenticator) LookupSession(*http.Request) (AuthResult, string, bool, error) {
+	return AuthResult{}, "", false, errors.New("session store unavailable")
 }
