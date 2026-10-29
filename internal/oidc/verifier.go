@@ -641,7 +641,7 @@ func (v *Verifier) verifySignature(ctx context.Context, header jwtHeader, signin
 	}
 	key, ok := selectSigningKey(keys, header.Kid)
 	if !ok {
-		return errors.New("OIDC signing key unavailable")
+		return fmt.Errorf("%w: signing key not found", errInvalidIdentityToken)
 	}
 	if err := verifySignatureWithKey(properties, key, signingInput, signature); err != nil {
 		return fmt.Errorf("%w: %v", errInvalidIdentityToken, err)
@@ -746,7 +746,7 @@ func (v *Verifier) keyForToken(ctx context.Context, kid string) (any, error) {
 	if key, ok := selectSigningKey(keys, kid); ok {
 		return key, nil
 	}
-	return nil, errors.New("OIDC signing key unavailable")
+	return nil, fmt.Errorf("%w: signing key not found", errInvalidIdentityToken)
 }
 
 func (v *Verifier) fetchUserInfo(ctx context.Context, token string) (map[string]any, error) {
