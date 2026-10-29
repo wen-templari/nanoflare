@@ -52,7 +52,7 @@ func TestForcedJWKSReloadIsRateLimited(t *testing.T) {
 			}
 			// Failed signatures also share the same reload budget.
 			for i := 0; i < 10; i++ {
-				v.verifySignature(context.Background(), jwtHeader{Alg: "RS256", Kid: "old"}, "forged", []byte("invalid"))
+				v.verifySignature(context.Background(), jwtHeader{Alg: "RS256", Kid: "cached-key"}, "forged", []byte("invalid"))
 			}
 			if fetches.Load() != 1 {
 				t.Fatalf("signature failures fetched %d times", fetches.Load())
