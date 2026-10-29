@@ -655,9 +655,9 @@ session. Refreshes without a replacement ID token retain login-time claims and
 overlay fresh userinfo fields. An already-expired refresh result requires login
 without repeated token rotation.
 
-Signing keys have a five-minute cache lifetime, with an immediate JWKS reload
-on an unknown key ID or failed signature verification (including same-ID key
-rotation). Key-fetch/coalescing waits are bounded. Typed validation errors keep
+Signing keys have a five-minute cache lifetime. Unknown key IDs and failed
+signatures (including same-ID key rotation) trigger a forced JWKS reload at most
+once every 30 seconds. Key-fetch/coalescing waits are bounded. Typed validation errors keep
 JWKS/discovery outages retriable rather than deleting sessions.
 
 Temporary provider/database failures return 502 to API requests only when the
@@ -673,12 +673,24 @@ from the last persisted sample; failed authentication does not renew activity.
 Normal requests only read the record. Optional browser identity at the worker
 gateway uses a separate read-only lookup with a 100 ms store budget. It never
 refreshes tokens, fetches identity or keys, renews idle time, deletes records, or
-waits for a refresh lease. Expired/pending identity and store failures simply omit
-identity headers. The second fresh read intentionally observes cross-instance
-revocation, instead of caching identity or using a signed-proof replay window.
+waits for a refresh lease. While refreshed identity is pending, the last accepted
+access token and identity remain available until that token expires and within
+the browser limits; unverified pending tokens are never forwarded as identity.
+Store lookup failures return 503 for protected routes. Public routes continue
+without optional identity headers. The fresh lookup observes cross-instance
+revocation.
 It has no dependency on proxy URL encodings. Expired records are cleaned up every
 minute. Changing the key requires reauthentication: unreadable
 or corrupt records are deleted.
+
+Refresh requires the IdP to issue refresh tokens. For Entra and Auth0, request
+`offline_access` in `NANOFLARE_OIDC_SCOPES`; Google requires the provider's offline
+access/consent equivalent. Keycloak issues refresh tokens by default. Check the
+provider's client policy as well as scopes. Without refresh tokens, persistence
+only preserves sessions across restarts until the access token expires.
+
+The session lookup key includes the issuer, client ID and redirect URL. Changing
+`NANOFLARE_OIDC_PUBLIC_URL` changes the redirect URL and logs existing sessions out.
 
 A crash or lost response between IdP rotation and database commit can still
 require login if the provider offers no refresh-token reuse grace period.
