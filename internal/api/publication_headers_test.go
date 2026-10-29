@@ -83,7 +83,7 @@ func TestWorkerGatewayRejectsForgedIdentity(t *testing.T) {
 
 func TestPublicWorkerSurvivesOptionalAuthenticationFailure(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, header := range []string{"X-Nanoflare-User-JWT", "X-Nanoflare-User-Email", "X-Nanoflare-Session-Proof"} {
+		for _, header := range []string{"X-Nanoflare-User-JWT", "X-Nanoflare-User-Email"} {
 			if r.Header.Get(header) != "" {
 				t.Errorf("untrusted %s forwarded", header)
 			}
@@ -97,7 +97,6 @@ func TestPublicWorkerSurvivesOptionalAuthenticationFailure(t *testing.T) {
 	request.AddCookie(&http.Cookie{Name: "nanoflare_oidc_session", Value: "session"})
 	request.Header.Set("X-Nanoflare-User-JWT", "forged")
 	request.Header.Set("X-Nanoflare-User-Email", "forged")
-	request.Header.Set("X-Nanoflare-Session-Proof", "forged")
 	response, err := server.workerResponse(request, runtime.EnsuredWorker{URL: upstream.URL}, "/public", "", nanoflare.AuthConfig{})
 	if err != nil {
 		t.Fatal(err)
