@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.7.0](https://github.com/wen-templari/nanoflare/compare/v0.6.1...v0.7.0) (2026-10-29)
+
+
+### Features
+
+* add opt-in TCP and TLS sockets for WFP scripts ([38a3b99](https://github.com/wen-templari/nanoflare/commit/38a3b99b246dfb02b3291ab26a42f9f31ed8ea1d))
+* add opt-in TCP and TLS sockets for WFP scripts ([e024569](https://github.com/wen-templari/nanoflare/commit/e024569ec7dc778a01b8947f78a0815091399bfd))
+* align resource resolution with Wrangler and reuse active bindings ([3307258](https://github.com/wen-templari/nanoflare/commit/33072585698de11a40a4ec8f7b0a3d289370ad3d))
+* migrate to the Cloudflare Vite plugin ([5f280da](https://github.com/wen-templari/nanoflare/commit/5f280da4e669bebfd78aa89f4216614417de1e51))
+
+
+### Bug Fixes
+
+* answer native Worker DNS through platform resolvers ([1dc2b69](https://github.com/wen-templari/nanoflare/commit/1dc2b69eca0d2e6e5428bb15ce44cfadc6033dd1))
+* back off browser session lease polling ([c9659b8](https://github.com/wen-templari/nanoflare/commit/c9659b82fa81160c0b6c1e9755e795a2c63640cd))
+* deny WFP link-local destinations by default ([098b18e](https://github.com/wen-templari/nanoflare/commit/098b18eee53e979cdf7ed6eac07417e2021ed942))
+* guard WFP socket access to platform networks ([e40d76b](https://github.com/wen-templari/nanoflare/commit/e40d76b307bdc14ca821bc53320390d202d1866a))
+* harden namespace DNS compilation and broker errors ([73c048f](https://github.com/wen-templari/nanoflare/commit/73c048fd78d1882736209a133fc3993891de8174))
+* keep accepted OIDC identity during pending refresh ([2c26d6a](https://github.com/wen-templari/nanoflare/commit/2c26d6aa8fb4129a408e63645bba3c3b7db71317))
+* persist and refresh worker OIDC browser sessions ([5ed437a](https://github.com/wen-templari/nanoflare/commit/5ed437aae889f1655d7bf5e7322c540c3955af24))
+* persist and refresh worker OIDC browser sessions ([4aece7d](https://github.com/wen-templari/nanoflare/commit/4aece7ddc2d507ae2da1083265e60d9b33b4adfd))
+* preserve DNS record APIs and narrow DoH interception ([2f403d5](https://github.com/wen-templari/nanoflare/commit/2f403d5b7db580881a5994a9f349265c2ba1f6be))
+* preserve module syntax and isolate DNS compiler failures ([3c64ead](https://github.com/wen-templari/nanoflare/commit/3c64ead5084b5c6506047113d2de28287069c29b))
+* preserve OIDC compatibility and harden browser session refresh ([32bf975](https://github.com/wen-templari/nanoflare/commit/32bf97579e32ad159e79b0e8eaed22b9a2543b0e))
+* preserve OIDC sessions during JWKS reload cooldown ([ac8a0e7](https://github.com/wen-templari/nanoflare/commit/ac8a0e79b07ca68bae288661a49107463248249f))
+* preserve private DNS record fidelity ([dfe1794](https://github.com/wen-templari/nanoflare/commit/dfe179479a21ec1c6454e8df9bba2e92d1e9255c))
+* preserve private DNS record fidelity ([67e1151](https://github.com/wen-templari/nanoflare/commit/67e1151481326251ff7268010e9b1c9e63c7657b))
+* preserve uploaded source during DNS import adaptation ([2653d18](https://github.com/wen-templari/nanoflare/commit/2653d186b80f5450a27c4265b79bc3d430bd12d7))
+* raise WFP invocation subrequest budget to 10,000 ([966adc8](https://github.com/wen-templari/nanoflare/commit/966adc855cee584d57380199ba539e18e477a4d0))
+* raise WFP invocation subrequest budget to 10,000 ([2d2028b](https://github.com/wen-templari/nanoflare/commit/2d2028b907f81c7e1aa1931b25495f97b2a46c04))
+* rate-limit forced JWKS reloads ([865e3fd](https://github.com/wen-templari/nanoflare/commit/865e3fd3627f6922e565b187ced8ce2eb065b5eb))
+* recover browser sessions with short refresh leases ([5eee417](https://github.com/wen-templari/nanoflare/commit/5eee41764c1d74db16ebbde8b0dbcd48e4534656))
+* recover expired pending OIDC identity tokens ([7eacef0](https://github.com/wen-templari/nanoflare/commit/7eacef0a38de881c6ba65dc6d4c198ca347a1cf9))
+* recover OIDC key rotation and bound optional identity lookup ([0da58ea](https://github.com/wen-templari/nanoflare/commit/0da58ea21d7d6796f8ca86cddc8d296efb310ea3))
+* retain accepted credentials from existing browser records ([745e9ee](https://github.com/wen-templari/nanoflare/commit/745e9eea3616a206effc2a864370502191aaf486))
+* return 401 for unknown OIDC signing keys ([ce6ad80](https://github.com/wen-templari/nanoflare/commit/ce6ad8049f8cbb16786a01c45244f985cfa73a68))
+* route native Worker DNS through platform resolvers ([8d9777b](https://github.com/wen-templari/nanoflare/commit/8d9777baa65bf6af29256690199342762b84b5ab))
+* surface dynamic runtime errors and preserve fetch cancellation ([94d779f](https://github.com/wen-templari/nanoflare/commit/94d779fa32bc8384f6f60eacb4a7e1f2861da591))
+* surface dynamic runtime errors and preserve fetch cancellation ([6237afb](https://github.com/wen-templari/nanoflare/commit/6237afbebc1a31a42f211bcb1722fa7d68fbb6b9))
+* use platform default DNS for dynamic namespace scripts ([f0c3992](https://github.com/wen-templari/nanoflare/commit/f0c39925c667e9fc9c85549dae8f910758e99b13))
+
 ## [0.6.1](https://github.com/wen-templari/nanoflare/compare/v0.6.0...v0.6.1) (2026-10-26)
 
 

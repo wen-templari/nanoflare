@@ -11,7 +11,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.65.0",
-    "@nanoflare/cli": "^0.6.1",
+    "@nanoflare/cli": "^0.7.0",
     "@tailwindcss/vite": "^4.3.2",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.8.3",

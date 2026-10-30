@@ -1,6 +1,6 @@
 {
   "name": "@nanoflare/vite-plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Deprecated: use @cloudflare/vite-plugin with the Nanoflare CLI.",
   "homepage": "https://github.com/wen-templari/nanoflare#readme",
   "bugs": "https://github.com/wen-templari/nanoflare/issues",
