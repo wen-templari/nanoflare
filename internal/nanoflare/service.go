@@ -3583,6 +3583,22 @@ func (s *Service) generatedHostname(name, orgID string, attempt int) (string, er
 		labels = append(labels, org)
 	}
 	generated := strings.Join(labels, "-")
+	// Worker and organization names can together exceed a DNS label. Preserve
+	// a readable prefix and a stable digest, budgeting for wildcard decorations
+	// and the full hostname as well as the 63-byte label limit.
+	budget := min(63, 253-len(s.baseHostname)-1)
+	if strings.Contains(s.baseHostname, "*") {
+		firstLabel := strings.SplitN(s.baseHostname, ".", 2)[0]
+		budget = min(63-len(firstLabel)+1, 253-len(s.baseHostname)+1)
+	}
+	if len(generated) > budget {
+		if budget < 9 {
+			return "", errors.New("base hostname leaves insufficient room for a generated Worker name")
+		}
+		digest := hashBytes([]byte(generated))[:8]
+		generated = strings.TrimRight(generated[:budget-9], "-") + "-" + digest
+		generated = strings.TrimLeft(generated, "-")
+	}
 	if strings.Contains(s.baseHostname, "*") {
 		return normalizeHostname(strings.Replace(s.baseHostname, "*", generated, 1))
 	}
