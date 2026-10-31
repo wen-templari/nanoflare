@@ -119,6 +119,37 @@ func TestRuntimeResourcePrefixPreservesReservedKVKeys(t *testing.T) {
 	}
 }
 
+func TestUnusedSocketPolicyDoesNotBlockStartup(t *testing.T) {
+	if mode := os.Getenv("NANOFLARE_TEST_UNUSED_SOCKET_CHILD"); mode != "" {
+		flag.CommandLine = flag.NewFlagSet("nanoflared", flag.ExitOnError)
+		os.Args = []string{"nanoflared"}
+		if mode == "remote" {
+			os.Args = append(os.Args, "--enable-platform-dispatch", "--runner-url", "http://127.0.0.1:1")
+		} else {
+			os.Args = append(os.Args, "--enable-cloudflare-compatibility")
+		}
+		main()
+		return
+	}
+	for _, mode := range []string{"disabled", "remote"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestUnusedSocketPolicyDoesNotBlockStartup$")
+			cmd.Dir = t.TempDir()
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "NANOFLARE_TEST_UNUSED_SOCKET_CHILD=" + mode, "NANOFLARE_WFP_SOCKET_ALLOW=invalid-range", "NANOFLARE_WFP_SOCKET_CA_FILES=/missing/database-ca.pem"}
+			output, err := cmd.CombinedOutput()
+			expected := "Cloudflare compatibility requires --enable-platform-dispatch"
+			if mode == "remote" {
+				expected = "Traefik token is required when HTTP discovery is enabled"
+			}
+			if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "WFP socket configuration ignored") || !strings.Contains(string(output), expected) {
+				t.Fatalf("unused policy blocked startup: %v %s", err, output)
+			}
+		})
+	}
+}
+
 func TestPlatformDNSRemoteConfiguration(t *testing.T) {
 	if server, _, err := platformDNS("invalid-json", "not-an-address", true, false); err != nil || server != nil {
 		t.Fatalf("unused remote DNS config: %v", err)
