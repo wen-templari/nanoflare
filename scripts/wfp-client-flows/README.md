@@ -70,8 +70,12 @@ Its process environment is isolated; the test-only preload sends configuration
 to the disposable directory and blocks non-loopback Node socket connections.
 It leaves shell home variables and the user's Wrangler login unchanged.
 
-Verified: namespace list/get/create/delete, a plain module upload, and a second
-upload with updated source and a plain-text variable. The Go fixture inspects the
+Covered: namespace list/get/create/delete, a plain module upload, and a second
+upload with updated source and a plain-text variable. The fixture also creates an
+ordinary Worker with native default ingress, sets a secret, redeploys changed code
+through Versions/Deployments, checks retained secrets/hostname and active traffic,
+lists D1 databases and deletes the Worker. It explicitly disables workers.dev and
+preview URLs. The Go fixture inspects the
 actual native snapshots. This is management-request qualification; the fixture
 does not execute Wrangler-uploaded code in workerd.
 
@@ -171,7 +175,9 @@ assets. Use `--keep-vars` to retain secrets on namespace re-upload.
 Wrangler 4.54.0 has no namespace option for secret commands, so namespace secret
 updates use the compatible API in this fixture. Customer script cleanup uses native administration; namespace deletion and
 ordinary Worker deletion use Wrangler. The fixture also exercises ordinary secret
-put/list/update/delete, proving serving-state changes and dispatch preservation.
+put/list/update/delete and ordinary dispatcher redeployment through
+Versions/Deployments, proving that new dispatcher code serves with its retained
+secret and namespace binding.
 This qualifies the representative local workflow with explicit namespace
 adaptations, not full CLI equivalence. The CLI cleanup requires kv:read to list
 legacy asset namespaces; deletion of matching legacy KV namespaces is unsupported.

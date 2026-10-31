@@ -77,7 +77,7 @@ func wranglerRuntimeWorkflow(t *testing.T) {
 		config := func(value map[string]any) {
 			t.Helper()
 			value["account_id"], value["compatibility_date"] = org.ID, "2025-12-10"
-			value["workers_dev"], value["send_metrics"], value["no_bundle"] = false, false, true
+			value["workers_dev"], value["preview_urls"], value["send_metrics"], value["no_bundle"] = false, false, false, true
 			body, err := json.Marshal(value)
 			must(err)
 			write("wrangler.json", string(body))
@@ -143,6 +143,17 @@ func wranglerRuntimeWorkflow(t *testing.T) {
 			if result["version"] != version || result["secret"] != secret {
 				t.Fatalf("runtime response: %v", result)
 			}
+		}
+		check("v1", "wrangler-secret")
+		// Redeploy the ordinary dispatcher through Versions/Deployments and
+		// verify the real runtime serves its new code with its retained secret.
+		write("src/dispatcher.js", `export default {async fetch(request,env){const response=await env.CUSTOMERS.get("customer").fetch(request);const headers=new Headers(response.headers);headers.set("X-Dispatcher-Secret",env.ROUTE_TOKEN||"");headers.set("X-Dispatcher-Version","v2");return new Response(response.body,{status:response.status,headers})}}`)
+		run("", "deploy", "--keep-vars")
+		response, err := server.Client().Get(server.URL + "/internal/http/workers/" + dispatcher.ID + "/api/check")
+		must(err)
+		response.Body.Close()
+		if response.StatusCode != 200 || response.Header.Get("X-Dispatcher-Version") != "v2" || response.Header.Get("X-Dispatcher-Secret") != dispatcherSecret {
+			t.Fatal("ordinary redeploy did not serve updated code and retained secret")
 		}
 		check("v1", "wrangler-secret")
 		must(os.Mkdir(filepath.Join(directory, "public"), 0700))

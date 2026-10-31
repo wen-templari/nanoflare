@@ -1,12 +1,114 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/clas/nanoflare/internal/cfcompat"
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
+
+// Wrangler patches these non-versioned settings after activation. Support tags
+// and explicit disabled observability; reject features the runtime cannot honor.
+func (s *Server) cfOrdinaryScriptSettings(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.cfScopes(w, r, "workers:read", "deployments:write", "secrets:write", "namespaces:dispatch") {
+		return
+	}
+	var input struct {
+		Tags          *[]string         `json:"tags"`
+		Logpush       bool              `json:"logpush"`
+		TailConsumers []json.RawMessage `json:"tail_consumers"`
+		Observability *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"observability"`
+	}
+	if err := cfReadObject(r, &input, "tags", "logpush", "tail_consumers", "observability"); err != nil {
+		cfError(w, 422, err.Error())
+		return
+	}
+	if input.Logpush || len(input.TailConsumers) != 0 || (input.Observability != nil && input.Observability.Enabled) {
+		cfError(w, 422, "logpush, tail consumers and observability must remain disabled")
+		return
+	}
+	app, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), name)
+	if err != nil {
+		cfServiceError(w, err)
+		return
+	}
+	if len(r.Header.Values("If-Match")) == 0 && len(r.Header.Values("Idempotency-Key")) == 0 {
+		snapshot, found, err := s.service.ManagementUploadForOrg(controlOrgID(r), app.ID, false)
+		if err != nil {
+			cfServiceError(w, err)
+			return
+		}
+		if found && (input.Tags == nil || slices.Equal(*input.Tags, snapshot.State.Metadata.Tags)) {
+			cfJSON(w, s.cfSettings(snapshot))
+			return
+		}
+	}
+	s.cfApplyMutation(w, r, app, "script-settings.patch", input, func(snapshot nanoflare.ManagementUpload) (nanoflare.ManagedDeployInput, error) {
+		in, err := cfPreservedMutation(snapshot, true)
+		if input.Tags != nil {
+			if err := cfcompat.ValidateTags(*input.Tags); err != nil {
+				return in, err
+			}
+			in.Metadata.Tags = append([]string{}, (*input.Tags)...)
+		}
+		in.ConfigurationOnly = true
+		return in, err
+	}, func(snapshot nanoflare.ManagementUpload) any { return s.cfSettings(snapshot) })
+}
+
+// Version upload advances the latest management snapshot, independently of live
+// traffic. Activation selects immutable revisions through the native validator
+// and its runtime rollback path; it never rebuilds code or resolves secrets.
+func (s *Server) cfOrdinaryDeployment(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.cfScopes(w, r, "deployments:write", "namespaces:dispatch") {
+		return
+	}
+	if len(r.Header.Values("If-Match")) > 0 || len(r.Header.Values("Idempotency-Key")) > 0 {
+		cfError(w, 422, "traffic selection does not accept mutation preconditions")
+		return
+	}
+	var input struct {
+		Strategy string `json:"strategy"`
+		Versions []struct {
+			ID         string `json:"version_id"`
+			Percentage int    `json:"percentage"`
+		} `json:"versions"`
+		Annotations map[string]string `json:"annotations"`
+	}
+	if err := cfReadObject(r, &input, "strategy", "versions", "annotations"); err != nil {
+		cfError(w, 422, err.Error())
+		return
+	}
+	if input.Strategy != "percentage" {
+		cfError(w, 422, "only percentage deployment strategy is supported")
+		return
+	}
+	// Wrangler sends an empty annotations object for ordinary deploy. Do not
+	// silently discard requested messages until durable deployment history exists.
+	if len(input.Annotations) != 0 {
+		cfError(w, 422, "deployment annotations are not supported")
+		return
+	}
+	app, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), name)
+	if err != nil {
+		cfServiceError(w, err)
+		return
+	}
+	traffic := make([]nanoflare.DeploymentTraffic, 0, len(input.Versions))
+	for _, version := range input.Versions {
+		traffic = append(traffic, nanoflare.DeploymentTraffic{ID: version.ID, TrafficPercent: version.Percentage})
+	}
+	if _, err := s.service.SetDeploymentTrafficForOrg(controlOrgID(r), app.ID, traffic); err != nil {
+		cfServiceError(w, err)
+		return
+	}
+	cfJSON(w, map[string]any{"strategy": input.Strategy, "versions": input.Versions, "nanoflare_current_traffic": true})
+}
 
 // Wrangler probes service metadata before first upload. Report only the native
 // ordinary identity; no service environments or migrations are synthesized.
@@ -68,6 +170,18 @@ func (s *Server) cfOrdinaryScript(w http.ResponseWriter, r *http.Request, parts 
 	}
 	if len(parts) == 1 && r.Method == "PUT" {
 		s.cfUploadWorker(w, r, nanoflare.DispatchNamespace{}, parts[0], true)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "versions" && r.Method == "POST" {
+		s.cfUploadWorker(w, r, nanoflare.DispatchNamespace{}, parts[0], true)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "deployments" && r.Method == "POST" {
+		s.cfOrdinaryDeployment(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "script-settings" && r.Method == "PATCH" {
+		s.cfOrdinaryScriptSettings(w, r, parts[0])
 		return
 	}
 	if len(parts) >= 2 && parts[1] == "secrets" {
