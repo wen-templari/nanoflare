@@ -131,7 +131,11 @@ identity, enforced by the existing Worker primary key and publication lock. They
 must use the same 1–63 character lowercase name subset as namespaces. Existing
 native Workers with matching display names are not adopted. Successful uploads
 return a `nanoflare_worker_id` extension for native administration. New identities
-have no hostname; configure ingress/TLS separately using the native routing setup.
+receive the native default hostname when the server has a base hostname configured,
+including collision handling. Without a base hostname they remain hostname-free;
+configure ingress/TLS through the native API. Existing identities retain their
+current hostname, including an unset hostname, across uploads and redeploys.
+Hostname assignment uses native ingress and does not enable workers.dev or previews.
 No shared namespace is created or deleted by ordinary upload. Failed publication
 can leave an undeployed ordinary identity for inspection/native cleanup.
 
@@ -157,6 +161,80 @@ tags. Duplicate scalar fields, mixed JSON/bracketed settings and ambiguous
 binding arrays are rejected. Empty arrays produce no SDK form fields; use a JSON
 settings part to clear lists or change bindings.
 
+## Wrangler ordinary deployment and redeployment
+
+For Wrangler 4.54.0, configure both flags explicitly:
+
+```json
+{
+  "workers_dev": false,
+  "preview_urls": false
+}
+```
+
+The account-level `/workers/subdomain` endpoint and Cloudflare workers.dev URL
+scheme are unsupported. Without these flags Wrangler can fail **after uploading
+or activating** a revision. Inspect native Worker traffic before retrying; a CLI
+error does not imply that the upload was rolled back. Native hostnames remain
+available with workers.dev disabled.
+
+Eligible existing module Workers redeploy through these account-relative routes:
+
+| Method and path | Required native scopes | Behavior |
+| --- | --- | --- |
+| POST `/workers/scripts/{script}/versions` | `workers:write`, `deployments:write`, `secrets:write`, `namespaces:dispatch` | Stage an immutable revision for an existing ordinary Worker; return its native revision ID as `id` and `resources.script.etag` |
+| POST `/workers/scripts/{script}/deployments` | `deployments:write`, `namespaces:dispatch` | Select native traffic using `strategy: "percentage"` and `versions: [{version_id, percentage}]` |
+| PATCH `/workers/scripts/{script}/script-settings` | `workers:read`, `deployments:write`, `secrets:write`, `namespaces:dispatch` | Update tags without switching traffic; accept disabled logpush, tail consumers and observability |
+
+Version upload advances the latest management snapshot used by settings reads and
+subsequent upload inheritance. It leaves live code, secrets and traffic unchanged.
+A staged revision pins its complete code/configuration/secret snapshot. A failed
+activation leaves the staged revision available and restores prior native traffic;
+retry activation with the same revision ID. Native revision ownership, resource
+grants and runtime publication validation also apply to activation.
+
+Traffic weights must be positive whole percentages totaling 100, with unique
+revision IDs belonging to the selected Worker. Fractional percentages, deployment
+annotations and `force` queries are unsupported. Deployment writes return a current
+traffic projection, without inventing a Cloudflare deployment ID or history.
+Uploads support keyed replay; activation uses native traffic selection and does
+not accept `Idempotency-Key` or `If-Match`. Replaying a staged upload never changes
+traffic, including after a rollback. Other version management commands such as
+version listing/download and gradual deployment CLI workflows are not qualified.
+
+Use `--keep-vars` for redeploys that must retain existing secret and variable
+bindings. Do not delete and recreate a Worker to update its code: deletion removes
+its secrets and ingress configuration.
+
+D1 discovery supports GET `/client/v4/accounts/{organization}/d1/database` with
+`db:read`, optional `page`/`per_page`, and account-scoped native IDs in `uuid`.
+D1 creation, deletion, SQL and migrations remain native management operations.
+
+Wrangler 4.54.0 cannot delete an individual dispatch-namespace script through
+`wrangler delete`. Use DELETE
+`/client/v4/accounts/{organization}/workers/dispatch/namespaces/{namespace}/scripts/{script}`
+with `workers:write`, or delete it through native administration before deleting
+the namespace.
+
+Native display names are not unique, so existing native Workers are not adopted
+by name. Keep using `nanoflare deploy` for those identities, or deploy the retained
+source/configuration under a new Wrangler script name, provision its secrets,
+verify it through its native hostname, and switch callers/service bindings and
+custom ingress through native administration. Retire the old Worker only after
+cutover verification; this is a new identity and does not transfer history or
+secrets automatically. Older Wrangler-created Workers with no hostname can be
+assigned one through PATCH
+`/v1/organizations/{organization}/workers/{nanoflare_worker_id}` with a `hostname`
+field. The upload response exposes `nanoflare_worker_id`.
+
+For corporate endpoints, Node must trust the endpoint's CA. Set
+`NODE_EXTRA_CA_CERTS` to an approved CA bundle if Node reports
+`SELF_SIGNED_CERT_IN_CHAIN`. Wrangler's proxy handling may differ from other
+clients, including wildcard `NO_PROXY` behavior. Where direct access is permitted,
+exclude the endpoint from the proxy for the Wrangler process; preserve the
+organization's normal proxy and certificate policy. These are client environment
+requirements, separate from compatibility API support.
+
 ## Wrangler deployment probes
 
 Ordinary Workers additionally support GET `/workers/services/{script}` for
@@ -174,7 +252,7 @@ The deployments result contains only a current traffic projection marked
 It does not invent deployment history or Cloudflare deployment IDs. Service
 metadata does not claim migrations or service-environment support. workers.dev
 and previews cannot be enabled; POST accepts only an explicit disabled state.
-Native ingress/TLS remains separate.
+Native ingress/TLS uses the Worker hostname; it is separate from workers.dev.
 
 Wrangler 4.54.0 assets use truncated BLAKE3 over base64 content plus extension;
 this hash is verified in addition to the earlier SHA-256 wire conventions.

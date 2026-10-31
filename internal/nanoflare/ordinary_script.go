@@ -32,7 +32,8 @@ func (s *Service) OrdinaryScriptForOrg(org, name string) (App, error) {
 
 // EnsureOrdinaryScriptForOrg serializes identity creation with publication and
 // deletion across service instances. The database primary key is the final
-// uniqueness constraint. Upload does not implicitly publish a hostname or TLS.
+// uniqueness constraint. New Workers get native default ingress when a base
+// hostname is configured. Existing identities retain their hostname unchanged.
 func (s *Service) EnsureOrdinaryScriptForOrg(org, name, actor string) (App, error) {
 	id, err := ordinaryScriptID(org, name)
 	if err != nil {
@@ -60,5 +61,17 @@ func (s *Service) EnsureOrdinaryScriptForOrg(org, name, actor string) (App, erro
 		return App{}, err
 	}
 	app = App{ID: id, OrgID: org, Name: name, RuntimeToken: token, CreatedBy: actor, CreatedAt: time.Now().UTC()}
-	return app, s.store.CreateApp(app)
+	for attempt := 0; attempt < 5; attempt++ {
+		if s.baseHostname != "" {
+			app.Hostname, err = s.generatedHostname(name, org, attempt)
+			if err != nil {
+				return App{}, err
+			}
+		}
+		err = s.store.CreateApp(app)
+		if s.baseHostname == "" || !errors.Is(err, ErrAppExists) {
+			return app, err
+		}
+	}
+	return App{}, errors.New("could not generate unique hostname")
 }

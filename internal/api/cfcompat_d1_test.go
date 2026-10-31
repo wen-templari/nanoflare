@@ -57,6 +57,41 @@ func TestCloudflareD1DatabaseIDLifecycle(t *testing.T) {
 				must(json.Unmarshal(response.Body.Bytes(), &envelope))
 				return envelope.Result
 			}
+			foreign, err := auth.CreateOrganization(session.User.ID, nanoflare.CreateOrganizationInput{Name: "foreign"})
+			must(err)
+			foreignDB, err := service.CreateDatabase(nanoflare.CreateDatabaseInput{OrgID: foreign.ID, Name: "foreign"})
+			must(err)
+			listing := "/client/v4/accounts/" + org.ID + "/d1/database"
+			list := func(path, token string, want int) string {
+				t.Helper()
+				r := httptest.NewRequest("GET", path, nil)
+				r.Header.Set("Authorization", "Bearer "+token)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				if w.Code != want {
+					t.Fatalf("D1 list: %d %s", w.Code, w.Body.String())
+				}
+				return w.Body.String()
+			}
+			listed := list(listing, session.Token, 200)
+			if !strings.Contains(listed, db.ID) || !strings.Contains(listed, ungranted.ID) || strings.Contains(listed, foreignDB.ID) {
+				t.Fatal("D1 listing crossed account boundary")
+			}
+			limited, err := auth.CreatePersonalAccessToken(session.User.ID, nanoflare.CreatePersonalAccessTokenInput{Name: "no-db", ScopeType: "org", OrgID: org.ID, Scopes: []string{"workers:read"}})
+			must(err)
+			list(listing, "", 401)
+			list(listing, limited.Token, 403)
+			list(strings.Replace(listing, org.ID, foreign.ID, 1), limited.Token, 403)
+			for _, query := range []string{"page=0", "per_page=1001", "page=1&page=2", "unexpected=true"} {
+				list(listing+"?"+query, session.Token, 422)
+			}
+			page := list(listing+"?page=1&per_page=1", session.Token, 200)
+			if strings.Count(page, `"uuid"`) != 1 {
+				t.Fatal("D1 pagination ignored")
+			}
+			if !strings.Contains(list(listing+"?page=3&per_page=1", session.Token, 200), `"result":[]`) {
+				t.Fatal("D1 pagination did not terminate")
+			}
 			binding := func(field, id string) string { return `{"name":"DB","type":"d1","` + field + `":"` + id + `"}` }
 			code := `export default {fetch(){return new Response("ok")}}`
 			for _, field := range []string{"database_id", "id"} {

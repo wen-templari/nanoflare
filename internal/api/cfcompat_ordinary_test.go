@@ -33,17 +33,19 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			must(err)
 			foreign, err := auth.CreateOrganization(session.User.ID, nanoflare.CreateOrganizationInput{Name: "foreign"})
 			must(err)
-			service, _ := managedService(t, repo, discardWriter{})
+			writer := &managedRecordingWriter{}
+			service, _ := managedService(t, repo, writer)
+			must(service.SetBaseHostname("workers.example.test"))
 			ns, err := service.CreateDispatchNamespace(org.ID, nanoflare.CreateDispatchNamespaceInput{Name: "sites"})
 			must(err)
 			_, err = service.CreateDispatchNamespace(foreign.ID, nanoflare.CreateDispatchNamespaceInput{Name: "foreign-sites"})
 			must(err)
 			// Ordinary script identity must not silently adopt a native display name.
-			legacy, err := service.CreateApp(nanoflare.CreateAppInput{OrgID: org.ID, Name: "dispatcher", Hostname: "legacy.example.com"})
+			legacy, err := service.CreateApp(nanoflare.CreateAppInput{OrgID: org.ID, Name: "dispatcher", Hostname: "dispatcher-platform.workers.example.test"})
 			must(err)
 			control, err := service.CreateApp(nanoflare.CreateAppInput{OrgID: org.ID, Name: "control", Hostname: "control.example.com"})
 			must(err)
-			_, err = service.DeployForOrg(org.ID, control.ID, nanoflare.DeployInput{Format: "modules", CompatibilityDate: "2025-12-10", Entrypoint: "worker.js", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default {fetch(){return new Response("control")}}`}}})
+			controlRevision, err := service.DeployForOrg(org.ID, control.ID, nanoflare.DeployInput{Format: "modules", CompatibilityDate: "2025-12-10", Entrypoint: "worker.js", Files: []nanoflare.WorkerFile{{Path: "worker.js", Content: `export default {fetch(){return new Response("control")}}`}}})
 			must(err)
 			handler := NewServerWithControlAuth(service, nil, "", nil, auth)
 			base := "/client/v4/accounts/" + org.ID + "/workers/scripts/dispatcher"
@@ -152,7 +154,7 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			must(json.Unmarshal(first, &receipt))
 			app, err := service.OrdinaryScriptForOrg(org.ID, "dispatcher")
 			must(err)
-			if receipt.ID != "dispatcher" || receipt.WorkerID != app.ID || app.ID == legacy.ID || app.Platform != nil || app.Hostname != "" {
+			if receipt.ID != "dispatcher" || receipt.WorkerID != app.ID || app.ID == legacy.ID || app.Platform != nil || app.Hostname == "" || app.Hostname == legacy.Hostname {
 				t.Fatalf("incorrect ordinary identity: %#v %s", app, first)
 			}
 			snapshot, found, err := service.ManagementUploadForOrg(org.ID, app.ID, false)
@@ -186,6 +188,94 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			if !reflect.DeepEqual(updated.SecretRefs, snapshot.SecretRefs) || !reflect.DeepEqual(updated.Deployment.DispatchNamespaces, snapshot.Deployment.DispatchNamespaces) {
 				t.Fatal("update lost secret or namespace")
 			}
+			// Version uploads are immutable latest snapshots, with no live traffic
+			// change until a separately validated deployment request succeeds.
+			stagedKind, stagedBody := cfMultipart(t, `{"main_module":"worker.js","compatibility_date":"2025-12-10","keep_bindings":["secret_text","dispatch_namespace","service"]}`, code+"\n// staged")
+			check(request("POST", base+"/versions", stagedKind, stagedBody, limited.Token, "staged", nil), 403)
+			check(request("POST", strings.Replace(base, org.ID, foreign.ID, 1)+"/versions", stagedKind, stagedBody, bound.Token, "staged", nil), 403)
+			stagedResponse := request("POST", base+"/versions", stagedKind, stagedBody, session.Token, "staged", nil)
+			var version struct {
+				ID        string `json:"id"`
+				Resources struct {
+					Script struct {
+						ETag string `json:"etag"`
+					} `json:"script"`
+				} `json:"resources"`
+			}
+			must(json.Unmarshal(check(stagedResponse, 200), &version))
+			if version.ID == "" || version.ID == updated.DeploymentID || version.Resources.Script.ETag != version.ID {
+				t.Fatal("incorrect staged version receipt")
+			}
+			assertTraffic := func(id string) {
+				t.Helper()
+				active, err := service.ActiveDeployments()
+				must(err)
+				found := false
+				for _, item := range active {
+					if item.App.ID == app.ID {
+						found = true
+						if item.Deployment.ID != id || item.TrafficPercent != 100 {
+							t.Fatalf("unexpected live traffic: %#v", item)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("Worker lost live traffic")
+				}
+			}
+			assertTraffic(updated.DeploymentID)
+			staged, found, err := service.ManagementUploadForOrg(org.ID, app.ID, false)
+			must(err)
+			if !found || staged.DeploymentID != version.ID || !reflect.DeepEqual(staged.SecretRefs, updated.SecretRefs) {
+				t.Fatal("staging lost immutable secret snapshot")
+			}
+			// Replays preserve the same staged receipt and do not activate it.
+			replayed := request("POST", base+"/versions", stagedKind, stagedBody, session.Token, "staged", nil)
+			check(replayed, 200)
+			if replayed.Header().Get("ETag") != stagedResponse.Header().Get("ETag") {
+				t.Fatal("staged retry created a revision")
+			}
+			assertTraffic(updated.DeploymentID)
+			check(request("PUT", base, stagedKind, stagedBody, session.Token, "staged", nil), 409)
+			deploymentBody := []byte(`{"strategy":"percentage","versions":[{"version_id":"` + version.ID + `","percentage":100}],"annotations":{}}`)
+			check(request("POST", base+"/deployments", "application/json", deploymentBody, limited.Token, "", nil), 403)
+			check(request("POST", strings.Replace(base, org.ID, foreign.ID, 1)+"/deployments", "application/json", deploymentBody, bound.Token, "", nil), 403)
+			for _, invalid := range []string{
+				`{"strategy":"other","versions":[]}`,
+				`{"strategy":"percentage","versions":[]}`,
+				`{"strategy":"percentage","versions":[{"version_id":"` + version.ID + `","percentage":50}]}`,
+				`{"strategy":"percentage","versions":[{"version_id":"` + version.ID + `","percentage":50},{"version_id":"` + version.ID + `","percentage":50}]}`,
+				`{"strategy":"percentage","versions":[{"version_id":"` + version.ID + `","percentage":99.5}]}`,
+				`{"strategy":"percentage","versions":[{"version_id":"missing","percentage":100}]}`,
+				`{"strategy":"percentage","versions":[{"version_id":"` + controlRevision.ID + `","percentage":100}]}`,
+			} {
+				response := request("POST", base+"/deployments", "application/json", []byte(invalid), session.Token, "", nil)
+				if response.Code < 400 {
+					t.Fatalf("invalid traffic accepted: %s", invalid)
+				}
+				assertTraffic(updated.DeploymentID)
+			}
+			writer.mu.Lock()
+			writer.failNext = true
+			writer.mu.Unlock()
+			check(request("POST", base+"/deployments", "application/json", deploymentBody, session.Token, "", nil), 400)
+			assertTraffic(updated.DeploymentID)
+			weighted := []byte(`{"strategy":"percentage","versions":[{"version_id":"` + updated.DeploymentID + `","percentage":25},{"version_id":"` + version.ID + `","percentage":75}]}`)
+			check(request("POST", base+"/deployments", "application/json", weighted, session.Token, "", nil), 200)
+			projection := check(request("GET", base+"/deployments", "", nil, session.Token, "", nil), 200)
+			if !bytes.Contains(projection, []byte(`"percentage":25`)) || !bytes.Contains(projection, []byte(`"percentage":75`)) {
+				t.Fatal("deployment weights were not preserved")
+			}
+			check(request("POST", base+"/deployments", "application/json", deploymentBody, session.Token, "", nil), 200)
+			assertTraffic(version.ID)
+			// Non-versioned tag updates must not alter live traffic or accept
+			// unsupported observability features.
+			check(request("PATCH", base+"/script-settings", "application/json", []byte(`{"tags":["release"],"observability":{"enabled":false}}`), session.Token, "tags", nil), 200)
+			assertTraffic(version.ID)
+			for _, settings := range []string{`{"observability":{"enabled":true}}`, `{"logpush":true}`, `{"tail_consumers":[{"service":"x"}]}`, `{"unknown":true}`} {
+				check(request("PATCH", base+"/script-settings", "application/json", []byte(settings), session.Token, "", nil), 422)
+			}
+			check(request("PATCH", base+"/script-settings", "application/json", []byte(`{"tags":[]}`), limited.Token, "", nil), 403)
 			_, err = service.SetDeploymentTrafficForOrg(org.ID, app.ID, []nanoflare.DeploymentTraffic{{ID: snapshot.DeploymentID, TrafficPercent: 100}})
 			must(err)
 			check(request("PUT", base, updateKind, updateBody, session.Token, "second", nil), 200)
@@ -202,9 +292,11 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			handler.SetCloudflareCompatibilityEnabled(true)
 			restarted, err := reopened.OrdinaryScriptForOrg(org.ID, "dispatcher")
 			must(err)
-			if restarted.ID != app.ID || restarted.RuntimeToken != app.RuntimeToken {
+			if restarted.ID != app.ID || restarted.RuntimeToken != app.RuntimeToken || restarted.Hostname != app.Hostname {
 				t.Fatal("script identity changed after service recreation")
 			}
+			check(request("POST", base+"/versions", stagedKind, stagedBody, session.Token, "staged", nil), 200)
+			assertTraffic(snapshot.DeploymentID)
 			check(request("PUT", base, updateKind, updateBody, session.Token, "second", nil), 200)
 			// Native administration preserves inspectable dispatch metadata and cannot
 			// replace a namespace binding with a colliding secret.

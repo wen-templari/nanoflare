@@ -105,10 +105,11 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 		parts[index] = decoded
 	}
 	kvCollection := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "storage" && parts[3] == "kv" && parts[4] == "namespaces"
+	d1Collection := len(parts) == 4 && parts[0] == "accounts" && parts[2] == "d1" && parts[3] == "database"
 	ordinaryService := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "services"
 	ordinaryScript := len(parts) >= 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "scripts"
 	assetUpload := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "assets" && parts[4] == "upload"
-	if len(parts) < 5 || parts[0] != "accounts" || parts[1] == "" || (parts[2] != "workers" && !kvCollection) || (!kvCollection && !assetUpload && !ordinaryScript && !ordinaryService && (parts[3] != "dispatch" || parts[4] != "namespaces")) {
+	if !d1Collection && (len(parts) < 5 || parts[0] != "accounts" || parts[1] == "" || (parts[2] != "workers" && !kvCollection) || (!kvCollection && !assetUpload && !ordinaryScript && !ordinaryService && (parts[3] != "dispatch" || parts[4] != "namespaces"))) {
 		cfError(w, 404, "unsupported compatibility route")
 		return
 	}
@@ -147,6 +148,9 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 	// Consent is configured by the administrator. Legacy request profile headers
 	// are ignored; this response reports the only supported execution profile.
 	allowedQuery := map[string]bool{}
+	if d1Collection {
+		allowedQuery["page"], allowedQuery["per_page"] = true, true
+	}
 	if kvCollection {
 		for _, key := range []string{"per_page", "page", "order", "direction"} {
 			allowedQuery[key] = true
@@ -158,7 +162,7 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 	if ordinaryScript && len(parts) == 7 && parts[5] == "secrets" && r.Method == "DELETE" {
 		allowedQuery["url_encoded"] = true
 	}
-	if (len(parts) == 8 || (ordinaryScript && len(parts) == 5)) && r.Method == "PUT" {
+	if ((len(parts) == 8 || (ordinaryScript && len(parts) == 5)) && r.Method == "PUT") || (ordinaryScript && len(parts) == 6 && parts[5] == "versions" && r.Method == "POST") {
 		allowedQuery["bindings_inherit"] = true
 		allowedQuery["excludeScript"] = true
 	}
@@ -190,6 +194,10 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 	}
 	if kvCollection {
 		s.cfKVCollection(w, r)
+		return
+	}
+	if d1Collection {
+		s.cfD1Collection(w, r)
 		return
 	}
 	if ordinaryService {
@@ -606,7 +614,7 @@ func (s *Server) cfReplayUpload(w http.ResponseWriter, r *http.Request, app nano
 		return false
 	}
 	w.Header().Set("ETag", `"`+original.DeploymentID+`"`)
-	cfJSON(w, s.cfScriptResult(app, original))
+	cfJSON(w, s.cfUploadResult(r, app, original))
 	return true
 }
 func (s *Server) cfUploadScript(w http.ResponseWriter, r *http.Request, ns nanoflare.DispatchNamespace, name string) {
@@ -614,6 +622,7 @@ func (s *Server) cfUploadScript(w http.ResponseWriter, r *http.Request, ns nanof
 }
 
 func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanoflare.DispatchNamespace, name string, ordinary bool) {
+	staged := ordinary && r.Method == "POST"
 	if !s.cfScopes(w, r, "workers:write", "deployments:write", "secrets:write") {
 		return
 	}
@@ -649,8 +658,9 @@ func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanof
 	identityPayload, _ := json.Marshal(struct {
 		Org, Namespace, Script, Customer string
 		Strict                           bool
+		Staged                           bool `json:",omitempty"`
 		Payload                          json.RawMessage
-	}{controlOrgID(r), ns.ID, name, r.Header.Get("X-Nanoflare-Customer-ID"), r.URL.Query().Get("bindings_inherit") == "strict", payload})
+	}{controlOrgID(r), ns.ID, name, r.Header.Get("X-Nanoflare-Customer-ID"), r.URL.Query().Get("bindings_inherit") == "strict", staged, payload})
 	identity, err := s.service.ManagementRequestIdentity(identityPayload)
 	if err != nil {
 		cfError(w, 422, "invalid upload identity")
@@ -663,6 +673,10 @@ func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanof
 		app, err = s.service.NamespaceScript(controlOrgID(r), ns.ID, name)
 	}
 	newScript := errors.Is(err, nanoflare.ErrAppNotFound)
+	if staged && newScript {
+		cfServiceError(w, err)
+		return
+	}
 	if err != nil && !newScript {
 		cfServiceError(w, err)
 		return
@@ -756,6 +770,7 @@ func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanof
 		return
 	}
 	input.Deployment.IdempotencyKey = key
+	input.ConfigurationOnly = staged
 	if upload.Metadata.Assets != nil {
 		input.AssetUploadToken = upload.Metadata.Assets.JWT
 	}
@@ -775,5 +790,16 @@ func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanof
 		return
 	}
 	w.Header().Set("ETag", `"`+deployment.ID+`"`)
-	cfJSON(w, s.cfScriptResult(app, snapshot))
+	cfJSON(w, s.cfUploadResult(r, app, snapshot))
+}
+
+func (s *Server) cfUploadResult(r *http.Request, app nanoflare.App, snapshot nanoflare.ManagementUpload) any {
+	if r.Method == "POST" {
+		return map[string]any{
+			"id":        snapshot.DeploymentID,
+			"resources": map[string]any{"script": map[string]string{"etag": snapshot.DeploymentID}},
+			"metadata":  map[string]any{"created_on": snapshot.State.UpdatedAt},
+		}
+	}
+	return s.cfScriptResult(app, snapshot)
 }

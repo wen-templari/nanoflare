@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -113,7 +114,7 @@ func TestWranglerLocalRequestQualification(t *testing.T) {
 			defer direct.Close()
 			directory := t.TempDir()
 			must(os.WriteFile(filepath.Join(directory, "worker.js"), []byte(`export default {fetch(){return new Response("wrangler-fixture")}}`), 0600))
-			config, _ := json.Marshal(map[string]any{"name": "alpha", "main": "worker.js", "account_id": org.ID, "compatibility_date": "2025-12-10", "workers_dev": false, "send_metrics": false, "no_bundle": true})
+			config, _ := json.Marshal(map[string]any{"name": "alpha", "main": "worker.js", "account_id": org.ID, "compatibility_date": "2025-12-10", "workers_dev": false, "preview_urls": false, "send_metrics": false, "no_bundle": true})
 			must(os.WriteFile(filepath.Join(directory, "wrangler.json"), config, 0600))
 			run := func(base string, wantSuccess bool, args ...string) string {
 				t.Helper()
@@ -121,6 +122,7 @@ func TestWranglerLocalRequestQualification(t *testing.T) {
 				defer cancel()
 				command := exec.CommandContext(ctx, node, append([]string{"--require", guard, cli}, args...)...)
 				command.Dir = directory
+				command.Stdin = strings.NewReader("fixture-secret\n")
 				command.Env = []string{"PATH=" + os.Getenv("PATH"), "TMPDIR=" + directory, "XDG_CONFIG_HOME=" + directory, "NF_WRANGLER_FIXTURE_DIRECTORY=" + directory, "CLOUDFLARE_API_TOKEN=" + session.Token, "CLOUDFLARE_ACCOUNT_ID=" + org.ID, "CLOUDFLARE_API_BASE_URL=" + base + "/client/v4", "WRANGLER_SEND_METRICS=false", "CI=true", "NO_COLOR=1", "WRANGLER_LOG_PATH=" + filepath.Join(directory, "wrangler.log")}
 				out, err := command.CombinedOutput()
 				if (err == nil) != wantSuccess {
@@ -159,6 +161,34 @@ func TestWranglerLocalRequestQualification(t *testing.T) {
 			if len(remaining) != 0 {
 				t.Fatal("Wrangler namespace deletion did not finish")
 			}
+			// Ordinary redeploys use Versions/Deployments rather than namespace PUT.
+			must(service.SetBaseHostname("workers.example.test"))
+			run(direct.URL, true, "deploy")
+			ordinary, err := service.OrdinaryScriptForOrg(org.ID, "alpha")
+			must(err)
+			if ordinary.Hostname == "" {
+				t.Fatal("ordinary Worker has no default hostname")
+			}
+			run(direct.URL, true, "secret", "put", "TOKEN")
+			before, _, err := service.ManagementUploadForOrg(org.ID, ordinary.ID, false)
+			must(err)
+			must(os.WriteFile(filepath.Join(directory, "worker.js"), []byte(`export default {fetch(){return new Response("ordinary-updated")}}`), 0600))
+			output := run(direct.URL, true, "deploy", "--keep-vars")
+			if strings.Contains(output, "Could not apply service and environment tags") {
+				t.Fatal("Wrangler post-deploy settings were rejected")
+			}
+			after, _, err := service.ManagementUploadForOrg(org.ID, ordinary.ID, false)
+			must(err)
+			if after.DeploymentID == before.DeploymentID || !strings.Contains(after.Deployment.Files[0].Content, "ordinary-updated") || !reflect.DeepEqual(after.SecretRefs, before.SecretRefs) {
+				t.Fatal("ordinary redeploy lost code or secrets")
+			}
+			active, err := service.ActiveDeployments()
+			must(err)
+			if len(active) != 1 || active[0].Deployment.ID != after.DeploymentID || active[0].App.Hostname != ordinary.Hostname {
+				t.Fatalf("ordinary redeploy traffic/hostname: %#v", active)
+			}
+			run(direct.URL, true, "d1", "list", "--json")
+			run(direct.URL, true, "delete", "--force")
 			mu.Lock()
 			t.Logf("Wrangler %s local paths=%v upload metadata keys=%v metadata content type=%q", pkg.Version, paths, metadataKeys, metadataType)
 			mu.Unlock()
