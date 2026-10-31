@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.1](https://github.com/wen-templari/nanoflare/compare/v0.7.0...v0.7.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* bound generated Worker hostnames to DNS limits ([0baffbf](https://github.com/wen-templari/nanoflare/commit/0baffbfda8dd1a31a052d465b07a6be0e1255ddc))
+* support Wrangler ordinary Worker redeployment ([eea6db4](https://github.com/wen-templari/nanoflare/commit/eea6db4d47a817d6ce6514128ad0b5a56fa4e270))
+* support Wrangler ordinary Worker redeployment ([462551f](https://github.com/wen-templari/nanoflare/commit/462551f75d97382cfcba625062452b996c56eaae))
+
 ## [0.7.0](https://github.com/wen-templari/nanoflare/compare/v0.6.1...v0.7.0) (2026-10-29)
 
 
