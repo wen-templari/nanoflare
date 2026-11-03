@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -8,8 +10,6 @@ import (
 	"net/netip"
 	"os"
 	"strings"
-
-	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 // WFPSocketOptions is the shared native namespace socket policy. Empty Allow disables it.
@@ -36,8 +36,8 @@ func LoadWFPSocketPolicy(allow, deny, files string, allowLocal bool) (WFPSocketO
 		return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_ALLOW: %w", err)
 	}
 	for _, rule := range o.Allow {
-		if rule == "local" && !allowLocal {
-			return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_ALLOW: local requires NANOFLARE_WFP_SOCKET_ALLOW_LOCAL=true; this exposes platform services")
+		if !allowLocal && (rule == "local" || overlapsWFPLocalRange(rule)) {
+			return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_ALLOW: %q overlaps local destinations and requires NANOFLARE_WFP_SOCKET_ALLOW_LOCAL=true; this exposes platform services", rule)
 		}
 	}
 	o.Deny, err = parseWFPSocketRules(deny)
@@ -53,25 +53,12 @@ func LoadWFPSocketPolicy(allow, deny, files string, allowLocal bool) (WFPSocketO
 		if err != nil {
 			return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: %w", err)
 		}
-		count := 0
-		for len(strings.TrimSpace(string(data))) > 0 {
-			if !strings.HasPrefix(strings.TrimSpace(string(data)), "-----BEGIN CERTIFICATE-----") {
-				return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: invalid certificate PEM in %q", file)
-			}
-			block, rest := pem.Decode(data)
-			if block == nil || block.Type != "CERTIFICATE" {
-				return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: invalid certificate PEM in %q", file)
-			}
-			if _, err := x509.ParseCertificate(block.Bytes); err != nil {
-				return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: invalid certificate in %q: %w", file, err)
-			}
-			o.Certificates = append(o.Certificates, string(pem.EncodeToMemory(block)))
-			count++
-			data = rest
+		certificates, err := parseWFPCertificates(data)
+		if err != nil {
+			return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: %s: %w", file, err)
 		}
-		if count == 0 {
-			return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: no certificates in %q", file)
-		}
+		o.Certificates = append(o.Certificates, certificates...)
+
 	}
 	return o, nil
 }
@@ -85,13 +72,18 @@ func parseWFPSocketRules(value string) ([]string, error) {
 		switch rule {
 		case "public", "private", "local":
 		default:
-			if _, err := netip.ParsePrefix(rule); err != nil {
-				if addr, err := netip.ParseAddr(rule); err != nil || addr.Zone() != "" {
+			prefix, err := netip.ParsePrefix(rule)
+			if err != nil {
+				addr, e := netip.ParseAddr(rule)
+				if e != nil || addr.Zone() != "" {
 					return nil, fmt.Errorf("invalid destination %q", rule)
-				} else {
-					rule = netip.PrefixFrom(addr, addr.BitLen()).String()
 				}
+				addr = addr.Unmap()
+				prefix = netip.PrefixFrom(addr, addr.BitLen())
+			} else if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
+				prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
 			}
+			rule = prefix.Masked().String()
 		}
 		rules = append(rules, rule)
 	}
@@ -101,11 +93,11 @@ func parseWFPSocketRules(value string) ([]string, error) {
 func (o WFPSocketOptions) effectiveDeny() []string {
 	deny := append([]string(nil), o.Deny...)
 	if !o.AllowLocal {
-		localRanges := []string{"127.0.0.0/8", "::1/128", "169.254.0.0/16", "fe80::/10"}
+		localRanges := wfpLocalRanges()
 		deny = append(deny, "local")
 		deny = append(deny, localRanges...)
 		// workerd uses longest-prefix matching. Match any narrower allow prefix
-		// so explicit loopback or link-local addresses cannot override the default deny.
+		// so explicit local or unspecified addresses cannot override the default deny.
 		for _, rule := range o.Allow {
 			if prefix, err := netip.ParsePrefix(rule); err == nil {
 				for _, blocked := range localRanges {
@@ -117,7 +109,41 @@ func (o WFPSocketOptions) effectiveDeny() []string {
 			}
 		}
 	}
-	return deny
+	return mirroredWFPSocketDenies(deny)
+}
+
+// Workerd may match a mapped destination as IPv6 even when the kernel dials
+// IPv4. Emit both representations for every IPv4 deny, including custom rules.
+func mirroredWFPSocketDenies(rules []string) []string {
+	var result []string
+	seen := make(map[string]bool)
+	add := func(rule string) {
+		if !seen[rule] {
+			seen[rule] = true
+			result = append(result, rule)
+		}
+	}
+	for _, rule := range rules {
+		prefix, err := netip.ParsePrefix(rule)
+		if err != nil {
+			add(rule)
+			continue
+		}
+		if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+		}
+		prefix = prefix.Masked()
+		add(prefix.String())
+		if !prefix.Addr().Is4() {
+			continue
+		}
+		var mapped [16]byte
+		mapped[10], mapped[11] = 0xff, 0xff
+		addr := prefix.Addr().As4()
+		copy(mapped[12:], addr[:])
+		add(netip.PrefixFrom(netip.AddrFrom16(mapped), 96+prefix.Bits()).String())
+	}
+	return result
 }
 
 // LogWFPSocketPolicy reports the executor-local policy, never certificate contents.
@@ -142,22 +168,78 @@ func writeWFPSocketService(out *strings.Builder, o WFPSocketOptions) {
 	}
 	fmt.Fprintf(out, "(name = \"nanoflare-wfp-sockets\", network = (allow = [%s], deny = [%s], tlsOptions = (trustBrowserCas = true, trustedCertificates = [%s]))),\n", quotedList(o.Allow), quotedList(o.effectiveDeny()), quotedList(o.Certificates))
 }
-func wfpSocketBinding(o WFPSocketOptions) string {
+
+// wfpSocketBindings returns complete entries, without presentation delimiters.
+func wfpSocketBindings(o WFPSocketOptions) []string {
 	if len(o.Allow) == 0 {
-		return ""
-	}
-	return `(name = "__NANOFLARE_WFP_SOCKET_OUTBOUND", service = "nanoflare-wfp-sockets"),`
-}
-func wfpSocketBindings(item nanoflare.ActiveDeployment, o WFPSocketOptions) []string {
-	if len(item.Deployment.DispatchNamespaces) == 0 || len(o.Allow) == 0 {
 		return nil
 	}
-	return []string{strings.TrimSuffix(wfpSocketBinding(o), ",")}
+	return []string{`(name = "__NANOFLARE_WFP_SOCKET_OUTBOUND", service = "nanoflare-wfp-sockets")`}
 }
 
-func wfpSocketBindingLine(o WFPSocketOptions) string {
-	if binding := wfpSocketBinding(o); binding != "" {
-		return "    " + binding + "\n"
+func wfpLocalRanges() []string {
+	return []string{"0.0.0.0/8", "::/128", "127.0.0.0/8", "::1/128", "169.254.0.0/16", "fe80::/10", "::ffff:0.0.0.0/104", "::ffff:127.0.0.0/104", "::ffff:169.254.0.0/112"}
+}
+func overlapsWFPLocalRange(rule string) bool {
+	prefix, err := netip.ParsePrefix(rule)
+	if err != nil {
+		return false
 	}
-	return ""
+	for _, local := range wfpLocalRanges() {
+		if prefix.Overlaps(netip.MustParsePrefix(local)) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseWFPCertificates scans each bundle line once, allowing standard annotations
+// outside certificates while still rejecting malformed or truncated PEM blocks.
+func parseWFPCertificates(data []byte) ([]string, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	var block bytes.Buffer
+	var certificates []string
+	inCertificate := false
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if inCertificate && bytes.HasPrefix(line, []byte("-----BEGIN")) {
+			return nil, fmt.Errorf("nested or malformed certificate PEM")
+		}
+		if !inCertificate {
+			if bytes.Equal(line, []byte("-----BEGIN CERTIFICATE-----")) {
+				inCertificate = true
+			} else {
+				text := string(line)
+				if text == "" || strings.HasPrefix(text, "#") || strings.HasPrefix(text, "Subject:") || strings.HasPrefix(text, "Issuer:") || strings.HasPrefix(text, "subject=") || strings.HasPrefix(text, "issuer=") || text == "Bag Attributes" || strings.HasPrefix(text, "friendlyName:") || strings.HasPrefix(text, "localKeyID:") {
+					continue
+				}
+				return nil, fmt.Errorf("invalid certificate PEM or annotation")
+			}
+		}
+		block.Write(line)
+		block.WriteByte('\n')
+		if bytes.Equal(line, []byte("-----END CERTIFICATE-----")) {
+			decoded, rest := pem.Decode(block.Bytes())
+			if decoded == nil || decoded.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+				return nil, fmt.Errorf("invalid certificate PEM")
+			}
+			if _, err := x509.ParseCertificate(decoded.Bytes); err != nil {
+				return nil, fmt.Errorf("invalid certificate: %w", err)
+			}
+			certificates = append(certificates, string(pem.EncodeToMemory(decoded)))
+			block.Reset()
+			inCertificate = false
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if inCertificate {
+		return nil, fmt.Errorf("truncated certificate PEM")
+	}
+	if len(certificates) == 0 {
+		return nil, fmt.Errorf("no certificates")
+	}
+	return certificates, nil
 }

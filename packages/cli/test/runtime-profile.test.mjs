@@ -22,12 +22,14 @@ test("private local profile rejects unsupported APIs and keeps signals", async (
     open() {}
   }
   const calls = [];
+  const websocketCalls = [];
   const context = vm.createContext({
     Request,
     Response,
     URL,
     TypeError,
     caches: new CacheStorage(),
+    WebSocket: class { constructor(url) { websocketCalls.push(url); } },
     fetch: async (request) => {
       calls.push(request);
       return new Response("ok");
@@ -44,6 +46,12 @@ test("private local profile rejects unsupported APIs and keeps signals", async (
     context.fetch("https://example.test", { headers: { Upgrade: "websocket" } }),
     /Outbound WebSockets/,
   );
+  for (const url of ["ws://example.test", "wss://example.test"]) {
+    assert.throws(() => vm.runInContext(`new WebSocket(${JSON.stringify(url)})`, context), /Outbound WebSockets/);
+  }
+  assert.throws(() => vm.runInContext("new WebSocketPair()", context), /Outbound WebSockets/);
+  assert.equal(websocketCalls.length, 0);
+  assert.equal(Object.getOwnPropertyDescriptor(context, "WebSocket").configurable, false);
   const controller = new AbortController();
   assert.equal(
     await (await context.fetch("https://example.test", { signal: controller.signal })).text(),

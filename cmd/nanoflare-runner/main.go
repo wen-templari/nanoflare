@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,7 +22,7 @@ import (
 func main() {
 	var (
 		wfpSocketDeny        = flag.String("wfp-socket-deny", envOrDefault("NANOFLARE_WFP_SOCKET_DENY", ""), "additional WFP socket destination deny list; local is denied by default")
-		wfpSocketAllowLocal  = flag.Bool("wfp-socket-allow-local", envBoolOrDefault("NANOFLARE_WFP_SOCKET_ALLOW_LOCAL", false), "unsafe opt-in to WFP access to local platform services")
+		wfpSocketAllowLocal  = flag.Bool("wfp-socket-allow-local", config.EnvBoolOrDefault("NANOFLARE_WFP_SOCKET_ALLOW_LOCAL", false), "unsafe opt-in to WFP access to local platform services")
 		wfpSocketAllow       = flag.String("wfp-socket-allow", envOrDefault("NANOFLARE_WFP_SOCKET_ALLOW", ""), "opt-in WFP socket destination allow list (including explicit public)")
 		wfpSocketCAFiles     = flag.String("wfp-socket-ca-files", envOrDefault("NANOFLARE_WFP_SOCKET_CA_FILES", ""), "comma-separated PEM CA files for WFP sockets")
 		addr                 = flag.String("addr", "127.0.0.1:8090", "runner control API listen address")
@@ -137,16 +136,4 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func envBoolOrDefault(name string, fallback bool) bool {
-	value := os.Getenv(name)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		log.Fatalf("%s must be a boolean: %v", name, err)
-	}
-	return parsed
 }

@@ -24,6 +24,21 @@ export function installPrivateDynamicProfile(delegate = globalThis.fetch) {
     }
     Object.defineProperty(globalThis, "caches", { get: unavailableCache, configurable: false });
   }
+  // Native constructors must not bypass the invocation broker when socket
+  // globalOutbound is enabled. Raw TCP remains an explicit separate capability.
+  // Pair objects also expose the native prototype; reject the unsupported
+  // server API instead of leaving a route back to the original constructor.
+  for (const name of ["WebSocket", "WebSocketPair"]) {
+    Object.defineProperty(globalThis, name, {
+      value: class WebSocket {
+        constructor() {
+          throw new TypeError("Outbound WebSockets are unavailable");
+        }
+      },
+      writable: false,
+      configurable: false,
+    });
+  }
   Object.defineProperty(globalThis, "fetch", {
     async value(input, init) {
       if (init?.cf) throw new TypeError("Custom fetch/cache options are unavailable");
