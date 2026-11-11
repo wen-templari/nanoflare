@@ -125,7 +125,8 @@ func TestWorkerdUsesConfiguredEgress(t *testing.T) {
 	generated := WorkerdWithOptions(active, WorkerdOptions{EgressAddr: "127.0.0.1:8082"})
 	for _, expected := range []string{
 		`(name = "nanoflare-egress", external = (address = "127.0.0.1:8082", http = (style = proxy)))`,
-		`globalOutbound = "nanoflare-egress"`,
+		`globalOutbound = "internet"`,
+		`(name = "__NANOFLARE_HTTP_OUTBOUND", wrapped = (moduleName = "nanoflare-internal:egress"`,
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, generated)

@@ -12,7 +12,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
 	outbound := "internet"
 	var out strings.Builder
 	out.WriteString("using Workerd = import \"/workerd/workerd.capnp\";\nconst config :Workerd.Config = (\n services = [\n")
-	fmt.Fprintf(&out, "(name = \"internet\", network = (allow = [%s], tlsOptions = (trustBrowserCas = true))),\n", quotedList(normalizedNetworkAllow(options.NetworkAllow)))
+	writeInternetService(&out, options)
 	if address := strings.TrimSpace(options.EgressAddr); address != "" {
 		outbound = "nanoflare-egress"
 		fmt.Fprintf(&out, "(name = %s, external = (address = %s, http = (style = proxy))),\n", capnpQuote(outbound), capnpQuote(address))
@@ -26,7 +26,8 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
   bindings = [
 %s    (name = "LOADER", workerLoader = (id = "nanoflare-publications")),
     (name = "BROKER", service = "broker"),
-    (name = "OUTBOUND", service = %s),
+    (name = "OUTBOUND", service = "internet"),
+    (name = "HTTP_OUTBOUND", service = %s),
     (name = "DISPATCHER_TOKEN", text = %s)
   ],
 )),
@@ -92,6 +93,7 @@ async function load(env, ctx, key, validation = false, state = {}) {
     const code = validationCode || await source();
     const childEnv = {
       ...code.env,
+      __NANOFLARE_HTTP_OUTBOUND: env.HTTP_OUTBOUND,
       __NANOFLARE_RESOURCE_BROKER: parentExports.ResourceBridge({ props: { key } }),
       __NANOFLARE_LIFECYCLE: parentExports.LifecycleBridge({ props: { key } }),
       __NANOFLARE_WFP: parentExports.WFPBridge({props:{key}}),
