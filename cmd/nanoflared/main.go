@@ -233,6 +233,11 @@ func main() {
 		writer.SetNanoflareRuntimeAddr(*runtimeAddr)
 		writer.SetNetworkAllow(config.ParseNetworkAllow(*workerdNetworkAllow))
 		writer.SetWFPSockets(wfpSockets)
+		certificates, err := config.LoadNetworkCertificates(*egressCAFiles)
+		if err != nil {
+			log.Fatalf("NANOFLARE_WORKERD_EGRESS_CA_FILES: %v", err)
+		}
+		writer.SetNetworkCertificates(certificates)
 		if err := dnsServer.Start(); err != nil {
 			log.Fatal(err)
 		}

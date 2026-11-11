@@ -348,8 +348,9 @@ func (r *byteCountingReader) Read(p []byte) (int, error) {
 // or private network must be dialed directly. Routing: an explicit NO_PROXY
 // match, or a target that resolves entirely to loopback/private/configured
 // ranges, is dialed directly; everything else tunnels through the proxy with a
-// nested CONNECT. The adapter never terminates TLS for a tunnel; workerd does
-// that end to end.
+// nested CONNECT. The adapter never terminates TLS for a tunnel. Ordinary
+// Worker sockets use a native network service for TLS; this CONNECT path does
+// not supply the TLS starter required by workerd's Socket API.
 func (s *Server) handleConnect(conn net.Conn, reader *bufio.Reader, request *http.Request) {
 	target := request.Host
 	if target == "" {

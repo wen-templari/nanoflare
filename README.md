@@ -164,7 +164,8 @@ On proxy-only networks without local public DNS, explicitly set
 `--workerd-egress-proxy-resolves=true` on nanoflared/nanoflare-runner).
 This defaults to false. When a proxy is selected, the network allow list includes
 `public`, and local DNS fails, a valid hostname is forwarded unchanged to the
-trusted proxy. This applies to Worker HTTP(S), raw CONNECT, and WFP outbound.
+trusted proxy. This applies to Worker HTTP(S) and WFP outbound. Native Worker
+sockets use direct connections and local DNS, as described below.
 Direct and `NO_PROXY` routes still require successful local resolution; denied IP
 literals, rejected or mixed DNS answers, malformed names, and cancellations never
 trigger delegation. Successful local resolution still authorizes every returned
@@ -200,13 +201,26 @@ services:
       - ./corp-root.pem:/run/secrets/corp-root.pem:ro
 ```
 
-When a proxy is configured, `globalOutbound` directs Worker `fetch()` through
-the adapter. `NANOFLARE_WORKERD_NETWORK_ALLOW` authorizes resolved destinations
-before routing; the no-proxy list only chooses whether authorized traffic uses
+When a proxy is configured, a bootstrap installed before user modules directs
+Worker global `fetch()` through an internal service binding to the adapter.
+`NANOFLARE_WORKERD_NETWORK_ALLOW` authorizes resolved destinations before routing; the no-proxy list only chooses whether authorized traffic uses
 the corporate proxy. The adapter pins an authorized IP while preserving the
 original HTTP Host and TLS identity, including when tunneling through the proxy.
-Private dynamic dispatch uses the same policy through an invocation-scoped HTTP
-adapter; its native raw TCP and Cache API remain unavailable. See the
+
+Ordinary Worker `connect()` (including Node-compatible TCP/TLS) uses a native
+TLS-capable network service, independently of HTTP proxy routing. Both immediate
+TLS (`secureTransport: "on"`) and STARTTLS (`socket.startTls()`) verify the server
+certificate and hostname against browser roots plus
+`NANOFLARE_WORKERD_EGRESS_CA_FILES`. The native service uses
+`NANOFLARE_WORKERD_NETWORK_ALLOW` and dials directly; corporate proxy routing,
+`NO_PROXY`, and proxy DNS delegation do not apply to sockets. Destinations must
+be resolvable and reachable from the executor. Restart the executor after rotating
+CA files. Native APIs that bypass the global JavaScript `fetch` adapter also use
+this network service; the proxy setting is not a mandatory network isolation
+boundary.
+
+Namespace dispatch uses its invocation-scoped HTTP adapter and a separate opt-in
+socket policy; Cache API remains unavailable. See the
 [runtime contract](docs/reference/workers-for-platforms-runtime.md)
 for supported operations and initial bounds.
 

@@ -58,7 +58,7 @@ jobs:
           export PATH="$RUNNER_TEMP/wfp-tools/node_modules/.bin:$PATH"
           "$NANOFLARE_TEST_WORKERD" --version
           go test -count=1 -v ./internal/config ./internal/dnsresolver ./internal/runtime ./cmd/nanoflared ./cmd/nanoflare-runner
-          go test -count=1 -v ./internal/api -run 'TestIssue78RuntimeRestrictionObservations|TestStableRuntimePrivateDynamicDispatch|TestWorkerdDynamicLoaderContracts|TestDispatchDNS|TestWorkerdDynamicNamespacePrivateDNS|TestWorkerdNestedNodeDNSImportsUseHostResolver'
+          go test -count=1 -v ./internal/api -run 'TestIssue78RuntimeRestrictionObservations|TestStableRuntimePrivateDynamicDispatch|TestWorkerdDynamicLoaderContracts|TestDispatchDNS|TestWorkerdDynamicNamespacePrivateDNS|TestWorkerdNestedNodeDNSImportsUseHostResolver|TestWorkerdGlobalOutboundUsesConfiguredEgressProxy'
           go test -count=1 ./internal/nanoflare ./internal/cli
           node scripts/update-runtime-profile.mjs --check
           node --test packages/cli/test/*.cjs packages/cli/test/*.mjs

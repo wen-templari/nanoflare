@@ -15,17 +15,18 @@ import (
 )
 
 type Writer struct {
-	workerdPath  string
-	traefikPath  string
-	authURL      string
-	authHost     string
-	workerHost   string
-	runtimeAddr  string
-	networkAllow []string
-	egressAddr   string
-	dnsAddr      string
-	dnsProfiles  map[string]bool
-	wfpSockets   WFPSocketOptions
+	workerdPath         string
+	traefikPath         string
+	authURL             string
+	authHost            string
+	workerHost          string
+	runtimeAddr         string
+	networkAllow        []string
+	networkCertificates []string
+	egressAddr          string
+	dnsAddr             string
+	dnsProfiles         map[string]bool
+	wfpSockets          WFPSocketOptions
 }
 
 type TraefikWriter interface {
@@ -33,14 +34,15 @@ type TraefikWriter interface {
 }
 
 type RuntimeWriter struct {
-	workerdPath  string
-	traefik      TraefikWriter
-	runtimeAddr  string
-	networkAllow []string
-	egressAddr   string
-	dnsAddr      string
-	dnsProfiles  map[string]bool
-	wfpSockets   WFPSocketOptions
+	workerdPath         string
+	traefik             TraefikWriter
+	runtimeAddr         string
+	networkAllow        []string
+	networkCertificates []string
+	egressAddr          string
+	dnsAddr             string
+	dnsProfiles         map[string]bool
+	wfpSockets          WFPSocketOptions
 }
 
 func NewWriter(workerdPath, traefikPath, authURL, workerHost string) *Writer {
@@ -80,10 +82,10 @@ func (w *RuntimeWriter) ValidateRuntime(active []nanoflare.ActiveDeployment) err
 
 // RuntimeOptions returns a detached snapshot of the runtime compiler options.
 func (w *Writer) RuntimeOptions() WorkerdOptions {
-	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr, WFPSockets: w.wfpSockets.clone()}
+	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), NetworkCertificates: append([]string(nil), w.networkCertificates...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr, WFPSockets: w.wfpSockets.clone()}
 }
 func (w *RuntimeWriter) RuntimeOptions() WorkerdOptions {
-	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr, WFPSockets: w.wfpSockets.clone()}
+	return WorkerdOptions{RuntimeAddr: w.runtimeAddr, NetworkAllow: append([]string(nil), w.networkAllow...), NetworkCertificates: append([]string(nil), w.networkCertificates...), EgressAddr: w.egressAddr, DNSAddr: w.dnsAddr, WFPSockets: w.wfpSockets.clone()}
 }
 
 func DefaultNetworkAllow() []string {
@@ -172,11 +174,12 @@ func WorkerdWithRuntimeAddr(active []nanoflare.ActiveDeployment, runtimeAddr str
 }
 
 type WorkerdOptions struct {
-	RuntimeAddr  string
-	NetworkAllow []string
-	EgressAddr   string
-	DNSAddr      string
-	WFPSockets   WFPSocketOptions
+	RuntimeAddr         string
+	NetworkAllow        []string
+	NetworkCertificates []string
+	EgressAddr          string
+	DNSAddr             string
+	WFPSockets          WFPSocketOptions
 }
 
 func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOptions) string {
@@ -185,11 +188,12 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 	if runtimeAddr == "" {
 		runtimeAddr = "127.0.0.1:8081"
 	}
-	networkAllow := normalizedNetworkAllow(options.NetworkAllow)
 	var out strings.Builder
 	out.WriteString("using Workerd = import \"/workerd/workerd.capnp\";\n\n")
-	out.WriteString("const config :Workerd.Config = (\n  services = [\n")
-	fmt.Fprintf(&out, "    (name = \"internet\", network = (allow = [%s], tlsOptions = (trustBrowserCas = true))),\n", quotedList(networkAllow))
+	out.WriteString("const config :Workerd.Config = (\n")
+	writeOrdinaryEgressExtension(&out, options)
+	out.WriteString("  services = [\n")
+	writeInternetService(&out, options)
 	if egressAddr := strings.TrimSpace(options.EgressAddr); egressAddr != "" {
 		fmt.Fprintf(&out, "    (name = \"nanoflare-egress\", external = (address = %s, http = (style = proxy))),\n", capnpQuote(egressAddr))
 	}
@@ -241,10 +245,10 @@ func WorkerdWithOptions(active []nanoflare.ActiveDeployment, options WorkerdOpti
 		fmt.Fprintf(&out, "  tails = [%s],\n", capnpQuote(telemetryServiceName(item, "tail")))
 
 		if strings.TrimSpace(options.EgressAddr) != "" {
-			out.WriteString("  globalOutbound = \"nanoflare-egress\",\n")
+			out.WriteString("  globalOutbound = \"internet\",\n")
 		}
 		fmt.Fprintf(&out, "  bindings = [%s],\n",
-			strings.Join(append(workerBindings(item, active, dnsEnabled), wfpSocketBindings(item, options.WFPSockets)...), ", "))
+			strings.Join(append(append(workerBindings(item, active, dnsEnabled), ordinaryEgressBindings(options)...), wfpSocketBindings(item, options.WFPSockets)...), ", "))
 		fmt.Fprintf(&out, "  compatibilityDate = %s,\n", capnpQuote(code.CompatibilityDate))
 		fmt.Fprintf(&out, "  compatibilityFlags = [%s],\n", quotedList(code.CompatibilityFlags))
 

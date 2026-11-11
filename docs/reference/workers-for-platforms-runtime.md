@@ -159,8 +159,9 @@ certificate and hostname verification. Nanoflare does not add that flag silently
 Oracle Thin plaintext is supported; TCPS needs database-specific qualification.
 SQL Server through tedious remains plaintext-only: `encrypt: true` requires TLS
 on a JavaScript duplex unsupported by workerd, and strict mode uses unsupported
-ALPN options. Use an HTTP gateway for SQL Server TLS. Standalone Worker socket TLS
-through proxy egress is outside this configuration's scope.
+ALPN options. Use an HTTP gateway for SQL Server TLS. These driver limitations
+are independent of ordinary Worker native TLS support; see
+[ordinary Worker egress](../../README.md#corporate-proxy-egress).
 
 ### Protecting platform networks
 

@@ -44,6 +44,16 @@ func LoadWFPSocketPolicy(allow, deny, files string, allowLocal bool) (WFPSocketO
 	if err != nil {
 		return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_DENY: %w", err)
 	}
+	o.Certificates, err = LoadNetworkCertificates(files)
+	if err != nil {
+		return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: %w", err)
+	}
+	return o, nil
+}
+
+// LoadNetworkCertificates reads PEM trust anchors for native workerd TLS.
+func LoadNetworkCertificates(files string) ([]string, error) {
+	var certificates []string
 	for _, file := range strings.Split(files, ",") {
 		file = strings.TrimSpace(file)
 		if file == "" {
@@ -51,29 +61,29 @@ func LoadWFPSocketPolicy(allow, deny, files string, allowLocal bool) (WFPSocketO
 		}
 		data, err := os.ReadFile(file)
 		if err != nil {
-			return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: %w", err)
+			return nil, err
 		}
 		count := 0
 		for len(strings.TrimSpace(string(data))) > 0 {
 			if !strings.HasPrefix(strings.TrimSpace(string(data)), "-----BEGIN CERTIFICATE-----") {
-				return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: invalid certificate PEM in %q", file)
+				return nil, fmt.Errorf("invalid certificate PEM in %q", file)
 			}
 			block, rest := pem.Decode(data)
 			if block == nil || block.Type != "CERTIFICATE" {
-				return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: invalid certificate PEM in %q", file)
+				return nil, fmt.Errorf("invalid certificate PEM in %q", file)
 			}
 			if _, err := x509.ParseCertificate(block.Bytes); err != nil {
-				return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: invalid certificate in %q: %w", file, err)
+				return nil, fmt.Errorf("invalid certificate in %q: %w", file, err)
 			}
-			o.Certificates = append(o.Certificates, string(pem.EncodeToMemory(block)))
+			certificates = append(certificates, string(pem.EncodeToMemory(block)))
 			count++
 			data = rest
 		}
 		if count == 0 {
-			return o, fmt.Errorf("NANOFLARE_WFP_SOCKET_CA_FILES: no certificates in %q", file)
+			return nil, fmt.Errorf("no certificates in %q", file)
 		}
 	}
-	return o, nil
+	return certificates, nil
 }
 func parseWFPSocketRules(value string) ([]string, error) {
 	var rules []string

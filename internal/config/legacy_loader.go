@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -12,6 +13,14 @@ import (
 // so installing its own environment on its globals cannot cross revisions.
 func SnapshotWorkerCodeForLoader(item nanoflare.ActiveDeployment, options WorkerdOptions) WorkerCodeSnapshot {
 	code := SnapshotWorkerCode(item, options)
+	if strings.TrimSpace(options.EgressAddr) != "" {
+		main := code.Modules[code.MainModule]
+		main.JS = `import "nanoflare-internal:egress-fetch";` + "\n" + main.JS
+		code.Modules[code.MainModule] = main
+		code.Modules["nanoflare-internal:egress-fetch"] = WorkerCodeModule{JS: egressFetchSource}
+		code.Modules[loaderInvocationContextModule] = WorkerCodeModule{JS: loaderInvocationContextSource}
+		code.moduleOrder = append(code.moduleOrder, "nanoflare-internal:egress-fetch", loaderInvocationContextModule)
+	}
 	if deploymentFormat(item.Deployment) != "service-worker" {
 		return code
 	}
@@ -95,6 +104,8 @@ export default {
 `
 	code.Modules[code.MainModule] = main
 	code.Modules[loaderInvocationContextModule] = WorkerCodeModule{JS: loaderInvocationContextSource}
-	code.moduleOrder = append(code.moduleOrder, loaderInvocationContextModule)
+	if !slices.Contains(code.moduleOrder, loaderInvocationContextModule) {
+		code.moduleOrder = append(code.moduleOrder, loaderInvocationContextModule)
+	}
 	return code
 }
