@@ -615,6 +615,34 @@ it appropriate for CI; replace it in the environment when it expires or is
 rotated. `nanoflare auth whoami` and `nanoflare auth orgs` show the configured
 organization without attempting to resolve identity metadata when environment
 credentials are active.
+Validate a deployed public worker, including routes protected by Nanoflare auth,
+using the active CLI organization and worker ID or name:
+
+```sh
+nanoflare workers request my-worker /api/check
+nanoflare workers request my-worker /api/items -X POST \
+  -H 'Content-Type: application/json' -d '{"name":"test"}'
+```
+
+The command requires `workers:read` and `workers:invoke`. It exchanges the CLI
+credential for a five-minute credential restricted to that worker, hostname,
+HTTP method, and exact path including query, then requests the public HTTPS
+endpoint. The worker receives `X-Nanoflare-Principal-Type: agent` and a verified
+`X-Nanoflare-Actor`, without the temporary credential or an end-user identity.
+Application `Authorization` headers remain available with `-H`; user-specific
+endpoints still require application authentication. Redirects are returned
+without following them. HTTP 4xx/5xx responses print their body and fail the
+command; use `--fail=false` to inspect an expected denial, `-i` to include
+response headers, `-d -` to read stdin, or `--timeout 10s` to change the default
+30-second worker request timeout. Private dispatch workers are not supported.
+
+Existing PATs and OAuth grants must explicitly include `workers:invoke`; they
+are not expanded by an upgrade. Temporary credentials already issued remain
+valid until their five-minute expiry after the issuing grant is revoked.
+The Nanoflare server and CLI must both support this command. No worker-code
+change is needed to move ingress authentication to Cloudflare Access later;
+Cloudflare Access uses its own service credentials and policies.
+
 Use `nanoflare deployment output` from a registered project to print captured
 worker output, or pass a worker ID with `nanoflare deployment output <worker-id>`.
 When `NANOFLARE_LOKI_URL` is configured, output is retained in Loki and can be

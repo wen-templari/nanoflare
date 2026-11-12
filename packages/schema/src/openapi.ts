@@ -1171,6 +1171,26 @@ export interface paths {
     patch: operations["updateWorker"];
     trace?: never;
   };
+  "/v1/organizations/{orgID}/workers/{workerID}/access-token": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create temporary access to a public worker endpoint
+     * @description Requires workers:invoke. Returns a five-minute machine credential bound to this organization, worker, current hostname, exact HTTP method and request URI including query. Supply it as X-Nanoflare-Access-Token to the public HTTPS endpoint. It is not an end-user session and does not authorize control API calls. Existing credentials expire naturally within five minutes after the issuing grant is revoked. Response is Cache-Control: no-store.
+     */
+    post: operations["createWorkerAccessToken"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/workers/{workerID}/analytics": {
     parameters: {
       query?: never;
@@ -2003,6 +2023,7 @@ export interface components {
       dispatch_namespaces?: components["schemas"]["DispatchBinding"][] | null;
       dns?: components["schemas"]["DNSSelection"];
       entrypoint?: string;
+      expected_active_traffic?: components["schemas"]["DeploymentTraffic"][];
       files: components["schemas"]["WorkerFile"][] | null;
       format?: string;
       idempotency_key?: string;
@@ -2804,6 +2825,28 @@ export interface components {
       created_at: string;
       created_by?: string;
       id: string;
+    };
+    WorkerAccessRequest: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/WorkerAccessRequest.json
+       */
+      readonly $schema?: string;
+      method: string;
+      path: string;
+    };
+    WorkerAccessToken: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/WorkerAccessToken.json
+       */
+      readonly $schema?: string;
+      /** Format: date-time */
+      expires_at: string;
+      token: string;
+      url: string;
     };
     WorkerDeployment: {
       /**
@@ -8859,6 +8902,87 @@ export interface operations {
       };
       /** @description Error */
       500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  createWorkerAccessToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["WorkerAccessRequest"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkerAccessToken"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      503: {
         headers: {
           [name: string]: unknown;
         };

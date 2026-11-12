@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
 type authTokenRequest struct {
@@ -29,6 +31,18 @@ func (s *Server) registerAuthRoutes() {
 }
 
 func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if _, present := r.Header[http.CanonicalHeaderKey(nanoflare.WorkerAccessHeader)]; present {
+		claims, err := s.workerAccess(r, r.Header.Get("X-Forwarded-Host"), r.Header.Get("X-Forwarded-Method"), r.Header.Get("X-Forwarded-Uri"))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err)
+			return
+		}
+		w.Header().Set("X-Nanoflare-Principal-Type", "agent")
+		w.Header().Set("X-Nanoflare-Actor", claims.Actor)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	token := strings.TrimSpace(bearerToken(r))
 	if token == "" {
 		if browserAuth, ok := s.auth.(BrowserAuthenticator); ok {

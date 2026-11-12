@@ -20,7 +20,10 @@ pnpm run deploy
 ```
 
 To exercise the protected route meaningfully, run `nanoflared` with OIDC or send
-an accepted bearer token through Traefik ForwardAuth.
+an accepted bearer token through Traefik ForwardAuth. Agents can validate ingress
+access using `nanoflare workers request protected-app /api/auth/me` with
+`workers:read` and `workers:invoke` permissions. This supplies a machine identity;
+the example's user JWT/email fields remain empty for machine requests.
 
 ## Routes To Try
 
