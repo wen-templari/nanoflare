@@ -108,7 +108,13 @@ func addOpenAPIOperation(api huma.API, item openAPIOperation) {
 		op.Responses["409"] = errorResponse(api)
 	}
 	if item.id == "createWorkerDeployment" {
-		op.Description = "An optional worker-scoped idempotency_key (or Idempotency-Key header) returns the original revision on identical retries without reactivation. A reused key with different content or a confirmed failed publication returns 409. Inspect the publication endpoint after an uncertain response. Immutable artifacts pin source, configuration, asset digests and sealed secret versions. Runtime readiness is verified only when the configured publisher supports prepare/commit; route_published confirms configuration publication, not edge propagation."
+		op.RequestBody.Content["multipart/form-data"] = &huma.MediaType{Schema: &huma.Schema{
+			Type: "object", Required: []string{"metadata"},
+			Properties:           map[string]*huma.Schema{"metadata": {Type: "string", Description: "DeployInput JSON with file/asset metadata only; no inline content, wasm, data or object keys. Must be the first part."}},
+			AdditionalProperties: &huma.Schema{Type: "string", Format: "binary", Description: "Raw parts named file-N or asset-N, indexed into metadata.files or metadata.assets. Worker Content-Type must be application/javascript or application/wasm."},
+		}}
+		op.Responses["413"] = errorResponse(api)
+		op.Description = "Accepts legacy JSON or metadata-first multipart/form-data with raw files. Defaults: 30 MiB total worker code, 50 MiB per asset, 250 MiB encoded request, 1 MiB multipart metadata and 10,000 multipart files. Limits are configurable by the operator. An optional worker-scoped idempotency_key (or Idempotency-Key header) returns the original revision on identical retries without reactivation. A reused key with different content or a confirmed failed publication returns 409. Inspect the publication endpoint after an uncertain response. Immutable artifacts pin source, configuration, asset digests and sealed secret versions. Runtime readiness is verified only when the configured publisher supports prepare/commit; route_published confirms configuration publication, not edge propagation."
 		op.Responses["409"] = errorResponse(api)
 		op.Parameters = append(op.Parameters, &huma.Param{Name: "Idempotency-Key", In: "header", Schema: &huma.Schema{Type: "string", MaxLength: func() *int { n := 256; return &n }()}})
 	}

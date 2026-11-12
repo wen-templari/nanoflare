@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clas/nanoflare/internal/deployupload"
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
@@ -1922,6 +1923,14 @@ func readProject(t *testing.T, path string) Project {
 
 func decodeRequest(t *testing.T, request *http.Request, target any) {
 	t.Helper()
+	if input, ok := target.(*nanoflare.DeployInput); ok && strings.HasPrefix(request.Header.Get("Content-Type"), "multipart/") {
+		decoded, err := deployupload.Decode(request.Body, request.Header.Get("Content-Type"), nanoflare.DefaultDeploymentLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		*input = decoded
+		return
+	}
 	if err := json.NewDecoder(request.Body).Decode(target); err != nil {
 		t.Fatal(err)
 	}

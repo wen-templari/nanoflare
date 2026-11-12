@@ -1234,7 +1234,7 @@ export interface paths {
     put?: never;
     /**
      * createWorkerDeployment
-     * @description An optional worker-scoped idempotency_key (or Idempotency-Key header) returns the original revision on identical retries without reactivation. A reused key with different content or a confirmed failed publication returns 409. Inspect the publication endpoint after an uncertain response. Immutable artifacts pin source, configuration, asset digests and sealed secret versions. Runtime readiness is verified only when the configured publisher supports prepare/commit; route_published confirms configuration publication, not edge propagation.
+     * @description Accepts legacy JSON or metadata-first multipart/form-data with raw files. Defaults: 30 MiB total worker code, 50 MiB per asset, 250 MiB encoded request, 1 MiB multipart metadata and 10,000 multipart files. Limits are configurable by the operator. An optional worker-scoped idempotency_key (or Idempotency-Key header) returns the original revision on identical retries without reactivation. A reused key with different content or a confirmed failed publication returns 409. Inspect the publication endpoint after an uncertain response. Immutable artifacts pin source, configuration, asset digests and sealed secret versions. Runtime readiness is verified only when the configured publisher supports prepare/commit; route_published confirms configuration publication, not edge propagation.
      */
     post: operations["createWorkerDeployment"];
     delete?: never;
@@ -9159,6 +9159,12 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["DeployInput"];
+        "multipart/form-data": {
+          /** @description DeployInput JSON with file/asset metadata only; no inline content, wasm, data or object keys. Must be the first part. */
+          metadata: string;
+        } & {
+          [key: string]: string;
+        };
       };
     };
     responses: {
@@ -9209,6 +9215,15 @@ export interface operations {
       };
       /** @description Error */
       409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      413: {
         headers: {
           [name: string]: unknown;
         };

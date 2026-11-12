@@ -85,10 +85,14 @@ func platformFile[T any](_ *cobra.Command, a []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > 10<<20 {
-		return nil, errors.New("platform request file exceeds 10 MiB")
-	}
 	var result T
+	limit := int64(10 << 20)
+	if _, deployment := any(&result).(*nanoflare.DeployInput); deployment {
+		limit = nanoflare.DefaultDeploymentLimits().RequestBytes
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("platform request file exceeds %d bytes", limit)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&result); err != nil {
@@ -205,8 +209,8 @@ func (r *Runner) platformBundle(output string) error {
 	if err != nil {
 		return err
 	}
-	if len(payload) > 10<<20 {
-		return errors.New("deployment bundle exceeds the 10 MiB control API limit")
+	if int64(len(payload)) > nanoflare.DefaultDeploymentLimits().RequestBytes {
+		return errors.New("deployment bundle exceeds the 250 MiB deployment API limit")
 	}
 	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

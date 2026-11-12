@@ -255,7 +255,7 @@ func (s *Server) abort(w http.ResponseWriter, r *http.Request) {
 
 func decodeJSON(r *http.Request, target any) error {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 64<<20))
+	decoder := json.NewDecoder(io.LimitReader(r.Body, nanoflare.RuntimeSnapshotMaxBytes))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(target)
 }

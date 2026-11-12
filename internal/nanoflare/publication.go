@@ -262,6 +262,9 @@ func (s *Service) publishStoredArtifact(p *Publication, a DeploymentArtifact) (D
 // deployPublication holds the same cross-process publication guard as vars and
 // secrets. Source/config validation still uses the normal deployment pipeline.
 func (s *Service) deployPublication(app string, in DeployInput) (Deployment, error) {
+	if err := s.deploymentLimits.Validate(in); err != nil {
+		return Deployment{}, err
+	}
 	in.IdempotencyKey = strings.TrimSpace(in.IdempotencyKey)
 	if len(in.IdempotencyKey) > 256 {
 		return Deployment{}, errors.New("idempotency_key max 256 bytes")
