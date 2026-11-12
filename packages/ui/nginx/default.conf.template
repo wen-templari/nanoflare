@@ -6,6 +6,21 @@ server {
   root /usr/share/nginx/html;
   index index.html;
 
+  # Only deployment uploads receive the larger body allowance. The API enforces
+  # its exact configured request limit (250 MiB by default).
+  location ~ ^/v1/organizations/[^/]+/workers/[^/]+/deployments$ {
+    client_max_body_size ${NANOFLARE_DEPLOYMENT_PROXY_MAX_BODY_SIZE};
+    proxy_request_buffering off;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    proxy_pass ${NANOFLARED_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
   location /v1/ {
     proxy_pass ${NANOFLARED_UPSTREAM};
     proxy_http_version 1.1;

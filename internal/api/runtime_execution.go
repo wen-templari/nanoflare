@@ -101,7 +101,7 @@ func (s *RuntimeExecutionServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, errors.New("unsupported execution operation"))
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, nanoflare.RuntimeSnapshotMaxBytes)
 	defer r.Body.Close()
 	var request struct {
 		Active         nanoflare.ActiveDeployment `json:"active"`

@@ -289,17 +289,13 @@ func (r *Runner) deploy(args []string) error {
 	}, nil); err != nil {
 		return err
 	}
-	files, err := projectWorkerFiles(project)
-	if err != nil {
-		return err
-	}
-	assets, err := loadAssetFiles(project.Assets.Directory)
+	files, assets, sources, err := prepareDeploymentFiles(project)
 	if err != nil {
 		return err
 	}
 	commitHash, commitMessage := deploymentGitMetadata(filepath.Dir(projectPath))
 	var deployment nanoflare.Deployment
-	if err := r.request(http.MethodPost, baseURL+"/v1/workers/"+app.ID+"/deployments", nanoflare.DeployInput{
+	if err := r.requestDeployment(baseURL+"/v1/workers/"+app.ID+"/deployments", nanoflare.DeployInput{
 		ExpectedActiveTraffic: project.expectedActiveTraffic,
 		CommitHash:            commitHash,
 		CommitMessage:         commitMessage,
@@ -323,7 +319,7 @@ func (r *Runner) deploy(args []string) error {
 			NotFoundHandling: project.Assets.NotFoundHandling,
 			RunWorkerFirst:   project.Assets.RunWorkerFirst,
 		},
-	}, &deployment); err != nil {
+	}, sources, &deployment); err != nil {
 		return err
 	}
 	if deployment.CompatibilityDate != date {
@@ -942,8 +938,14 @@ func (r *Runner) request(method, url string, input, output any) error {
 			return err
 		}
 	}
+	return r.requestWithSender(method, url, output, func(auth AuthConfig) (*http.Response, error) {
+		return r.authenticatedRequest(method, url, payload, input != nil, auth)
+	})
+}
+
+func (r *Runner) requestWithSender(method, url string, output any, send func(AuthConfig) (*http.Response, error)) error {
 	auth, authFromEnvironment, authErr := resolveAuthConfig()
-	response, err := r.authenticatedRequest(method, url, payload, input != nil, auth)
+	response, err := send(auth)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, url, err)
 	}
@@ -953,7 +955,7 @@ func (r *Runner) request(method, url string, input, output any) error {
 		if err != nil {
 			return fmt.Errorf("refresh auth token: %w", err)
 		}
-		response, err = r.authenticatedRequest(method, url, payload, input != nil, refreshed)
+		response, err = send(refreshed)
 		if err != nil {
 			return fmt.Errorf("%s %s: %w", method, url, err)
 		}

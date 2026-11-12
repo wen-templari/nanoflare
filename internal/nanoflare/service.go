@@ -94,6 +94,7 @@ type kvOrgUsageCacheDisabler interface {
 }
 
 type Service struct {
+	deploymentLimits     DeploymentLimits
 	executions           *ExecutionRegistry
 	dispatch             dispatchRuntime
 	telemetry            telemetryState
@@ -159,6 +160,7 @@ func NewServiceWithConsole(store Repository, writer ConfigWriter, objects Object
 
 func newService(store Repository, writer ConfigWriter, objects ObjectStore) *Service {
 	return &Service{
+		deploymentLimits:     DefaultDeploymentLimits(),
 		executions:           NewExecutionRegistry(),
 		store:                store,
 		telemetry:            telemetryState{policy: TelemetryPolicy{Enabled: true, SamplePercent: 100}},
@@ -1218,7 +1220,10 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 	if err := s.checkNamespaceBindings(app, input); err != nil {
 		return Deployment{}, err
 	}
-	files, entrypoint, err := deploymentFiles(input.Files, input.Entrypoint)
+	if err := s.deploymentLimits.Validate(input); err != nil {
+		return Deployment{}, err
+	}
+	files, entrypoint, err := deploymentFilesWithLimit(input.Files, input.Entrypoint, s.deploymentLimits.WorkerBytes)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -1440,9 +1445,13 @@ func workerFormat(format string, fileCount int) (string, error) {
 	}
 }
 
-const maxWorkerBundleSize = 10 << 20
+const maxWorkerBundleSize = 30 << 20
 
 func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, string, error) {
+	return deploymentFilesWithLimit(files, entrypoint, maxWorkerBundleSize)
+}
+
+func deploymentFilesWithLimit(files []WorkerFile, entrypoint string, limit int64) ([]WorkerFile, string, error) {
 	if len(files) == 0 {
 		return nil, "", errors.New("files are required")
 	}
@@ -1472,8 +1481,8 @@ func deploymentFiles(files []WorkerFile, entrypoint string) ([]WorkerFile, strin
 		}
 		file.Size = int64(size)
 		totalSize += size
-		if totalSize > maxWorkerBundleSize {
-			return nil, "", fmt.Errorf("worker files exceed %d byte limit", maxWorkerBundleSize)
+		if int64(totalSize) > limit {
+			return nil, "", fmt.Errorf("%w: worker code exceeds %d bytes", ErrDeploymentTooLarge, limit)
 		}
 		result = append(result, file)
 	}

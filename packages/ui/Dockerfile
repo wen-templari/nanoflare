@@ -15,6 +15,7 @@ RUN pnpm --filter @nanoflare/ui run build
 FROM nginx:1.27-alpine
 
 ENV NANOFLARED_UPSTREAM=http://nanoflared:8080
+ENV NANOFLARE_DEPLOYMENT_PROXY_MAX_BODY_SIZE=251m
 
 COPY packages/ui/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /workspace/packages/ui/dist/ /usr/share/nginx/html/

@@ -60,6 +60,9 @@ func main() {
 		traefikFile                    = flag.String("traefik-file", "", "optional Traefik dynamic configuration file fallback")
 		authURL                        = flag.String("auth-url", "http://host.docker.internal:8080/internal/auth/verify", "Traefik ForwardAuth callback URL")
 		workerHost                     = flag.String("worker-host", "host.docker.internal", "hostname Traefik uses to reach workerd sockets")
+		deployWorkerBytes              = flag.Int64("deployment-worker-max-bytes", nanoflare.DefaultDeploymentLimits().WorkerBytes, "maximum total worker code bytes per deployment")
+		deployAssetBytes               = flag.Int64("deployment-asset-max-bytes", nanoflare.DefaultDeploymentLimits().AssetBytes, "maximum bytes per static asset")
+		deployRequestBytes             = flag.Int64("deployment-request-max-bytes", nanoflare.DefaultDeploymentLimits().RequestBytes, "maximum encoded deployment request bytes")
 		baseHostname                   = flag.String("base-hostname", os.Getenv("NANOFLARE_BASE_HOSTNAME"), "base DNS hostname used when worker hostnames are omitted")
 		workerd                        = flag.String("workerd", envOrDefault("NANOFLARE_WORKERD_EXECUTABLE", "workerd"), "path to the workerd executable")
 		workerdNetworkAllow            = flag.String("workerd-network-allow", envOrDefault("NANOFLARE_WORKERD_NETWORK_ALLOW", strings.Join(config.DefaultNetworkAllow(), ",")), "comma-separated workerd outbound network allow list")
@@ -291,6 +294,9 @@ func main() {
 		log.Printf("using Loki worker output at %s", *lokiURL)
 	}
 	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, outputReader, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
+	if err := service.SetDeploymentLimits(nanoflare.DeploymentLimits{WorkerBytes: *deployWorkerBytes, AssetBytes: *deployAssetBytes, RequestBytes: *deployRequestBytes}); err != nil {
+		log.Fatal(err)
+	}
 	compatibilityDate, err := runtime.CompatibilityDate(*workerd)
 	if err != nil {
 		log.Fatal(err)

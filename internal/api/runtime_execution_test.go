@@ -130,7 +130,7 @@ func TestRuntimeExecutionRegistrationSupportsLargeSnapshots(t *testing.T) {
 	service := nanoflare.NewService(store, discardWriter{})
 	handler := NewRuntimeExecutionServer(service, "runner")
 	t.Cleanup(func() { _ = handler.Close() })
-	active := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "large"}, Deployment: nanoflare.Deployment{ID: "large-deployment", AppID: "large", Files: []nanoflare.WorkerFile{{Name: "index.js", Content: strings.Repeat("x", 11<<20)}}}}
+	active := nanoflare.ActiveDeployment{App: nanoflare.App{ID: "large"}, Deployment: nanoflare.Deployment{ID: "large-deployment", AppID: "large", Files: []nanoflare.WorkerFile{{Name: "index.js", Content: strings.Repeat("\x00", 12<<20)}}}}
 	open := httptest.NewRequest(http.MethodPost, "/internal/runtime/executions/open-session", strings.NewReader("{}"))
 	open.Header.Set("X-Nanoflare-Runner-Token", "runner")
 	opened := httptest.NewRecorder()
@@ -142,6 +142,9 @@ func TestRuntimeExecutionRegistrationSupportsLargeSnapshots(t *testing.T) {
 	body, err := json.Marshal(map[string]any{"active": active, "session_id": session["session_id"], "registration_id": "large"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(body) <= 64<<20 {
+		t.Fatal("fixture must exceed the previous 64 MiB runner limit")
 	}
 	r := httptest.NewRequest(http.MethodPost, "/internal/runtime/executions/register", bytes.NewReader(body))
 	r.Header.Set("X-Nanoflare-Runner-Token", "runner")

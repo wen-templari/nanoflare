@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/clas/nanoflare/internal/deployupload"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtime"
 	"go.opentelemetry.io/otel"
@@ -277,9 +278,14 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, "deployments:write") {
 		return
 	}
-	var input nanoflare.DeployInput
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	defer r.Body.Close()
+	input, err := deployupload.Decode(r.Body, r.Header.Get("Content-Type"), s.service.DeploymentLimits())
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrDeploymentTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeError(w, status, err)
 		return
 	}
 	if len(input.DispatchNamespaces) > 0 && !s.requireScope(w, r, "namespaces:dispatch") {
@@ -297,6 +303,9 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	deployment, err := s.service.DeployForOrg(controlOrgID(r), r.PathValue("workerID"), input)
 	if err != nil {
 		status := http.StatusBadRequest
+		if errors.Is(err, nanoflare.ErrDeploymentTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
 		if errors.Is(err, nanoflare.ErrActiveBindingsChanged) || errors.Is(err, nanoflare.ErrIdempotencyConflict) || errors.Is(err, nanoflare.ErrPublicationFailed) {
 			status = http.StatusConflict
 		}
