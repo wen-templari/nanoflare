@@ -1327,6 +1327,12 @@
           "entrypoint": {
             "type": "string"
           },
+          "expected_active_traffic": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentTraffic"
+            },
+            "type": "array"
+          },
           "files": {
             "items": {
               "$ref": "#/components/schemas/WorkerFile"
@@ -3344,6 +3350,50 @@
           }
         },
         "required": ["id", "base_deployment_id", "created_at"],
+        "type": "object"
+      },
+      "WorkerAccessRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/WorkerAccessRequest.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": ["method", "path"],
+        "type": "object"
+      },
+      "WorkerAccessToken": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/WorkerAccessToken.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": ["token", "url", "expires_at"],
         "type": "object"
       },
       "WorkerDeployment": {
@@ -11479,6 +11529,119 @@
           }
         ],
         "summary": "Update worker hostname and authentication",
+        "tags": ["Workers"]
+      }
+    },
+    "/v1/organizations/{orgID}/workers/{workerID}/access-token": {
+      "post": {
+        "description": "Requires workers:invoke. Returns a five-minute machine credential bound to this organization, worker, current hostname, exact HTTP method and request URI including query. Supply it as X-Nanoflare-Access-Token to the public HTTPS endpoint. It is not an end-user session and does not authorize control API calls. Existing credentials expire naturally within five minutes after the issuing grant is revoked. Response is Cache-Control: no-store.",
+        "operationId": "createWorkerAccessToken",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workerID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerAccessToken"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create temporary access to a public worker endpoint",
         "tags": ["Workers"]
       }
     },

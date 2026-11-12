@@ -49,13 +49,21 @@ func TestPlatformMigrationPreservesLegacyWorkersAndDeployments(t *testing.T) {
 	must(repo.CreateOrganization(nanoflare.Organization{ID: "org", Name: "org"}))
 	oldOwner := []string{}
 	for _, scope := range nanoflare.RoleScopes(nanoflare.RoleOwner) {
-		if len(scope) < 11 || scope[:11] != "namespaces:" {
+		if (len(scope) < 11 || scope[:11] != "namespaces:") && scope != "workers:invoke" {
 			oldOwner = append(oldOwner, scope)
 		}
 	}
-	for _, id := range []string{"default-owner", "restricted-owner"} {
+	for _, id := range []string{"default-owner", "previous-owner", "restricted-owner"} {
 		must(repo.CreateUser(nanoflare.User{ID: id, Email: id + "@example.com", CreatedAt: now}))
 		scopes := oldOwner
+		if id == "previous-owner" {
+			scopes = []string{}
+			for _, scope := range nanoflare.RoleScopes(nanoflare.RoleOwner) {
+				if scope != "workers:invoke" {
+					scopes = append(scopes, scope)
+				}
+			}
+		}
 		if id == "restricted-owner" {
 			scopes = []string{"workers:read"}
 		}
@@ -109,9 +117,17 @@ func TestPlatformMigrationPreservesLegacyWorkersAndDeployments(t *testing.T) {
 	if !nanoflare.HasScope(defaultOwner.Scopes, "namespaces:dispatch") {
 		t.Fatal("legacy default owner did not gain new role-default namespace permissions")
 	}
+	if !nanoflare.HasScope(defaultOwner.Scopes, "workers:invoke") {
+		t.Fatal("legacy role default did not gain worker invocation")
+	}
+	previousOwner, err := repo.OrganizationMembership("previous-owner", "org")
+	must(err)
+	if !nanoflare.HasScope(previousOwner.Scopes, "workers:invoke") {
+		t.Fatal("previous role default did not gain worker invocation")
+	}
 	restricted, err := repo.OrganizationMembership("restricted-owner", "org")
 	must(err)
-	if nanoflare.HasScope(restricted.Scopes, "namespaces:dispatch") {
+	if nanoflare.HasScope(restricted.Scopes, "namespaces:dispatch") || nanoflare.HasScope(restricted.Scopes, "workers:invoke") {
 		t.Fatal("custom restrictions silently expanded")
 	}
 	must(repo.migratePlatform(context.Background()))

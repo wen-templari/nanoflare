@@ -105,3 +105,15 @@ Explicit bindings override `.dev.vars`.
 Use it for a single Worker’s API/SSR local path. Do not use it to emulate remote
 Nanoflare resources, multiple Workers, Durable Objects, or browser/client
 builds; D1/R2 are local Miniflare emulations.
+
+## Validate deployed protected routes
+
+Use `nanoflare workers request <worker-id-or-name> /api/check` after deployment.
+This requests the public HTTPS endpoint using a temporary machine credential;
+keep protected routes enabled. CLI credentials need `workers:read` and
+`workers:invoke` in the selected organization. Existing PAT/OAuth grants need
+that invocation scope explicitly. Use `-X POST`, repeatable `-H 'Name: value'`,
+`-d 'body'` or `-d -` for stdin, and `-i` for response headers. HTTP 4xx/5xx
+responses fail by default (`--fail=false` allows inspecting an expected denial).
+Redirects are not followed. Worker code receives verified agent/actor headers,
+not a user JWT; tests requiring a user still need application authentication.

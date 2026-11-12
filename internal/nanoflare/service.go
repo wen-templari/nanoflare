@@ -967,6 +967,11 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 	return detail, nil
 }
 
+// AppForOrg reads worker identity without loading its deployment, assets or secrets.
+func (s *Service) AppForOrg(orgID, appID string) (App, error) {
+	return s.appForOrg(orgID, appID)
+}
+
 func (s *Service) WorkerDetailForOrg(orgID, appID string) (WorkerDetail, error) {
 	if _, err := s.appForOrg(orgID, appID); err != nil {
 		return WorkerDetail{}, err

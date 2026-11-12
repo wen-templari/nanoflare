@@ -48,11 +48,21 @@ func (p *Postgres) migratePlatform(ctx context.Context) error {
 		current := nanoflare.RoleScopes(role)
 		old := []string{}
 		for _, scope := range current {
-			if !strings.HasPrefix(scope, "namespaces:") {
+			if !strings.HasPrefix(scope, "namespaces:") && scope != "workers:invoke" {
 				old = append(old, scope)
 			}
 		}
+		previous := []string{}
+		for _, scope := range current {
+			if scope != "workers:invoke" {
+				previous = append(previous, scope)
+			}
+		}
 		for _, table := range []string{"user_organizations", "organization_invites"} {
+			if _, err = tx.ExecContext(ctx, `UPDATE `+table+` SET scopes=$1 WHERE role=$2 AND scopes @> $3::jsonb AND scopes <@ $3::jsonb`, mustJSON(current), role, mustJSON(previous)); err != nil {
+				return err
+			}
+
 			if _, err = tx.ExecContext(ctx, `UPDATE `+table+` SET scopes=$1 WHERE role=$2 AND scopes @> $3::jsonb AND scopes <@ $3::jsonb`, mustJSON(current), role, mustJSON(old)); err != nil {
 				return err
 			}

@@ -32,6 +32,7 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("DELETE "+base+"/{workerID}", s.deleteApp)
 	s.mux.HandleFunc("GET "+base+"/{workerID}", s.workerDetail)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/files", s.workerFiles)
+	s.mux.HandleFunc("POST "+base+"/{workerID}/access-token", s.issueWorkerAccessToken)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/active-bindings", s.activeWorkerBindings)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/output", s.workerOutput)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/analytics", s.workerTraffic)
@@ -391,6 +392,14 @@ func (s *Server) appGateway(w http.ResponseWriter, r *http.Request) {
 		writeWorkerError(w, nanoflare.ErrAppNotFound)
 		return
 	}
+	if _, present := r.Header[http.CanonicalHeaderKey(nanoflare.WorkerAccessHeader)]; present {
+		uri := (&url.URL{Path: requestPath, RawPath: escapedRequestPath, RawQuery: r.URL.RawQuery, ForceQuery: r.URL.ForceQuery}).RequestURI()
+		claims, err := s.workerAccess(r, r.Host, r.Method, uri)
+		if err != nil || claims.WorkerID != active.App.ID {
+			writeError(w, http.StatusUnauthorized, errors.New("invalid or expired worker access token"))
+			return
+		}
+	}
 	rootID := ""
 	if len(active.Deployment.DispatchNamespaces) > 0 {
 		var deadline time.Time
@@ -579,11 +588,12 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 	))
 	defer span.End()
 	target := &url.URL{
-		Scheme:   "http",
-		Host:     "127.0.0.1:" + strconv.Itoa(endpoint.Port),
-		Path:     requestPath,
-		RawPath:  escapedRequestPath,
-		RawQuery: r.URL.RawQuery,
+		Scheme:     "http",
+		Host:       "127.0.0.1:" + strconv.Itoa(endpoint.Port),
+		Path:       requestPath,
+		RawPath:    escapedRequestPath,
+		RawQuery:   r.URL.RawQuery,
+		ForceQuery: r.URL.ForceQuery,
 	}
 	if endpoint.SocketPath != "" {
 		target.Host = runtime.SocketHost(endpoint.SocketPath)
@@ -637,9 +647,15 @@ func (s *Server) workerResponse(r *http.Request, endpoint runtime.EnsuredWorker,
 			delete(request.Header, name)
 		}
 	}
-	// Identity headers are caller-controlled, even when requests bypass Traefik.
-	// Rebuild them only from credentials accepted by the authenticator.
-	if token := strings.TrimSpace(bearerToken(r)); token != "" {
+	if r.Header.Get(nanoflare.WorkerAccessHeader) != "" {
+		uri := (&url.URL{Path: requestPath, RawPath: escapedRequestPath, RawQuery: r.URL.RawQuery, ForceQuery: r.URL.ForceQuery}).RequestURI()
+		claims, err := s.workerAccess(r, r.Host, r.Method, uri)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("X-Nanoflare-Principal-Type", "agent")
+		request.Header.Set("X-Nanoflare-Actor", claims.Actor)
+	} else if token := strings.TrimSpace(bearerToken(r)); token != "" {
 		if identity, _, err := s.userInfoForRequest(r.Context(), token); err == nil && identity.Valid {
 			request.Header.Set("X-Nanoflare-User-JWT", token)
 			request.Header.Set("X-Nanoflare-User-Email", identity.Email)

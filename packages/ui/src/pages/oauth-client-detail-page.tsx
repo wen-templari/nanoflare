@@ -28,6 +28,7 @@ import { Input } from "../components/ui/input";
 const oauthScopes = [
   "workers:read",
   "workers:write",
+  "workers:invoke",
   "deployments:write",
   "secrets:write",
   "kv:read",
