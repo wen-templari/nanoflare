@@ -23,6 +23,12 @@ func (s *Service) OrdinaryScriptForOrg(org, name string) (App, error) {
 	if err != nil {
 		return App{}, err
 	}
+	registered, lookupErr := s.store.OrdinaryServiceWorkerID(org, name)
+	if lookupErr == nil {
+		id = registered
+	} else if !errors.Is(lookupErr, ErrAppNotFound) {
+		return App{}, lookupErr
+	}
 	app, err := s.appForOrg(org, id)
 	if err == nil && (app.Platform != nil || app.Name != name) {
 		return App{}, ErrAppNotFound
@@ -35,7 +41,7 @@ func (s *Service) OrdinaryScriptForOrg(org, name string) (App, error) {
 // uniqueness constraint. New Workers get native default ingress when a base
 // hostname is configured. Existing identities retain their hostname unchanged.
 func (s *Service) EnsureOrdinaryScriptForOrg(org, name, actor string) (App, error) {
-	id, err := ordinaryScriptID(org, name)
+	_, err := ordinaryScriptID(org, name)
 	if err != nil {
 		return App{}, err
 	}
@@ -60,7 +66,11 @@ func (s *Service) EnsureOrdinaryScriptForOrg(org, name, actor string) (App, erro
 	if err != nil {
 		return App{}, err
 	}
-	app = App{ID: id, OrgID: org, Name: name, RuntimeToken: token, CreatedBy: actor, CreatedAt: time.Now().UTC()}
+	identity, err := randomToken()
+	if err != nil {
+		return App{}, err
+	}
+	app = App{ID: "cf-worker-" + identity, OrgID: org, Name: name, RuntimeToken: token, CreatedBy: actor, CreatedAt: time.Now().UTC()}
 	for attempt := 0; attempt < 5; attempt++ {
 		if s.baseHostname != "" {
 			app.Hostname, err = s.generatedHostname(name, org, attempt)
@@ -68,7 +78,7 @@ func (s *Service) EnsureOrdinaryScriptForOrg(org, name, actor string) (App, erro
 				return App{}, err
 			}
 		}
-		err = s.store.CreateApp(app)
+		err = s.store.CreateOrdinaryService(org, name, app)
 		if s.baseHostname == "" || !errors.Is(err, ErrAppExists) {
 			return app, err
 		}

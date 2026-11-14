@@ -32,7 +32,7 @@ func (s *Server) cfOrdinaryScriptSettings(w http.ResponseWriter, r *http.Request
 		cfError(w, 422, "logpush, tail consumers and observability must remain disabled")
 		return
 	}
-	app, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), name)
+	app, err := s.cfOrdinaryTarget(r, name)
 	if err != nil {
 		cfServiceError(w, err)
 		return
@@ -94,7 +94,7 @@ func (s *Server) cfOrdinaryDeployment(w http.ResponseWriter, r *http.Request, na
 		cfError(w, 422, "deployment annotations are not supported")
 		return
 	}
-	app, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), name)
+	app, err := s.cfOrdinaryTarget(r, name)
 	if err != nil {
 		cfServiceError(w, err)
 		return
@@ -111,7 +111,7 @@ func (s *Server) cfOrdinaryDeployment(w http.ResponseWriter, r *http.Request, na
 }
 
 // Wrangler probes service metadata before first upload. Report only the native
-// ordinary identity; no service environments or migrations are synthesized.
+// ordinary identity and its independently persisted service environments.
 func (s *Server) cfOrdinaryService(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != "GET" && r.Method != "DELETE" {
 		cfError(w, 404, "unsupported service compatibility route")
@@ -128,7 +128,7 @@ func (s *Server) cfOrdinaryService(w http.ResponseWriter, r *http.Request, name 
 	if !s.cfScopes(w, r, scope) {
 		return
 	}
-	app, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), name)
+	app, err := s.cfOrdinaryTarget(r, name)
 	if errors.Is(err, nanoflare.ErrAppNotFound) {
 		writeJSON(w, 404, cfEnvelope{Errors: []cfAPIError{{Code: 10007, Message: "ordinary Worker not found"}}, Messages: []cfAPIError{}})
 		return
@@ -154,11 +154,16 @@ func (s *Server) cfOrdinaryService(w http.ResponseWriter, r *http.Request, name 
 		cfServiceError(w, err)
 		return
 	}
-	if !found {
-		cfError(w, 404, "script has no uploaded revision")
+	environments, err := s.service.ServiceEnvironmentsForOrg(controlOrgID(r), app.ID)
+	if err != nil {
+		cfServiceError(w, err)
 		return
 	}
-	cfJSON(w, map[string]any{"id": name, "default_environment": map[string]any{"script": s.cfScriptResult(app, snapshot)}})
+	var script any
+	if found {
+		script = s.cfScriptResult(app, snapshot)
+	}
+	cfJSON(w, map[string]any{"id": name, "default_environment": map[string]any{"environment": "production", "script": script}, "environments": environments})
 }
 
 // Ordinary uploads use account-scoped script identity rather than namespace
@@ -166,6 +171,10 @@ func (s *Server) cfOrdinaryService(w http.ResponseWriter, r *http.Request, name 
 func (s *Server) cfOrdinaryScript(w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(r.Header.Values("X-Nanoflare-Customer-ID")) > 0 {
 		cfError(w, 422, "ordinary Workers do not accept customer identity headers")
+		return
+	}
+	if len(parts) == 1 && r.Method == "DELETE" {
+		s.cfOrdinaryService(w, r, parts[0])
 		return
 	}
 	if len(parts) == 1 && r.Method == "PUT" {
@@ -198,7 +207,7 @@ func (s *Server) cfOrdinaryScript(w http.ResponseWriter, r *http.Request, parts 
 		} else if !s.cfScopes(w, r, "workers:read") {
 			return
 		}
-		app, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), parts[0])
+		app, err := s.cfOrdinaryTarget(r, parts[0])
 		if err != nil {
 			cfServiceError(w, err)
 			return
@@ -236,7 +245,7 @@ func (s *Server) cfOrdinaryScript(w http.ResponseWriter, r *http.Request, parts 
 		if !s.cfScopes(w, r, "workers:read") {
 			return
 		}
-		if _, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), parts[0]); err != nil {
+		if _, err := s.cfOrdinaryTarget(r, parts[0]); err != nil {
 			cfServiceError(w, err)
 			return
 		}
@@ -247,7 +256,7 @@ func (s *Server) cfOrdinaryScript(w http.ResponseWriter, r *http.Request, parts 
 		if !s.cfScopes(w, r, "workers:write") {
 			return
 		}
-		if _, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), parts[0]); err != nil {
+		if _, err := s.cfOrdinaryTarget(r, parts[0]); err != nil {
 			cfServiceError(w, err)
 			return
 		}
@@ -270,7 +279,7 @@ func (s *Server) cfOrdinaryScript(w http.ResponseWriter, r *http.Request, parts 
 	if !s.cfScopes(w, r, "workers:read") {
 		return
 	}
-	app, err := s.service.OrdinaryScriptForOrg(controlOrgID(r), parts[0])
+	app, err := s.cfOrdinaryTarget(r, parts[0])
 	if parts[1] == "deployments" && errors.Is(err, nanoflare.ErrAppNotFound) {
 		writeJSON(w, 404, cfEnvelope{Errors: []cfAPIError{{Code: 10007, Message: "ordinary Worker not found"}}, Messages: []cfAPIError{}})
 		return

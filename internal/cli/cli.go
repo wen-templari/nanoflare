@@ -53,29 +53,31 @@ type Runner struct {
 // Project is the internal deployment representation; source aliases are normalized
 // before decoding it. Its JSON tags also preserve existing build manifests.
 type Project struct {
-	expectedActiveTraffic    *[]nanoflare.DeploymentTraffic
-	bundledFiles             []nanoflare.WorkerFile
-	dispatchNamespaceNames   map[string]string
-	objectStorageBucketNames map[string]string
-	Schema                   string                                 `json:"$schema,omitempty"`
-	Name                     string                                 `json:"name"`
-	WorkerID                 string                                 `json:"worker_id,omitempty"`
-	DispatchNamespaces       []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
-	Main                     string                                 `json:"main"`
-	Format                   string                                 `json:"format,omitempty"`
-	CompatibilityDate        string                                 `json:"compatibility_date"`
-	CompatibilityFlags       []string                               `json:"compatibility_flags,omitempty"`
-	DNS                      nanoflare.DNSSelection                 `json:"dns,omitempty"`
-	Triggers                 nanoflare.TriggerConfig                `json:"triggers,omitempty"`
-	Vars                     map[string]json.RawMessage             `json:"vars,omitempty"`
-	Files                    []string                               `json:"files"`
-	KVNamespaces             []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
-	Databases                []nanoflare.DatabaseBinding            `json:"db,omitempty"`
-	ObjectStorageBuckets     []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
-	Services                 []nanoflare.ServiceBinding             `json:"services,omitempty"`
-	Assets                   ProjectAssets                          `json:"assets,omitempty"`
-	Auth                     ProjectAuth                            `json:"auth,omitempty"`
-	Secrets                  ProjectSecrets                         `json:"secrets,omitempty"`
+	expectedActiveTraffic        *[]nanoflare.DeploymentTraffic
+	bundledFiles                 []nanoflare.WorkerFile
+	dispatchNamespaceNames       map[string]string
+	dispatchOutboundNames        map[string]string
+	dispatchOutboundEnvironments map[string]string
+	objectStorageBucketNames     map[string]string
+	Schema                       string                                 `json:"$schema,omitempty"`
+	Name                         string                                 `json:"name"`
+	WorkerID                     string                                 `json:"worker_id,omitempty"`
+	DispatchNamespaces           []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	Main                         string                                 `json:"main"`
+	Format                       string                                 `json:"format,omitempty"`
+	CompatibilityDate            string                                 `json:"compatibility_date"`
+	CompatibilityFlags           []string                               `json:"compatibility_flags,omitempty"`
+	DNS                          nanoflare.DNSSelection                 `json:"dns,omitempty"`
+	Triggers                     nanoflare.TriggerConfig                `json:"triggers,omitempty"`
+	Vars                         map[string]json.RawMessage             `json:"vars,omitempty"`
+	Files                        []string                               `json:"files"`
+	KVNamespaces                 []nanoflare.KVBinding                  `json:"kv_namespaces,omitempty"`
+	Databases                    []nanoflare.DatabaseBinding            `json:"db,omitempty"`
+	ObjectStorageBuckets         []nanoflare.ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
+	Services                     []nanoflare.ServiceBinding             `json:"services,omitempty"`
+	Assets                       ProjectAssets                          `json:"assets,omitempty"`
+	Auth                         ProjectAuth                            `json:"auth,omitempty"`
+	Secrets                      ProjectSecrets                         `json:"secrets,omitempty"`
 }
 
 type projectAlias struct {
@@ -312,7 +314,7 @@ func (r *Runner) deploy(args []string) error {
 		Databases:             append([]nanoflare.DatabaseBinding(nil), project.Databases...),
 		ObjectStorageBuckets:  append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
 		Services:              append([]nanoflare.ServiceBinding(nil), project.Services...),
-		DispatchNamespaces:    append([]nanoflare.DispatchBinding(nil), project.DispatchNamespaces...),
+		DispatchNamespaces:    nanoflare.CloneDispatchBindings(project.DispatchNamespaces),
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,
@@ -1151,6 +1153,17 @@ func parseProjectConfig(path string, content []byte, migrateAliases bool) (Proje
 		return Project{}, fmt.Errorf("decode %s: %w", path, err)
 	}
 	project.dispatchNamespaceNames = namespaceNames
+	project.dispatchOutboundNames = map[string]string{}
+	project.dispatchOutboundEnvironments = map[string]string{}
+	for name, value := range namespaceNames {
+		if strings.HasSuffix(name, ":outbound-environment") {
+			project.dispatchOutboundEnvironments[strings.TrimSuffix(name, ":outbound-environment")] = value
+			delete(namespaceNames, name)
+		} else if strings.HasSuffix(name, ":outbound") {
+			project.dispatchOutboundNames[strings.TrimSuffix(name, ":outbound")] = value
+			delete(namespaceNames, name)
+		}
+	}
 	var portable struct {
 		Buckets []struct {
 			Binding string `json:"binding"`
@@ -1473,6 +1486,48 @@ func (r *Runner) ensureProjectApp(baseURL string, project Project) (nanoflare.Ap
 // configured R2 names or deterministic project-and-binding names, provisioning
 // when enabled. Resolved IDs live in deployment records, not source config.
 func (r *Runner) resolveProjectBindings(baseURL string, project *Project, provision bool) error {
+	if len(project.dispatchOutboundNames) > 0 || len(project.dispatchOutboundEnvironments) > 0 {
+		var workers []nanoflare.App
+		if err := r.request(http.MethodGet, baseURL+"/v1/workers", nil, &workers); err != nil {
+			return err
+		}
+		for i := range project.DispatchNamespaces {
+			binding := &project.DispatchNamespaces[i]
+			name := project.dispatchOutboundNames[binding.Binding]
+			if name == "" && project.dispatchOutboundEnvironments[binding.Binding] == "" {
+				continue
+			}
+			for _, worker := range workers {
+				if name != "" && worker.Platform == nil && worker.Name == name {
+					if binding.Outbound.WorkerID != "" {
+						return fmt.Errorf("outbound Worker %q is ambiguous", name)
+					}
+					binding.Outbound.WorkerID = worker.ID
+				}
+			}
+			if binding.Outbound.WorkerID == "" {
+				return fmt.Errorf("outbound Worker %q was not found; deploy it before the dispatcher", name)
+			}
+			if environment := project.dispatchOutboundEnvironments[binding.Binding]; environment != "" {
+				var environments []nanoflare.ServiceEnvironment
+				if err := r.request(http.MethodGet, baseURL+"/v1/workers/"+url.PathEscape(binding.Outbound.WorkerID)+"/environments", nil, &environments); err != nil {
+					return err
+				}
+				target := ""
+				for _, item := range environments {
+					if item.Name == environment {
+						target = item.WorkerID
+					}
+				}
+				if target == "" {
+					return fmt.Errorf("outbound service environment %q was not found; deploy it before the dispatcher", environment)
+				}
+				binding.Outbound.WorkerID = target
+			}
+
+		}
+	}
+
 	if len(project.dispatchNamespaceNames) > 0 {
 		var namespaces []nanoflare.DispatchNamespace
 		if err := r.request(http.MethodGet, baseURL+"/v1/dispatch-namespaces", nil, &namespaces); err != nil {

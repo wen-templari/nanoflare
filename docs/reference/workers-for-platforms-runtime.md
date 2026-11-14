@@ -29,7 +29,7 @@ Revisions retain native immutable deployment IDs and weighted traffic. Each invo
 | Engine                  | Experimental native Worker Loader, checked on workerd 2025-12-10 and candidate 2026-10-18; other builds need qualification                            |
 | Platform namespace host | Module fetch-handler object and named native RPC exports; default classes rejected                                                                    |
 | Customer handler        | Module fetch object or `WorkerEntrypoint` subclass                                                                                                    |
-| Dispatch                | `env.NAMESPACE.get(script, { props }, {}).fetch(request)`                                                                                             |
+| Dispatch                | `env.NAMESPACE.get(script, { props }, { outbound }).fetch(request)` (outbound optional)                                                               |
 | Props                   | Per-invocation native values/RPC capabilities, never cached in loader configuration                                                                   |
 | Nested calls            | Exact declared dynamic service fetch, same namespace/customer, shared root budgets                                                                    |
 | Lifecycle               | Streaming response, cancellation, at most two seconds background authority, original wall deadline retained                                           |
@@ -46,7 +46,7 @@ Dispatch acquisitions consume one shared root unit each. Resource effects share 
 
 ## Rejected, deferred and independent work
 
-Untrusted execution profiles, custom WFP CPU/outbound/limit options, classic scripts, WebSockets, arbitrary cross-Worker service RPC, dynamic namespace-wide nested dispatch, schedules, custom DNS profiles, Cache API and presigned object URL effects are unavailable. Unsupported dispatch options are rejected explicitly. Native control JSON rejects unknown fields; it does not accept a limit and silently substitute a weaker one.
+Untrusted execution profiles, custom WFP CPU/limit options, classic scripts, WebSockets, arbitrary cross-Worker service RPC, dynamic namespace-wide nested dispatch, schedules, custom DNS profiles, Cache API and presigned object URL effects are unavailable. Unsupported dispatch options are rejected explicitly. Native control JSON rejects unknown fields; it does not accept a limit and silently substitute a weaker one.
 
 Real CPU accounting/interruption is the user's [separate workstream](../plans/workers-for-platforms-cpu-enforcement.md). The wall/effect deadline cannot stop a JavaScript infinite loop. Customer cells, hardened OS/VM containment and independent security qualification remain gates before an untrusted release.
 
@@ -112,7 +112,6 @@ does not validate or bind the local DNS adapter listen address. The outbound
 transport calls that resolver in-process, so private DoH does not traverse the
 HTTP proxy. Missing resolver configuration fails closed at the intercepted
 endpoint rather than falling back to public DoH.
-
 
 ## Opt-in namespace TCP and TLS sockets
 
@@ -212,3 +211,33 @@ these logs make mismatches visible but do not enforce cross-process equality.
 The `WFP native sockets` GitHub Actions job installs the repository-pinned
 `workerd@1.20260911.1` and runs the native contract tests, including TLS trust and
 hostname rejection, destination denial, nested dispatch, and brokered fetch.
+
+## Outbound Worker bindings
+
+Optional binding-local `outbound` selects an ordinary same-organization modules
+Worker and declared JSON parameters. See the
+[outbound example](../../examples/outbound-workers/README.md) for supported fields,
+parameter limits and target eligibility. A selected policy and secret versions
+are pinned at customer admission. Its fetch handler runs under a child lease,
+sharing the original root deadline, cancellation, depth and effect budgets.
+
+Policy-bound customers use a request-scoped native `globalOutbound` bridge,
+independently of administrator socket opt-in. Native HTTP reaches the selected
+policy and customer TCP is denied. The normal fetch adapter shares policy admission;
+an unavailable policy never falls back to direct networking. Policy execution uses
+the ordinary Worker compiler and invocation instrumentation with its own resource
+and service authority, rather than the customer's private resource facade.
+
+Request-bound capabilities use anonymous loader descriptors. Immutable source is
+reused separately; live invocation channels and parameters are never stored in a
+keyed descriptor cache. This currently trades warm-isolate reuse for request
+isolation and needs performance qualification. Nested dynamic service calls inherit
+the selected policy. Refer to the [compatibility contract](outbound-workers-compatibility.md)
+for exact qualified capabilities and remaining environment/lifecycle gaps.
+Outbound targets preserve their own configured DNS profile; caller-supplied DNS
+profile headers or query parameters do not override that authority.
+
+Capabilities expose `outbound_workers` as feature availability. Worker-level
+capabilities do not identify a universal policy: different dispatcher bindings
+may select different outbound Workers for one customer revision. The console's
+active binding table reports the selected target per host revision.

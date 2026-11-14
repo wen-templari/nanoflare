@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/clas/nanoflare/internal/config"
+	"github.com/clas/nanoflare/internal/dnsresolver"
 	"github.com/clas/nanoflare/internal/egress"
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtimeassets"
@@ -34,7 +35,10 @@ func NewRuntimeDispatchServer(service *nanoflare.Service, objects *Server, trans
 	server.mux.HandleFunc("/internal/runtime/dispatch/outbound", server.forwardOutbound)
 	server.mux.HandleFunc("POST /internal/runtime/dispatch/acquire", server.acquire)
 	server.mux.HandleFunc("POST /internal/runtime/dispatch/finish", server.finish)
+	server.mux.HandleFunc("POST /internal/runtime/dispatch/outbound-acquire", server.acquireOutbound)
 	server.mux.HandleFunc("POST /internal/runtime/dispatch/nested", server.nested)
+	server.mux.HandleFunc("POST /internal/runtime/dispatch/target-dispatch", server.targetDispatch)
+	server.mux.HandleFunc("POST /internal/runtime/dispatch/start", server.start)
 	server.mux.HandleFunc("/internal/runtime/dispatch/effect/{kind}/{binding}/{path...}", server.effect)
 	return server
 }
@@ -43,8 +47,10 @@ func (s *RuntimeDispatchServer) ServeHTTP(w http.ResponseWriter, r *http.Request
 }
 func (s *RuntimeDispatchServer) acquire(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Script string `json:"script"`
-		Root   string `json:"root"`
+		Script   string                     `json:"script"`
+		Binding  string                     `json:"binding"`
+		Outbound map[string]json.RawMessage `json:"outbound"`
+		Root     string                     `json:"root"`
 	}
 	if err := decodeJSON(r, &input); err != nil {
 		writeError(w, 400, err)
@@ -54,7 +60,7 @@ func (s *RuntimeDispatchServer) acquire(w http.ResponseWriter, r *http.Request) 
 		writeRuntimeError(w, nanoflare.ErrInvocationExpired)
 		return
 	}
-	artifact, err := s.service.AcquireDispatchWithRoot(r.Context(), bearerToken(r), r.Header.Get("X-Nanoflare-Dispatch-Namespace-ID"), input.Script, input.Root)
+	artifact, err := s.service.AcquireDispatchBinding(r.Context(), bearerToken(r), r.Header.Get("X-Nanoflare-Dispatch-Namespace-ID"), input.Script, input.Root, input.Binding, input.Outbound)
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -162,12 +168,26 @@ func (s *RuntimeDispatchServer) effect(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeDispatchArtifact(w http.ResponseWriter, artifact nanoflare.DispatchArtifact) {
+	if artifact.OutboundExecution {
+		deployment := artifact.Deployment
+		// Intercepted HTTP always runs policy code; its explicit asset binding stays usable.
+		deployment.AssetConfig.RunWorkerFirst = nanoflare.RunWorkerFirst{"*"}
+		code := config.InstrumentLoaderInvocation(config.SnapshotWorkerCodeForLoader(nanoflare.ActiveDeployment{Deployment: deployment}, config.WorkerdOptions{EgressAddr: "dispatch-broker", DNSAddr: "dispatch-broker"}), nanoflare.ActiveDeployment{Deployment: deployment})
+		config.InstallOutboundParameters(&code, artifact.OutboundParameterNames)
+		writeJSON(w, 200, struct {
+			nanoflare.DispatchArtifact
+			Code config.WorkerCodeSnapshot `json:"code"`
+		}{artifact, code})
+		return
+	}
+	dynamicEnv := runtimeassets.DynamicEnvModule
+	deployment := artifact.Deployment
 	writeJSON(w, 200, struct {
 		nanoflare.DispatchArtifact
 		Wrapper         string `json:"wrapper"`
 		RuntimeBindings string `json:"runtime_bindings"`
 		DynamicEnv      string `json:"dynamic_env"`
-	}{artifact, config.DynamicEntrypoint(artifact.Deployment), runtimeassets.BindingsModule, runtimeassets.DynamicEnvModule})
+	}{artifact, config.DynamicEntrypoint(deployment), runtimeassets.BindingsModule, dynamicEnv})
 }
 func (s *RuntimeDispatchServer) nested(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -187,8 +207,29 @@ func (s *RuntimeDispatchServer) nested(w http.ResponseWriter, r *http.Request) {
 	writeDispatchArtifact(w, artifact)
 }
 
+func (s *RuntimeDispatchServer) acquireOutbound(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Lease string `json:"lease"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	artifact, err := s.service.AcquireOutboundDispatch(r.Context(), bearerToken(r), input.Lease)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeDispatchArtifact(w, artifact)
+}
+
 func (s *RuntimeDispatchServer) forwardOutbound(w http.ResponseWriter, r *http.Request) {
 	lease := r.Header.Get("X-Nanoflare-Invocation")
+	if err := s.service.AuthorizeDirectDispatchOutbound(r.Context(), bearerToken(r), lease); err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
 	if _, err := s.service.DispatchEffect(r.Context(), bearerToken(r), lease, nanoflare.RuntimeOutbound, "", 1); err != nil {
 		writeRuntimeError(w, err)
 		return
@@ -205,6 +246,16 @@ func (s *RuntimeDispatchServer) forwardOutbound(w http.ResponseWriter, r *http.R
 		return
 	}
 	authorization := r.Header.Get("X-Nanoflare-Outbound-Authorization")
+	if dnsresolver.IsDoHRequest(&http.Request{Method: r.Method, URL: target}) {
+		principal, e := s.service.AuthorizeRuntime(ctx, lease, nanoflare.RuntimeOutbound, "")
+		if e != nil {
+			writeRuntimeError(w, e)
+			return
+		}
+		if !principal.App.IsDynamic() {
+			ctx = dnsresolver.WithTrustedProfile(ctx, principal.Deployment.DNS.Profile)
+		}
+	}
 	out := r.Clone(ctx)
 	out.URL = target
 	out.RequestURI = ""
@@ -283,4 +334,31 @@ func (s *RuntimeDispatchServer) log(w http.ResponseWriter, r *http.Request) {
 		appendRuntimeLog(s.output, line)
 	}
 	w.WriteHeader(204)
+}
+
+func (s *RuntimeDispatchServer) start(w http.ResponseWriter, r *http.Request) {
+	if err := s.service.StartDispatchExecution(r.Context(), bearerToken(r), r.Header.Get("X-Nanoflare-Invocation")); err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *RuntimeDispatchServer) targetDispatch(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Lease    string                     `json:"lease"`
+		Binding  string                     `json:"binding"`
+		Script   string                     `json:"script"`
+		Outbound map[string]json.RawMessage `json:"outbound"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	artifact, err := s.service.AcquireOutboundNestedDispatch(r.Context(), bearerToken(r), input.Lease, input.Binding, input.Script, input.Outbound)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeDispatchArtifact(w, artifact)
 }

@@ -15,6 +15,7 @@ type RuntimeCapabilities struct {
 	CPULimit               bool              `json:"cpu_limit"`
 	CacheAPI               string            `json:"cache_api"`
 	RawTCP                 string            `json:"raw_tcp"`
+	OutboundWorkers        bool              `json:"outbound_workers"`
 	Outbound               string            `json:"outbound"`
 	DurationMeasurement    string            `json:"duration_measurement"`
 	CompatibilityCeiling   string            `json:"compatibility_ceiling"`
@@ -42,7 +43,7 @@ func (s *Service) RuntimeCapabilitiesForOrg(org, worker string) (RuntimeCapabili
 		return RuntimeCapabilities{}, err
 	}
 	enabled := s.dispatch.enabled.Load()
-	result := RuntimeCapabilities{WorkerID: app.ID, CacheAPI: "runner_configured", RawTCP: "runner_configured", Execution: "static", Enabled: true, Isolation: "trusted_shared_workerd", PublicIngress: !app.IsPrivate(), DynamicDispatchEnabled: enabled, Outbound: "runner_configured", DurationMeasurement: "elapsed_handler", CompatibilityCeiling: s.maxCompatibilityDate, EngineVersion: "unreported", Experimental: []string{}, Unavailable: []string{"untrusted_execution", "cpu_accounting", "cpu_limit"}}
+	result := RuntimeCapabilities{WorkerID: app.ID, CacheAPI: "runner_configured", RawTCP: "runner_configured", Execution: "static", Enabled: true, Isolation: "trusted_shared_workerd", PublicIngress: !app.IsPrivate(), DynamicDispatchEnabled: enabled, Outbound: "runner_configured", OutboundWorkers: enabled, DurationMeasurement: "elapsed_handler", CompatibilityCeiling: s.maxCompatibilityDate, EngineVersion: "unreported", Experimental: []string{}, Unavailable: []string{"untrusted_execution", "cpu_accounting", "cpu_limit"}}
 	// Static Cache/TCP support is configured by the runner, not attested here.
 	if app.IsDynamic() {
 		counts := s.DispatchCounters(worker)
@@ -54,7 +55,7 @@ func (s *Service) RuntimeCapabilitiesForOrg(org, worker string) (RuntimeCapabili
 		result.Outbound = "invocation_http_policy"
 		result.DurationMeasurement = "elapsed_dispatch"
 		result.Experimental = []string{"worker_loader", "native_props", "nodejs_als"}
-		result.Unavailable = append(result.Unavailable, "cache_api", "raw_tcp", "websockets", "classic_scripts", "custom_dispatch_limits", "custom_dispatch_outbound", "arbitrary_service_rpc", "customer_namespace_dispatch", "schedules", "custom_dns_profiles", "presigned_object_urls")
+		result.Unavailable = append(result.Unavailable, "cache_api", "raw_tcp", "websockets", "classic_scripts", "custom_dispatch_limits", "arbitrary_service_rpc", "customer_namespace_dispatch", "schedules", "custom_dns_profiles", "presigned_object_urls")
 		result.Limits = RuntimeLimits{WallMS: 30000, BackgroundMS: 2000, Subrequests: defaultInvocationSubrequestBudget, Depth: 8, GlobalInvocations: 1024, NamespaceInvocations: 128, CustomerInvocations: 32, CodeDescriptors: 64, CodeDescriptorBytes: 32 << 20}
 	}
 	return result, nil

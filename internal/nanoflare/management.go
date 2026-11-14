@@ -168,6 +168,7 @@ func validateManagementMetadata(metadata ScriptManagementMetadata) error {
 			allowed["json"] = true
 		case "dispatch_namespace":
 			allowed["namespace"] = true
+			allowed["outbound"] = true
 		case "kv_namespace":
 			allowed["namespace_id"] = true
 		case "d1":
@@ -414,8 +415,18 @@ func (s *Service) validateManagedBindingIntent(org string, in ManagedDeployInput
 			JSON        json.RawMessage `json:"json"`
 			NamespaceID string          `json:"namespace_id"`
 			Namespace   string          `json:"namespace"`
-			ID          string          `json:"id"`
-			DatabaseID  string          `json:"database_id"`
+			Outbound    *struct {
+				Worker *struct {
+					Service     string `json:"service"`
+					Environment string `json:"environment"`
+					Entrypoint  string `json:"entrypoint"`
+				} `json:"worker"`
+				Params []struct {
+					Name string `json:"name"`
+				} `json:"params"`
+			} `json:"outbound"`
+			ID         string `json:"id"`
+			DatabaseID string `json:"database_id"`
 		}
 		if err := json.Unmarshal(raw, &binding); err != nil {
 			return errors.New("invalid management binding")
@@ -448,6 +459,29 @@ func (s *Service) validateManagedBindingIntent(org string, in ManagedDeployInput
 			for _, native := range in.Deployment.DispatchNamespaces {
 				if native.Binding != binding.Name {
 					continue
+				}
+				if (native.Outbound == nil) != (binding.Outbound == nil) {
+					return errors.New("management outbound does not match native binding")
+				}
+				if native.Outbound != nil {
+					wire := binding.Outbound
+					identity, err := s.ServiceEnvironmentForWorkerForOrg(org, native.Outbound.WorkerID)
+					if err != nil {
+						return errors.New("management outbound environment does not match native binding")
+					}
+					parent, err := s.appForOrg(org, identity.ServiceID)
+					environment := "production"
+					if wire.Worker != nil && wire.Worker.Environment != "" {
+						environment = wire.Worker.Environment
+					}
+					if err != nil || wire.Worker == nil || (wire.Worker.Service != parent.Name && wire.Worker.Service != parent.ID) || wire.Worker.Entrypoint != native.Outbound.Entrypoint || environment != identity.Name || len(wire.Params) != len(native.Outbound.Parameters) {
+						return errors.New("management outbound target does not match native binding")
+					}
+					for i, param := range wire.Params {
+						if param.Name != native.Outbound.Parameters[i] {
+							return errors.New("management outbound parameters do not match native binding")
+						}
+					}
 				}
 				ns, err := s.DispatchNamespaceForOrg(org, native.NamespaceID)
 				if err != nil || ns.Name != binding.Namespace {

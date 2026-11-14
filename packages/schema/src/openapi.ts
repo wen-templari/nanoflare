@@ -1191,6 +1191,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/organizations/{orgID}/workers/{workerID}/active-bindings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getActiveWorkerBindings */
+    get: operations["getActiveWorkerBindings"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/organizations/{orgID}/workers/{workerID}/analytics": {
     parameters: {
       query?: never;
@@ -1272,6 +1289,43 @@ export interface paths {
     };
     /** getWorkerArtifact */
     get: operations["getWorkerArtifact"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/workers/{workerID}/dispatch-bindings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Publish retained Worker dispatch bindings
+     * @description Requires deployments:write and namespaces:dispatch in the Worker organization. dispatch_namespaces is a complete replacement array; [] removes bindings, while missing/null is invalid. Preserves code, assets, variables, frozen secret versions and other settings. expected_deployment_id must identify the sole active revision receiving 100% of traffic; stale and split-traffic bases return 409. Identical retries with the same Worker-scoped idempotency key return the original result without reactivation; changed content returns 409. Confirmed publication failure restores prior traffic and requires a new key.
+     */
+    put: operations["updateWorkerDispatchBindings"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/organizations/{orgID}/workers/{workerID}/environments": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** listWorkerServiceEnvironments */
+    get: operations["listWorkerServiceEnvironments"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2052,6 +2106,7 @@ export interface components {
     DispatchBinding: {
       binding: string;
       namespace_id: string;
+      outbound?: components["schemas"]["DispatchOutbound"];
     };
     DispatchCounters: {
       /** Format: int64 */
@@ -2080,6 +2135,11 @@ export interface components {
       /** Format: int64 */
       policy_revision: number;
       trust: string;
+    };
+    DispatchOutbound: {
+      entrypoint?: string;
+      parameters?: string[] | null;
+      worker_id: string;
     };
     InviteCreated: {
       /**
@@ -2671,6 +2731,7 @@ export interface components {
       isolation: string;
       limits: components["schemas"]["RuntimeLimits"];
       outbound: string;
+      outbound_workers: boolean;
       public_ingress: boolean;
       raw_tcp: string;
       unavailable_features: string[] | null;
@@ -2725,6 +2786,14 @@ export interface components {
       service?: string;
       worker_id?: string;
     };
+    ServiceEnvironment: {
+      name: string;
+      org_id: string;
+      /** Format: date-time */
+      service_generation: string;
+      service_id: string;
+      worker_id: string;
+    };
     SignupInput: {
       /**
        * Format: uri
@@ -2749,6 +2818,21 @@ export interface components {
       auth?: components["schemas"]["AuthConfig"];
       /** @description DNS hostname; globally unique. DNS and TLS must be configured externally. */
       hostname?: string;
+    };
+    UpdateDispatchBindingsInput: {
+      /**
+       * Format: uri
+       * @description A URL to the JSON Schema for this object.
+       * @example https://example.com/schemas/UpdateDispatchBindingsInput.json
+       */
+      readonly $schema?: string;
+      commit_message?: string;
+      /** @description Complete replacement list; an empty array removes all dispatch bindings. */
+      dispatch_namespaces: components["schemas"]["DispatchBinding"][] | null;
+      /** @description Must be the sole active deployment receiving 100% of traffic. */
+      expected_deployment_id: string;
+      /** @description Worker-scoped retry key; identical retries return the original result without reactivation. */
+      idempotency_key: string;
     };
     UpdateKVNamespaceInput: {
       /**
@@ -8992,6 +9076,74 @@ export interface operations {
       };
     };
   };
+  getActiveWorkerBindings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkerDeployment"][] | null;
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
   getWorkerMetrics: {
     parameters: {
       query?: never;
@@ -9386,6 +9538,155 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ArtifactManifest"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  updateWorkerDispatchBindings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateDispatchBindingsInput"];
+      };
+    };
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VarsUpdateResult"];
+        };
+      };
+      /** @description Error */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+      /** @description Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OpenAPIError"];
+        };
+      };
+    };
+  };
+  listWorkerServiceEnvironments: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        orgID: string;
+        workerID: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Success */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ServiceEnvironment"][] | null;
         };
       };
       /** @description Error */

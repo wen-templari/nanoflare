@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-11-13T12:08:19.566Z",
+  "node": "v26.13.1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "workerd": "2026-09-11",
+  "descriptor_policy": "Anonymous restricted customer descriptors; keyed immutable policy source",
+  "scope": "Engine fixture only, including 5ms synthetic policy delay; development observation, no production latency or warm-isolate guarantee",
+  "measurements": [
+    {
+      "host": "static",
+      "first_policy_http_ms": 11.421957999999997,
+      "overlapping_24_ms": 70.524042
+    },
+    {
+      "host": "loaded",
+      "first_policy_http_ms": 11.119917000000015,
+      "overlapping_24_ms": 65.42483299999998
+    }
+  ]
+}

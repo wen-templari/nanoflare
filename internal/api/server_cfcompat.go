@@ -106,7 +106,7 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 	}
 	kvCollection := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "storage" && parts[3] == "kv" && parts[4] == "namespaces"
 	d1Collection := len(parts) == 4 && parts[0] == "accounts" && parts[2] == "d1" && parts[3] == "database"
-	ordinaryService := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "services"
+	ordinaryService := len(parts) >= 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "services"
 	ordinaryScript := len(parts) >= 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "scripts"
 	assetUpload := len(parts) == 5 && parts[0] == "accounts" && parts[2] == "workers" && parts[3] == "assets" && parts[4] == "upload"
 	if !d1Collection && (len(parts) < 5 || parts[0] != "accounts" || parts[1] == "" || (parts[2] != "workers" && !kvCollection) || (!kvCollection && !assetUpload && !ordinaryScript && !ordinaryService && (parts[3] != "dispatch" || parts[4] != "namespaces"))) {
@@ -156,13 +156,13 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 			allowedQuery[key] = true
 		}
 	}
-	if ordinaryService && r.Method == "DELETE" {
+	if (ordinaryService || (ordinaryScript && len(parts) == 5)) && r.Method == "DELETE" {
 		allowedQuery["force"] = true
 	}
 	if ordinaryScript && len(parts) == 7 && parts[5] == "secrets" && r.Method == "DELETE" {
 		allowedQuery["url_encoded"] = true
 	}
-	if ((len(parts) == 8 || (ordinaryScript && len(parts) == 5)) && r.Method == "PUT") || (ordinaryScript && len(parts) == 6 && parts[5] == "versions" && r.Method == "POST") {
+	if (ordinaryService && r.Method == "PUT") || ((len(parts) == 8 || (ordinaryScript && len(parts) == 5)) && r.Method == "PUT") || (ordinaryScript && len(parts) == 6 && parts[5] == "versions" && r.Method == "POST") {
 		allowedQuery["bindings_inherit"] = true
 		allowedQuery["excludeScript"] = true
 	}
@@ -198,6 +198,10 @@ func (s *Server) serveCloudflareCompatibility(w http.ResponseWriter, r *http.Req
 	}
 	if d1Collection {
 		s.cfD1Collection(w, r)
+		return
+	}
+	if ordinaryService && len(parts) > 5 {
+		s.cfServiceEnvironment(w, r, parts)
 		return
 	}
 	if ordinaryService {
@@ -556,6 +560,25 @@ func (s *Server) cfResolver(org string) cfcompat.Resolver {
 					return item.ID, nil
 				}
 			}
+		case "service_environment":
+			var selector []string
+			if err := json.Unmarshal([]byte(name), &selector); err != nil || len(selector) != 2 {
+				return "", nanoflare.ErrAppNotFound
+			}
+			serviceID, err := s.cfResolver(org)("service", selector[0])
+			if err != nil {
+				return "", err
+			}
+			environments, err := s.service.ServiceEnvironmentsForOrg(org, serviceID)
+			if err != nil {
+				return "", err
+			}
+			for _, environment := range environments {
+				if environment.Name == selector[1] {
+					return environment.WorkerID, nil
+				}
+			}
+			return "", nanoflare.ErrAppNotFound
 		case "service":
 			items, err := s.service.ListAppsForOrg(org)
 			if err != nil {
@@ -668,7 +691,7 @@ func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanof
 	}
 	var app nanoflare.App
 	if ordinary {
-		app, err = s.service.OrdinaryScriptForOrg(controlOrgID(r), name)
+		app, err = s.cfOrdinaryTarget(r, name)
 	} else {
 		app, err = s.service.NamespaceScript(controlOrgID(r), ns.ID, name)
 	}
@@ -755,7 +778,7 @@ func (s *Server) cfUploadWorker(w http.ResponseWriter, r *http.Request, ns nanof
 	}
 	if newScript {
 		if ordinary {
-			app, err = s.service.EnsureOrdinaryScriptForOrg(controlOrgID(r), name, controlActor(r))
+			app, err = s.cfEnsureOrdinaryTarget(r, name)
 		} else {
 			app, err = s.service.CreateNamespaceScript(controlOrgID(r), ns.ID, nanoflare.CreateNamespaceScriptInput{ScriptName: name, CustomerID: r.Header.Get("X-Nanoflare-Customer-ID"), Execution: "dynamic"})
 		}

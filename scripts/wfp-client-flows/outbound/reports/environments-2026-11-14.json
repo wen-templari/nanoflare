@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-14T05:52:18.043247+00:00",
+  "status": "passed",
+  "workerd": "2026-09-11",
+  "command": "NANOFLARE_TEST_WORKERD=/path/to/workerd NANOFLARE_TEST_POSTGRES_URL=<disposable-postgres> go test -race ./internal/api -run ^TestOutboundEnvironment -count=1",
+  "duration_seconds": 11.16,
+  "runtime_matrix": {
+    "repositories": [
+      "memory",
+      "postgres"
+    ],
+    "dispatchers": [
+      "static",
+      "dynamic"
+    ],
+    "runners": [
+      "local",
+      "remote"
+    ],
+    "combinations_passed": 8
+  },
+  "cases": [
+    {
+      "id": "legacy-environment-upload",
+      "status": "passed"
+    },
+    {
+      "id": "distinct-production-staging-code-and-secrets",
+      "status": "passed"
+    },
+    {
+      "id": "outbound-environment-selection",
+      "status": "passed"
+    },
+    {
+      "id": "canonical-selector-settings-readback",
+      "status": "passed"
+    },
+    {
+      "id": "keep-bindings-preserves-child-worker-id",
+      "status": "passed"
+    },
+    {
+      "id": "inherit-preserves-child-worker-id",
+      "status": "passed"
+    },
+    {
+      "id": "host-rollback-selects-original-environment",
+      "status": "passed"
+    },
+    {
+      "id": "environment-secret-rotation",
+      "status": "passed"
+    },
+    {
+      "id": "deleted-child-recreation-does-not-rebind-historical-host",
+      "status": "passed"
+    },
+    {
+      "id": "production-unaffected-by-staging-delete",
+      "status": "passed"
+    },
+    {
+      "id": "settings-redacts-secret-values",
+      "status": "passed"
+    },
+    {
+      "id": "memory-service-recreation",
+      "status": "passed"
+    },
+    {
+      "id": "postgres-connection-pool-reopen",
+      "status": "passed"
+    },
+    {
+      "id": "environment-mapping-durable-after-reopen",
+      "status": "passed"
+    },
+    {
+      "id": "historical-child-authority-durable-after-reopen",
+      "status": "passed"
+    },
+    {
+      "id": "cross-organization-environment-rejection",
+      "status": "passed"
+    }
+  ],
+  "limitations": [
+    "Hosted Cloudflare comparison was not run; WFP entitlement unavailable.",
+    "Persistence tests close/reopen the PostgreSQL pool and recreate the service; they do not restart the daemon process."
+  ],
+  "wrangler": {
+    "version": "4.54.0",
+    "status": "passed",
+    "repositories": [
+      "memory",
+      "postgres"
+    ],
+    "dispatcher": "dynamic",
+    "runner": "local",
+    "race": true,
+    "command": "NANOFLARE_TEST_WRANGLER_PATH=/path/to/wrangler.js NANOFLARE_TEST_WORKERD=/path/to/workerd NANOFLARE_TEST_POSTGRES_URL=<disposable-postgres> go test -race ./internal/api -run ^TestWranglerRuntime(Postgres)?Workflow$ -count=1 -v",
+    "duration_seconds": 25.912,
+    "cases": [
+      "legacy_env=false deploy --env staging",
+      "secret put --env staging",
+      "secret list --env staging",
+      "outbound environment selector deployment",
+      "canonical service/environment settings readback",
+      "real dispatch invokes staging code and staging secret",
+      "immutable child Worker ID persisted",
+      "staging --keep-vars redeployment retains secret"
+    ]
+  }
+}

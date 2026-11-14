@@ -7,6 +7,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
 import { useWorkspace } from "../app/workspace-context";
+import { NamespaceDispatchers } from "../components/namespace-dispatchers";
 import { DeployPlatformBundle } from "../components/platform-runtime";
 import { CopyableResourceID } from "../components/shared/copyable-resource-id";
 import { PageHeading } from "../components/shared/primitives";
@@ -288,6 +289,7 @@ export function DispatchNamespacesPage() {
               />
             </div>
           </div>
+          <NamespaceDispatchers namespaceID={selected.id} revision={revision} />
           <section className="grid min-w-0 gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <Text as="h2" variant="heading3">

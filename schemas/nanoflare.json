@@ -128,6 +128,46 @@
           "namespace": {
             "type": "string",
             "minLength": 1
+          },
+          "outbound": {
+            "type": "object",
+            "description": "Outbound Worker for this dispatch binding. Disables customer native TCP sockets.",
+            "properties": {
+              "worker_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "service": {
+                "type": "string",
+                "minLength": 1
+              },
+              "environment": {
+                "type": "string",
+                "minLength": 1
+              },
+              "entrypoint": {
+                "type": "string",
+                "description": "Fetch entrypoint export on the outbound Worker. Omit to select the default export."
+              },
+              "parameters": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+                },
+                "maxItems": 64
+              }
+            },
+            "oneOf": [
+              {
+                "required": ["worker_id"]
+              },
+              {
+                "required": ["service"]
+              }
+            ],
+            "additionalProperties": false
           }
         },
         "additionalProperties": false,

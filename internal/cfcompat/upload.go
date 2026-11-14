@@ -25,19 +25,32 @@ const MaxUploadBytes = 10 << 20
 // Binding is the management representation, never a runtime authority handle.
 // Unknown and type-inappropriate fields are rejected by DecodeMetadata.
 type Binding struct {
-	Name        string          `json:"name"`
-	Type        string          `json:"type"`
-	Text        *string         `json:"text,omitempty"`
-	JSON        json.RawMessage `json:"json,omitempty"`
-	NamespaceID string          `json:"namespace_id,omitempty"`
-	Namespace   string          `json:"namespace,omitempty"`
-	ID          string          `json:"id,omitempty"` // Deprecated D1 identifier.
-	DatabaseID  string          `json:"database_id,omitempty"`
-	BucketName  string          `json:"bucket_name,omitempty"`
-	Service     string          `json:"service,omitempty"`
-	Environment string          `json:"environment,omitempty"`
-	OldName     string          `json:"old_name,omitempty"`
-	VersionID   string          `json:"version_id,omitempty"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	Text        *string           `json:"text,omitempty"`
+	JSON        json.RawMessage   `json:"json,omitempty"`
+	NamespaceID string            `json:"namespace_id,omitempty"`
+	Namespace   string            `json:"namespace,omitempty"`
+	ID          string            `json:"id,omitempty"` // Deprecated D1 identifier.
+	DatabaseID  string            `json:"database_id,omitempty"`
+	BucketName  string            `json:"bucket_name,omitempty"`
+	Service     string            `json:"service,omitempty"`
+	Environment string            `json:"environment,omitempty"`
+	Outbound    *DispatchOutbound `json:"outbound,omitempty"`
+	OldName     string            `json:"old_name,omitempty"`
+	VersionID   string            `json:"version_id,omitempty"`
+}
+type DispatchOutbound struct {
+	Worker *OutboundWorker `json:"worker"`
+	Params []OutboundParam `json:"params,omitempty"`
+}
+type OutboundWorker struct {
+	Service     string `json:"service"`
+	Environment string `json:"environment,omitempty"`
+	Entrypoint  string `json:"entrypoint,omitempty"`
+}
+type OutboundParam struct {
+	Name string `json:"name"`
 }
 type Metadata struct {
 	Assets             *AssetUploadMetadata `json:"assets,omitempty"`
@@ -208,7 +221,34 @@ func DecodeMetadata(data []byte) (Metadata, error) {
 	var bindings []map[string]json.RawMessage
 	_ = json.Unmarshal(fields["bindings"], &bindings)
 	for _, binding := range bindings {
-		if err := exactFields(binding, "name", "type", "text", "json", "namespace_id", "namespace", "id", "database_id", "bucket_name", "service", "environment", "old_name", "version_id"); err != nil {
+		if raw, exists := binding["outbound"]; exists {
+			var outbound map[string]json.RawMessage
+			if json.Unmarshal(raw, &outbound) != nil || outbound == nil {
+				return metadata, errors.New("outbound must be an object")
+			}
+			if err := exactFields(outbound, "worker", "params"); err != nil {
+				return metadata, err
+			}
+			var worker map[string]json.RawMessage
+			if json.Unmarshal(outbound["worker"], &worker) != nil || worker == nil {
+				return metadata, errors.New("outbound.worker is required")
+			}
+			if err := exactFields(worker, "service", "environment", "entrypoint"); err != nil {
+				return metadata, err
+			}
+			var params []map[string]json.RawMessage
+			if raw, exists := outbound["params"]; exists {
+				if err := json.Unmarshal(raw, &params); err != nil {
+					return metadata, err
+				}
+			}
+			for _, param := range params {
+				if err := exactFields(param, "name"); err != nil {
+					return metadata, err
+				}
+			}
+		}
+		if err := exactFields(binding, "name", "type", "text", "json", "namespace_id", "namespace", "id", "database_id", "bucket_name", "service", "environment", "old_name", "version_id", "outbound"); err != nil {
 			return metadata, err
 		}
 	}
@@ -630,7 +670,34 @@ func translate(metadata Metadata, previous *Previous, resolve Resolver, allowDis
 					return Candidate{}, errors.New("retained dispatch namespace identity changed; supply an explicit binding")
 				}
 			}
-			result.Deployment.DispatchNamespaces = append(result.Deployment.DispatchNamespaces, nanoflare.DispatchBinding{Binding: name, NamespaceID: id})
+			var outbound *nanoflare.DispatchOutbound
+			if binding.Outbound != nil {
+				kind, selector := "service", binding.Outbound.Worker.Service
+				if environment := binding.Outbound.Worker.Environment; environment != "" && environment != "production" {
+					encoded, _ := json.Marshal([]string{selector, environment})
+					kind, selector = "service_environment", string(encoded)
+				}
+				target, err := resolve(kind, selector)
+				if err != nil || target == "" {
+					return Candidate{}, errors.New("outbound Worker was not found or is not authorized")
+				}
+				if source, inherited := retained[name]; inherited {
+					var previousID string
+					for _, old := range previous.Deployment.DispatchNamespaces {
+						if old.Binding == source && old.Outbound != nil {
+							previousID = old.Outbound.WorkerID
+						}
+					}
+					if previousID != target {
+						return Candidate{}, errors.New("retained outbound Worker identity changed; supply an explicit binding")
+					}
+				}
+				outbound = &nanoflare.DispatchOutbound{WorkerID: target, Entrypoint: binding.Outbound.Worker.Entrypoint}
+				for _, param := range binding.Outbound.Params {
+					outbound.Parameters = append(outbound.Parameters, param.Name)
+				}
+			}
+			result.Deployment.DispatchNamespaces = append(result.Deployment.DispatchNamespaces, nanoflare.DispatchBinding{Binding: name, NamespaceID: id, Outbound: outbound})
 		case "r2_bucket", "service":
 			if resolve == nil {
 				return Candidate{}, errors.New("scoped resource resolution is required")
@@ -713,6 +780,21 @@ func (binding Binding) validate() error {
 			return errors.New("service environments are unsupported")
 		}
 	case "dispatch_namespace":
+		allowed["outbound"] = true
+		if binding.Outbound != nil {
+			worker := binding.Outbound.Worker
+			if worker == nil || strings.TrimSpace(worker.Service) == "" {
+				return errors.New("outbound.worker.service is required")
+			}
+
+			seen := map[string]bool{}
+			for _, param := range binding.Outbound.Params {
+				if param.Name == "" || seen[param.Name] {
+					return errors.New("invalid or duplicate outbound parameter")
+				}
+				seen[param.Name] = true
+			}
+		}
 		allowed["namespace"] = true
 		required = binding.Namespace
 	case "assets":

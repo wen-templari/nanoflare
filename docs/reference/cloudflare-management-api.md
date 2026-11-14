@@ -121,13 +121,22 @@ Upload metadata may include:
 
 Namespace names resolve only within the authenticated organization and become
 immutable native namespace IDs. Namespace-script uploads continue rejecting
-`dispatch_namespace`, including through preservation/inheritance. Dispatch outbound
-options and arbitrary service entrypoint selection remain unsupported and rejected.
+`dispatch_namespace`, including through preservation/inheritance. Outbound configuration is supported on ordinary dispatch namespace bindings as
+`outbound: {worker: {service, entrypoint?}, params: [{name}]}`. Names resolve to same-organization
+ordinary Worker IDs. Default and named outbound fetch entrypoints are supported.
+An omitted environment selects production; named service environments resolve to
+independent immutable Worker IDs. Keep/inherit and rollback retain those IDs. Keep/inherit preserves
+target identity and refuses name reuse that would redirect authority. See the
+[outbound example](../../examples/outbound-workers/README.md) for execution limits.
+For ordinary `service` bindings, arbitrary service entrypoint selection remains
+unsupported and rejected; outbound selectors are a separate configuration.
 The `CONTROL` target must already be deployed; ordinary static service bindings
 can call the target's default `WorkerEntrypoint` RPC methods.
 
-Ordinary script names use a deterministic, domain-separated account/name Worker
-identity, enforced by the existing Worker primary key and publication lock. They
+Ordinary script names use a persisted account/name registry pointing to an
+immutable Worker identity. New services receive random IDs; existing deterministic
+legacy identities remain readable without rewriting. Deleting and recreating a
+service produces a fresh identity and cannot redirect retained outbound authority. They
 must use the same 1–63 character lowercase name subset as namespaces. Existing
 native Workers with matching display names are not adopted. Successful uploads
 return a `nanoflare_worker_id` extension for native administration. New identities
@@ -180,11 +189,11 @@ available with workers.dev disabled.
 
 Eligible existing module Workers redeploy through these account-relative routes:
 
-| Method and path | Required native scopes | Behavior |
-| --- | --- | --- |
-| POST `/workers/scripts/{script}/versions` | `workers:write`, `deployments:write`, `secrets:write`, `namespaces:dispatch` | Stage an immutable revision for an existing ordinary Worker; return its native revision ID as `id` and `resources.script.etag` |
-| POST `/workers/scripts/{script}/deployments` | `deployments:write`, `namespaces:dispatch` | Select native traffic using `strategy: "percentage"` and `versions: [{version_id, percentage}]` |
-| PATCH `/workers/scripts/{script}/script-settings` | `workers:read`, `deployments:write`, `secrets:write`, `namespaces:dispatch` | Update tags without switching traffic; accept disabled logpush, tail consumers and observability |
+| Method and path                                   | Required native scopes                                                       | Behavior                                                                                                                       |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| POST `/workers/scripts/{script}/versions`         | `workers:write`, `deployments:write`, `secrets:write`, `namespaces:dispatch` | Stage an immutable revision for an existing ordinary Worker; return its native revision ID as `id` and `resources.script.etag` |
+| POST `/workers/scripts/{script}/deployments`      | `deployments:write`, `namespaces:dispatch`                                   | Select native traffic using `strategy: "percentage"` and `versions: [{version_id, percentage}]`                                |
+| PATCH `/workers/scripts/{script}/script-settings` | `workers:read`, `deployments:write`, `secrets:write`, `namespaces:dispatch`  | Update tags without switching traffic; accept disabled logpush, tail consumers and observability                               |
 
 Version upload advances the latest management snapshot used by settings reads and
 subsequent upload inheritance. It leaves live code, secrets and traffic unchanged.
@@ -250,7 +259,9 @@ This client-driven code choice has not been verified against live Cloudflare.
 The deployments result contains only a current traffic projection marked
 `nanoflare_current_traffic: true`, with native revision IDs and percentages.
 It does not invent deployment history or Cloudflare deployment IDs. Service
-metadata does not claim migrations or service-environment support. workers.dev
+metadata does not claim migrations. Service environments use persisted independent
+Worker identities, with compatible upload, settings, bindings, content and secret
+operations under `/workers/services/{service}/environments/{environment}`. workers.dev
 and previews cannot be enabled; POST accepts only an explicit disabled state.
 Native ingress/TLS uses the Worker hostname; it is separate from workers.dev.
 

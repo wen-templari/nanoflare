@@ -1,11 +1,28 @@
+import { env as nativeEnv } from "cloudflare:workers";
 import { AsyncLocalStorage } from "node:async_hooks";
 const invocation = new AsyncLocalStorage();
+export function installOutboundParameters(names) {
+  for (const name of names)
+    Object.defineProperty(nativeEnv, name, {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return invocation.getStore()?.parameters?.[name];
+      },
+    });
+}
 const contexts = new WeakMap();
 export function invocationContext(ctx) {
   if (contexts.has(ctx)) return contexts.get(ctx).ctx;
   const broker = ctx.props.__NANOFLARE_BROKER;
   const reference = ctx.props.__NANOFLARE_ERROR_ID || crypto.randomUUID();
-  const state = { broker, rawCtx: ctx, reference, starts: [] };
+  const state = {
+    broker,
+    rawCtx: ctx,
+    reference,
+    parameters: ctx.props.__NANOFLARE_OUTBOUND_PARAMETERS || {},
+    starts: [],
+  };
   state.report = errorReporter((level, message) => broker.log(level, message), reference);
   state.ctx = new Proxy(ctx, {
     get(target, name) {
@@ -39,6 +56,10 @@ export function invocationContext(ctx) {
   contexts.set(ctx, state);
   contexts.set(state.ctx, state);
   return state.ctx;
+}
+export function withInvocationConstructor(ctx, run) {
+  invocationContext(ctx);
+  return invocation.run(contexts.get(ctx), run);
 }
 export async function withInvocation(ctx, run) {
   invocationContext(ctx);
@@ -154,6 +175,8 @@ function kvBinding(broker, name) {
 export function dynamicEnv(values, ctx, metadata) {
   const env = Object.create(values),
     broker = ctx.props.__NANOFLARE_BROKER;
+  for (const [name, value] of Object.entries(ctx.props.__NANOFLARE_OUTBOUND_PARAMETERS || {}))
+    Object.defineProperty(env, name, { value, enumerable: true });
   for (const b of metadata.kv_namespaces || [])
     Object.defineProperty(env, b.binding, {
       value: kvBinding(broker, b.binding),

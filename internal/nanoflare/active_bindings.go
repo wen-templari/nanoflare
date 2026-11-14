@@ -1,6 +1,8 @@
 package nanoflare
 
-// ActiveWorkerBindingsForOrg returns storage bindings for every traffic-bearing
+import "errors"
+
+// ActiveWorkerBindingsForOrg returns storage and dispatch bindings for every traffic-bearing
 // revision. Inactive history is deliberately excluded, including after rollback.
 func (s *Service) ActiveWorkerBindingsForOrg(orgID, appID string) ([]WorkerDeployment, error) {
 	if _, err := s.appForOrg(orgID, appID); err != nil {
@@ -15,8 +17,17 @@ func (s *Service) ActiveWorkerBindingsForOrg(orgID, appID string) ([]WorkerDeplo
 		if item.TrafficPercent <= 0 {
 			continue
 		}
+		// The immutable artifact is authoritative for retained configuration;
+		// PostgreSQL's legacy deployment columns do not store dispatch bindings.
+		artifact, err := s.store.GetDeploymentArtifact(appID, item.Deployment.ID)
+		if err == nil {
+			item.Deployment = artifact.Deployment
+		} else if !errors.Is(err, ErrArtifactNotFound) {
+			return nil, err
+		}
 		result = append(result, WorkerDeployment{
 			ID: item.Deployment.ID, TrafficPercent: item.TrafficPercent,
+			DispatchNamespaces:   CloneDispatchBindings(item.Deployment.DispatchNamespaces),
 			KVNamespaces:         append([]KVBinding(nil), item.Deployment.KVNamespaces...),
 			Databases:            append([]DatabaseBinding(nil), item.Deployment.Databases...),
 			ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), item.Deployment.ObjectStorageBuckets...),

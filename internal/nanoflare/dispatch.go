@@ -31,8 +31,9 @@ var (
 )
 
 type DispatchBinding struct {
-	Binding     string `json:"binding"`
-	NamespaceID string `json:"namespace_id"`
+	Binding     string            `json:"binding"`
+	NamespaceID string            `json:"namespace_id"`
+	Outbound    *DispatchOutbound `json:"outbound,omitempty"`
 }
 
 type dispatchRuntime struct {
@@ -44,32 +45,42 @@ type dispatchRuntime struct {
 	counts  map[string]DispatchCounters
 }
 type dispatchLease struct {
-	AdmittedAt     time.Time
-	Observed       bool
-	LogLines       int
-	Context        context.Context
-	Cancel         context.CancelFunc
-	TransportToken string
-	Parent         string
-	Depth          int
-	Root           string
-	CallerToken    string
-	Caller         RuntimeGrant
-	Target         ActiveDeployment
-	Deadline       time.Time
-	Expires        time.Time
-	Finished       bool
-	Remaining      int
+	AdmittedAt        time.Time
+	Namespace         string
+	CustomerID        string
+	Outbound          *dispatchOutboundSnapshot
+	OutboundExecution bool
+	Started           bool
+	Observed          bool
+	LogLines          int
+	Context           context.Context
+	Cancel            context.CancelFunc
+	TransportToken    string
+	Parent            string
+	Depth             int
+	Root              string
+	CallerToken       string
+	Caller            RuntimeGrant
+	Target            ActiveDeployment
+	Deadline          time.Time
+	Expires           time.Time
+	Finished          bool
+	Remaining         int
 }
 
 // DispatchArtifact crosses only the authenticated runner management transport.
 // It deliberately has no management signing roots or resource bearer credentials.
 type DispatchArtifact struct {
-	Deployment Deployment     `json:"deployment"`
-	Values     map[string]any `json:"values"`
-	Digest     string         `json:"digest"`
-	Lease      string         `json:"lease"`
-	Deadline   time.Time      `json:"deadline"`
+	Deployment             Deployment                 `json:"deployment"`
+	Values                 map[string]any             `json:"values"`
+	Digest                 string                     `json:"digest"`
+	Lease                  string                     `json:"lease"`
+	Deadline               time.Time                  `json:"deadline"`
+	RestrictedOutbound     bool                       `json:"restricted_outbound,omitempty"`
+	OutboundExecution      bool                       `json:"outbound_execution,omitempty"`
+	OutboundParameters     map[string]json.RawMessage `json:"outbound_parameters,omitempty"`
+	OutboundEntrypoint     string                     `json:"outbound_entrypoint,omitempty"`
+	OutboundParameterNames []string                   `json:"outbound_parameter_names,omitempty"`
 }
 
 // PlatformDispatchEnabled reports the administrator opt-in to shared trusted execution.
@@ -180,6 +191,9 @@ func (s *Service) validateDispatchBindings(app App, in DeployInput) error {
 		if err != nil {
 			return err
 		}
+		if err := s.validateDispatchOutbound(app, b.Outbound); err != nil {
+			return err
+		}
 		if ns.Trust != "trusted" {
 			return ErrUnsupportedExecutionProfile
 		}
@@ -208,11 +222,19 @@ func (s *Service) AcquireDispatchWithRoot(ctx context.Context, callerToken, name
 	if err != nil {
 		return DispatchArtifact{}, err
 	}
-	return s.acquireResolvedDispatch(ctx, callerToken, callerToken, caller, app, rootID, "", 0)
+	return s.acquireDispatchBinding(ctx, callerToken, caller, app, namespace, rootID, "", nil)
 }
-func (s *Service) acquireResolvedDispatch(ctx context.Context, callerToken, transportToken string, caller RuntimePrincipal, app App, rootID, parentID string, depth int) (DispatchArtifact, error) {
-	namespace := app.Platform.NamespaceID
-	if !app.IsDynamic() {
+func (s *Service) acquireResolvedDispatch(ctx context.Context, callerToken, transportToken string, caller RuntimePrincipal, app App, rootID, parentID string, depth int, admission ...dispatchAdmission) (DispatchArtifact, error) {
+	var config dispatchAdmission
+	if len(admission) > 0 {
+		config = admission[0]
+	}
+	namespace, customerID := config.namespace, config.customerID
+	if app.Platform != nil {
+		namespace = app.Platform.NamespaceID
+		customerID = app.Platform.CustomerID
+	}
+	if !app.IsDynamic() && !config.outboundExecution {
 		return DispatchArtifact{}, errors.New("dispatch target must use dynamic execution")
 	}
 	active, err := s.store.ActiveDeploymentsForApp(app.ID)
@@ -220,6 +242,10 @@ func (s *Service) acquireResolvedDispatch(ctx context.Context, callerToken, tran
 		return DispatchArtifact{}, err
 	}
 	selected := selectWeightedDeploymentWithPreference(active, "")
+	if config.selected != nil {
+		copy := cloneExecutionActive(*config.selected)
+		selected = &copy
+	}
 	if selected == nil {
 		return DispatchArtifact{}, ErrArtifactNotFound
 	}
@@ -289,9 +315,14 @@ func (s *Service) acquireResolvedDispatch(ctx context.Context, callerToken, tran
 			delete(s.dispatch.leases, key)
 			continue
 		}
-		if lease.Target.App.Platform.NamespaceID == namespace {
+		// Finished leases retain a short retry grace period, not a live concurrency slot.
+		if lease.Finished {
+			continue
+		}
+		leaseNamespace, leaseCustomer := lease.admissionIdentity()
+		if leaseNamespace == namespace {
 			nsCount++
-			if lease.Target.App.Platform.CustomerID == app.Platform.CustomerID {
+			if leaseCustomer == customerID {
 				customerCount++
 			}
 		}
@@ -307,9 +338,9 @@ func (s *Service) acquireResolvedDispatch(ctx context.Context, callerToken, tran
 		parentContext = parent.Context
 	}
 	leaseContext, leaseCancel := context.WithDeadline(parentContext, deadline)
-	s.dispatch.leases[token] = &dispatchLease{AdmittedAt: now, Context: leaseContext, Cancel: leaseCancel, CallerToken: callerToken, Caller: caller.Grant, Target: *selected, Deadline: deadline, Expires: deadline, Remaining: defaultInvocationSubrequestBudget, Root: rootID, TransportToken: transportToken, Parent: parentID, Depth: depth}
+	s.dispatch.leases[token] = &dispatchLease{Namespace: namespace, CustomerID: customerID, Outbound: config.outbound, OutboundExecution: config.outboundExecution, AdmittedAt: now, Context: leaseContext, Cancel: leaseCancel, CallerToken: callerToken, Caller: caller.Grant, Target: *selected, Deadline: deadline, Expires: deadline, Remaining: defaultInvocationSubrequestBudget, Root: rootID, TransportToken: transportToken, Parent: parentID, Depth: depth}
 	s.admitDispatchObservationLocked(app.ID)
-	return DispatchArtifact{Deployment: artifact.Deployment, Values: values, Digest: artifact.Digest, Lease: token, Deadline: deadline}, nil
+	return DispatchArtifact{Deployment: artifact.Deployment, Values: values, Digest: artifact.Digest, Lease: token, Deadline: deadline, RestrictedOutbound: config.outbound != nil || config.outboundExecution, OutboundExecution: config.outboundExecution, OutboundParameters: config.parameters, OutboundParameterNames: config.parameterNames, OutboundEntrypoint: config.entrypoint}, nil
 }
 func (s *Service) authorizeInvocation(ctx context.Context, token string) (RuntimePrincipal, error) {
 	if !s.dispatch.enabled.Load() {
@@ -334,7 +365,7 @@ func (s *Service) authorizeInvocation(ctx context.Context, token string) (Runtim
 			return RuntimePrincipal{}, ErrInvocationExpired
 		}
 	}
-	target, callerToken, callerGrant := lease.Target, lease.CallerToken, lease.Caller
+	target, callerToken, callerGrant, outboundExecution := lease.Target, lease.CallerToken, lease.Caller, lease.OutboundExecution
 	s.dispatch.mu.Unlock()
 	if _, err := s.AuthorizeRuntime(ctx, callerToken, callerGrant.Kind, callerGrant.ResourceID); err != nil {
 		return RuntimePrincipal{}, err
@@ -343,7 +374,7 @@ func (s *Service) authorizeInvocation(ctx context.Context, token string) (Runtim
 	if err != nil {
 		return RuntimePrincipal{}, err
 	}
-	return RuntimePrincipal{App: app, Deployment: target.Deployment, Grant: RuntimeGrant{OrgID: app.OrgID, AppID: app.ID, DeploymentID: target.Deployment.ID}}, nil
+	return RuntimePrincipal{App: app, Deployment: target.Deployment, Grant: RuntimeGrant{OrgID: app.OrgID, AppID: app.ID, DeploymentID: target.Deployment.ID, outboundExecution: outboundExecution}}, nil
 }
 func (s *Service) DispatchEffect(ctx context.Context, callerToken, leaseToken, kind, resource string, cost int) (RuntimePrincipal, error) {
 	p, err := s.AuthorizeRuntime(ctx, leaseToken, kind, resource)
@@ -416,7 +447,9 @@ func (s *Service) FinishDispatch(ctx context.Context, callerToken, leaseToken st
 			observations = append(observations, event)
 		}
 		lease.Finished = true
-		lease.Expires = minTime(lease.Expires, time.Now().Add(2*time.Second))
+		if !s.hasActiveOrdinaryDescendantLocked(leaseToken) {
+			lease.Expires = minTime(lease.Expires, time.Now().Add(2*time.Second))
+		}
 		if lease.Cancel != nil {
 			time.AfterFunc(max(time.Until(lease.Expires), 0), lease.Cancel)
 		}
@@ -467,7 +500,7 @@ func (s *Service) DispatchResource(ctx context.Context, token, kind, binding str
 		}
 	case RuntimeServiceDispatch:
 		for _, b := range p.Deployment.Services {
-			if b.Binding == binding && b.Execution == "dynamic" {
+			if b.Binding == binding && (b.Execution == "dynamic" || p.Grant.outboundExecution) {
 				return b.WorkerID, nil
 			}
 		}
@@ -514,9 +547,11 @@ func (s *Service) AcquireServiceDispatch(ctx context.Context, transportToken, pa
 		s.dispatch.mu.Unlock()
 		return DispatchArtifact{}, ErrRuntimeGrantDenied
 	}
-	root, depth := parent.Root, parent.Depth+1
+	root, depth, outbound := parent.Root, parent.Depth+1, parent.Outbound
+	ordinary := parent.OutboundExecution
+	namespace, customer := parent.admissionIdentity()
 	s.dispatch.mu.Unlock()
-	return s.acquireResolvedDispatch(ctx, parentToken, transportToken, caller, app, root, parentToken, depth)
+	return s.acquireResolvedDispatch(ctx, parentToken, transportToken, caller, app, root, parentToken, depth, dispatchAdmission{outbound: outbound, outboundExecution: ordinary && !app.IsDynamic(), namespace: namespace, customerID: customer})
 }
 
 // DispatchEffectContext interrupts admitted resource work at the invocation's
@@ -547,4 +582,38 @@ func (s *Service) AuthorizeDispatchTransport(ctx context.Context, transport, tok
 		return ErrRuntimeGrantDenied
 	}
 	return nil
+}
+
+// StartDispatchExecution acknowledges actual ordinary execution before user code.
+func (s *Service) StartDispatchExecution(ctx context.Context, transport, token string) error {
+	if err := s.AuthorizeDispatchTransport(ctx, transport, token); err != nil {
+		return err
+	}
+	s.dispatch.mu.Lock()
+	defer s.dispatch.mu.Unlock()
+	lease := s.dispatch.leases[token]
+	if lease == nil || lease.Finished {
+		return ErrInvocationExpired
+	}
+	lease.Started = true
+	return nil
+}
+func (s *Service) hasActiveOrdinaryDescendantLocked(parent string) bool {
+	for _, candidate := range s.dispatch.leases {
+		if !candidate.OutboundExecution || !candidate.Started || candidate.Finished {
+			continue
+		}
+		id := candidate.Parent
+		for depth := 0; id != "" && depth <= 8; depth++ {
+			if id == parent {
+				return true
+			}
+			ancestor := s.dispatch.leases[id]
+			if ancestor == nil {
+				break
+			}
+			id = ancestor.Parent
+		}
+	}
+	return false
 }

@@ -1,4 +1,4 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { WorkerEntrypoint, RpcTarget } from "cloudflare:workers";
 
 // Cache only immutable code/configuration. Invocation capabilities never enter
 // WorkerCode.env, so one warm revision cannot retain another request's authority.
@@ -13,12 +13,6 @@ function argumentError(message) {
 function requireSupportedOptions(options, dispatchOptions) {
   if (!options || typeof options !== "object" || Object.keys(options).some((k) => k !== "props"))
     throw argumentError("Only native props are supported in dispatch options");
-  if (
-    !dispatchOptions ||
-    typeof dispatchOptions !== "object" ||
-    Object.keys(dispatchOptions).length
-  )
-    throw argumentError("Custom CPU/outbound/limit options are not supported by this profile");
 }
 async function requireOK(response, missingWorker = false) {
   if (response.ok) return response;
@@ -41,6 +35,132 @@ function dispatchControl(entrypoint) {
     : entrypoint.env[entrypoint.ctx.props.control];
 }
 export class DispatchBroker extends WorkerEntrypoint {
+  async fetch(request) {
+    const role = this.ctx.props.role;
+    if (role === "lifecycle") {
+      const operation = new URL(request.url).pathname;
+      if (operation === "/complete") {
+        await this.finish(false);
+        return new Response(null, { status: 204 });
+      }
+      if (operation !== "/start") return new Response(null, { status: 400 });
+      return dispatchControl(this).fetch(
+        "http://nanoflare.internal/internal/runtime/dispatch/start",
+        { method: "POST", headers: { "X-Nanoflare-Invocation": this.ctx.props.lease } },
+      );
+    }
+    if (role === "resource") {
+      const name = request.headers.get("X-Nanoflare-Binding-Name");
+      const kind = this.ctx.props.bindings[name];
+      if (!kind) throw new TypeError("Undeclared outbound resource binding");
+      return this.effect(kind, name, request);
+    }
+    if (role === "log") {
+      const events = await request.json();
+      for (const event of events)
+        for (const log of event.logs || [])
+          await this.log(log.level, (log.message || []).join(" "));
+      return new Response(null, { status: 204 });
+    }
+    if (role === "dns")
+      return this.outbound(
+        new Request("https://cloudflare-dns.com/dns-query" + new URL(request.url).search, request),
+      );
+    if (role === "duration") return new Response(null, { status: 204 });
+    return this.outbound(request);
+  }
+  async invoke(token, binding, method, args, dispatchOptions, root, request) {
+    if (token !== this.ctx.props.lease) throw new TypeError("Invalid outbound invocation");
+    if (this.ctx.props.role === "dispatch") {
+      const response = await requireOK(
+        await dispatchControl(this).fetch(
+          "http://nanoflare.internal/internal/runtime/dispatch/target-dispatch",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              lease: token,
+              binding,
+              script: method,
+              outbound: dispatchOptions?.outbound,
+            }),
+          },
+        ),
+      );
+      try {
+        return {
+          response: await invokeArtifact(
+            this._parentEnv(),
+            this.ctx,
+            this.ctx.props.control,
+            await response.json(),
+            request,
+            args?.props || {},
+          ),
+        };
+      } catch (error) {
+        return { error: error.message, status: error.status || 500 };
+      }
+    }
+    const forbidden = new Set([
+      "constructor",
+      "ctx",
+      "env",
+      "then",
+      "__proto__",
+      "prototype",
+      "connect",
+      "scheduled",
+      "alarm",
+      "waitUntil",
+    ]);
+    if (
+      typeof method !== "string" ||
+      method.startsWith("_") ||
+      forbidden.has(method) ||
+      !Array.isArray(args)
+    )
+      throw new TypeError("Invalid service call");
+    const response = await requireOK(
+      await dispatchControl(this).fetch(
+        "http://nanoflare.internal/internal/runtime/dispatch/nested",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ lease: token, binding }),
+        },
+      ),
+    );
+    const artifact = await response.json();
+    if (artifact.outbound_execution)
+      return invokeOrdinaryArtifact(
+        this._parentEnv(),
+        this.ctx,
+        this.ctx.props.control,
+        artifact,
+        method,
+        args,
+      );
+    if (method !== "fetch") throw new TypeError("Private service supports fetch only");
+    return invokeArtifact(
+      this._parentEnv(),
+      this.ctx,
+      this.ctx.props.control,
+      artifact,
+      args[0],
+      {},
+    );
+  }
+  _parentEnv() {
+    return {
+      ...this.env,
+      __NANOFLARE_OUTBOUND_NETWORK: this.env.__NANOFLARE_OUTBOUND_NETWORK ?? this.env.OUTBOUND,
+      __NANOFLARE_WORKER_LOADER: this.env.__NANOFLARE_WORKER_LOADER || this.env.LOADER,
+      __NANOFLARE_RESOURCE_CONTROL: this.ctx.props.resourceControl,
+      __NANOFLARE_BACKGROUND: this.ctx.props.background,
+      [this.ctx.props.control]: dispatchControl(this),
+    };
+  }
   retainBackground() {
     this._background = (this._background || 0) + 1;
   }
@@ -62,7 +182,7 @@ export class DispatchBroker extends WorkerEntrypoint {
       new Request(target, {
         method: original.method,
         headers,
-        body: original.body,
+        body: ["GET", "HEAD"].includes(original.method) ? null : original.body,
         signal: original.signal,
         redirect: "manual",
       }),
@@ -79,6 +199,33 @@ export class DispatchBroker extends WorkerEntrypoint {
     });
   }
   async outbound(request) {
+    if (this.ctx.props.outbound) {
+      const response = await requireOK(
+        await dispatchControl(this).fetch(
+          "http://nanoflare.internal/internal/runtime/dispatch/outbound-acquire",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ lease: this.ctx.props.lease }),
+          },
+        ),
+      );
+      return invokeArtifact(
+        {
+          ...this.env,
+          __NANOFLARE_OUTBOUND_NETWORK: this.env.__NANOFLARE_OUTBOUND_NETWORK ?? this.env.OUTBOUND,
+          __NANOFLARE_WORKER_LOADER: this.env.__NANOFLARE_WORKER_LOADER || this.env.LOADER,
+          __NANOFLARE_RESOURCE_CONTROL: this.ctx.props.resourceControl,
+          __NANOFLARE_BACKGROUND: this.ctx.props.background,
+          [this.ctx.props.control]: dispatchControl(this),
+        },
+        this.ctx,
+        this.ctx.props.control,
+        await response.json(),
+        new Request(request, { redirect: "manual" }),
+        {},
+      );
+    }
     const headers = new Headers(request.headers);
     headers.set("X-Nanoflare-Outbound-URL", request.url);
     headers.set("X-Nanoflare-Outbound-Authorization", request.headers.get("Authorization") || "");
@@ -89,7 +236,7 @@ export class DispatchBroker extends WorkerEntrypoint {
       {
         method: request.method,
         headers,
-        body: request.body,
+        body: ["GET", "HEAD"].includes(request.method) ? null : request.body,
         redirect: "manual",
         signal: request.signal,
       },
@@ -181,15 +328,106 @@ function trackResponse(response, broker, ctx, brokerReference) {
     headers: response.headers,
   });
 }
+class InvocationCompletion extends RpcTarget {
+  constructor(target) {
+    super();
+    this.target = target;
+  }
+  wait() {
+    return this.target.wait();
+  }
+}
+function artifactBroker(env, ctx, control, artifact, extra = {}) {
+  return (parentExports || ctx.exports).DispatchBroker({
+    props: {
+      control,
+      lease: artifact.lease,
+      resourceControl: env.__NANOFLARE_RESOURCE_CONTROL,
+      background: env.__NANOFLARE_BACKGROUND,
+      outbound: artifact.restricted_outbound && !artifact.outbound_execution,
+      ...extra,
+    },
+  });
+}
+async function invokeOrdinaryArtifact(env, ctx, control, artifact, method, args) {
+  const broker = artifactBroker(env, ctx, control, artifact);
+  try {
+    const modules = Object.fromEntries(
+      Object.entries(artifact.code.modules).map(([name, module]) => [
+        name,
+        Object.hasOwn(module, "wasm")
+          ? { wasm: Uint8Array.from(atob(module.wasm), (byte) => byte.charCodeAt(0)).buffer }
+          : module,
+      ]),
+    );
+    const bindings = {},
+      d = artifact.deployment;
+    for (const b of d.kv_namespaces || []) bindings[b.binding] = "kv";
+    for (const b of d.db || []) bindings[b.binding] = "db";
+    for (const b of d.object_storage_buckets || []) bindings[b.binding] = "objects";
+    if ((d.assets || []).length || d.asset_config?.binding)
+      bindings[d.asset_config?.binding || "ASSETS"] = "assets";
+    const bridge = (role, extra = {}) =>
+      artifactBroker(env, ctx, control, artifact, { role, ...extra });
+    // A fresh descriptor holds request-bound authority; only immutable source may
+    // enter a keyed code cache. Ordinary resource facades initialize from this env.
+    const worker = env.__NANOFLARE_WORKER_LOADER.get(null, () => ({
+      ...artifact.code,
+      allowExperimental: true,
+      modules,
+      env: {
+        ...artifact.values,
+        __NANOFLARE_APP_ID: d.app_id,
+        __NANOFLARE_DEPLOYMENT_ID: d.id,
+        __NANOFLARE_RESOURCE_BROKER: bridge("resource", { bindings }),
+        __NANOFLARE_SERVICE_BROKER: bridge("service"),
+        __NANOFLARE_WFP: bridge("dispatch"),
+        __NANOFLARE_DNS: bridge("dns"),
+        __NANOFLARE_LIFECYCLE: bridge("lifecycle"),
+        __NANOFLARE_HTTP_OUTBOUND: bridge("http"),
+        __NANOFLARE_DURATION_COLLECTOR: bridge("duration"),
+        __NANOFLARE_LOG_COLLECTOR: bridge("log"),
+      },
+      globalOutbound: env.__NANOFLARE_OUTBOUND_NETWORK ?? null,
+    }));
+    const props = {
+      __nanoflare_invocation: { key: artifact.digest, token: artifact.lease },
+      __nanoflare_outbound_parameters: artifact.outbound_parameters || {},
+    };
+    const result = artifact.outbound_entrypoint
+      ? await worker
+          .getEntrypoint("NanoflareExportDispatcher", { props })
+          .invoke(artifact.outbound_entrypoint, {}, method, args, false, true)
+      : await worker.getEntrypoint(undefined, { props })[method](...args);
+    // Keep the parent RPC event alive until the child's tracked background work
+    // drains, independently of when its HTTP response body completes.
+    const completion = worker.getEntrypoint("NanoflareInvocationCompletion", { props });
+    ctx.waitUntil(completion.wait());
+    if (env.__NANOFLARE_BACKGROUND)
+      await env.__NANOFLARE_BACKGROUND.add(new InvocationCompletion(completion));
+    return result;
+  } catch (error) {
+    ctx.waitUntil(broker.finish(true));
+    throw error;
+  }
+}
 async function invokeArtifact(env, ctx, control, artifact, request, props) {
+  if (artifact.outbound_execution)
+    return invokeOrdinaryArtifact(env, ctx, control, artifact, "fetch", [request]);
   const reference = crypto.randomUUID();
   const broker = (parentExports || ctx.exports).DispatchBroker({
-    props: { control, lease: artifact.lease, resourceControl: env.__NANOFLARE_RESOURCE_CONTROL },
+    props: {
+      control,
+      lease: artifact.lease,
+      resourceControl: env.__NANOFLARE_RESOURCE_CONTROL,
+      background: env.__NANOFLARE_BACKGROUND,
+      outbound: artifact.restricted_outbound && !artifact.outbound_execution,
+    },
   });
   try {
     if (request.headers.get("upgrade"))
       throw Object.assign(new Error("WebSockets are not supported"), { status: 501 });
-    const key = `${artifact.deployment.app_id}:${artifact.deployment.id}:${artifact.digest}`;
+    const key = `${artifact.deployment.app_id}:${artifact.deployment.id}:${artifact.digest}:${artifact.restricted_outbound ? "restricted" : "sockets"}:${JSON.stringify(artifact.outbound_parameter_names || [])}`;
     let cached = revisions.get(key);
     let code = cached?.code;
     let wasmBytes = 0;
@@ -223,7 +461,9 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
         mainModule: "__nanoflare_dynamic_entrypoint__.js",
         modules,
         env: artifact.values,
-        globalOutbound: env.__NANOFLARE_WFP_SOCKET_OUTBOUND ?? null,
+        globalOutbound: artifact.restricted_outbound
+          ? null
+          : (env.__NANOFLARE_WFP_SOCKET_OUTBOUND ?? null),
       };
     }
     if (!cached)
@@ -243,10 +483,17 @@ async function invokeArtifact(env, ctx, control, artifact, request, props) {
     }
     // get() returns a request-bound native channel. Its ID allows the
     // runtime to reuse code, but the channel itself must never be cached.
-    const worker = env.__NANOFLARE_WORKER_LOADER.get(key, () => code);
+    const worker = artifact.restricted_outbound
+      ? env.__NANOFLARE_WORKER_LOADER.get(null, () => ({ ...code, globalOutbound: broker }))
+      : env.__NANOFLARE_WORKER_LOADER.get(key, () => code);
     request.headers.delete("X-Nanoflare-Dispatch-Root");
     const target = worker.getEntrypoint(undefined, {
-      props: { ...props, __NANOFLARE_BROKER: broker, __NANOFLARE_ERROR_ID: reference },
+      props: {
+        ...props,
+        __NANOFLARE_BROKER: broker,
+        __NANOFLARE_ERROR_ID: reference,
+        __NANOFLARE_OUTBOUND_PARAMETERS: artifact.outbound_parameters || {},
+      },
     });
     return trackResponse(await target.fetch(request), broker, ctx, reference);
   } catch (error) {
@@ -269,6 +516,7 @@ export function wrapDispatchEnv(env, ctx, root) {
       value: {
         get(script, options = {}, dispatchOptions = {}) {
           requireSupportedOptions(options, dispatchOptions);
+          dispatchOptions = snapshotDispatchOptions(dispatchOptions);
           if (typeof script !== "string" || !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(script))
             throw argumentError("Invalid script name");
           const props = options.props === undefined ? {} : options.props;
@@ -299,7 +547,12 @@ export function wrapDispatchEnv(env, ctx, root) {
                   {
                     method: "POST",
                     headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ script, root }),
+                    body: JSON.stringify({
+                      script,
+                      root,
+                      binding,
+                      outbound: dispatchOptions.outbound,
+                    }),
                   },
                 ),
                 true,

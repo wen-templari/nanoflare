@@ -57,12 +57,30 @@ export class NamedExportBridge extends WorkerEntrypoint {
   return (await this._target).invoke(name,props,method,args,read);
  }
 }
+const dispatchBackgrounds=new Map();
+export class DispatchBackgroundBridge extends WorkerEntrypoint {
+ add(completion){const state=dispatchBackgrounds.get(this.ctx.props.id);if(!state)throw new Error("Expired dispatch background");state.pending++;Promise.resolve(completion.wait()).then(()=>{state.pending--;state.drain();},error=>{state.pending--;state.reject(error);});}
+ wait(){const id=this.ctx.props.id,state=dispatchBackgrounds.get(id);return state?.done.finally(()=>dispatchBackgrounds.delete(id));}
+}
+function createDispatchBackground(exports) {
+ if(dispatchBackgrounds.size>=1024)throw new Error("Dispatch background capacity exceeded");
+ const id=crypto.randomUUID(),state={pending:0,sealed:false};
+ state.done=new Promise((resolve,reject)=>{state.resolve=resolve;state.reject=reject;});
+ // Registry state is request-local and bounded independently of code caches.
+ // The server's root deadline remains authoritative for all effects.
+ const timer=setTimeout(()=>state.reject(new Error("Dispatch background deadline exceeded")),30000);
+ state.done.finally(()=>{clearTimeout(timer);dispatchBackgrounds.delete(id);}).catch(()=>{});
+ state.drain=()=>{if(state.sealed&&!state.pending)state.resolve();};
+ dispatchBackgrounds.set(id,state);
+ return {binding:exports.DispatchBackgroundBridge({props:{id}}),seal(){state.sealed=true;state.drain();}};
+}
 export class WFPBridge extends WorkerEntrypoint {
  async invoke(token,binding,script,options,dispatchOptions,root,request) {
   const control=parentExports.ResourceBridge({props:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token}});
-  const env={__NANOFLARE_WFP_SOCKET_OUTBOUND:this.env.__NANOFLARE_WFP_SOCKET_OUTBOUND,__NANOFLARE_RESOURCE_CONTROL:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token},__NANOFLARE_WORKER_LOADER:this.env.LOADER,__NANOFLARE_DISPATCH_BINDINGS:{[binding]:"control"},control};
-  try{return {response:await wrapDispatchEnv(env,this.ctx,root)[binding].get(script,restoreExportProps(options,this.ctx.props.key,token),dispatchOptions).fetch(request)};}
-  catch(error){return {error:error.message,status:error.status||500};}
+  const backgroundState=createDispatchBackground(parentExports),background=backgroundState.binding;
+  const env={__NANOFLARE_BACKGROUND:background,__NANOFLARE_OUTBOUND_NETWORK:this.env.OUTBOUND,__NANOFLARE_WFP_SOCKET_OUTBOUND:this.env.__NANOFLARE_WFP_SOCKET_OUTBOUND,__NANOFLARE_RESOURCE_CONTROL:{key:this.ctx.props.key,binding:"__NANOFLARE_DISPATCH:"+binding,token},__NANOFLARE_WORKER_LOADER:this.env.LOADER,__NANOFLARE_DISPATCH_BINDINGS:{[binding]:"control"},control};
+  try{const response=await wrapDispatchEnv(env,this.ctx,root)[binding].get(script,restoreExportProps(options,this.ctx.props.key,token),dispatchOptions).fetch(request);backgroundState.seal();return {response,background};}
+  catch(error){backgroundState.seal();return {error:error.message,status:error.status||500,background};}
  }
 }
 

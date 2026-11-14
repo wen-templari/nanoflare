@@ -62,16 +62,20 @@ installImportedBindings(` + string(declarationJSON) + `, env => wrapEnv(env, ` +
 	code.Modules[main] = WorkerCodeModule{JS: `import "./` + importedEnvModule + `";
 import UserWorker, * as UserModule from "./` + code.MainModule + `";
 export * from "./` + code.MainModule + `";
+export class NanoflareInvocationCompletion extends WorkerEntrypoint {
+ wait() { return waitInvocation(this.ctx.props.__nanoflare_invocation?.token); }
+}
 export class NanoflareExportDispatcher extends WorkerEntrypoint {
- invoke(name,props,method,args,read=false) {
+ invoke(name,props,method,args,read=false,fetchEntrypoint=false) {
   const state=this._state??=invocationState(this.env,this.ctx);
   const Type=UserModule[name];
+  if(fetchEntrypoint && (typeof Type!=="function" || !(Type.prototype instanceof WorkerEntrypoint) || typeof Type.prototype.fetch!=="function"))throw new TypeError("Invalid outbound fetch entrypoint: "+name);
   if(typeof Type!=="function" || typeof method!=="string" || method.startsWith("_") || ["constructor","ctx","env","prototype","__proto__"].includes(method)) throw new Error("Invalid named export call");
   return runInvocation(state,()=>{const instance=this._instance??=new Type({...state.ctx,props:restoreRpcProps(props)},state.env);return read?instance[method]:instance[method](...args);});
  }
 }
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { makeInvocation, runInvocation, wrapInvocationExports, restoreRpcProps } from "` + loaderInvocationContextModule + `";
+import { makeInvocation, runInvocation, wrapInvocationExports, restoreRpcProps, waitInvocation } from "` + loaderInvocationContextModule + `";
 const declarations = ` + string(declarationJSON) + `;
 function invocationState(env, ctx) {
   const state = makeInvocation(env, ctx, declarations);
@@ -134,9 +138,19 @@ export default WrappedWorker;
 	return code
 }
 
-var loaderInvocationContextSource = runtimeassets.ExportPropsModule + "\n" + runtimeassets.ErrorsModule + "\n" + runtimeassets.FetchSignalModule + "\n" + `import { AsyncLocalStorage } from "node:async_hooks";
+// InstallOutboundParameters overlays request-local values without storing them in code.
+func InstallOutboundParameters(code *WorkerCodeSnapshot, names []string) {
+	encoded, _ := json.Marshal(append([]string{}, names...))
+	module := code.Modules["__nanoflare_imported_env__.js"]
+	module.JS += "\nimport { installOutboundParameters } from \"" + loaderInvocationContextModule + "\";\ninstallOutboundParameters(" + string(encoded) + ");\n"
+	code.Modules["__nanoflare_imported_env__.js"] = module
+}
+
+var loaderInvocationContextSource = runtimeassets.DispatchOptionsModule + "\n" + runtimeassets.ExportPropsModule + "\n" + runtimeassets.ErrorsModule + "\n" + runtimeassets.FetchSignalModule + "\n" + `import { AsyncLocalStorage } from "node:async_hooks";
 import { env as nativeEnv, RpcTarget } from "cloudflare:workers";
 const storage = new AsyncLocalStorage();
+const invocationCompletions = new Map();
+export function waitInvocation(token) { return invocationCompletions.get(token)?.completion; }
 function recordLog(state,level,args) {
  if(!state?.log) return;
  let message;
@@ -146,6 +160,11 @@ function recordLog(state,level,args) {
 for(const level of ["debug","info","log","warn","error"]){const original=console[level];console[level]=(...args)=>{recordLog(storage.getStore(),level,args);return original.apply(console,args);};}
 
 export function currentInvocationEnv() { return storage.getStore()?.env ?? nativeEnv; }
+let outboundParameterNames=[];
+export function installOutboundParameters(names) {
+ outboundParameterNames=names;
+ for(const name of names)Object.defineProperty(nativeEnv,name,{enumerable:true,configurable:true,get(){return storage.getStore()?.env[name];}});
+}
 
 // workerd dispatches WebSocket events outside the registering async context.
 // Capture it at registration, without changing synchronous EventTarget behavior.
@@ -246,13 +265,15 @@ export function installImportedBindings(declarations, wrapEnv) {
     Object.defineProperty(nativeEnv, name, { enumerable: true, configurable: true, value: wrapped[name] });
   }
   for (const name of declarations.dispatch || []) {
-  Object.defineProperty(nativeEnv,name,{enumerable:true,configurable:true,value:{get(script,options={},dispatchOptions={}) {return {fetch(input,init){const state=storage.getStore();if(!state)throw new Error("Dispatch outside admitted invocation");return state.env.__NANOFLARE_WFP.invoke(name,script,options,dispatchOptions,null,new Request(input,init));}};}}});
+  Object.defineProperty(nativeEnv,name,{enumerable:true,configurable:true,value:{get(script,options={},dispatchOptions={}) {dispatchOptions=snapshotDispatchOptions(dispatchOptions);return {fetch(input,init){const state=storage.getStore();if(!state)throw new Error("Dispatch outside admitted invocation");return state.env.__NANOFLARE_WFP.invoke(name,script,options,dispatchOptions,null,new Request(input,init));}};}}});
  }
  for (const name of declarations.services) {
     // The callback wrappers above retain this exact admission. Never substitute
     // another live invocation when a callback's original lifetime has drained.
     const binding = new Proxy({}, { get(_, method) {
-      if (method === "then") return undefined;
+      if (method === "then" || method === "toJSON") return undefined;
+      if (method === "toString") return () => "[object Object]";
+      if (method === "valueOf") return () => ({});
       if (typeof method !== "string") return undefined;
       return (...args) => {
         const state = storage.getStore();
@@ -391,15 +412,18 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
   for (const [name, value] of Object.entries(rawEnv)) {
     if (!["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_LIFECYCLE", "__NANOFLARE_SERVICE_BROKER", "__NANOFLARE_LOG_COLLECTOR", "__NANOFLARE_WFP"].includes(name)) state.env[name] = value;
   }
+  for(const name of outboundParameterNames)Object.defineProperty(state.env,name,{enumerable:true,configurable:true,writable:true,value:rawCtx.props?.__nanoflare_outbound_parameters?.[name]});
   for (const name of declarations.services) {
     state.env[name] = new Proxy({}, { get(_, method) {
-      if (method === "then") return undefined;
+      if (method === "then" || method === "toJSON") return undefined;
+      if (method === "toString") return () => "[object Object]";
+      if (method === "valueOf") return () => ({});
       if (method === "fetch") return (input, init) => fetchWithSignal(new Request(input, init), request => rawEnv.__NANOFLARE_SERVICE_BROKER.invoke(token, name, "fetch", [request]));
       if (typeof method !== "string") return undefined;
       return (...args) => rawEnv.__NANOFLARE_SERVICE_BROKER.invoke(token, name, method, args);
     } });
   }
-  state.env.__NANOFLARE_WFP={invoke(binding,script,options,dispatchOptions,root,request){return rawEnv.__NANOFLARE_WFP.invoke(token,binding,script,exportProps(options),dispatchOptions,rawCtx.props.__nanoflare_dispatch_root,request).then(result=>{if(result.error)throw Object.assign(new Error(result.error),{status:result.status});return result.response;});}};
+  state.env.__NANOFLARE_WFP={invoke(binding,script,options,dispatchOptions,root,request){return rawEnv.__NANOFLARE_WFP.invoke(token,binding,script,exportProps(options),dispatchOptions,rawCtx.props.__nanoflare_dispatch_root,request).then(result=>{if(result.background)state.ctx.waitUntil(result.background.wait());if(result.error)throw Object.assign(new Error(result.error),{status:result.status});return result.response;});}};
   for(const name of ["__NANOFLARE_ACCESS","__NANOFLARE_DURATION_COLLECTOR"]){if(rawEnv[name])state.env[name]={fetch(input,init){const request=new Request(input,init);request.headers.set("X-Nanoflare-Invocation",token);return rawEnv[name].fetch(request);}};}
   let finish, fail;
   async function lifecycle(operation, epoch) {
@@ -421,13 +445,15 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
     }
   }
   function beginEpoch() {
+    invocationCompletions.set(token,state);
     state.epoch++;
     state.started = false;
     state.mainDone = false;
     state.completing = false;
     const completion = new Promise((resolve, reject) => { finish = resolve; fail = reject; });
+    state.completion = completion;
     rawCtx.waitUntil(completion);
-    state.startPromise = lifecycle("start", state.epoch).then(() => { state.started = true; }).catch(error => { finish(); throw error; });
+    state.startPromise = lifecycle("start", state.epoch).then(() => { state.started = true; }).catch(error => { invocationCompletions.delete(token); finish(); throw error; });
     return state.startPromise;
   }
   state.start = () => {
@@ -447,11 +473,11 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
     if (!state.mainDone || state.running || state.pending || state.completing) return;
     state.completing = true;
     state.completionAck = lifecycle("complete", state.epoch);
-    state.completionAck.then(finish, fail);
+    state.completionAck.then(() => { invocationCompletions.delete(token); finish(); }, error => { invocationCompletions.delete(token); fail(error); });
     });
   };
   state.ctx = {
-    props: Object.fromEntries(Object.entries(rawCtx.props ?? {}).filter(([name]) => name !== "__nanoflare_invocation" && name !== "__nanoflare_dispatch_root")),
+    props: Object.fromEntries(Object.entries(rawCtx.props ?? {}).filter(([name]) => name !== "__nanoflare_invocation" && name !== "__nanoflare_dispatch_root" && name !== "__nanoflare_outbound_parameters")),
     exports: rawCtx.exports,
     waitUntil(value) {
       state.pending++;
