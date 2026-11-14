@@ -1,0 +1,669 @@
+{
+  "schema_version": 1,
+  "contract_version": "2026-11-14.1",
+  "baseline": "Current local qualified surface; each evidence claim remains scoped to its named fixture and run report, not hosted Cloudflare",
+  "versions": {
+    "wrangler": "4.54.0",
+    "cloudflare_sdk": "7.3.0",
+    "workerd_package": "1.20260911.1",
+    "workerd": "2026-09-11"
+  },
+  "sources": {
+    "guide": "https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/outbound-workers/",
+    "api": "https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/",
+    "wrangler": "https://github.com/cloudflare/workers-sdk/tree/wrangler%404.54.0/packages/wrangler",
+    "sdk": "https://github.com/cloudflare/cloudflare-typescript/tree/v7.3.0",
+    "workerd": "https://github.com/cloudflare/workerd/tree/v1.20260911.1"
+  },
+  "groups": {
+    "parameters": {
+      "package": "./internal/config",
+      "test": "TestOutboundParameterSnapshot",
+      "native": false
+    },
+    "admission": {
+      "package": "./internal/api",
+      "test": "TestOutboundBindingAdmission",
+      "native": false
+    },
+    "metadata": {
+      "package": "./internal/cfcompat",
+      "test": "TestOutboundBindingTranslationAndRetention",
+      "native": false
+    },
+    "cli": {
+      "package": "./internal/cli",
+      "test": "TestOutboundProjectConfigAndResolution",
+      "native": false
+    },
+    "engine": {
+      "package": "./internal/config",
+      "test": "TestWorkerdOutboundIsolation",
+      "native": true
+    },
+    "runtime": {
+      "package": "./internal/api",
+      "test": "TestOutboundWorkersEndToEnd",
+      "native": true
+    },
+    "wrangler-runtime": {
+      "package": "./internal/api",
+      "test": "TestWranglerRuntimeWorkflow",
+      "native": true
+    },
+    "engine-native-http": {
+      "package": "./internal/config",
+      "test": "TestWorkerdOutboundNativeHTTP",
+      "native": true
+    },
+    "persistence": {
+      "package": "./internal/api",
+      "test": "TestOutboundPublicationPersistenceRecovery",
+      "native": false
+    },
+    "sdk-runtime": {
+      "package": "./internal/api",
+      "test": "TestCloudflareSDKRuntimeWorkflow",
+      "native": true
+    },
+    "sdk-postgres": {
+      "package": "./internal/api",
+      "test": "TestCloudflareSDKRuntimePostgresWorkflow",
+      "native": true
+    },
+    "wrangler-postgres": {
+      "package": "./internal/api",
+      "test": "TestWranglerRuntimePostgresWorkflow",
+      "native": true
+    },
+    "runner-restart": {
+      "package": "./internal/api",
+      "test": "TestOutboundRunnerRestart",
+      "native": true
+    },
+    "runner-postgres-restart": {
+      "package": "./internal/api",
+      "test": "TestOutboundRunnerPostgresRestart",
+      "native": true
+    },
+    "runtime-postgres": {
+      "package": "./internal/api",
+      "test": "TestOutboundWorkersPostgresEndToEnd",
+      "native": true
+    },
+    "selector-lifecycle": {
+      "package": "./internal/api",
+      "test": "TestOutboundSelectorLifecycle",
+      "native": false
+    },
+    "shared-budget-depth": {
+      "package": "./internal/api",
+      "test": "TestOutboundSharedBudgetAndDepth",
+      "native": false
+    },
+    "ordinary-api-parity": {
+      "package": "./internal/api",
+      "test": "TestOutboundOrdinaryAPIs",
+      "native": true
+    },
+    "environment-runtime": {
+      "package": "./internal/api",
+      "test": "TestOutboundEnvironmentEndToEnd",
+      "native": true
+    },
+    "environment-postgres-runtime": {
+      "package": "./internal/api",
+      "test": "TestOutboundEnvironmentPostgresEndToEnd",
+      "native": true
+    },
+    "environment-persistence": {
+      "package": "./internal/api",
+      "test": "TestOutboundEnvironmentPersistence",
+      "native": false
+    },
+    "environment-cli": {
+      "package": "./internal/cli",
+      "test": "TestOutboundProjectEnvironmentResolution",
+      "native": false
+    },
+    "environment-metadata": {
+      "package": "./internal/cfcompat",
+      "test": "TestOutboundEnvironmentTranslation",
+      "native": false
+    },
+    "console-retained": {
+      "package": "./internal/nanoflare",
+      "test": "TestDispatchBindingsRetainedPublication",
+      "native": false
+    },
+    "console-concurrent": {
+      "package": "./internal/nanoflare",
+      "test": "TestDispatchBindingsConcurrentPublication",
+      "native": false
+    },
+    "console-endpoint": {
+      "package": "./internal/api",
+      "test": "TestOrgWorkerDispatchBindingsEndpoint",
+      "native": false
+    }
+  },
+  "cases": [
+    {
+      "id": "binding-local",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "cloudflare": "Optional policy on each dispatch namespace binding",
+      "local": "Two policies and a no-policy binding may share one namespace",
+      "groups": [
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "metadata-wire",
+      "sources": [
+        "api",
+        "wrangler",
+        "sdk"
+      ],
+      "evidence": [
+        "documented",
+        "upstream-client-observed"
+      ],
+      "cloudflare": "Nested outbound.worker selector and outbound.params name array",
+      "local": "Translate service name to immutable ordinary Worker ID; preserve on keep/inherit",
+      "groups": [
+        "metadata",
+        "cli",
+        "sdk-runtime",
+        "sdk-postgres",
+        "wrangler-runtime",
+        "wrangler-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "wrangler-selector",
+      "sources": [
+        "wrangler"
+      ],
+      "evidence": [
+        "upstream-client-observed"
+      ],
+      "cloudflare": "4.54.0 schema has service/environment/parameters; serializer forwards environment unchanged; no entrypoint field",
+      "local": "Service accepted; non-production environment rejected",
+      "groups": [
+        "cli"
+      ],
+      "disposition": "implement"
+    },
+    {
+      "id": "named-entrypoint",
+      "sources": [
+        "api",
+        "sdk"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "documented",
+        "hosted-unverified"
+      ],
+      "cloudflare": "API/SDK worker.entrypoint selects export; pinned Wrangler does not expose it",
+      "local": "Named API/native selector preserved in CLI/config, multipart, settings, keep/inherit and ordinary invocation; production Policy class exercised",
+      "groups": [
+        "metadata",
+        "cli",
+        "runtime",
+        "sdk-runtime",
+        "sdk-postgres",
+        "selector-lifecycle",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "environment-selection",
+      "sources": [
+        "api",
+        "wrangler",
+        "sdk"
+      ],
+      "evidence": [
+        "documented",
+        "hosted-unverified",
+        "locally-qualified"
+      ],
+      "cloudflare": "Service environment selector exists; exact legacy service versus independent deployed-name behavior requires comparison",
+      "local": "Persisted service/environment relationship selects independent immutable Worker IDs, code, secrets and traffic; native bindings pin child ID; no suffix inference. New production services also retain unique identity across delete/recreate.",
+      "groups": [
+        "environment-runtime",
+        "environment-postgres-runtime",
+        "environment-persistence",
+        "environment-cli",
+        "environment-metadata",
+        "wrangler-runtime",
+        "wrangler-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "ordinary-target-capabilities",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Guide creates a Worker; it does not enumerate a blanket prohibition on target bindings",
+      "local": "Ordinary target compilation/invocation; own KV/secrets, service fetch/RPC with helper own secret, own nested dispatch and named export exercised in static/dynamic local/remote matrix; DNS profile enforced through trusted broker",
+      "groups": [
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "target-egress",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "documented",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Policy can forward requests and perform background logging",
+      "local": "Ordinary target networking restored independently from customer TCP restriction; forwarding tested in production matrix",
+      "groups": [
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "customer-fetch",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "cloudflare": "Customer fetch invokes policy fetch handler",
+      "local": "Adapter fetch invokes admitted policy with its own secrets/KV",
+      "groups": [
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "customer-native-http",
+      "sources": [
+        "workerd"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Node/native HTTP coverage must be measured separately; globalOutbound schema alone only describes global fetch",
+      "local": "Engine fixture intercepts native fetch/node:http and production fixture verifies native HTTP interception through anonymous per-invocation descriptors",
+      "groups": [
+        "engine-native-http",
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "customer-tcp",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "cloudflare": "Customer connect() disabled when outbound enabled",
+      "local": "Native TCP denied for policy-bound customer even with executor sockets enabled",
+      "groups": [
+        "engine",
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "no-policy-baseline",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified"
+      ],
+      "cloudflare": "Outbound attachment optional",
+      "local": "No-policy native networking remains enabled under executor policy",
+      "groups": [
+        "engine",
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "exclusion-do-mtls",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "documented"
+      ],
+      "cloudflare": "Durable Object and mTLS binding fetches are excluded",
+      "local": "These platform capabilities are not implemented; no interception claim",
+      "groups": [],
+      "disposition": "platform-dependency"
+    },
+    {
+      "id": "parameter-env",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "documented",
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Named parameters available through env; sample declares params_object but reads flattened fields inconsistently",
+      "local": "Named env property preserved; object is not flattened; imported env and class constructor covered",
+      "groups": [
+        "runtime",
+        "sdk-runtime",
+        "sdk-postgres",
+        "wrangler-runtime",
+        "wrangler-postgres",
+        "runtime-postgres"
+      ],
+      "disposition": "compare"
+    },
+    {
+      "id": "parameter-json",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Example passes object; full value domain unspecified",
+      "local": "Finite JSON scalars, arrays and nested objects; excludes non-JSON values",
+      "groups": [
+        "parameters"
+      ],
+      "disposition": "compare"
+    },
+    {
+      "id": "parameter-mutation",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Snapshot timing not established",
+      "local": "Copy synchronously at get(); concurrent invocations isolate values",
+      "groups": [
+        "parameters",
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "compare"
+    },
+    {
+      "id": "parameter-missing",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "hosted-unverified"
+      ],
+      "cloudflare": "Missing declared value behavior unspecified",
+      "local": "Missing declared value reads undefined through both handler and imported environments in the production matrix",
+      "groups": [
+        "runtime"
+      ],
+      "disposition": "compare"
+    },
+    {
+      "id": "parameter-extra",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Extra undeclared name behavior unspecified",
+      "local": "Reject undeclared parameters and parameters supplied without policy",
+      "groups": [
+        "admission"
+      ],
+      "disposition": "compare"
+    },
+    {
+      "id": "parameter-collision",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Binding/secret collision precedence unspecified",
+      "local": "Reject variable, secret, resource and reserved-name collisions",
+      "groups": [
+        "admission"
+      ],
+      "disposition": "deployment-policy"
+    },
+    {
+      "id": "parameter-limits",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "No equivalent numeric limit established",
+      "local": "16 KiB JSON, depth 64, 64 declared names; explicit executor bounds",
+      "groups": [
+        "parameters"
+      ],
+      "disposition": "deployment-policy"
+    },
+    {
+      "id": "policy-block",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "cloudflare": "Policy may block or add authentication",
+      "local": "403 can block without origin hit; own secret used for forwarding",
+      "groups": [
+        "engine",
+        "runtime",
+        "sdk-runtime",
+        "sdk-postgres",
+        "wrangler-runtime",
+        "wrangler-postgres",
+        "runtime-postgres"
+      ],
+      "disposition": "preserve"
+    },
+    {
+      "id": "streams-binary-redirects",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Detailed HTTP semantics need comparison",
+      "local": "Engine fixture covers streamed response, binary POST and authorization, buffered 302 cross-origin redirect method and credential stripping; full production/lifetime matrix pending",
+      "groups": [
+        "engine-native-http"
+      ],
+      "disposition": "implement"
+    },
+    {
+      "id": "exceptions-lifetime",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "hosted-unverified"
+      ],
+      "cloudflare": "Guide uses waitUntil; exception/cancellation/deadline details need comparison",
+      "local": "Policy request exceptions fail closed; streams and disconnects, long waitUntil, bounded root cancellation, restart, shared budgets and depth tested through production paths",
+      "groups": [
+        "runtime",
+        "runtime-postgres",
+        "shared-budget-depth",
+        "runner-restart",
+        "runner-postgres-restart"
+      ],
+      "disposition": "implement"
+    },
+    {
+      "id": "nested-service-dispatch",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Policy propagation through service/dispatch chains unspecified",
+      "local": "Target own service fetch/RPC and nested dispatch bindings qualified with independent resource authority; hosted chain propagation semantics remain unverified",
+      "groups": [
+        "runtime",
+        "runtime-postgres"
+      ],
+      "disposition": "compare"
+    },
+    {
+      "id": "revision-secret-pinning",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Selection timing/weighted deployment/secret update behavior unspecified",
+      "local": "Target revision and secret version pinned at customer admission",
+      "groups": [
+        "admission",
+        "selector-lifecycle"
+      ],
+      "disposition": "compare"
+    },
+    {
+      "id": "target-revocation",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Delete/recreate and in-flight revocation semantics unspecified",
+      "local": "Immutable IDs, no rebound to recreated name, deleted target fails",
+      "groups": [
+        "admission",
+        "metadata",
+        "selector-lifecycle"
+      ],
+      "disposition": "deployment-policy"
+    },
+    {
+      "id": "persistence-recovery",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Outbound-specific restart/publication failure semantics unspecified",
+      "local": "Service/repository reopen and durable pending/failed publication recovery; eight-way native child replacement; remote runner HTTP+manager teardown/new boot identity and ReconcileRuntime restores named policy, parameters, own secret and persisted KV state (memory/PostgreSQL, static/dynamic, local/remote)",
+      "groups": [
+        "persistence",
+        "runner-restart",
+        "runner-postgres-restart"
+      ],
+      "disposition": "implement"
+    },
+    {
+      "id": "console-authoring",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "hosted-unverified"
+      ],
+      "cloudflare": "No entitled dashboard observed; no UI parity claim",
+      "local": "Full-bundle and retained-revision direct editing verified; optimistic traffic/revision checks, idempotency, frozen secrets, scopes and concurrent publication tested; wide/narrow browser checks and namespace references inspected",
+      "groups": [
+        "console-retained",
+        "console-concurrent",
+        "console-endpoint"
+      ],
+      "disposition": "implement"
+    },
+    {
+      "id": "shared-budget-depth",
+      "sources": [
+        "guide"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Hosted shared effect accounting and recursion semantics require comparison; this is not equivalent CPU interruption evidence",
+      "local": "Production admission/effect APIs enforce exact shared 10000-unit accounting across customer and policy admissions/effects; exhaustion and depth9 return429, declared recursive service reaches depth8, resource authority remains separate, ingress cancellation revokes retained nested target effects",
+      "groups": [
+        "shared-budget-depth"
+      ],
+      "disposition": "deployment-policy"
+    },
+    {
+      "id": "ordinary-network-cache-parity",
+      "sources": [
+        "workerd"
+      ],
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "cloudflare": "Outbound ordinary target capability parity is qualified locally; hosted networking and Cache semantics remain unverified",
+      "local": "Same code ordinary/outbound: native TCP succeeds under explicit executor local-network policy; customer TCP denied. Both Cache APIs report no configured backend on this runner. No private Cache override.",
+      "groups": [
+        "ordinary-api-parity"
+      ],
+      "disposition": "preserve"
+    }
+  ]
+}

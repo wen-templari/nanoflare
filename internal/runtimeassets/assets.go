@@ -12,7 +12,10 @@ var BindingsModule string
 //go:embed assets/dispatch.js
 var dispatchModule string
 
-var DispatchModule = ErrorsModule + "\n" + dispatchModule
+//go:embed assets/dispatch-options.js
+var DispatchOptionsModule string
+
+var DispatchModule = ErrorsModule + "\n" + DispatchOptionsModule + "\n" + dispatchModule
 
 //go:embed assets/dynamic-env.js
 var dynamicEnvModule string

@@ -51,6 +51,21 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 	if err != nil {
 		return VarsUpdateResult{}, err
 	}
+	return s.updateRetainedDeploymentForOrg(orgID, appID, input, fingerprint, func(current *ActiveDeployment, next *Deployment) error {
+		if err := validateBindingCollisions(input.Vars, current.App.SecretValues, current.Deployment.KVNamespaces, current.Deployment.Databases, current.Deployment.ObjectStorageBuckets, current.Deployment.Services, current.Deployment.AssetConfig); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidVarsUpdate, err)
+		}
+		if err := validateDispatchNameCollisions(current.Deployment.DispatchNamespaces, input.Vars, current.App.SecretValues); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidVarsUpdate, err)
+		}
+		next.Vars = cloneVars(input.Vars)
+		return nil
+	})
+}
+
+// updateRetainedDeploymentForOrg publishes a configuration-only revision through
+// the same durable operation journal and recovery path as variable updates.
+func (s *Service) updateRetainedDeploymentForOrg(orgID, appID string, input UpdateVarsInput, fingerprint string, mutate func(*ActiveDeployment, *Deployment) error) (VarsUpdateResult, error) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 	release, err := s.store.LockDeploymentUpdates()
@@ -125,12 +140,6 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 		return VarsUpdateResult{}, ErrDeploymentConflict
 	}
 	current := activeForApp(active, appID)
-	if err := validateBindingCollisions(input.Vars, current.App.SecretValues, current.Deployment.KVNamespaces, current.Deployment.Databases, current.Deployment.ObjectStorageBuckets, current.Deployment.Services, current.Deployment.AssetConfig); err != nil {
-		return VarsUpdateResult{}, fmt.Errorf("%w: %v", ErrInvalidVarsUpdate, err)
-	}
-	if err := validateDispatchNameCollisions(current.Deployment.DispatchNamespaces, input.Vars, current.App.SecretValues); err != nil {
-		return VarsUpdateResult{}, fmt.Errorf("%w: %v", ErrInvalidVarsUpdate, err)
-	}
 	// Round-trip to detach every slice/map, including nested trigger/asset config.
 	payload, err := json.Marshal(current.Deployment)
 	if err != nil {
@@ -150,7 +159,9 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 	next.CreatedAt = time.Now().UTC()
 	next.CreatedBy = strings.TrimSpace(input.CreatedBy)
 	next.CommitMessage = input.CommitMessage
-	next.Vars = cloneVars(input.Vars)
+	if err := mutate(current, &next); err != nil {
+		return VarsUpdateResult{}, err
+	}
 	baseArtifact, err := s.freezeArtifact(*current, nil)
 	if err != nil {
 		return VarsUpdateResult{}, err

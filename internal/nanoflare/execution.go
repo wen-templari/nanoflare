@@ -81,7 +81,7 @@ func cloneExecutionActive(a ActiveDeployment) ActiveDeployment {
 	d.Databases = slices.Clone(d.Databases)
 	d.ObjectStorageBuckets = slices.Clone(d.ObjectStorageBuckets)
 	d.Services = slices.Clone(d.Services)
-	d.DispatchNamespaces = slices.Clone(d.DispatchNamespaces)
+	d.DispatchNamespaces = CloneDispatchBindings(d.DispatchNamespaces)
 	d.AssetConfig.RunWorkerFirst = slices.Clone(d.AssetConfig.RunWorkerFirst)
 	return a
 }

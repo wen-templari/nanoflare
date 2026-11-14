@@ -63,6 +63,10 @@ func (p *Postgres) PoolStats() nanoflare.RepositoryPoolStats {
 
 func (p *Postgres) migrate(ctx context.Context) error {
 	_, err := p.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS ordinary_services (org_id TEXT NOT NULL,name TEXT NOT NULL,worker_id TEXT NOT NULL,PRIMARY KEY(org_id,name));
+CREATE TABLE IF NOT EXISTS service_environments (
+ org_id TEXT NOT NULL, service_id TEXT NOT NULL, service_generation TIMESTAMPTZ NOT NULL, name TEXT NOT NULL, worker_id TEXT NOT NULL, PRIMARY KEY(service_id,name)
+);
 CREATE TABLE IF NOT EXISTS oidc_browser_records (
  id TEXT PRIMARY KEY,
  payload BYTEA NOT NULL,

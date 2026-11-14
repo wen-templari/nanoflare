@@ -1,0 +1,1115 @@
+{
+  "schema_version": 1,
+  "contract_version": "2026-11-14.1",
+  "manifest_sha256": "b63379bcd22e9b5ad65c16b7c6f3197f0383b09e49270488a7404fbbbf36e84d",
+  "generated_at": "2026-11-14T06:01:37.808Z",
+  "source_commit": "804c1a0a5a39e00cfedb75909d4f040541ca571b",
+  "source_dirty": true,
+  "node": "v26.13.1",
+  "upstream": {
+    "workerd": {
+      "status": "observed",
+      "version": "workerd 2026-09-11",
+      "expected": "2026-09-11"
+    },
+    "wrangler": {
+      "status": "passed",
+      "version": "4.54.0",
+      "schema_sha256": "451104c2b86508e4515c72f11a9d7afb1182db48baa35fb869ad628f9d2347c9",
+      "serializer_sha256": "c6985faa1b7d6fdea3c7a48047e5cd62ad5c5d08829966f2855dc71e36835da2",
+      "observations": [
+        "environment forwarded unchanged",
+        "entrypoint absent from config schema",
+        "parameter names mapped to params objects"
+      ]
+    },
+    "sdk": {
+      "status": "passed",
+      "version": "7.3.0",
+      "selector_types_sha256": "3a06090b9e5786b3b80186d68f4e0679bba320e0398bbb5e3a3d40a9e83dfc29",
+      "default_keys": [
+        "metadata[main_module]",
+        "metadata[bindings][][name]",
+        "metadata[bindings][][type]",
+        "metadata[bindings][][namespace]",
+        "metadata[bindings][][outbound][worker][service]",
+        "metadata[bindings][][outbound][worker][environment]",
+        "metadata[bindings][][outbound][worker][entrypoint]",
+        "metadata[bindings][][outbound][params][][name]"
+      ],
+      "observations": [
+        "types expose service/environment/entrypoint",
+        "default object arrays emit unindexed fields",
+        "explicit JSON metadata preserves full selector"
+      ]
+    }
+  },
+  "groups": {
+    "parameters": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/config",
+        "-run",
+        "^TestOutboundParameterSnapshot$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "916a61dab9c2a687208453ffbef23f90d5cb90e4afe99687fef94f4f1865f0d2"
+    },
+    "admission": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundBindingAdmission$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "504e6e0f4944a90cad08edd78d6d5465e4c93286c9b86a7ad9141c461eb0eddb"
+    },
+    "metadata": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/cfcompat",
+        "-run",
+        "^TestOutboundBindingTranslationAndRetention$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "0884342d5fed777d8a9ad4b5b058a554dd0b4099501fae0c5038880c52f26143"
+    },
+    "cli": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/cli",
+        "-run",
+        "^TestOutboundProjectConfigAndResolution$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "fe9e533383288d7acdade9e1b5e178453bb893f647658158bd60e49bf1fdb1f0"
+    },
+    "engine": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/config",
+        "-run",
+        "^TestWorkerdOutboundIsolation$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "f6270ce93d0e8bd0a4b9fe660c00e1fe1a4e32cbe8c20841e7ce4992d60e2018"
+    },
+    "runtime": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundWorkersEndToEnd$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "a40bc656d937da6edec3bf1733c6e68f64a63e4ccc12af526d128a0a28bae5db"
+    },
+    "wrangler-runtime": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestWranglerRuntimeWorkflow$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "530a1b90067dd6a91e418ac9dec22ae0eda07fffc2f68dd37310308536e5f3fe"
+    },
+    "engine-native-http": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/config",
+        "-run",
+        "^TestWorkerdOutboundNativeHTTP$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "046d9a1e52c5ff2db50d688bfeed2ed3837faea5454a2593aa0f03226077d50b"
+    },
+    "persistence": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundPublicationPersistenceRecovery$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "db1038eb8464ba2b1f01b37e31d55b9fe54e0569aa68148479fd714bf5bfda68"
+    },
+    "sdk-runtime": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestCloudflareSDKRuntimeWorkflow$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "c4d7c1b0181f9e34e93dc399768c443b52781178dc7ad41befe6c29175e1cca6"
+    },
+    "sdk-postgres": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestCloudflareSDKRuntimePostgresWorkflow$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "a2b6c4df4f8b1df3d5d370e8700679fedbfdf577b1db66683dfd216c031a1aef"
+    },
+    "wrangler-postgres": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestWranglerRuntimePostgresWorkflow$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "6488118d80bd5cd79a9de7f726b845c6824121b96d3f3775872f2c4bff146e65"
+    },
+    "runner-restart": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundRunnerRestart$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "73ecbadecdd99e767ffd7df65e613c34a43d573643b876ce40b2729eb23a649c"
+    },
+    "runner-postgres-restart": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundRunnerPostgresRestart$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "a6e5739d4d37e5153c42bc6e6d4f759c295024d8a135c1b939cbeec7b8e26609"
+    },
+    "runtime-postgres": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundWorkersPostgresEndToEnd$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "e9577ea2800b82384e1134abcb6be2d8bd147a7f5b44fd96c206e3b494aeebac"
+    },
+    "selector-lifecycle": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundSelectorLifecycle$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "d12337aed1b45edc6a8c2d79af86cb45cb96d7b2e7d801ab05ebd61fd88e1308"
+    },
+    "shared-budget-depth": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundSharedBudgetAndDepth$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "bb5a035741d301761d363cd270fb61aa18e60e4b0f08780f74d75bbf69aa0395"
+    },
+    "ordinary-api-parity": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundOrdinaryAPIs$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "5da5bdb163e87771e7d4deef55c6f38cc661b737c8626bd6d566897cfae6e92c"
+    },
+    "environment-runtime": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundEnvironmentEndToEnd$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "7fc2551d2c73c32775b78a166ebfad6e56fccbe61f5b963deb70e94692d0a1e7"
+    },
+    "environment-postgres-runtime": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundEnvironmentPostgresEndToEnd$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "963f3c4f68330251e61eee9aef7dd9e39925f13c9cfccdeef2f3562ea35e5bb2"
+    },
+    "environment-persistence": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOutboundEnvironmentPersistence$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "29321de929598d35b2a76489e4389fc9273ef990c76732e816c3ccbf473af1ba"
+    },
+    "environment-cli": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/cli",
+        "-run",
+        "^TestOutboundProjectEnvironmentResolution$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "993844fe1020552e7280d9e74e7f8b21cb8f6c9d2a986cb655fd48c608c4dbea"
+    },
+    "environment-metadata": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/cfcompat",
+        "-run",
+        "^TestOutboundEnvironmentTranslation$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "383ebb63e2a0ce28723d7d89f49c84e73753b87bcf13fa176652e716fe220194"
+    },
+    "console-retained": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/nanoflare",
+        "-run",
+        "^TestDispatchBindingsRetainedPublication$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "2c5ed9c7bc9678cee26dce13a8efcbc9b9caa1914948ea385dbb93dc531c114d"
+    },
+    "console-concurrent": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/nanoflare",
+        "-run",
+        "^TestDispatchBindingsConcurrentPublication$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "c0522b4e16aa9793b1884b5d39f9d22e59aefcdf5cdb68106e1be09d4e588e3b"
+    },
+    "console-endpoint": {
+      "status": "passed",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-json",
+        "./internal/api",
+        "-run",
+        "^TestOrgWorkerDispatchBindingsEndpoint$",
+        "-count=1",
+        "-timeout=120s"
+      ],
+      "skipped_subtests": [],
+      "transcript_sha256": "0fca71c44b23fc1f6ba24e8af8a9ac0bbb71e9b76595076c3da58c12e97a3dc4"
+    }
+  },
+  "hosted": {
+    "status": "not-run",
+    "reason": "No hosted backend invoked; no WFP-entitled account is required for this runner"
+  },
+  "postgres": {
+    "configured": true
+  },
+  "cases": [
+    {
+      "id": "binding-local",
+      "disposition": "preserve",
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "metadata-wire",
+      "disposition": "preserve",
+      "evidence": [
+        "documented",
+        "upstream-client-observed"
+      ],
+      "local_groups": [
+        {
+          "group": "metadata",
+          "status": "passed"
+        },
+        {
+          "group": "cli",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-postgres",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "wrangler-selector",
+      "disposition": "implement",
+      "evidence": [
+        "upstream-client-observed"
+      ],
+      "local_groups": [
+        {
+          "group": "cli",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "named-entrypoint",
+      "disposition": "preserve",
+      "evidence": [
+        "locally-qualified",
+        "documented",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "metadata",
+          "status": "passed"
+        },
+        {
+          "group": "cli",
+          "status": "passed"
+        },
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-postgres",
+          "status": "passed"
+        },
+        {
+          "group": "selector-lifecycle",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "environment-selection",
+      "disposition": "preserve",
+      "evidence": [
+        "documented",
+        "hosted-unverified",
+        "locally-qualified"
+      ],
+      "local_groups": [
+        {
+          "group": "environment-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "environment-postgres-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "environment-persistence",
+          "status": "passed"
+        },
+        {
+          "group": "environment-cli",
+          "status": "passed"
+        },
+        {
+          "group": "environment-metadata",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "ordinary-target-capabilities",
+      "disposition": "preserve",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "target-egress",
+      "disposition": "preserve",
+      "evidence": [
+        "locally-qualified",
+        "documented",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "customer-fetch",
+      "disposition": "preserve",
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "customer-native-http",
+      "disposition": "preserve",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "engine-native-http",
+          "status": "passed"
+        },
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "customer-tcp",
+      "disposition": "preserve",
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "local_groups": [
+        {
+          "group": "engine",
+          "status": "passed"
+        },
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "no-policy-baseline",
+      "disposition": "preserve",
+      "evidence": [
+        "locally-qualified"
+      ],
+      "local_groups": [
+        {
+          "group": "engine",
+          "status": "passed"
+        },
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "exclusion-do-mtls",
+      "disposition": "platform-dependency",
+      "evidence": [
+        "documented"
+      ],
+      "local_groups": [],
+      "hosted": "unverified"
+    },
+    {
+      "id": "parameter-env",
+      "disposition": "compare",
+      "evidence": [
+        "documented",
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-postgres",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-postgres",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "parameter-json",
+      "disposition": "compare",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "parameters",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "parameter-mutation",
+      "disposition": "compare",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "parameters",
+          "status": "passed"
+        },
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "parameter-missing",
+      "disposition": "compare",
+      "evidence": [
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "parameter-extra",
+      "disposition": "compare",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "admission",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "parameter-collision",
+      "disposition": "deployment-policy",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "admission",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "parameter-limits",
+      "disposition": "deployment-policy",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "parameters",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "policy-block",
+      "disposition": "preserve",
+      "evidence": [
+        "documented",
+        "locally-qualified"
+      ],
+      "local_groups": [
+        {
+          "group": "engine",
+          "status": "passed"
+        },
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "sdk-postgres",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-runtime",
+          "status": "passed"
+        },
+        {
+          "group": "wrangler-postgres",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "streams-binary-redirects",
+      "disposition": "implement",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "engine-native-http",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "exceptions-lifetime",
+      "disposition": "implement",
+      "evidence": [
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        },
+        {
+          "group": "shared-budget-depth",
+          "status": "passed"
+        },
+        {
+          "group": "runner-restart",
+          "status": "passed"
+        },
+        {
+          "group": "runner-postgres-restart",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "nested-service-dispatch",
+      "disposition": "compare",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "runtime",
+          "status": "passed"
+        },
+        {
+          "group": "runtime-postgres",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "revision-secret-pinning",
+      "disposition": "compare",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "admission",
+          "status": "passed"
+        },
+        {
+          "group": "selector-lifecycle",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "target-revocation",
+      "disposition": "deployment-policy",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "admission",
+          "status": "passed"
+        },
+        {
+          "group": "metadata",
+          "status": "passed"
+        },
+        {
+          "group": "selector-lifecycle",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "persistence-recovery",
+      "disposition": "implement",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "persistence",
+          "status": "passed"
+        },
+        {
+          "group": "runner-restart",
+          "status": "passed"
+        },
+        {
+          "group": "runner-postgres-restart",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "console-authoring",
+      "disposition": "implement",
+      "evidence": [
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "console-retained",
+          "status": "passed"
+        },
+        {
+          "group": "console-concurrent",
+          "status": "passed"
+        },
+        {
+          "group": "console-endpoint",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "shared-budget-depth",
+      "disposition": "deployment-policy",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "shared-budget-depth",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    },
+    {
+      "id": "ordinary-network-cache-parity",
+      "disposition": "preserve",
+      "evidence": [
+        "locally-qualified",
+        "hosted-unverified"
+      ],
+      "local_groups": [
+        {
+          "group": "ordinary-api-parity",
+          "status": "passed"
+        }
+      ],
+      "hosted": "unverified"
+    }
+  ],
+  "summary": {
+    "cases": 29,
+    "groups_passed": 26,
+    "groups_failed": 0
+  }
+}

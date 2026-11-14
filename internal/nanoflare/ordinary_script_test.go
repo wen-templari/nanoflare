@@ -36,3 +36,30 @@ func TestOrdinaryScriptLongNameDefaultHostname(t *testing.T) {
 		})
 	}
 }
+
+func TestOrdinaryServicePreservesLegacyIdentity(t *testing.T) {
+	store := NewStore()
+	if err := store.CreateOrganization(Organization{ID: "org", Name: "org"}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := ordinaryScriptID("org", "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := App{ID: id, OrgID: "org", Name: "legacy"}
+	if err := store.CreateApp(legacy); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(store, &recordingWriter{})
+	app, err := service.EnsureOrdinaryScriptForOrg("org", "legacy", "")
+	if err != nil || app.ID != id {
+		t.Fatalf("legacy identity changed: %s %v", app.ID, err)
+	}
+	if err := service.DeleteAppForOrg("org", id); err != nil {
+		t.Fatal(err)
+	}
+	app, err = service.EnsureOrdinaryScriptForOrg("org", "legacy", "")
+	if err != nil || app.ID == id {
+		t.Fatalf("legacy deleted identity rebound: %s %v", app.ID, err)
+	}
+}

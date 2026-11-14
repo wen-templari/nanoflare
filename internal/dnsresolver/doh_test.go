@@ -140,3 +140,20 @@ func TestDoHTransportCancellation(t *testing.T) {
 		t.Fatalf("cancellation: %v %v", response, err)
 	}
 }
+
+func TestDoHTransportTrustedDeploymentProfile(t *testing.T) {
+	transport := DoHTransport(nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanoflare-DNS-Profile") != "corporate" || r.URL.Query().Get("profile") != "" || r.Header.Get("Authorization") != "" {
+			t.Errorf("resolver authority: %s %v", r.URL, r.Header)
+		}
+		w.Write([]byte(`{"Status":0}`))
+	}))
+	request, _ := http.NewRequest("GET", "https://cloudflare-dns.com/dns-query?name=internal.invalid&type=A&profile=forged", nil)
+	request.Header.Set("X-Nanoflare-DNS-Profile", "forged")
+	request.Header.Set("Authorization", "caller-secret")
+	response, err := transport.RoundTrip(request.WithContext(WithTrustedProfile(request.Context(), "corporate")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+}

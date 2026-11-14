@@ -35,12 +35,14 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("GET "+base+"/{workerID}/files", s.workerFiles)
 	s.mux.HandleFunc("POST "+base+"/{workerID}/access-token", s.issueWorkerAccessToken)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/active-bindings", s.activeWorkerBindings)
+	s.mux.HandleFunc("GET "+base+"/{workerID}/environments", s.workerServiceEnvironments)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/output", s.workerOutput)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/analytics", s.workerTraffic)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/deployments", s.workerDeployments)
 	s.mux.HandleFunc("PUT "+base+"/{workerID}/deployment-traffic", s.setWorkerDeploymentTraffic)
 	s.mux.HandleFunc("POST "+base+"/{workerID}/deployments", s.deploy)
 	s.mux.HandleFunc("PUT "+base+"/{workerID}/vars", s.updateVars)
+	s.mux.HandleFunc("PUT "+base+"/{workerID}/dispatch-bindings", s.updateDispatchBindings)
 	s.mux.HandleFunc("GET "+base+"/{workerID}/secrets", s.listSecrets)
 	s.mux.HandleFunc("PUT "+base+"/{workerID}/secrets/{name}", s.putSecret)
 	s.mux.HandleFunc("DELETE "+base+"/{workerID}/secrets/{name}", s.deleteSecret)
@@ -801,4 +803,16 @@ func protectedWorkerPath(auth nanoflare.AuthConfig, path string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) workerServiceEnvironments(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "workers:read") {
+		return
+	}
+	items, err := s.service.ServiceEnvironmentsForOrg(controlOrgID(r), r.PathValue("workerID"))
+	if err != nil {
+		writeWorkerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }

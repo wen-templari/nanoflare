@@ -44,7 +44,7 @@ Actual CPU accounting/interruption is [scoped separately](workers-for-platforms-
 and not implemented. Hardened customer isolation, interruption/failure blast
 radius, capability transport and adversarial qualification must also pass before
 untrusted execution is offered. Wall/effect deadlines and shared container
-quotas are not substitutes. Custom CPU/outbound/limit options and other deferred
+quotas are not substitutes. Custom CPU/limit options and other deferred
 runtime features require explicit implementation before acceptance.
 
 ## Production expansion and operations
@@ -61,3 +61,10 @@ the selected environment, verify real dispatch after recovery and rollback, and
 resolve deployment-specific operational findings. See the
 [pilot runbook](../guides/workers-for-platforms-operator.md) and
 [qualification evidence](../../scripts/wfp-qualification/README.md).
+
+## Outbound Workers
+
+Binding-local outbound execution, CLI/API translation, full-bundle console editing
+and pinned native/client qualification are tracked in the
+[outbound plan](workers-for-platforms-outbound-workers.md). Live Cloudflare comparison
+remains unavailable; the initial outbound execution subset is documented explicitly.

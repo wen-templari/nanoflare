@@ -2,6 +2,7 @@ package dnsresolver
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -114,6 +115,14 @@ type dohTransport struct {
 	resolver http.Handler
 }
 
+type trustedProfileKey struct{}
+
+// WithTrustedProfile selects a deployment-owned resolver profile after admission.
+// Headers and URL parameters cannot set this authority.
+func WithTrustedProfile(ctx context.Context, profile string) context.Context {
+	return context.WithValue(ctx, trustedProfileKey{}, profile)
+}
+
 // DoHTransport answers workerd's DoH through the platform default resolver.
 // Invoke the private handler in-process so split deployments need no listener,
 // and HTTP(S)_PROXY cannot send private names outside the platform. Broker
@@ -140,6 +149,9 @@ func (t *dohTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/dns-json")
+	if profile, ok := r.Context().Value(trustedProfileKey{}).(string); ok {
+		request.Header.Set("X-Nanoflare-DNS-Profile", profile)
+	}
 	response := &dohBuffer{header: make(http.Header)}
 	if t.resolver == nil {
 		writeJSON(response, http.StatusServiceUnavailable, dohResponse{Status: 2})

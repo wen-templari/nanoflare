@@ -60,7 +60,7 @@ func TestPlatformBundlePreservesCompleteProjectAndCannotOverwrite(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), "DISPATCHER: NanoflareDispatchNamespace") || !strings.Contains(string(generated), "dispatchOptions?: Record<string, never>") {
+	if !strings.Contains(string(generated), "DISPATCHER: NanoflareDispatchNamespace") || !strings.Contains(string(generated), "dispatchOptions?: { outbound?: Record<string, NanoflareOutboundJSON> }") {
 		t.Fatalf("missing supported namespace types: %s", generated)
 	}
 }

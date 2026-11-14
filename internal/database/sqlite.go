@@ -21,6 +21,7 @@ type SQLiteManager struct {
 	dir        string
 	litestream *LitestreamSupervisor
 	mu         sync.Mutex
+	openMu     sync.Mutex
 	dbs        map[string]*sql.DB
 	bookmarks  map[string]int64
 	restoreMu  sync.RWMutex
@@ -310,6 +311,16 @@ func (m *SQLiteManager) open(databaseID string) (*sql.DB, error) {
 		return db, nil
 	}
 	m.mu.Unlock()
+	// Initialize each connection pool once. Concurrent WAL transitions on a cold
+	// file can return SQLITE_BUSY even with a busy timeout installed.
+	m.openMu.Lock()
+	defer m.openMu.Unlock()
+	m.mu.Lock()
+	if db := m.dbs[databaseID]; db != nil {
+		m.mu.Unlock()
+		return db, nil
+	}
+	m.mu.Unlock()
 	if err := m.RestoreMissing(databaseID); err != nil {
 		return nil, err
 	}
@@ -318,7 +329,7 @@ func (m *SQLiteManager) open(databaseID string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`); err != nil {
 		db.Close()
 		return nil, err
 	}

@@ -72,7 +72,7 @@ func decodeProjectConfig(path string, content []byte) ([]byte, map[string]string
 		"d1_databases":        "binding database_id database_name preview_database_id migrations_dir migrations_table migrations_pattern",
 		"r2_buckets":          "binding bucket_name preview_bucket_name jurisdiction",
 		"services":            "binding service worker_id execution",
-		"dispatch_namespaces": "binding namespace namespace_id",
+		"dispatch_namespaces": "binding namespace namespace_id outbound",
 		"assets":              "binding directory html_handling not_found_handling run_worker_first",
 		"triggers":            "crons",
 	} {
@@ -158,6 +158,50 @@ func decodeProjectConfig(path string, content []byte) ([]byte, map[string]string
 			raw["kv_namespaces"], _ = json.Marshal(bindings)
 		}
 	}
+	outboundNames := map[string]string{}
+	if raw["dispatch_namespaces"] != nil {
+		var bindings []map[string]json.RawMessage
+		if err := json.Unmarshal(raw["dispatch_namespaces"], &bindings); err != nil {
+			return nil, nil, err
+		}
+		for _, binding := range bindings {
+			if value, exists := binding["outbound"]; exists {
+				var config struct {
+					Service     string   `json:"service"`
+					WorkerID    string   `json:"worker_id"`
+					Environment string   `json:"environment"`
+					Entrypoint  string   `json:"entrypoint"`
+					Parameters  []string `json:"parameters"`
+				}
+				var object map[string]json.RawMessage
+				if err := json.Unmarshal(value, &object); err != nil || object == nil {
+					return nil, nil, fmt.Errorf("%s: outbound must be an object", path)
+				}
+				for key := range object {
+					if key != "service" && key != "worker_id" && key != "environment" && key != "entrypoint" && key != "parameters" {
+						return nil, nil, fmt.Errorf("%s: unsupported outbound field %s", path, key)
+					}
+				}
+				if err := json.Unmarshal(value, &config); err != nil {
+					return nil, nil, err
+				}
+				if (strings.TrimSpace(config.Service) == "") == (strings.TrimSpace(config.WorkerID) == "") {
+					return nil, nil, fmt.Errorf("%s: outbound requires exactly one of service or worker_id", path)
+				}
+
+				var name string
+				_ = json.Unmarshal(binding["binding"], &name)
+				if config.Environment != "" && config.Environment != "production" {
+					outboundNames[name+":outbound-environment"] = config.Environment
+				}
+				if config.Service != "" {
+					outboundNames[name+":outbound"] = config.Service
+				}
+				binding["outbound"], _ = json.Marshal(nanoflare.DispatchOutbound{WorkerID: config.WorkerID, Entrypoint: config.Entrypoint, Parameters: config.Parameters})
+			}
+		}
+		raw["dispatch_namespaces"], _ = json.Marshal(bindings)
+	}
 	var dispatch []struct {
 		Binding     string `json:"binding"`
 		Namespace   string `json:"namespace"`
@@ -168,7 +212,7 @@ func decodeProjectConfig(path string, content []byte) ([]byte, map[string]string
 			return nil, nil, err
 		}
 	}
-	names := make(map[string]string)
+	names := outboundNames
 	for _, binding := range dispatch {
 		if strings.TrimSpace(binding.Binding) == "" || (strings.TrimSpace(binding.Namespace) == "" && strings.TrimSpace(binding.NamespaceID) == "") {
 			return nil, nil, fmt.Errorf("%s: dispatch_namespaces requires binding and namespace", path)

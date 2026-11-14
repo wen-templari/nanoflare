@@ -3,10 +3,12 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,5 +244,38 @@ func TestLitestreamGeneratedConfigTracksOpenedDatabases(t *testing.T) {
 	gotCalls := string(calls)
 	if !strings.Contains(gotCalls, "restore\n-if-db-not-exists\n-if-replica-exists\n-config\n"+configPath) || !strings.Contains(gotCalls, "replicate\n-config\n"+configPath) {
 		t.Fatalf("litestream calls = %q", gotCalls)
+	}
+}
+
+func TestSQLiteConcurrentColdDatabase(t *testing.T) {
+	manager, err := NewSQLiteManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, db := range manager.dbs {
+			db.Close()
+		}
+	}()
+	for round := 0; round < 5; round++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := 0; i < 16; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				result, err := manager.Execute(fmt.Sprintf("cold-%d", round), nanoflare.DBQueryRequest{Method: "first", FirstColumn: "value", Statements: []nanoflare.DBStatementRequest{{SQL: "SELECT 42 AS value"}}})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if fmt.Sprint(result.First) != "42" {
+					t.Errorf("cold result: %+v", result)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
 	}
 }

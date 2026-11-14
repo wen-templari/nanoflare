@@ -47,6 +47,10 @@ var (
 )
 
 type Repository interface {
+	OrdinaryServiceWorkerID(string, string) (string, error)
+	CreateOrdinaryService(string, string, App) error
+	ListServiceEnvironments(string, string) ([]ServiceEnvironment, error)
+	CreateServiceEnvironment(ServiceEnvironment, App) error
 	DeleteNamespaceScripts(string, string, []string) error
 	PruneAssetUploadSessions(context.Context, time.Time, int) (int, error)
 	GetAssetUploadSession(string) (AssetUploadSession, error)
@@ -218,6 +222,8 @@ type Store struct {
 	partnerIntegrations map[string]PartnerIntegration
 	partnerConnections  map[string]PartnerConnection
 	partnerByExternal   map[string]string
+	ordinaryServices    map[string]string
+	serviceEnvironments map[string]ServiceEnvironment
 	apps                map[string]App
 	kvNamespaces        map[string]KVNamespace
 	databases           map[string]Database

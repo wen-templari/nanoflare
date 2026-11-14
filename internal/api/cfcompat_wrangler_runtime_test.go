@@ -239,6 +239,69 @@ func wranglerRuntimeWorkflow(t *testing.T) {
 		putNamespaceSecret("wasm-secret")
 		checkWasm("7", "wasm-secret")
 		downloadBinary(wasm(7))
+		// The pinned client emits the distinct outbound worker/params wire
+		// shape. Qualify it against the same real dispatcher/runtime path.
+		write("src/outbound.js", `export default {fetch(request,env){return Response.json({customer:env.context.customer,secret:env.POLICY_TOKEN})}}`)
+		config(map[string]any{"name": "wrangler-outbound", "main": "src/outbound.js"})
+		run("", "deploy")
+		run("policy-secret\n", "secret", "put", "POLICY_TOKEN")
+		write("src/customer.js", `export default {fetch(){return fetch('http://policy.invalid/')}}`)
+		config(map[string]any{"name": "customer", "main": "src/customer.js"})
+		run("", "deploy", "--dispatch-namespace", "wrangler-runtime", "--keep-vars")
+		write("src/dispatcher.js", `export default {fetch(request,env){return env.CUSTOMERS.get('customer',{}, {outbound:{context:{customer:'wrangler-customer'}}}).fetch(request)}}`)
+		config(map[string]any{"name": "wrangler-dispatcher", "main": "src/dispatcher.js", "dispatch_namespaces": []map[string]any{{"binding": "CUSTOMERS", "namespace": "wrangler-runtime", "outbound": map[string]any{"service": "wrangler-outbound", "parameters": []string{"context"}}}}})
+		run("", "deploy", "--keep-vars")
+		var outboundResult map[string]string
+		must(json.Unmarshal([]byte(invoke("/api/check")), &outboundResult))
+		if outboundResult["customer"] != "wrangler-customer" || outboundResult["secret"] != "policy-secret" {
+			t.Fatalf("Wrangler outbound runtime: %v", outboundResult)
+		}
+		snapshot, _, err := service.ManagementUploadForOrg(org.ID, dispatcher.ID, false)
+		must(err)
+		if len(snapshot.Deployment.DispatchNamespaces) != 1 || snapshot.Deployment.DispatchNamespaces[0].Outbound == nil || len(snapshot.Deployment.DispatchNamespaces[0].Outbound.Parameters) != 1 {
+			t.Fatal("Wrangler outbound binding lost on readback")
+		}
+		// Real non-legacy Wrangler environments use the service/environment
+		// endpoint family for deployment, secrets and settings reads.
+		write("src/outbound.js", `export default {fetch(request,env){return Response.json({customer:env.context.customer,secret:env.POLICY_TOKEN,environment:'staging'})}}`)
+		config(map[string]any{"name": "wrangler-outbound", "main": "src/outbound.js", "legacy_env": false, "env": map[string]any{"staging": map[string]any{}}})
+		run("", "deploy", "--env", "staging")
+		run("staging-policy-secret\n", "secret", "put", "POLICY_TOKEN", "--env", "staging")
+		run("", "secret", "list", "--env", "staging")
+		staging, err := service.OrdinaryServiceEnvironmentForOrg(org.ID, "wrangler-outbound", "staging")
+		must(err)
+		production, err := service.OrdinaryServiceEnvironmentForOrg(org.ID, "wrangler-outbound", "production")
+		must(err)
+		if staging.ID == production.ID {
+			t.Fatal("Wrangler environments shared Worker identity")
+		}
+		config(map[string]any{"name": "wrangler-dispatcher", "main": "src/dispatcher.js", "dispatch_namespaces": []map[string]any{{"binding": "CUSTOMERS", "namespace": "wrangler-runtime", "outbound": map[string]any{"service": "wrangler-outbound", "environment": "staging", "parameters": []string{"context"}}}}})
+		run("", "deploy", "--keep-vars")
+		must(json.Unmarshal([]byte(invoke("/api/check")), &outboundResult))
+		if outboundResult["secret"] != "staging-policy-secret" || outboundResult["environment"] != "staging" || outboundResult["customer"] != "wrangler-customer" {
+			t.Fatalf("Wrangler environment outbound runtime: %v", outboundResult)
+		}
+		snapshot, _, err = service.ManagementUploadForOrg(org.ID, dispatcher.ID, false)
+		must(err)
+		if snapshot.Deployment.DispatchNamespaces[0].Outbound.WorkerID != staging.ID {
+			t.Fatal("Wrangler environment binding did not pin child identity")
+		}
+		readback := httptest.NewRequest("GET", "/client/v4/accounts/"+org.ID+"/workers/scripts/wrangler-dispatcher/settings", nil)
+		readback.Header.Set("Authorization", "Bearer "+token)
+		recorded := httptest.NewRecorder()
+		handler.ServeHTTP(recorded, readback)
+		if recorded.Code != 200 || !strings.Contains(recorded.Body.String(), `"environment":"staging"`) || !strings.Contains(recorded.Body.String(), `"service":"wrangler-outbound"`) {
+			t.Fatalf("Wrangler environment selector readback: %d %s", recorded.Code, recorded.Body.String())
+		}
+		// Redeploy both the selected environment and its dispatcher through the
+		// client's retained-binding reads and check its secret remains scoped.
+		config(map[string]any{"name": "wrangler-outbound", "main": "src/outbound.js", "legacy_env": false, "env": map[string]any{"staging": map[string]any{}}})
+		run("", "deploy", "--env", "staging", "--keep-vars")
+		must(json.Unmarshal([]byte(invoke("/api/check")), &outboundResult))
+		if outboundResult["secret"] != "staging-policy-secret" {
+			t.Fatalf("Wrangler environment redeploy lost secret: %v", outboundResult)
+		}
+		t.Log("Wrangler 4.54.0 legacy_env=false staging deploy, secret put/list, outbound selector readback, invoke and retained-secret redeploy passed")
 		namespaces, err := service.DispatchNamespacesForOrg(org.ID)
 		must(err)
 		if len(namespaces) != 1 {
@@ -252,6 +315,7 @@ func wranglerRuntimeWorkflow(t *testing.T) {
 		if _, err := service.OrdinaryScriptForOrg(org.ID, "wrangler-dispatcher"); err != nanoflare.ErrAppNotFound {
 			t.Fatalf("ordinary CLI cleanup failed: %v", err)
 		}
-		t.Log("Wrangler 4.54.0 runtime dispatch, Wasm upload/execution/binary update, compatible-API binary download, code/secret updates, assets and cleanup passed")
+		run("", "delete", "--name", "wrangler-outbound", "--force")
+		t.Log("Wrangler 4.54.0 outbound Worker configuration/parameters/secrets/readback, runtime dispatch, Wasm upload/execution/binary update, compatible-API binary download, code/secret updates, assets and cleanup passed")
 	})
 }

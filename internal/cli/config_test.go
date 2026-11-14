@@ -226,7 +226,7 @@ func TestSharedConfigRejectsConflicts(t *testing.T) {
 		`"worker_id":"a","nanoflare":{"worker_id":"b"}`,
 		`"dispatch_namespaces":[{"binding":"D","namespace":"name","namespace_id":"id"}]`,
 		`"dispatch_namespaces":[{"binding":"D"}]`,
-		`"dispatch_namespaces":[{"binding":"D","namespace":"name","outbound":{"service":"outbound"}}]`,
+		`"dispatch_namespaces":[{"binding":"D","namespace":"name","outbound":{"service":"outbound","worker_id":"conflicting"}}]`,
 	} {
 		_, _, err := decodeProjectConfig("nanoflare.json", []byte(`{"name":"test","main":"worker.js","compatibility_date":"2026-08-01",`+fields+`}`))
 		if err == nil {

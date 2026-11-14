@@ -15,7 +15,7 @@ import (
 const maxJSONBodySize = 10 << 20
 
 func writeRuntimeError(w http.ResponseWriter, err error) {
-	if errors.Is(err, nanoflare.ErrSQLPolicy) {
+	if errors.Is(err, nanoflare.ErrSQLPolicy) || errors.Is(err, nanoflare.ErrInvalidDispatchOptions) {
 		writeError(w, 422, err)
 		return
 	}

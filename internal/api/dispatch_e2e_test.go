@@ -116,6 +116,9 @@ func privateDynamicDispatchEndToEnd(t *testing.T, remote bool, dynamicMode ...bo
 }
 
 type dispatchFixtureObservations struct {
+	ConfigureWriter  func(*config.RuntimeWriter)
+	RunnerRestart    func(func() (string, string, error))
+	RuntimeControl   func(*dispatchCountingLauncher, RuntimeEnsurer)
 	DNS              http.Handler
 	Output           *runtime.OutputBuffer
 	OutboundCanceled func(string)
@@ -123,7 +126,7 @@ type dispatchFixtureObservations struct {
 
 func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixture func(*Server, *nanoflare.Service, nanoflare.Organization, string), observations ...dispatchFixtureObservations) {
 	executable, err := exec.LookPath("workerd")
-	if dynamic {
+	if dynamic || os.Getenv("NANOFLARE_TEST_WORKERD") != "" {
 		executable = os.Getenv("NANOFLARE_TEST_WORKERD")
 		err = nil
 	}
@@ -154,7 +157,7 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 	}
 	outboundCanceled := make(chan struct{}, 1)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != "8.8.8.8" {
+		if r.Host != "8.8.8.8" && r.Host != "8.8.8.8:81" {
 			t.Errorf("origin identity changed: %s", r.Host)
 			http.Error(w, "wrong origin identity", 421)
 			return
@@ -180,6 +183,21 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 			}
 			return
 		}
+		if r.URL.Path == "/outbound-binary" {
+			w.Header().Set("X-Origin-Method", r.Method)
+			w.Header().Set("X-Origin-Authorization", r.Header.Get("Authorization"))
+			w.Header().Set("Content-Type", "application/octet-stream")
+			io.Copy(w, r.Body)
+			return
+		}
+		if r.URL.Path == "/outbound-redirect" {
+			status := 302
+			if r.URL.Query().Get("status") == "307" {
+				status = 307
+			}
+			http.Redirect(w, r, "http://8.8.8.8:81/outbound-binary", status)
+			return
+		}
 		if r.URL.Path == "/redirect" {
 			http.Redirect(w, r, "http://169.254.169.254/metadata", 302)
 			return
@@ -196,7 +214,7 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 	// It forwards only the synthetic pinned destination to our local origin.
 	var proxied atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "CONNECT" || r.Host != "8.8.8.8:80" {
+		if r.Method != "CONNECT" || (r.Host != "8.8.8.8:80" && r.Host != "8.8.8.8:81") {
 			t.Errorf("unexpected proxy destination: %s %s", r.Method, r.Host)
 			http.Error(w, "unexpected destination", 502)
 			return
@@ -262,6 +280,9 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 	defer os.RemoveAll(sockets)
 	writer := config.NewRuntimeWriter(filepath.Join(dir, "workerd.capnp"), dispatchTraefik{})
 	writer.SetNanoflareRuntimeAddr(strings.TrimPrefix(runtimeHTTP.URL, "http://"))
+	if len(observations) > 0 && observations[0].ConfigureWriter != nil {
+		observations[0].ConfigureWriter(writer)
+	}
 	launcher := &dispatchCountingLauncher{executable: executable, experimental: dynamic}
 	type dispatchManager interface {
 		nanoflare.ConfigWriter
@@ -271,21 +292,61 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 		Abort(string) error
 		Close() error
 	}
-	var manager dispatchManager
-	if dynamic {
-		m := runtime.NewDynamicManager(writer, launcher, dir, filepath.Join(dir, "workerd.capnp"), sockets, 5*time.Second, time.Second)
-		m.SetRuntimeControlToken("dispatch-control")
-		manager = m
-	} else {
-		manager = runtime.NewManager(writer, launcher, dir, filepath.Join(dir, "workerd.capnp"), sockets, 5*time.Second, time.Second)
+	newManager := func() dispatchManager {
+		if dynamic {
+			m := runtime.NewDynamicManager(writer, launcher, dir, filepath.Join(dir, "workerd.capnp"), sockets, 5*time.Second, time.Second)
+			m.SetRuntimeControlToken("dispatch-control")
+			return m
+		}
+		return runtime.NewManager(writer, launcher, dir, filepath.Join(dir, "workerd.capnp"), sockets, 5*time.Second, time.Second)
 	}
-	defer manager.Close()
+	manager := newManager()
+	defer func() { manager.Close() }()
 
 	var publisher nanoflare.ConfigWriter = manager
 	var ensurer RuntimeEnsurer = manager
 	if remote {
 		runnerHTTP := httptest.NewServer(runner.NewServer(manager, "dispatch-runner-secret"))
-		defer runnerHTTP.Close()
+		defer func() { runnerHTTP.Close() }()
+		if len(observations) > 0 && observations[0].RunnerRestart != nil {
+			observations[0].RunnerRestart(func() (string, string, error) {
+				boot := func() (string, error) {
+					request, _ := http.NewRequest("GET", runnerHTTP.URL+"/v1/status", nil)
+					request.Header.Set("Authorization", "Bearer dispatch-runner-secret")
+					response, err := http.DefaultClient.Do(request)
+					if err != nil {
+						return "", err
+					}
+					defer response.Body.Close()
+					var result struct {
+						BootID string `json:"boot_id"`
+					}
+					err = json.NewDecoder(response.Body).Decode(&result)
+					return result.BootID, err
+				}
+				before, err := boot()
+				if err != nil {
+					return "", "", err
+				}
+				address := runnerHTTP.Listener.Addr().String()
+				runnerHTTP.Close()
+				if err = manager.Close(); err != nil {
+					return before, "", err
+				}
+				manager = newManager()
+				listener, err := net.Listen("tcp", address)
+				if err != nil {
+					return before, "", err
+				}
+				replacement := httptest.NewUnstartedServer(runner.NewServer(manager, "dispatch-runner-secret"))
+				replacement.Listener.Close()
+				replacement.Listener = listener
+				replacement.Start()
+				runnerHTTP = replacement
+				after, err := boot()
+				return before, after, err
+			})
+		}
 		client := runner.NewClient(runnerHTTP.URL, "dispatch-runner-secret", dispatchTraefik{})
 		publisher = client
 		ensurer = client
@@ -310,6 +371,9 @@ func privateDynamicDispatchWithFixture(t *testing.T, remote, dynamic bool, fixtu
 	service.SetDBExecutor(sqlite)
 	server = NewServerWithRuntime(service, nil, "", nil, auth, ensurer)
 	if fixture != nil {
+		if len(observations) > 0 && observations[0].RuntimeControl != nil {
+			observations[0].RuntimeControl(launcher, manager)
+		}
 		fixture(server, service, org, session.Token)
 		return
 	}

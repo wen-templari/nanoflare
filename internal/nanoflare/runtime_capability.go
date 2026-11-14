@@ -26,12 +26,13 @@ const (
 var ErrRuntimeGrantDenied = errors.New("runtime capability does not permit this operation")
 
 type RuntimeGrant struct {
-	InstanceID   string `json:"instance,omitempty"`
-	OrgID        string `json:"org"`
-	AppID        string `json:"app"`
-	DeploymentID string `json:"deployment"`
-	Kind         string `json:"kind"`
-	ResourceID   string `json:"resource"`
+	outboundExecution bool   // Set only by an admitted outbound lease; never serialized.
+	InstanceID        string `json:"instance,omitempty"`
+	OrgID             string `json:"org"`
+	AppID             string `json:"app"`
+	DeploymentID      string `json:"deployment"`
+	Kind              string `json:"kind"`
+	ResourceID        string `json:"resource"`
 }
 
 type RuntimePrincipal struct {
@@ -186,17 +187,17 @@ func (s *Service) authorizeBoundRuntime(p RuntimePrincipal, kind string) (Runtim
 			break
 		}
 		target, err := s.store.GetApp(grant.ResourceID)
-		if err != nil || !target.IsDynamic() || !ServiceTargetAllowed(app, target) {
+		if err != nil || (!target.IsDynamic() && !grant.outboundExecution) || !ServiceTargetAllowed(app, target) {
 			break
 		}
 		for _, binding := range deployment.Services {
-			if binding.WorkerID == target.ID && binding.Execution == "dynamic" {
+			if binding.WorkerID == target.ID && (binding.Execution == "dynamic" || grant.outboundExecution) {
 				bound = true
 				break
 			}
 		}
 	case RuntimeOutbound:
-		bound = app.IsDynamic() && grant.ResourceID == ""
+		bound = (app.IsDynamic() || grant.outboundExecution) && grant.ResourceID == ""
 	case RuntimeKV:
 		resource, e := s.store.GetKVNamespace(grant.ResourceID)
 		if e != nil || resource.OrgID != app.OrgID {

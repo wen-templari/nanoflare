@@ -347,7 +347,14 @@ func TestCloudflareOrdinaryDispatcherUpload(t *testing.T) {
 			check(request("DELETE", strings.Replace(deletePath, org.ID, foreign.ID, 1)+"?force=true", "", nil, bound.Token, "", nil), 403)
 			check(request("DELETE", deletePath, "", nil, session.Token, "", nil), 422)
 			check(request("DELETE", deletePath+"?force=true", "", nil, session.Token, "", map[string]string{"If-Match": "*"}), 422)
-			check(request("DELETE", deletePath+"?force=true", "", nil, session.Token, "", nil), 200)
+			scriptDeletePath := strings.Replace(deletePath, "/services/", "/scripts/", 1)
+			check(request("DELETE", scriptDeletePath+"?force=true", "", nil, "", "", nil), 401)
+			check(request("DELETE", scriptDeletePath+"?force=true", "", nil, readOnly.Token, "", nil), 403)
+			check(request("DELETE", strings.Replace(scriptDeletePath, org.ID, foreign.ID, 1)+"?force=true", "", nil, bound.Token, "", nil), 403)
+			check(request("DELETE", scriptDeletePath, "", nil, session.Token, "", nil), 422)
+			check(request("DELETE", scriptDeletePath+"?force=true", "", nil, session.Token, "", map[string]string{"If-Match": "*"}), 422)
+			check(request("DELETE", scriptDeletePath+"?force=true", "", nil, session.Token, "", nil), 200)
+
 			if _, err := service.OrdinaryScriptForOrg(org.ID, "concurrent"); err != nanoflare.ErrAppNotFound {
 				t.Fatalf("ordinary deletion did not remove identity: %v", err)
 			}

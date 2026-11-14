@@ -111,7 +111,7 @@ payloads retain their internal representation independently of this source schem
 ## Current runtime limits
 
 A shared config format does not implement every Cloudflare feature. Unsupported
-settings produce errors, including dispatch `outbound` and remote dispatch,
+settings produce errors, including remote dispatch,
 custom build commands, routing, Durable Objects, queues, Pages, and asset-only
 deployments. Named environment definitions can remain in the file, but only
 top-level configuration is selected; `CLOUDFLARE_ENV` must be unset.
@@ -121,3 +121,36 @@ Cloudflare account and preview metadata (`account_id`, `workers_dev`,
 deployment does not execute migrations. Runtime API and compatibility-flag
 support depend on the Nanoflare server. Wrangler CLI operation against Nanoflare
 requires the separate API compatibility work.
+
+## Outbound Workers
+
+Dispatch bindings accept `outbound: {service, parameters}` in Wrangler-style
+JSONC/TOML or `{worker_id, parameters}` with native IDs. Deploy the ordinary
+outbound Worker before the dispatcher. Service names resolve inside the active
+organization and are pinned to immutable Worker IDs. The
+[outbound example](../../examples/outbound-workers/README.md) covers parameter
+passing, hostname filtering, authentication and current target restrictions.
+Nanoflare's CLI also accepts `outbound.entrypoint` for a named fetch export;
+pinned Wrangler 4.54.0 does not expose this field. Multipart API uploads use
+`outbound.worker.entrypoint`. Service environments resolve through their persisted
+service/environment relationship, independently of modern Worker-name suffixes.
+
+Existing dispatch bindings can be edited from the console Runtime tab without
+uploading code. The native retained-revision endpoint is
+`PUT /v1/organizations/{orgID}/workers/{workerID}/dispatch-bindings`, with a complete
+`dispatch_namespaces` replacement array, `expected_deployment_id` and
+`idempotency_key`. It requires `deployments:write` and `namespaces:dispatch`.
+The expected revision must receive all traffic; retries return the original
+publication without reactivating a stale revision. Code, assets, variables and
+frozen secret references are retained.
+
+Cloudflare distinguishes modern Wrangler environments (separate deployed Workers,
+such as `policy-staging`) from legacy service environments. To select an already
+deployed modern environment, use that Worker's actual name in `outbound.service`.
+Nanoflare does not infer a suffix from `outbound.environment` or silently route it
+to production. Legacy service environments have a separate persisted identity,
+code, secret versions and revision history. Deploy them through the compatible
+`/workers/services/{service}/environments/{environment}` endpoint. The native
+`GET /v1/workers/{workerID}/environments` endpoint lists actual environment Worker
+IDs, which remain pinned in native outbound bindings. See Cloudflare's [environment documentation](https://developers.cloudflare.com/workers/wrangler/environments/)
+and [service-environment deprecation](https://developers.cloudflare.com/workers/wrangler/deprecations/).

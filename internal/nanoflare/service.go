@@ -881,27 +881,47 @@ func (s *Service) DeleteApp(appID string) error {
 	if err != nil {
 		return err
 	}
+	deleting := map[string]bool{appID: true}
 	exists := false
 	for _, app := range apps {
 		if app.ID == appID {
 			exists = true
+			environments, err := s.store.ListServiceEnvironments(app.OrgID, app.ID)
+			if err != nil {
+				return err
+			}
+			for _, environment := range environments {
+				if environment.ServiceGeneration.Equal(app.CreatedAt) {
+					deleting[environment.WorkerID] = true
+				}
+			}
 			break
 		}
 	}
 	if !exists {
 		return ErrAppNotFound
 	}
+	for id := range deleting {
+		if id == appID {
+			continue
+		}
+		if err := s.store.DeleteApp(id); err != nil && !errors.Is(err, ErrAppNotFound) {
+			return err
+		}
+	}
 	if err := s.store.DeleteApp(appID); err != nil {
 		return err
 	}
 	for _, record := range records {
-		if record.App.ID != appID {
+		if !deleting[record.App.ID] {
 			continue
 		}
 		s.cleanupDeploymentObject(record.Deployment)
 		s.cleanupDeploymentAssets(record.Deployment)
 	}
-	s.invalidateRuntimeDeployments(appID)
+	for id := range deleting {
+		s.invalidateRuntimeDeployments(id)
+	}
 	active, err := s.activeDeployments()
 	if err != nil {
 		return err
@@ -960,7 +980,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		Databases:            append([]DatabaseBinding(nil), active.Deployment.Databases...),
 		ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), active.Deployment.ObjectStorageBuckets...),
 		AssetConfig:          active.Deployment.AssetConfig,
-		DispatchNamespaces:   append([]DispatchBinding(nil), active.Deployment.DispatchNamespaces...),
+		DispatchNamespaces:   CloneDispatchBindings(active.Deployment.DispatchNamespaces),
 		Bindings:             s.deploymentBindings(active.Deployment),
 		Port:                 active.Deployment.Port,
 		TrafficPercent:       active.TrafficPercent,
@@ -1312,7 +1332,7 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 		Databases:            databases,
 		ObjectStorageBuckets: objectStorageBuckets,
 		Services:             services,
-		DispatchNamespaces:   append([]DispatchBinding(nil), input.DispatchNamespaces...),
+		DispatchNamespaces:   CloneDispatchBindings(input.DispatchNamespaces),
 		AssetConfig:          assetConfig,
 		BundleSize:           bundleSize(files),
 		CreatedAt:            time.Now().UTC(),

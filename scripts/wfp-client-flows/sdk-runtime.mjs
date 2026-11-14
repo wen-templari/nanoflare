@@ -177,11 +177,102 @@ assert.deepEqual(JSON.parse(await invoke("/api/check")), {
 });
 assert.equal(await invoke("/asset.txt"), asset.toString());
 await binaryContent(7);
+// The SDK's real multipart upload preserves outbound's named fetch selector.
+await client.workers.scripts.update("sdk-policy", {
+  account_id,
+  metadata: metadata({ main_module: "worker.js", compatibility_date: "2025-12-10" }),
+  files: [
+    file(
+      'import {WorkerEntrypoint,env as importedEnv} from "cloudflare:workers";export class Policy extends WorkerEntrypoint {fetch(request){return Response.json({context:this.env.context,imported:importedEnv.context,secret:this.env.TOKEN},{status:new URL(request.url).pathname==="/api/block"?403:200})}};export default {fetch(){return new Response("wrong export",{status:500})}}',
+    ),
+  ],
+});
+await client.workers.scripts.secrets.update("sdk-policy", {
+  account_id,
+  name: "TOKEN",
+  type: "secret_text",
+  text: "sdk-policy-secret",
+});
+await scripts.update("customer", {
+  ...params,
+  metadata: {
+    main_module: "worker.js",
+    compatibility_date: "2025-12-10",
+    keep_bindings: ["secret_text"],
+    keep_assets: true,
+  },
+  files: [
+    file(
+      'export default {fetch(request){return fetch("https://policy-fixture.invalid"+new URL(request.url).pathname)}}',
+    ),
+  ],
+});
+const outboundBinding = {
+  name: "CUSTOMERS",
+  type: "dispatch_namespace",
+  namespace,
+  outbound: {
+    worker: { service: "sdk-policy", entrypoint: "Policy" },
+    params: [{ name: "context" }],
+  },
+};
+await client.workers.scripts.update("sdk-dispatcher", {
+  account_id,
+  metadata: metadata({
+    main_module: "worker.js",
+    compatibility_date: "2025-12-10",
+    bindings: [outboundBinding],
+  }),
+  files: [
+    file(
+      'export default {fetch(request,env){return env.CUSTOMERS.get("customer",{},{outbound:{context:{customer:"sdk",nested:[1,true,null]}}}).fetch(request)}}',
+    ),
+  ],
+});
+const outboundSettings = await client.workers.scripts.scriptAndVersionSettings.get(
+  "sdk-dispatcher",
+  { account_id },
+);
+assert.deepEqual(
+  outboundSettings.bindings.find((binding) => binding.name === "CUSTOMERS"),
+  outboundBinding,
+);
+const expectedContext = { customer: "sdk", nested: [1, true, null] };
+assert.deepEqual(JSON.parse(await invoke("/api/check")), {
+  context: expectedContext,
+  imported: expectedContext,
+  secret: "sdk-policy-secret",
+});
+const blocked = await localFetch(
+  `${origin}/internal/http/workers/${dispatcher.nanoflare_worker_id}/api/block`,
+);
+assert.equal(blocked.status, 403);
+assert.deepEqual(await blocked.json(), {
+  context: expectedContext,
+  imported: expectedContext,
+  secret: "sdk-policy-secret",
+});
+// Restore unbound dispatcher before deleting its policy; keep the existing cleanup contract.
+await client.workers.scripts.update("sdk-dispatcher", {
+  account_id,
+  metadata: metadata({
+    main_module: "worker.js",
+    compatibility_date: "2025-12-10",
+    bindings: [{ name: "CUSTOMERS", type: "dispatch_namespace", namespace }],
+  }),
+  files: [
+    file(
+      'export default {fetch(request,env){return env.CUSTOMERS.get("customer").fetch(request)}}',
+    ),
+  ],
+});
+await client.workers.scripts.delete("sdk-policy", { account_id, force: true });
 await scripts.delete("customer", params);
 await namespaces.delete(namespace, { account_id });
 console.log(
   JSON.stringify({
     sdk: "7.3.0",
+    outbound_named_deployment_readback_invocation_block: "passed",
     runtime_dispatch: "passed",
     wasm_upload_execute_download: "passed",
     wasm_content_update: "passed",

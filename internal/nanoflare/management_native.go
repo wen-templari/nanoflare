@@ -50,7 +50,34 @@ func (s *Service) nativeManagementMetadata(d Deployment, secrets []ArtifactSecre
 		if err != nil {
 			return metadata, err
 		}
-		add(binding.Binding, "dispatch_namespace", map[string]any{"namespace": ns.Name})
+		fields := map[string]any{"namespace": ns.Name}
+		if binding.Outbound != nil {
+			target, err := s.appForOrg(app.OrgID, binding.Outbound.WorkerID)
+			if err != nil {
+				return metadata, err
+			}
+			params := make([]map[string]string, 0, len(binding.Outbound.Parameters))
+			for _, name := range binding.Outbound.Parameters {
+				params = append(params, map[string]string{"name": name})
+			}
+			identity, err := s.ServiceEnvironmentForWorkerForOrg(app.OrgID, target.ID)
+			if err != nil {
+				return metadata, err
+			}
+			parent, err := s.appForOrg(app.OrgID, identity.ServiceID)
+			if err != nil {
+				return metadata, err
+			}
+			worker := map[string]string{"service": parent.Name}
+			if identity.Name != "production" {
+				worker["environment"] = identity.Name
+			}
+			if binding.Outbound.Entrypoint != "" {
+				worker["entrypoint"] = binding.Outbound.Entrypoint
+			}
+			fields["outbound"] = map[string]any{"worker": worker, "params": params}
+		}
+		add(binding.Binding, "dispatch_namespace", fields)
 	}
 	for _, binding := range d.Databases {
 		add(binding.Binding, "d1", map[string]any{"database_id": binding.DatabaseID})

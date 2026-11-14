@@ -1416,6 +1416,9 @@
           },
           "namespace_id": {
             "type": "string"
+          },
+          "outbound": {
+            "$ref": "#/components/schemas/DispatchOutbound"
           }
         },
         "required": ["binding", "namespace_id"],
@@ -1497,6 +1500,25 @@
           "grants",
           "created_at"
         ],
+        "type": "object"
+      },
+      "DispatchOutbound": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "type": "string"
+            },
+            "type": ["array", "null"]
+          },
+          "worker_id": {
+            "type": "string"
+          }
+        },
+        "required": ["worker_id"],
         "type": "object"
       },
       "InviteCreated": {
@@ -2979,6 +3001,9 @@
           "outbound": {
             "type": "string"
           },
+          "outbound_workers": {
+            "type": "boolean"
+          },
           "public_ingress": {
             "type": "boolean"
           },
@@ -3006,6 +3031,7 @@
           "cpu_limit",
           "cache_api",
           "raw_tcp",
+          "outbound_workers",
           "outbound",
           "duration_measurement",
           "compatibility_ceiling",
@@ -3134,6 +3160,29 @@
         "required": ["binding"],
         "type": "object"
       },
+      "ServiceEnvironment": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "service_generation": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "service_id": {
+            "type": "string"
+          },
+          "worker_id": {
+            "type": "string"
+          }
+        },
+        "required": ["org_id", "service_id", "service_generation", "name", "worker_id"],
+        "type": "object"
+      },
       "SignupInput": {
         "additionalProperties": false,
         "properties": {
@@ -3187,6 +3236,43 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "UpdateDispatchBindingsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": ["https://example.com/schemas/UpdateDispatchBindingsInput.json"],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "commit_message": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "dispatch_namespaces": {
+            "description": "Complete replacement list; an empty array removes all dispatch bindings.",
+            "items": {
+              "$ref": "#/components/schemas/DispatchBinding"
+            },
+            "type": ["array", "null"]
+          },
+          "expected_deployment_id": {
+            "description": "Must be the sole active deployment receiving 100% of traffic.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Worker-scoped retry key; identical retries return the original result without reactivation.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["dispatch_namespaces", "expected_deployment_id", "idempotency_key"],
         "type": "object"
       },
       "UpdateKVNamespaceInput": {
@@ -11645,6 +11731,101 @@
         "tags": ["Workers"]
       }
     },
+    "/v1/organizations/{orgID}/workers/{workerID}/active-bindings": {
+      "get": {
+        "operationId": "getActiveWorkerBindings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workerID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkerDeployment"
+                  },
+                  "type": ["array", "null"]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "getActiveWorkerBindings",
+        "tags": ["Workers"]
+      }
+    },
     "/v1/organizations/{orgID}/workers/{workerID}/analytics": {
       "get": {
         "operationId": "getWorkerMetrics",
@@ -12273,6 +12454,214 @@
           }
         ],
         "summary": "getWorkerArtifact",
+        "tags": ["Workers"]
+      }
+    },
+    "/v1/organizations/{orgID}/workers/{workerID}/dispatch-bindings": {
+      "put": {
+        "description": "Requires deployments:write and namespaces:dispatch in the Worker organization. dispatch_namespaces is a complete replacement array; [] removes bindings, while missing/null is invalid. Preserves code, assets, variables, frozen secret versions and other settings. expected_deployment_id must identify the sole active revision receiving 100% of traffic; stale and split-traffic bases return 409. Identical retries with the same Worker-scoped idempotency key return the original result without reactivation; changed content returns 409. Confirmed publication failure restores prior traffic and requires a new key.",
+        "operationId": "updateWorkerDispatchBindings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workerID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDispatchBindingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VarsUpdateResult"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Publish retained Worker dispatch bindings",
+        "tags": ["Workers"]
+      }
+    },
+    "/v1/organizations/{orgID}/workers/{workerID}/environments": {
+      "get": {
+        "operationId": "listWorkerServiceEnvironments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "orgID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workerID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceEnvironment"
+                  },
+                  "type": ["array", "null"]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "listWorkerServiceEnvironments",
         "tags": ["Workers"]
       }
     },

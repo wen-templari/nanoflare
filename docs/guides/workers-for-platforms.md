@@ -21,7 +21,7 @@ API URL is insufficient for an arbitrary Cloudflare SDK or Wrangler application.
 | Dispatcher upload           | Ordinary Worker multipart PUT with a `dispatch_namespace` binding                                                  |
 | Bindings                    | Text, JSON, secret text, KV, D1, R2, services and namespace assets; native ownership/grants apply                  |
 | Management                  | Namespace/script operations, settings, content, secrets, tags and assets within the reference's route/field subset |
-| Dispatch options            | Per-invocation `props`; custom CPU, limits and outbound options are rejected                                       |
+| Dispatch options            | Per-invocation `props` and declared outbound JSON parameters; custom CPU/limits are rejected                       |
 | Execution                   | Shared trusted workerd; no CPU interruption or hardened customer sandbox                                           |
 | Hosting                     | Native hostname configuration with separately managed DNS/TLS                                                      |
 | Cloudflare account services | Access policy management, billing, token verification and general provisioning are outside the adapter             |
@@ -209,14 +209,14 @@ the full upstream deployment commands or Cloudflare Access policy APIs.
 
 ## Troubleshooting and support boundary
 
-| Symptom                         | Check                                                                                                                  |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 401 / 403                       | Nanoflare credentials, URL organization, scopes and resource/customer grants                                           |
-| 404 management route            | Adapter enablement and supported route/method; `/user/tokens/verify` is unsupported                                    |
-| 422 mutation/upload             | Profile header, explicit JSON metadata, supported fields/bindings; remove Cloudflare custom CPU/outbound/limit options |
-| 409 / 412                       | Conflicting operation, namespace dependencies, changed idempotent request or stale supported mutation precondition     |
-| Upload succeeds, hostname fails | Native hostname assignment, DNS/TLS, Traefik refresh, authentication and actual runtime health                         |
-| 429 during dispatch             | Shared admission bounds; apply backpressure and bounded retries                                                        |
+| Symptom                         | Check                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 401 / 403                       | Nanoflare credentials, URL organization, scopes and resource/customer grants                                       |
+| 404 management route            | Adapter enablement and supported route/method; `/user/tokens/verify` is unsupported                                |
+| 422 mutation/upload             | Profile header, explicit JSON metadata, supported fields/bindings; remove Cloudflare custom CPU/limit options      |
+| 409 / 412                       | Conflicting operation, namespace dependencies, changed idempotent request or stale supported mutation precondition |
+| Upload succeeds, hostname fails | Native hostname assignment, DNS/TLS, Traefik refresh, authentication and actual runtime health                     |
+| 429 during dispatch             | Shared admission bounds; apply backpressure and bounded retries                                                    |
 
 The [runtime reference](../reference/workers-for-platforms-runtime.md) defines
 resource/lifecycle restrictions. The current profile has no real CPU interruption;
@@ -224,3 +224,10 @@ an infinite loop or process failure can affect peers. Cache API, WebSockets,
 customer raw TCP, schedules and arbitrary cross-Worker RPC are outside this
 subset. Exact Cloudflare errors, live portability, broad tooling compatibility
 and production soak remain unverified; see [remaining work](../plans/workers-for-platforms-remaining-work.md).
+
+## Outbound Workers
+
+Attach an ordinary outbound Worker to each dispatcher binding to filter customer
+fetch requests and inject platform credentials. See the complete
+[outbound example](../../examples/outbound-workers/README.md) for native, Wrangler
+and multipart configuration, parameter semantics and current compatibility limits. The [compatibility contract](../reference/outbound-workers-compatibility.md) separates local qualification from hosted Cloudflare evidence.

@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { apiClient, errorMessage } from "../app/api";
 import { useAuth } from "../app/auth-context";
+import { DispatchBindingSummary, OutboundBundleEditor } from "./outbound-workers";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 
@@ -118,6 +119,14 @@ export function DeployPlatformBundle({
             <dd>{bundle.entrypoint || bundle.files?.[0]?.path}</dd>
           </dl>
         )}
+        {bundle && (
+          <OutboundBundleEditor
+            bundle={bundle}
+            workerID={workerID}
+            disabled={saving}
+            onChange={setBundle}
+          />
+        )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" type="button" disabled={saving} onClick={onClose}>
             Cancel
@@ -212,6 +221,12 @@ export function PlatformRuntime({
             </dd>
             <dt>Duration measurement</dt>
             <dd>{capabilities.duration_measurement.replace(/_/g, " ")}</dd>
+            <dt>Outbound Workers</dt>
+            <dd>
+              {capabilities.outbound_workers
+                ? "Available through dispatch bindings"
+                : "Disabled by administrator"}
+            </dd>
             <dt>Outbound requests</dt>
             <dd>{capabilities.outbound.replace(/_/g, " ")}</dd>
             <dt>Cache API / raw TCP</dt>
@@ -293,6 +308,14 @@ export function PlatformRuntime({
           </Table>
         </LayerCard>
       </div>
+      <DispatchBindingSummary
+        workerID={workerID}
+        revision={revision}
+        onPublished={() => {
+          refresh((value) => value + 1);
+          onPublished?.();
+        }}
+      />
       <DeployPlatformBundle
         workerID={workerID}
         open={deployOpen}

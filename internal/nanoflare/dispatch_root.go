@@ -63,9 +63,20 @@ func (s *Service) EndDispatchRoot(id string, cancel bool) {
 		root.Cancelled = true
 		root.Expires = time.Now()
 	}
+	activeOrdinary := false
+	if !cancel {
+		for _, lease := range s.dispatch.leases {
+			if lease.Root == id && lease.OutboundExecution && lease.Started && !lease.Finished {
+				activeOrdinary = true
+				break
+			}
+		}
+	}
 	if !root.Finished {
 		root.Finished = true
-		root.Expires = minTime(root.Expires, time.Now().Add(2*time.Second))
+		if !activeOrdinary {
+			root.Expires = minTime(root.Expires, time.Now().Add(2*time.Second))
+		}
 	}
 	for token, lease := range s.dispatch.leases {
 		if lease.Root == id {
