@@ -113,7 +113,7 @@ func TestAssetUploadStorageQuotaUntilPruned(t *testing.T) {
 				"/b": {Hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Size: nanoflare.MaxAssetUploadFileBytes},
 			}
 			// Seed reservations without allocating hundreds of MiB of blob fixtures.
-			for index := range nanoflare.MaxAssetUploadSessions {
+			for index := range nanoflare.MaxAssetUploadStorageBytes / nanoflare.MaxAssetUploadBytes {
 				must(repo.SaveAssetUploadSession(nanoflare.AssetUploadSession{
 					ID: fmt.Sprint(index), OrgID: org, NamespaceID: ns.ID, ScriptName: "alpha",
 					Revision: 1, Manifest: manifest, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Second),

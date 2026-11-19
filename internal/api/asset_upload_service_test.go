@@ -113,8 +113,8 @@ func TestAssetUploadPersistentScopeIntegrityAndRetry(t *testing.T) {
 			}
 			// Capacity reservation remains bounded under concurrent initiations.
 			var wg sync.WaitGroup
-			results := make(chan error, nanoflare.MaxAssetUploadSessions+4)
-			for index := range nanoflare.MaxAssetUploadSessions + 4 {
+			results := make(chan error, nanoflare.DefaultAssetUploadSessionLimit+4)
+			for index := range nanoflare.DefaultAssetUploadSessionLimit + 4 {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -136,8 +136,22 @@ func TestAssetUploadPersistentScopeIntegrityAndRetry(t *testing.T) {
 					t.Fatalf("unexpected session creation error: %v", err)
 				}
 			}
-			if success != nanoflare.MaxAssetUploadSessions {
+			if success != nanoflare.DefaultAssetUploadSessionLimit {
 				t.Fatalf("session reservation count %d", success)
+			}
+			if err := service.SetAssetUploadSessionLimit(0); err == nil {
+				t.Fatal("accepted a zero session limit")
+			}
+			limit := nanoflare.DefaultAssetUploadSessionLimit + 2
+			must(service.SetAssetUploadSessionLimit(limit))
+			must(restarted.SetAssetUploadSessionLimit(limit))
+			for _, instance := range []*nanoflare.Service{service, restarted} {
+				_, err := instance.CreateAssetUploadForOrg("asset-org", ns.ID, "alpha", "alice", manifest)
+				must(err)
+			}
+			_, err = service.CreateAssetUploadForOrg("asset-org", ns.ID, "alpha", "alice", manifest)
+			if !errors.Is(err, nanoflare.ErrAssetUploadQuotaExceeded) {
+				t.Fatalf("expected the configured session limit, got %v", err)
 			}
 		})
 	}

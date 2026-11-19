@@ -50,6 +50,7 @@ func main() {
 		wfpSocketCAFiles               = flag.String("wfp-socket-ca-files", envOrDefault("NANOFLARE_WFP_SOCKET_CA_FILES", ""), "comma-separated PEM CA files for WFP sockets")
 		platformDispatchEnabled        = flag.Bool("enable-platform-dispatch", envBoolOrDefault("NANOFLARE_PLATFORM_DISPATCH_ENABLED", false), "administrator opt-in to trusted_shared_workerd dispatch; namespaces share a runtime without CPU interruption or hardened untrusted isolation")
 		cloudflareCompatibilityEnabled = flag.Bool("enable-cloudflare-compatibility", envBoolOrDefault("NANOFLARE_CLOUDFLARE_COMPATIBILITY_ENABLED", false), "enable the experimental trusted Cloudflare management adapter; requires platform dispatch")
+		assetUploadSessionLimit        = flag.String("asset-upload-session-limit", envOrDefault("NANOFLARE_ASSET_UPLOAD_SESSION_LIMIT", strconv.Itoa(nanoflare.DefaultAssetUploadSessionLimit)), "maximum active asset upload sessions per organization (positive integer)")
 		addr                           = flag.String("addr", ":8080", "HTTP listen address")
 		runtimeAddr                    = flag.String("runtime-addr", "127.0.0.1:8081", "private runtime KV API listen address")
 		configDir                      = flag.String("config-dir", "./var/generated", "directory for generated runtime configuration")
@@ -106,6 +107,10 @@ func main() {
 		otelSampleRatio                = flag.Float64("otel-sample-ratio", envFloatOrDefault("NANOFLARE_OTEL_SAMPLE_RATIO", 0.1), "fraction of root traces to sample, from 0 to 1")
 	)
 	flag.Parse()
+	sessionLimit, err := strconv.Atoi(*assetUploadSessionLimit)
+	if err != nil || sessionLimit < 1 {
+		log.Fatal("asset-upload-session-limit (NANOFLARE_ASSET_UPLOAD_SESSION_LIMIT) must be a positive integer")
+	}
 	wfpSockets, err := config.LoadWFPSocketPolicy(*wfpSocketAllow, *wfpSocketDeny, *wfpSocketCAFiles, *wfpSocketAllowLocal)
 	if err != nil {
 		log.Fatal(err)
@@ -294,6 +299,9 @@ func main() {
 		log.Printf("using Loki worker output at %s", *lokiURL)
 	}
 	service := nanoflare.NewServiceWithConsole(store, publisher, objectStore, outputReader, metrics.NewCombinedReader(metrics.NewClient(*prometheus), durationTelemetry))
+	if err := service.SetAssetUploadSessionLimit(sessionLimit); err != nil {
+		log.Fatal(err)
+	}
 	if err := service.SetDeploymentLimits(nanoflare.DeploymentLimits{WorkerBytes: *deployWorkerBytes, AssetBytes: *deployAssetBytes, RequestBytes: *deployRequestBytes}); err != nil {
 		log.Fatal(err)
 	}
