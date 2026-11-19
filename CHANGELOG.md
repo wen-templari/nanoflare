@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.8.0](https://github.com/wen-templari/nanoflare/compare/v0.7.0...v0.8.0) (2026-11-19)
+
+
+### Features
+
+* add authenticated worker request command ([8640f89](https://github.com/wen-templari/nanoflare/commit/8640f89d5fa1022856149814c5e54f272b10f627))
+* add authenticated worker request command ([cee6eae](https://github.com/wen-templari/nanoflare/commit/cee6eaef931e5340ad5f1e7eb04a76a1168e115d))
+* add Cloudflare-aligned outbound Workers support ([60649ff](https://github.com/wen-templari/nanoflare/commit/60649ffd1933df48f4da59a1ba169154986ec509))
+* add Cloudflare-aligned outbound Workers support ([f177b48](https://github.com/wen-templari/nanoflare/commit/f177b486c0016545d288a37196943068f17e331e))
+* make asset upload quotas independently configurable ([7974a40](https://github.com/wen-templari/nanoflare/commit/7974a40433df45a47ea4c7c2d39590b08b9cf7f1))
+* make the active asset upload session limit configurable ([14d61c2](https://github.com/wen-templari/nanoflare/commit/14d61c2ed98b85f0cc604ef382b4e288a2a8f0b9))
+* make the asset upload staging budget configurable ([0e9aec1](https://github.com/wen-templari/nanoflare/commit/0e9aec1dacb412cc7e4b78310964a7fc47a52d13))
+
+
+### Bug Fixes
+
+* bound generated Worker hostnames to DNS limits ([0baffbf](https://github.com/wen-templari/nanoflare/commit/0baffbfda8dd1a31a052d465b07a6be0e1255ddc))
+* bound retained asset upload staging storage ([85d3842](https://github.com/wen-templari/nanoflare/commit/85d3842293b38556b579eaa88ef6c42ecb87cf59))
+* enable TLS sockets for ordinary Workers ([804c1a0](https://github.com/wen-templari/nanoflare/commit/804c1a0a5a39e00cfedb75909d4f040541ca571b))
+* enable TLS sockets for ordinary Workers ([86340ee](https://github.com/wen-templari/nanoflare/commit/86340eec990f2f874f94e981087fdb410937e041))
+* release quota for consumed asset upload sessions ([d410dd1](https://github.com/wen-templari/nanoflare/commit/d410dd1cdfb9a405c12101025af6d742f851bb37))
+* release quota for consumed asset upload sessions ([57dd499](https://github.com/wen-templari/nanoflare/commit/57dd499e39b5ba1cc8c4bd978593f635f1c33b11))
+* stream deployment uploads and raise size limits ([2f77f83](https://github.com/wen-templari/nanoflare/commit/2f77f83d65386cfa88bf5265e6a9c4b06664125a))
+* stream deployment uploads and raise size limits ([020fa57](https://github.com/wen-templari/nanoflare/commit/020fa578c28b9080df7936e31d06749ed7ea1d2c))
+* support Wrangler ordinary Worker redeployment ([eea6db4](https://github.com/wen-templari/nanoflare/commit/eea6db4d47a817d6ce6514128ad0b5a56fa4e270))
+* support Wrangler ordinary Worker redeployment ([462551f](https://github.com/wen-templari/nanoflare/commit/462551f75d97382cfcba625062452b996c56eaae))
+
 ## [0.7.0](https://github.com/wen-templari/nanoflare/compare/v0.6.1...v0.7.0) (2026-10-29)
 
 
