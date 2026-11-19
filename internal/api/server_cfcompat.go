@@ -37,7 +37,17 @@ func cfJSON(w http.ResponseWriter, result any) {
 func cfError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, cfEnvelope{Errors: []cfAPIError{{Code: 10000, Message: message}}, Messages: []cfAPIError{}, Result: nil})
 }
+
+const cfAssetSessionQuotaCode = 10001
+
 func cfServiceError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nanoflare.ErrAssetUploadQuotaExceeded) {
+		writeJSON(w, http.StatusTooManyRequests, cfEnvelope{
+			Errors:   []cfAPIError{{Code: cfAssetSessionQuotaCode, Message: err.Error()}},
+			Messages: []cfAPIError{},
+		})
+		return
+	}
 	status := 400
 	switch {
 	case errors.Is(err, nanoflare.ErrAppNotFound), errors.Is(err, nanoflare.ErrDispatchNamespaceNotFound), errors.Is(err, nanoflare.ErrArtifactNotFound), errors.Is(err, nanoflare.ErrSecretNotFound), errors.Is(err, nanoflare.ErrKVNamespaceNotFound), errors.Is(err, nanoflare.ErrDatabaseNotFound), errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound):

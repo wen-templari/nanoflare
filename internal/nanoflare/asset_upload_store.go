@@ -38,7 +38,9 @@ func (s *Store) SaveAssetUploadSession(value AssetUploadSession, expected int64)
 	if !exists || ns.OrgID != value.OrgID {
 		return ErrDispatchNamespaceNotFound
 	}
-	s.assetUploads[value.ID] = cloneAssetUpload(value)
+	value = cloneAssetUpload(value)
+	value.consumed = old.consumed
+	s.assetUploads[value.ID] = value
 	return nil
 }
 func (s *Store) CountAssetUploadSessions(org string, now time.Time) (int, error) {
@@ -46,7 +48,7 @@ func (s *Store) CountAssetUploadSessions(org string, now time.Time) (int, error)
 	defer s.mu.RUnlock()
 	count := 0
 	for _, session := range s.assetUploads {
-		if !session.ExpiresAt.After(now) {
+		if session.consumed || !session.ExpiresAt.After(now) {
 			continue
 		}
 		if _, exists := s.dispatchNamespaces[session.NamespaceID]; !exists {

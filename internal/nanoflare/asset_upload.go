@@ -19,6 +19,7 @@ import (
 	"github.com/zeebo/blake3"
 )
 
+var ErrAssetUploadQuotaExceeded = errors.New("active asset session limit exceeded")
 var ErrAssetUploadUnavailable = errors.New("asset upload session is unavailable or expired")
 
 const MaxAssetUploadBytes = 50 << 20
@@ -48,6 +49,7 @@ type AssetUploadSession struct {
 	CreatedAt   time.Time                   `json:"created_at"`
 	ExpiresAt   time.Time                   `json:"expires_at"`
 	CompletedAt *time.Time                  `json:"completed_at,omitempty"`
+	consumed    bool
 }
 type AssetUploadResult struct {
 	JWT     string     `json:"jwt,omitempty"`
@@ -128,7 +130,7 @@ func (s *Service) CreateAssetUploadForOrg(org, namespace, script, customer strin
 		return AssetUploadResult{}, err
 	}
 	if count >= MaxAssetUploadSessions {
-		return AssetUploadResult{}, errors.New("active asset session limit exceeded")
+		return AssetUploadResult{}, ErrAssetUploadQuotaExceeded
 	}
 	id, err := randomToken()
 	if err != nil {
@@ -348,43 +350,45 @@ func (s *Service) CompletedAssetsForOrg(org, namespace, script, customer, token 
 // Called with both publication locks held, after idempotent replay and before
 // artifact creation. Binding persists even when later publication fails, so a
 // deleted/recreated Worker cannot recover an earlier instance's completion.
-func (s *Service) bindCompletedAssetUpload(org, worker, token string, files []AssetFile) error {
+func (s *Service) bindCompletedAssetUpload(org, worker, token string, files []AssetFile) (string, error) {
 	app, err := s.appForOrg(org, worker)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if app.Platform == nil || app.Platform.Kind != "customer" {
-		return ErrAssetUploadUnavailable
+		return "", ErrAssetUploadUnavailable
 	}
 	assets, err := s.CompletedAssetsForOrg(org, app.Platform.NamespaceID, app.Platform.ScriptName, app.Platform.CustomerID, token)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(assets) != len(files) {
-		return ErrAssetUploadUnavailable
+		return "", ErrAssetUploadUnavailable
 	}
 	byPath := map[string]AssetFile{}
 	for _, file := range files {
 		if _, exists := byPath[file.Path]; exists {
-			return ErrAssetUploadUnavailable
+			return "", ErrAssetUploadUnavailable
 		}
 		byPath[file.Path] = file
 	}
 	for _, asset := range assets {
 		file, exists := byPath[strings.TrimPrefix(asset.Path, "/")]
 		if !exists || file.ObjectKey != "" || file.ContentType != asset.ContentType || !bytes.Equal(file.Data, asset.Data) {
-			return ErrAssetUploadUnavailable
+			return "", ErrAssetUploadUnavailable
 		}
 	}
 	session, err := s.assetUploadFromToken(org, token, "complete")
 	if err != nil {
-		return err
+		return "", err
 	}
 	if session.WorkerID == "" {
 		expected := session.Revision
 		session.Revision++
 		session.WorkerID = worker
-		return s.store.SaveAssetUploadSession(session, expected)
+		if err := s.store.SaveAssetUploadSession(session, expected); err != nil {
+			return "", err
+		}
 	}
-	return nil
+	return session.ID, nil
 }

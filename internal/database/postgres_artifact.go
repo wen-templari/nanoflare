@@ -83,7 +83,27 @@ func (p *Postgres) GetPublication(app, key string) (nanoflare.Publication, bool,
 	return op, true, err
 }
 func (p *Postgres) SavePublication(op nanoflare.Publication) error {
-	result, err := p.db.Exec(`INSERT INTO deployment_publications VALUES ($1,$2,$3,$4,$5) ON CONFLICT(worker_id,request_key) DO UPDATE SET payload=EXCLUDED.payload WHERE deployment_publications.fingerprint=EXCLUDED.fingerprint AND deployment_publications.deployment_id=EXCLUDED.deployment_id`, op.AppID, op.Key, op.Fingerprint, op.DeploymentID, mustJSON(op))
+	return savePublication(p.db.Exec, op)
+}
+
+func (p *Postgres) StoreAssetPublication(op nanoflare.Publication, sessionID string) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := savePublication(tx.Exec, op); err != nil {
+		return err
+	}
+	// A session pruned after validation already stopped counting against quota.
+	if _, err := tx.Exec(`UPDATE asset_upload_sessions SET consumed=true WHERE id=$1 AND NOT consumed`, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func savePublication(exec func(string, ...any) (sql.Result, error), op nanoflare.Publication) error {
+	result, err := exec(`INSERT INTO deployment_publications VALUES ($1,$2,$3,$4,$5) ON CONFLICT(worker_id,request_key) DO UPDATE SET payload=EXCLUDED.payload WHERE deployment_publications.fingerprint=EXCLUDED.fingerprint AND deployment_publications.deployment_id=EXCLUDED.deployment_id`, op.AppID, op.Key, op.Fingerprint, op.DeploymentID, mustJSON(op))
 	if err != nil {
 		return err
 	}

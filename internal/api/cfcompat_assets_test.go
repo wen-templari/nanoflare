@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"net/textproto"
 	"strings"
@@ -39,6 +41,23 @@ func cfAssetMultipart(t *testing.T, files map[string][]byte) (string, []byte) {
 	return writer.FormDataContentType(), body.Bytes()
 }
 
+// Simulate an interruption on either side of the durable publication write.
+type assetPublicationTestRepo struct {
+	nanoflare.Repository
+	beforeStoreError error
+	afterStoreError  error
+}
+
+func (r *assetPublicationTestRepo) StoreAssetPublication(publication nanoflare.Publication, sessionID string) error {
+	if r.beforeStoreError != nil {
+		return r.beforeStoreError
+	}
+	if err := r.Repository.StoreAssetPublication(publication, sessionID); err != nil {
+		return err
+	}
+	return r.afterStoreError
+}
+
 func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
@@ -59,7 +78,8 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 			org, err := auth.CreateOrganization(session.User.ID, nanoflare.CreateOrganizationInput{Name: "assets"})
 			must(err)
 			writer := &managedRecordingWriter{}
-			service := nanoflare.NewServiceWithObjects(repo, writer, newAPIObjectStore())
+			publicationRepo := &assetPublicationTestRepo{Repository: repo}
+			service := nanoflare.NewServiceWithObjects(publicationRepo, writer, newAPIObjectStore())
 			service.SetPlatformDispatchEnabled(true)
 			codec, err := nanoflare.NewSecretCodec("0123456789abcdef0123456789abcdef")
 			must(err)
@@ -68,6 +88,14 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 			must(err)
 			handler := NewServerWithControlAuth(service, nil, "", nil, auth)
 			handler.SetCloudflareCompatibilityEnabled(true)
+			checkQuota := func(want int) {
+				t.Helper()
+				count, err := repo.CountAssetUploadSessions(org.ID, time.Now().UTC())
+				must(err)
+				if count != want {
+					t.Fatalf("asset quota usage = %d, want %d", count, want)
+				}
+			}
 			base := "/client/v4/accounts/" + org.ID + "/workers"
 			script := base + "/dispatch/namespaces/staging/scripts/alpha"
 			call := func(method, path, token, kind string, body []byte, key, customer string, want int) json.RawMessage {
@@ -86,11 +114,15 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 				}
 				var envelope struct {
 					Success bool            `json:"success"`
+					Errors  []cfAPIError    `json:"errors"`
 					Result  json.RawMessage `json:"result"`
 				}
 				must(json.Unmarshal(out.Body.Bytes(), &envelope))
 				if envelope.Success != (want < 300) {
 					t.Fatal("incorrect asset envelope")
+				}
+				if want == http.StatusTooManyRequests && (len(envelope.Errors) != 1 || envelope.Errors[0].Code != cfAssetSessionQuotaCode) {
+					t.Fatalf("expected a quota-specific error, got %s", out.Body.String())
 				}
 				return envelope.Result
 			}
@@ -131,8 +163,15 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 			kind, body = cfMultipart(t, metadata, `export default {fetch(request,env){return env.ASSETS.fetch(request)}}`)
 			call("PUT", strings.TrimSuffix(script, "alpha")+"beta", session.Token, kind, body, "foreign-script", "bob", 422)
 			call("PUT", script, session.Token, kind, body, "first", "bob", 422)
+			checkQuota(1)
+			publicationRepo.beforeStoreError = errors.New("interrupted before the publication was stored")
+			call("PUT", script, session.Token, kind, body, "interrupted-before-store", "alice", 400)
+			publicationRepo.beforeStoreError = nil
+			checkQuota(1)
+
 			writer.failNext = true
 			call("PUT", script, session.Token, kind, body, "failed-publication", "alice", 400)
+			checkQuota(0)
 			failedApp, err := service.NamespaceScript(org.ID, ns.ID, "alpha")
 			must(err)
 			failedTraffic, err := repo.ActiveDeploymentsForApp(failedApp.ID)
@@ -186,6 +225,33 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 			if len(active) != 1 || active[0].Deployment.ID != first {
 				t.Fatal("retry undid rollback")
 			}
+			// Keep one completed, unattached upload and still deploy more times
+			// than the quota within the same session lifetime.
+			emptyManifest := []byte(`{"manifest":{}}`)
+			call("POST", script+"/assets-upload-session", session.Token, "application/json", emptyManifest, "", "alice", 200)
+			checkQuota(1)
+			for index := range nanoflare.MaxAssetUploadSessions + 1 {
+				var pending, ready nanoflare.AssetUploadResult
+				must(json.Unmarshal(call("POST", script+"/assets-upload-session", session.Token, "application/json", manifest, "", "alice", 200), &pending))
+				kind, body = cfAssetMultipart(t, map[string][]byte{aHash: a, bHash: b})
+				must(json.Unmarshal(call("POST", base+"/assets/upload?base64=true", pending.JWT, kind, body, "", "", 201), &ready))
+				checkQuota(2)
+				kind, body = cfMultipart(t, strings.Replace(metadata, completed.JWT, ready.JWT, 1), `export default {fetch(request,env){return env.ASSETS.fetch(request)}}`)
+				key := fmt.Sprintf("burst-%d", index)
+				if index == 0 {
+					publicationRepo.afterStoreError = errors.New("interrupted after the publication was stored")
+					// The HTTP handler recovers the stored publication before responding.
+					call("PUT", script, session.Token, kind, body, key, "alice", 200)
+					publicationRepo.afterStoreError = nil
+					checkQuota(1)
+				}
+				call("PUT", script, session.Token, kind, body, key, "alice", 200)
+				checkQuota(1)
+			}
+			for range nanoflare.MaxAssetUploadSessions - 1 {
+				call("POST", script+"/assets-upload-session", session.Token, "application/json", manifest, "", "alice", 200)
+			}
+			call("POST", script+"/assets-upload-session", session.Token, "application/json", manifest, "", "alice", http.StatusTooManyRequests)
 			// Even restoring the session expiry cannot authorize a replacement
 			// Worker under the same name once first attachment bound its old ID.
 			staged.ExpiresAt = time.Now().Add(time.Hour)

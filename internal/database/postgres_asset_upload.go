@@ -15,6 +15,7 @@ func (p *Postgres) migrateAssetUploads(ctx context.Context) error {
  id text PRIMARY KEY, org_id text NOT NULL, namespace_id text NOT NULL,
  revision bigint NOT NULL CHECK(revision>0), expires_at timestamptz NOT NULL, payload jsonb NOT NULL,
  FOREIGN KEY(namespace_id,org_id) REFERENCES dispatch_namespaces(id,org_id) ON DELETE CASCADE);
+ ALTER TABLE asset_upload_sessions ADD COLUMN IF NOT EXISTS consumed boolean NOT NULL DEFAULT false;
  CREATE INDEX IF NOT EXISTS asset_upload_org_expiry_idx ON asset_upload_sessions(org_id,expires_at);
  CREATE INDEX IF NOT EXISTS asset_upload_expiry_idx ON asset_upload_sessions(expires_at,id);`)
 	return err
@@ -54,7 +55,7 @@ func (p *Postgres) SaveAssetUploadSession(session nanoflare.AssetUploadSession, 
 }
 func (p *Postgres) CountAssetUploadSessions(org string, now time.Time) (int, error) {
 	var count int
-	err := p.db.QueryRow(`SELECT count(*) FROM asset_upload_sessions WHERE org_id=$1 AND expires_at>$2`, org, now).Scan(&count)
+	err := p.db.QueryRow(`SELECT count(*) FROM asset_upload_sessions WHERE org_id=$1 AND expires_at>$2 AND NOT consumed`, org, now).Scan(&count)
 	return count, err
 }
 

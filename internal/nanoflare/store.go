@@ -63,6 +63,8 @@ type Repository interface {
 	StoreDeployment(Deployment) error
 	GetPublication(string, string) (Publication, bool, error)
 	SavePublication(Publication) error
+	// StoreAssetPublication atomically records a recoverable publication and releases the session quota slot.
+	StoreAssetPublication(Publication, string) error
 	ListPublications() ([]Publication, error)
 	CreateDispatchNamespace(DispatchNamespace) error
 	GetDispatchNamespace(string) (DispatchNamespace, error)

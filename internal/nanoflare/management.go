@@ -86,6 +86,7 @@ type ManagedDeployInput struct {
 	KeepSecrets map[string]string
 }
 type managedPublication struct {
+	AssetSessionID    string
 	ConfigurationOnly bool
 	RequestIdentity   string
 	ExpectedRevision  int64
@@ -303,8 +304,10 @@ func (s *Service) deployManagedPublication(org, worker string, in ManagedDeployI
 	if state.Revision != in.ExpectedRevision || (found && state.DeploymentID != in.BaseDeploymentID) {
 		return Deployment{}, ErrManagementConflict
 	}
+	var assetSessionID string
 	if in.AssetUploadToken != "" {
-		if err := s.bindCompletedAssetUpload(org, worker, in.AssetUploadToken, in.Deployment.Assets); err != nil {
+		assetSessionID, err = s.bindCompletedAssetUpload(org, worker, in.AssetUploadToken, in.Deployment.Assets)
+		if err != nil {
 			return Deployment{}, err
 		}
 	}
@@ -346,7 +349,7 @@ func (s *Service) deployManagedPublication(org, worker string, in ManagedDeployI
 		selected = append(selected, ArtifactSecret{Name: name, Nonce: nonce, Ciphertext: ciphertext, Version: version, CreatedAt: created, UpdatedAt: now})
 	}
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Name < selected[j].Name })
-	return s.buildAndPublishDeployment(worker, in.Deployment, fingerprint, &managedPublication{ExpectedRevision: in.ExpectedRevision, Metadata: in.Metadata, Secrets: selected, RequestIdentity: in.RequestIdentity, ConfigurationOnly: in.ConfigurationOnly})
+	return s.buildAndPublishDeployment(worker, in.Deployment, fingerprint, &managedPublication{AssetSessionID: assetSessionID, ExpectedRevision: in.ExpectedRevision, Metadata: in.Metadata, Secrets: selected, RequestIdentity: in.RequestIdentity, ConfigurationOnly: in.ConfigurationOnly})
 }
 
 func (s *Service) commitManagedArtifact(p Publication, a DeploymentArtifact) error {

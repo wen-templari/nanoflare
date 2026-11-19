@@ -1422,7 +1422,12 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 	if err = s.store.StoreDeployment(deployment); err != nil {
 		return Deployment{}, err
 	}
-	if err = s.store.SavePublication(publication); err != nil {
+	if managed != nil && managed.AssetSessionID != "" {
+		err = s.store.StoreAssetPublication(publication, managed.AssetSessionID)
+	} else {
+		err = s.store.SavePublication(publication)
+	}
+	if err != nil {
 		return Deployment{}, err
 	}
 	return s.publishStoredArtifact(&publication, artifact)

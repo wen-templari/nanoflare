@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -112,8 +113,7 @@ func TestAssetUploadPersistentScopeIntegrityAndRetry(t *testing.T) {
 			}
 			// Capacity reservation remains bounded under concurrent initiations.
 			var wg sync.WaitGroup
-			var mu sync.Mutex
-			success := 0
+			results := make(chan error, nanoflare.MaxAssetUploadSessions+4)
 			for index := range nanoflare.MaxAssetUploadSessions + 4 {
 				wg.Add(1)
 				go func() {
@@ -123,14 +123,19 @@ func TestAssetUploadPersistentScopeIntegrityAndRetry(t *testing.T) {
 						selected = restarted
 					}
 					_, err := selected.CreateAssetUploadForOrg("asset-org", ns.ID, "alpha", "alice", manifest)
-					if err == nil {
-						mu.Lock()
-						success++
-						mu.Unlock()
-					}
+					results <- err
 				}()
 			}
 			wg.Wait()
+			close(results)
+			success := 0
+			for err := range results {
+				if err == nil {
+					success++
+				} else if !errors.Is(err, nanoflare.ErrAssetUploadQuotaExceeded) {
+					t.Fatalf("unexpected session creation error: %v", err)
+				}
+			}
 			if success != nanoflare.MaxAssetUploadSessions {
 				t.Fatalf("session reservation count %d", success)
 			}
