@@ -61,6 +61,19 @@ func (s *Store) CountAssetUploadSessions(org string, now time.Time) (int, error)
 	return count, nil
 }
 
+// Count every retained record until pruning actually removes it.
+func (s *Store) ReservedAssetUploadBytes(org string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var total int64
+	for _, session := range s.assetUploads {
+		if session.OrgID == org {
+			total += session.ReservedBytes()
+		}
+	}
+	return total, nil
+}
+
 func (s *Store) PruneAssetUploadSessions(ctx context.Context, now time.Time, limit int) (int, error) {
 	if err := validateAssetPruneLimit(limit); err != nil {
 		return 0, err

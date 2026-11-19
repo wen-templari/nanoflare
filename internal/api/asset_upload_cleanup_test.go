@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -82,6 +85,63 @@ func TestAssetUploadCleanupBatchesAndRetainsLiveSessions(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 			stop() // Stopping twice must remain safe during graceful shutdown.
+		})
+	}
+}
+
+func TestAssetUploadStorageQuotaUntilPruned(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			var repo nanoflare.Repository = nanoflare.NewStore()
+			if backend == "postgres" {
+				repo = runtimePostgres(t)
+			}
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			const org = "org"
+			must(repo.CreateOrganization(nanoflare.Organization{ID: org, Name: org}))
+			service, _ := managedService(t, repo, discardWriter{})
+			ns, err := service.CreateDispatchNamespace(org, nanoflare.CreateDispatchNamespaceInput{Name: "storage"})
+			must(err)
+			now := time.Now().UTC()
+			manifest := map[string]nanoflare.AssetUploadEntry{
+				"/a": {Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: nanoflare.MaxAssetUploadFileBytes},
+				"/b": {Hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Size: nanoflare.MaxAssetUploadFileBytes},
+			}
+			// Seed reservations without allocating hundreds of MiB of blob fixtures.
+			for index := range nanoflare.MaxAssetUploadSessions {
+				must(repo.SaveAssetUploadSession(nanoflare.AssetUploadSession{
+					ID: fmt.Sprint(index), OrgID: org, NamespaceID: ns.ID, ScriptName: "alpha",
+					Revision: 1, Manifest: manifest, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Second),
+				}, 0))
+			}
+			reserved, err := repo.ReservedAssetUploadBytes(org)
+			must(err)
+			if reserved != nanoflare.MaxAssetUploadStorageBytes {
+				t.Fatalf("storage reservation = %d", reserved)
+			}
+			_, err = service.CreateAssetUploadForOrg(org, ns.ID, "alpha", "", manifest)
+			if !errors.Is(err, nanoflare.ErrAssetUploadStorageExceeded) {
+				t.Fatalf("expected staging storage quota error, got %v", err)
+			}
+			response := httptest.NewRecorder()
+			cfServiceError(response, err)
+			var envelope cfEnvelope
+			must(json.Unmarshal(response.Body.Bytes(), &envelope))
+			if response.Code != http.StatusTooManyRequests || len(envelope.Errors) != 1 || envelope.Errors[0].Code != cfAssetStorageQuotaCode {
+				t.Fatalf("unexpected storage quota response: %d %s", response.Code, response.Body.String())
+			}
+			count, err := repo.PruneAssetUploadSessions(context.Background(), now, 1)
+			must(err)
+			if count != 1 {
+				t.Fatalf("pruned %d sessions, want 1", count)
+			}
+			_, err = service.CreateAssetUploadForOrg(org, ns.ID, "alpha", "", manifest)
+			must(err)
 		})
 	}
 }

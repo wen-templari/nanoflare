@@ -38,12 +38,22 @@ func cfError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, cfEnvelope{Errors: []cfAPIError{{Code: 10000, Message: message}}, Messages: []cfAPIError{}, Result: nil})
 }
 
-const cfAssetSessionQuotaCode = 10001
+const (
+	cfAssetSessionQuotaCode = 10001
+	cfAssetStorageQuotaCode = 10002
+)
 
 func cfServiceError(w http.ResponseWriter, err error) {
-	if errors.Is(err, nanoflare.ErrAssetUploadQuotaExceeded) {
+	var quotaCode int
+	switch {
+	case errors.Is(err, nanoflare.ErrAssetUploadQuotaExceeded):
+		quotaCode = cfAssetSessionQuotaCode
+	case errors.Is(err, nanoflare.ErrAssetUploadStorageExceeded):
+		quotaCode = cfAssetStorageQuotaCode
+	}
+	if quotaCode != 0 {
 		writeJSON(w, http.StatusTooManyRequests, cfEnvelope{
-			Errors:   []cfAPIError{{Code: cfAssetSessionQuotaCode, Message: err.Error()}},
+			Errors:   []cfAPIError{{Code: quotaCode, Message: err.Error()}},
 			Messages: []cfAPIError{},
 		})
 		return

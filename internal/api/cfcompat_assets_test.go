@@ -248,6 +248,12 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 				call("PUT", script, session.Token, kind, body, key, "alice", 200)
 				checkQuota(1)
 			}
+			reserved, err := repo.ReservedAssetUploadBytes(org.ID)
+			must(err)
+			wantReserved := int64(nanoflare.MaxAssetUploadSessions+3) * nanoflare.MinAssetUploadReservationBytes
+			if reserved != wantReserved {
+				t.Fatalf("retained reservation = %d, want %d", reserved, wantReserved)
+			}
 			for range nanoflare.MaxAssetUploadSessions - 1 {
 				call("POST", script+"/assets-upload-session", session.Token, "application/json", manifest, "", "alice", 200)
 			}

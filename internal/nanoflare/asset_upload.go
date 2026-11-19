@@ -20,12 +20,26 @@ import (
 )
 
 var ErrAssetUploadQuotaExceeded = errors.New("active asset session limit exceeded")
+var ErrAssetUploadStorageExceeded = errors.New("asset upload staging storage limit exceeded")
 var ErrAssetUploadUnavailable = errors.New("asset upload session is unavailable or expired")
 
 const MaxAssetUploadBytes = 50 << 20
 const MaxAssetUploadFileBytes = 25 << 20
 const MaxAssetUploadFiles = 1000
 const MaxAssetUploadSessions = 16
+const MaxAssetUploadStorageBytes = MaxAssetUploadSessions * MaxAssetUploadBytes
+const MinAssetUploadReservationBytes = 1 << 20
+
+// A minimum reservation also bounds the number of retained session records,
+// including empty manifests. Counting all paths conservatively covers blobs
+// shared by multiple paths in a manifest.
+func (s AssetUploadSession) ReservedBytes() int64 {
+	var total int64
+	for _, entry := range s.Manifest {
+		total += entry.Size
+	}
+	return max(total, MinAssetUploadReservationBytes)
+}
 
 type AssetUploadEntry struct {
 	Hash string `json:"hash"`
@@ -137,6 +151,13 @@ func (s *Service) CreateAssetUploadForOrg(org, namespace, script, customer strin
 		return AssetUploadResult{}, err
 	}
 	session := AssetUploadSession{ID: id, OrgID: org, NamespaceID: namespace, ScriptName: script, CustomerID: customer, WorkerID: worker, Revision: 1, Manifest: manifest, Blobs: map[string]AssetUploadBlob{}, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	reserved, err := s.store.ReservedAssetUploadBytes(org)
+	if err != nil {
+		return AssetUploadResult{}, err
+	}
+	if reserved > MaxAssetUploadStorageBytes-session.ReservedBytes() {
+		return AssetUploadResult{}, ErrAssetUploadStorageExceeded
+	}
 	if len(manifest) == 0 {
 		session.CompletedAt = &now
 	}

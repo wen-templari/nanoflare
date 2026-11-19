@@ -56,6 +56,7 @@ type Repository interface {
 	GetAssetUploadSession(string) (AssetUploadSession, error)
 	SaveAssetUploadSession(AssetUploadSession, int64) error
 	CountAssetUploadSessions(string, time.Time) (int, error)
+	ReservedAssetUploadBytes(string) (int64, error)
 	GetScriptManagementState(string) (ScriptManagementState, bool, error)
 	CommitScriptManagementState(ScriptManagementState, int64) error
 	PutDeploymentArtifact(DeploymentArtifact) error

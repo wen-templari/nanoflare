@@ -50,6 +50,14 @@ func TestPostgresAssetUploadSurvivesConnectionReopen(t *testing.T) {
 	hash := hex.EncodeToString(digest[:16])
 	initial, err := service.CreateAssetUploadForOrg("org", ns.ID, "alpha", "", map[string]nanoflare.AssetUploadEntry{"/file.txt": {Hash: hash, Size: int64(len(data))}})
 	must(err)
+	// Simulate a row written before the reservation column existed.
+	_, err = repo.db.Exec(`UPDATE asset_upload_sessions SET reserved_bytes=NULL`)
+	must(err)
+	reserved, err := repo.ReservedAssetUploadBytes("org")
+	must(err)
+	if reserved != nanoflare.MinAssetUploadReservationBytes {
+		t.Fatalf("legacy session reservation = %d", reserved)
+	}
 	must(repo.Close())
 	reopened, err := Open(context.Background(), dsn)
 	must(err)
