@@ -123,6 +123,9 @@ type Service struct {
 	runtimeDeploymentsMu sync.RWMutex
 	runtimeDeployments   map[string][]ActiveDeployment
 	runtimeVersions      map[string]uint64
+
+	assetUploadSessionLimit int
+	assetUploadStorageLimit int64
 }
 
 type AssetResponse struct {
@@ -173,6 +176,9 @@ func newService(store Repository, writer ConfigWriter, objects ObjectStore) *Ser
 		kvOrgUsageCacheTTL:   time.Second,
 		runtimeDeployments:   make(map[string][]ActiveDeployment),
 		runtimeVersions:      make(map[string]uint64),
+
+		assetUploadSessionLimit: DefaultAssetUploadSessionLimit,
+		assetUploadStorageLimit: DefaultAssetUploadStorageBytes,
 	}
 }
 

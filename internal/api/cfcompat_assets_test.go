@@ -230,7 +230,7 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 			emptyManifest := []byte(`{"manifest":{}}`)
 			call("POST", script+"/assets-upload-session", session.Token, "application/json", emptyManifest, "", "alice", 200)
 			checkQuota(1)
-			for index := range nanoflare.MaxAssetUploadSessions + 1 {
+			for index := range nanoflare.DefaultAssetUploadSessionLimit + 1 {
 				var pending, ready nanoflare.AssetUploadResult
 				must(json.Unmarshal(call("POST", script+"/assets-upload-session", session.Token, "application/json", manifest, "", "alice", 200), &pending))
 				kind, body = cfAssetMultipart(t, map[string][]byte{aHash: a, bHash: b})
@@ -250,11 +250,11 @@ func TestCloudflareAssetUploadHTTPPublicationAndIsolation(t *testing.T) {
 			}
 			reserved, err := repo.ReservedAssetUploadBytes(org.ID)
 			must(err)
-			wantReserved := int64(nanoflare.MaxAssetUploadSessions+3) * nanoflare.MinAssetUploadReservationBytes
+			wantReserved := int64(nanoflare.DefaultAssetUploadSessionLimit+3) * nanoflare.MinAssetUploadReservationBytes
 			if reserved != wantReserved {
 				t.Fatalf("retained reservation = %d, want %d", reserved, wantReserved)
 			}
-			for range nanoflare.MaxAssetUploadSessions - 1 {
+			for range nanoflare.DefaultAssetUploadSessionLimit - 1 {
 				call("POST", script+"/assets-upload-session", session.Token, "application/json", manifest, "", "alice", 200)
 			}
 			call("POST", script+"/assets-upload-session", session.Token, "application/json", manifest, "", "alice", http.StatusTooManyRequests)
