@@ -56,6 +56,7 @@ type Repository interface {
 	GetAssetUploadSession(string) (AssetUploadSession, error)
 	SaveAssetUploadSession(AssetUploadSession, int64) error
 	CountAssetUploadSessions(string, time.Time) (int, error)
+	ReservedAssetUploadBytes(string) (int64, error)
 	GetScriptManagementState(string) (ScriptManagementState, bool, error)
 	CommitScriptManagementState(ScriptManagementState, int64) error
 	PutDeploymentArtifact(DeploymentArtifact) error
@@ -63,6 +64,8 @@ type Repository interface {
 	StoreDeployment(Deployment) error
 	GetPublication(string, string) (Publication, bool, error)
 	SavePublication(Publication) error
+	// StoreAssetPublication atomically records a recoverable publication and releases the session quota slot.
+	StoreAssetPublication(Publication, string) error
 	ListPublications() ([]Publication, error)
 	CreateDispatchNamespace(DispatchNamespace) error
 	GetDispatchNamespace(string) (DispatchNamespace, error)

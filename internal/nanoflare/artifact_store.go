@@ -60,6 +60,23 @@ func (s *Store) GetPublication(app, key string) (Publication, bool, error) {
 func (s *Store) SavePublication(p Publication) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.savePublicationLocked(p)
+}
+
+func (s *Store) StoreAssetPublication(p Publication, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.savePublicationLocked(p); err != nil {
+		return err
+	}
+	if session, ok := s.assetUploads[sessionID]; ok {
+		session.consumed = true
+		s.assetUploads[sessionID] = session
+	}
+	return nil
+}
+
+func (s *Store) savePublicationLocked(p Publication) error {
 	if _, ok := s.apps[p.AppID]; !ok {
 		return ErrAppNotFound
 	}
