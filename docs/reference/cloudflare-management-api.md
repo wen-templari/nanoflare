@@ -366,9 +366,13 @@ permits 1,000 files, 25 MiB per file and 50 MiB total declared bytes. Each
 organization can hold 16 unexpired, unconsumed sessions by default. Set
 `NANOFLARE_ASSET_UPLOAD_SESSION_LIMIT` or pass
 `--asset-upload-session-limit` to `nanoflared` to change the limit. Use a
-positive integer and configure the same value on all control-plane replicas.
-The command-line flag takes precedence. Each organization also has a separate
-800 MiB staging reservation limit that includes retained sessions until cleanup.
+positive integer.
+The independent staging reservation limit defaults to 800 MiB (838860800
+bytes) per organization and includes retained sessions until cleanup. Set
+`NANOFLARE_ASSET_UPLOAD_STORAGE_LIMIT_BYTES` or pass
+`--asset-upload-storage-limit-bytes` to change it. Use a whole number of bytes
+of at least 1048576 (1 MiB). For both settings the command-line flag takes
+precedence, and all control-plane replicas should use the same values.
 
 The delegated endpoint is
 

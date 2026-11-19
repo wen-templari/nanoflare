@@ -142,6 +142,11 @@ func TestAssetUploadPersistentScopeIntegrityAndRetry(t *testing.T) {
 			if err := service.SetAssetUploadSessionLimit(0); err == nil {
 				t.Fatal("accepted a zero session limit")
 			}
+			must(service.SetAssetUploadStorageLimit(2 * nanoflare.DefaultAssetUploadStorageBytes))
+			_, err = service.CreateAssetUploadForOrg("asset-org", ns.ID, "alpha", "alice", manifest)
+			if !errors.Is(err, nanoflare.ErrAssetUploadQuotaExceeded) {
+				t.Fatalf("storage override changed the default session limit: %v", err)
+			}
 			limit := nanoflare.DefaultAssetUploadSessionLimit + 2
 			must(service.SetAssetUploadSessionLimit(limit))
 			must(restarted.SetAssetUploadSessionLimit(limit))

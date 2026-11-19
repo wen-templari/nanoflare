@@ -125,6 +125,7 @@ type Service struct {
 	runtimeVersions      map[string]uint64
 
 	assetUploadSessionLimit int
+	assetUploadStorageLimit int64
 }
 
 type AssetResponse struct {
@@ -177,6 +178,7 @@ func newService(store Repository, writer ConfigWriter, objects ObjectStore) *Ser
 		runtimeVersions:      make(map[string]uint64),
 
 		assetUploadSessionLimit: DefaultAssetUploadSessionLimit,
+		assetUploadStorageLimit: DefaultAssetUploadStorageBytes,
 	}
 }
 

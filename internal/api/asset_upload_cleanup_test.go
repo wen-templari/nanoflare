@@ -113,7 +113,7 @@ func TestAssetUploadStorageQuotaUntilPruned(t *testing.T) {
 				"/b": {Hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Size: nanoflare.MaxAssetUploadFileBytes},
 			}
 			// Seed reservations without allocating hundreds of MiB of blob fixtures.
-			for index := range nanoflare.MaxAssetUploadStorageBytes / nanoflare.MaxAssetUploadBytes {
+			for index := range nanoflare.DefaultAssetUploadStorageBytes / nanoflare.MaxAssetUploadBytes {
 				must(repo.SaveAssetUploadSession(nanoflare.AssetUploadSession{
 					ID: fmt.Sprint(index), OrgID: org, NamespaceID: ns.ID, ScriptName: "alpha",
 					Revision: 1, Manifest: manifest, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Second),
@@ -121,9 +121,10 @@ func TestAssetUploadStorageQuotaUntilPruned(t *testing.T) {
 			}
 			reserved, err := repo.ReservedAssetUploadBytes(org)
 			must(err)
-			if reserved != nanoflare.MaxAssetUploadStorageBytes {
+			if reserved != nanoflare.DefaultAssetUploadStorageBytes {
 				t.Fatalf("storage reservation = %d", reserved)
 			}
+			must(service.SetAssetUploadSessionLimit(nanoflare.DefaultAssetUploadSessionLimit + 2))
 			_, err = service.CreateAssetUploadForOrg(org, ns.ID, "alpha", "", manifest)
 			if !errors.Is(err, nanoflare.ErrAssetUploadStorageExceeded) {
 				t.Fatalf("expected staging storage quota error, got %v", err)
@@ -142,6 +143,16 @@ func TestAssetUploadStorageQuotaUntilPruned(t *testing.T) {
 			}
 			_, err = service.CreateAssetUploadForOrg(org, ns.ID, "alpha", "", manifest)
 			must(err)
+			if err := service.SetAssetUploadStorageLimit(nanoflare.MinAssetUploadReservationBytes - 1); err == nil {
+				t.Fatal("accepted a budget below the minimum session reservation")
+			}
+			must(service.SetAssetUploadStorageLimit(nanoflare.DefaultAssetUploadStorageBytes + nanoflare.MaxAssetUploadBytes))
+			_, err = service.CreateAssetUploadForOrg(org, ns.ID, "alpha", "", manifest)
+			must(err)
+			_, err = service.CreateAssetUploadForOrg(org, ns.ID, "alpha", "", manifest)
+			if !errors.Is(err, nanoflare.ErrAssetUploadStorageExceeded) {
+				t.Fatalf("expected the configured storage quota error, got %v", err)
+			}
 		})
 	}
 }

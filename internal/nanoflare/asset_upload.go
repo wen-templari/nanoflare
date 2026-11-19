@@ -27,7 +27,7 @@ const MaxAssetUploadBytes = 50 << 20
 const MaxAssetUploadFileBytes = 25 << 20
 const MaxAssetUploadFiles = 1000
 const DefaultAssetUploadSessionLimit = 16
-const MaxAssetUploadStorageBytes = 800 << 20
+const DefaultAssetUploadStorageBytes = 800 << 20
 const MinAssetUploadReservationBytes = 1 << 20
 
 // A minimum reservation also bounds the number of retained session records,
@@ -112,6 +112,17 @@ func (s *Service) SetAssetUploadSessionLimit(limit int) error {
 	return nil
 }
 
+// SetAssetUploadStorageLimit sets the staging reservation budget in bytes per organization.
+func (s *Service) SetAssetUploadStorageLimit(bytes int64) error {
+	if bytes < MinAssetUploadReservationBytes {
+		return errors.New("asset upload storage limit must be at least 1048576 bytes")
+	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	s.assetUploadStorageLimit = bytes
+	return nil
+}
+
 // Sessions reserve bounded storage before accepting bytes. Repository-wide
 // deployment locking makes the per-organization count work across service instances.
 func (s *Service) CreateAssetUploadForOrg(org, namespace, script, customer string, manifest map[string]AssetUploadEntry) (AssetUploadResult, error) {
@@ -166,7 +177,7 @@ func (s *Service) CreateAssetUploadForOrg(org, namespace, script, customer strin
 	if err != nil {
 		return AssetUploadResult{}, err
 	}
-	if reserved > MaxAssetUploadStorageBytes-session.ReservedBytes() {
+	if reserved > s.assetUploadStorageLimit-session.ReservedBytes() {
 		return AssetUploadResult{}, ErrAssetUploadStorageExceeded
 	}
 	if len(manifest) == 0 {
