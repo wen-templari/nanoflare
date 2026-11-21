@@ -63,6 +63,7 @@ type Project struct {
 	Name                         string                                 `json:"name"`
 	WorkerID                     string                                 `json:"worker_id,omitempty"`
 	DispatchNamespaces           []nanoflare.DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	WorkerLoaders                []nanoflare.WorkerLoaderBinding        `json:"worker_loaders,omitempty"`
 	Main                         string                                 `json:"main"`
 	Format                       string                                 `json:"format,omitempty"`
 	CompatibilityDate            string                                 `json:"compatibility_date"`
@@ -315,6 +316,7 @@ func (r *Runner) deploy(args []string) error {
 		ObjectStorageBuckets:  append([]nanoflare.ObjectStorageBucketBinding(nil), project.ObjectStorageBuckets...),
 		Services:              append([]nanoflare.ServiceBinding(nil), project.Services...),
 		DispatchNamespaces:    nanoflare.CloneDispatchBindings(project.DispatchNamespaces),
+		WorkerLoaders:         project.WorkerLoaders,
 		AssetConfig: nanoflare.AssetConfig{
 			Binding:          project.Assets.Binding,
 			HTMLHandling:     project.Assets.HTMLHandling,

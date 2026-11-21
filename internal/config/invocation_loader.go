@@ -28,6 +28,7 @@ func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.Active
 		Fetch    []string `json:"fetch"`
 		Services []string `json:"services"`
 		Dispatch []string `json:"dispatch"`
+		Loaders  []string `json:"loaders,omitempty"`
 	}{KV: []string{}, Fetch: []string{}, Services: []string{}}
 	for _, binding := range active.Deployment.KVNamespaces {
 		declarations.KV = append(declarations.KV, binding.Binding)
@@ -46,6 +47,9 @@ func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.Active
 	}
 	for _, binding := range active.Deployment.DispatchNamespaces {
 		declarations.Dispatch = append(declarations.Dispatch, binding.Binding)
+	}
+	for _, binding := range active.Deployment.WorkerLoaders {
+		declarations.Loaders = append(declarations.Loaders, binding.Binding)
 	}
 	declarationJSON, _ := json.Marshal(declarations)
 	const importedEnvModule = "__nanoflare_imported_env__.js"
@@ -146,7 +150,7 @@ func InstallOutboundParameters(code *WorkerCodeSnapshot, names []string) {
 	code.Modules["__nanoflare_imported_env__.js"] = module
 }
 
-var loaderInvocationContextSource = runtimeassets.DispatchOptionsModule + "\n" + runtimeassets.ExportPropsModule + "\n" + runtimeassets.ErrorsModule + "\n" + runtimeassets.FetchSignalModule + "\n" + `import { AsyncLocalStorage } from "node:async_hooks";
+var loaderInvocationContextSource = runtimeassets.DispatchOptionsModule + "\n" + runtimeassets.ExportPropsModule + "\n" + runtimeassets.ErrorsModule + "\n" + runtimeassets.FetchSignalModule + "\n" + applicationLoaderFacade + "\n" + `import { AsyncLocalStorage } from "node:async_hooks";
 import { env as nativeEnv, RpcTarget } from "cloudflare:workers";
 const storage = new AsyncLocalStorage();
 const invocationCompletions = new Map();
@@ -261,6 +265,11 @@ export function installImportedBindings(declarations, wrapEnv) {
   for (const name of declarations.fetch) resources[name] = resourceBinding(nativeEnv.__NANOFLARE_RESOURCE_BROKER, name);
   for (const name of declarations.kv) resources[name] = namespaceBinding(resourceBinding(nativeEnv.__NANOFLARE_RESOURCE_BROKER, name));
   const wrapped = wrapEnv(resources);
+  for (const name of declarations.loaders || []) {
+    Object.defineProperty(nativeEnv, name, {
+      enumerable: true, configurable: true, value: applicationLoader(name),
+    });
+  }
   for (const name of [...declarations.kv, ...declarations.fetch]) {
     Object.defineProperty(nativeEnv, name, { enumerable: true, configurable: true, value: wrapped[name] });
   }
@@ -410,8 +419,11 @@ export function makeInvocation(rawEnv, rawCtx, declarations) {
   const token = metadata.token;
   const state = { env: {}, pending: 0, running: 0, mainDone: false, completing: false, epoch: 0, capabilities: new WeakMap() };
   for (const [name, value] of Object.entries(rawEnv)) {
-    if (!["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_LIFECYCLE", "__NANOFLARE_SERVICE_BROKER", "__NANOFLARE_LOG_COLLECTOR", "__NANOFLARE_WFP"].includes(name)) state.env[name] = value;
+    if (!["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_LIFECYCLE", "__NANOFLARE_SERVICE_BROKER", "__NANOFLARE_LOG_COLLECTOR", "__NANOFLARE_WFP", "__NANOFLARE_APPLICATION_LOADER"].includes(name)) state.env[name] = value;
   }
+  state.applicationLoader = rawEnv.__NANOFLARE_APPLICATION_LOADER;
+  state.applicationLoaderToken = token;
+  for (const name of declarations.loaders || []) state.env[name] = rawEnv[name];
   for(const name of outboundParameterNames)Object.defineProperty(state.env,name,{enumerable:true,configurable:true,writable:true,value:rawCtx.props?.__nanoflare_outbound_parameters?.[name]});
   for (const name of declarations.services) {
     state.env[name] = new Proxy({}, { get(_, method) {

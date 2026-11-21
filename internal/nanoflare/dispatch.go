@@ -182,6 +182,9 @@ func (s *Service) validateDispatchBindings(app App, in DeployInput) error {
 		names[strings.TrimSpace(b.Binding)] = true
 	}
 	names[assetBindingNameForDispatch(in.AssetConfig)] = true
+	for _, binding := range in.WorkerLoaders {
+		names[binding.Binding] = true
+	}
 	for _, b := range in.DispatchNamespaces {
 		if !dispatchBindingNamePattern.MatchString(b.Binding) || strings.HasPrefix(b.Binding, "__NANOFLARE_") || names[b.Binding] {
 			return errors.New("invalid or duplicate dispatch binding name")

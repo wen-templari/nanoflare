@@ -50,7 +50,7 @@ func decodeProjectConfig(path string, content []byte) ([]byte, map[string]string
 		return nil, nil, fmt.Errorf("decode %s: %w", path, err)
 	}
 	// Reject unknown behavior instead of silently deploying a different application.
-	allowed := strings.Fields("$schema name main compatibility_date compatibility_flags vars kv_namespaces d1_databases r2_buckets services assets triggers account_id workers_dev preview_urls env dispatch_namespaces nanoflare files format entrypoint db object_storage_buckets object_storage_bucket worker_id dns auth secrets vite api_url hostname")
+	allowed := strings.Fields("$schema name main compatibility_date compatibility_flags vars kv_namespaces d1_databases r2_buckets services assets triggers account_id workers_dev preview_urls env dispatch_namespaces worker_loaders nanoflare files format entrypoint db object_storage_buckets object_storage_bucket worker_id dns auth secrets vite api_url hostname")
 	supported := make(map[string]bool)
 	for _, key := range allowed {
 		supported[key] = true
@@ -73,6 +73,7 @@ func decodeProjectConfig(path string, content []byte) ([]byte, map[string]string
 		"r2_buckets":          "binding bucket_name preview_bucket_name jurisdiction",
 		"services":            "binding service worker_id execution",
 		"dispatch_namespaces": "binding namespace namespace_id outbound",
+		"worker_loaders":      "binding",
 		"assets":              "binding directory html_handling not_found_handling run_worker_first",
 		"triggers":            "crons",
 	} {

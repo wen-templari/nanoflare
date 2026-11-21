@@ -2,8 +2,9 @@ package config
 
 import (
 	"fmt"
-	"github.com/clas/nanoflare/internal/runtimeassets"
 	"strings"
+
+	"github.com/clas/nanoflare/internal/runtimeassets"
 )
 
 // DynamicDispatcher configures one stable, authenticated workerd socket.
@@ -25,6 +26,7 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
   modules = [(name = "dispatcher.js", esModule = %s), (name = "dispatch.js", esModule = %s)],
   bindings = [
 %s    (name = "LOADER", workerLoader = (id = "nanoflare-publications")),
+    (name = "APPLICATION_LOADER", workerLoader = ()),
     (name = "BROKER", service = "broker"),
     (name = "OUTBOUND", service = "internet"),
     (name = "HTTP_OUTBOUND", service = %s),
@@ -38,7 +40,8 @@ func DynamicDispatcher(options WorkerdOptions, socketPath, brokerAddr, brokerTok
 	return out.String()
 }
 
-const dynamicDispatcherSource = `import { WorkerEntrypoint } from "cloudflare:workers";
+const dynamicDispatcherSource = applicationLoaderSource + `
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { wrapDispatchEnv, setDispatchExports } from "./dispatch.js";
 let parentExports;
 export { DispatchBroker } from "./dispatch.js";
@@ -121,6 +124,9 @@ async function load(env, ctx, key, validation = false, state = {}) {
       __NANOFLARE_DNS: parentExports.ResourceBridge({ props: { key, binding: "__NANOFLARE_DNS" } }),
       __NANOFLARE_DURATION_COLLECTOR: parentExports.ResourceBridge({ props: { key, binding: "__NANOFLARE_DURATION_COLLECTOR" } }),
     };
+    if (code.workerLoaders?.length) {
+      childEnv.__NANOFLARE_APPLICATION_LOADER = parentExports.ApplicationLoaderBridge({props:{key}});
+    }
     let mainModule = code.mainModule;
     let modules = Object.fromEntries(Object.entries(code.modules).map(([name, module]) => [name,
       Object.hasOwn(module, "wasm") ? {wasm: Uint8Array.from(atob(module.wasm), byte => byte.charCodeAt(0)).buffer} : module

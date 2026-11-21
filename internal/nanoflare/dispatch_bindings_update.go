@@ -62,7 +62,7 @@ func (s *Service) UpdateDispatchBindingsForOrg(orgID, appID string, input Update
 			return fmt.Errorf("%w: only ordinary Workers can host dispatch namespaces", ErrInvalidDispatchBindingsUpdate)
 		}
 		next.DispatchNamespaces = CloneDispatchBindings(input.DispatchNamespaces)
-		validation := DeployInput{Files: next.Files, Entrypoint: next.Entrypoint, Format: next.Format, CompatibilityFlags: next.CompatibilityFlags, Vars: next.Vars, KVNamespaces: next.KVNamespaces, Databases: next.Databases, ObjectStorageBuckets: next.ObjectStorageBuckets, Services: next.Services, AssetConfig: next.AssetConfig, DNS: next.DNS, Triggers: next.Triggers, DispatchNamespaces: next.DispatchNamespaces}
+		validation := DeployInput{Files: next.Files, Entrypoint: next.Entrypoint, Format: next.Format, CompatibilityFlags: next.CompatibilityFlags, Vars: next.Vars, KVNamespaces: next.KVNamespaces, Databases: next.Databases, ObjectStorageBuckets: next.ObjectStorageBuckets, Services: next.Services, AssetConfig: next.AssetConfig, DNS: next.DNS, Triggers: next.Triggers, DispatchNamespaces: next.DispatchNamespaces, WorkerLoaders: next.WorkerLoaders}
 		if err := s.validateDispatchBindings(current.App, validation); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidDispatchBindingsUpdate, err)
 		}

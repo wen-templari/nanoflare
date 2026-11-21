@@ -28,6 +28,7 @@ func (s *Service) ActiveWorkerBindingsForOrg(orgID, appID string) ([]WorkerDeplo
 		result = append(result, WorkerDeployment{
 			ID: item.Deployment.ID, TrafficPercent: item.TrafficPercent,
 			DispatchNamespaces:   CloneDispatchBindings(item.Deployment.DispatchNamespaces),
+			WorkerLoaders:        append([]WorkerLoaderBinding(nil), item.Deployment.WorkerLoaders...),
 			KVNamespaces:         append([]KVBinding(nil), item.Deployment.KVNamespaces...),
 			Databases:            append([]DatabaseBinding(nil), item.Deployment.Databases...),
 			ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), item.Deployment.ObjectStorageBuckets...),

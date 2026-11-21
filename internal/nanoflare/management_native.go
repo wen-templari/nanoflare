@@ -38,6 +38,9 @@ func (s *Service) nativeManagementMetadata(d Deployment, secrets []ArtifactSecre
 			add(name, "json", map[string]any{"json": raw})
 		}
 	}
+	for _, binding := range d.WorkerLoaders {
+		add(binding.Binding, "worker_loader", map[string]any{})
+	}
 	for _, binding := range d.KVNamespaces {
 		add(binding.Binding, "kv_namespace", map[string]any{"namespace_id": binding.ID})
 	}
@@ -212,7 +215,7 @@ func (s *Service) mutateManagedSecretLocked(worker, name string, value *string) 
 		if err := validateDispatchNameCollisions(source.DispatchNamespaces, source.Vars, secretNames); err != nil {
 			return true, err
 		}
-		if err := validateBindingCollisions(source.Vars, secretNames, source.KVNamespaces, source.Databases, source.ObjectStorageBuckets, source.Services, source.AssetConfig); err != nil {
+		if err := validateBindingCollisions(source.Vars, secretNames, source.KVNamespaces, source.Databases, source.ObjectStorageBuckets, source.Services, source.AssetConfig, source.WorkerLoaders...); err != nil {
 			return true, err
 		}
 	}

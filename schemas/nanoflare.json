@@ -111,6 +111,21 @@
       "description": "Existing immutable Worker ID, including a private namespace script. Deploy never creates a public Worker when this is set.",
       "deprecated": true
     },
+    "worker_loaders": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["binding"],
+        "properties": {
+          "binding": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "dispatch_namespaces": {
       "type": "array",
       "items": {

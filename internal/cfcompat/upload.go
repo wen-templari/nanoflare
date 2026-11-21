@@ -516,7 +516,7 @@ func ParseUpload(contentType string, body io.Reader, previous *Previous, resolve
 
 func supportedBinding(kind string) bool {
 	switch kind {
-	case "plain_text", "json", "secret_text", "kv_namespace", "d1", "r2_bucket", "service", "assets":
+	case "plain_text", "json", "secret_text", "kv_namespace", "d1", "r2_bucket", "service", "assets", "worker_loader":
 		return true
 	}
 	return false
@@ -643,6 +643,8 @@ func translate(metadata Metadata, previous *Previous, resolve Resolver, allowDis
 				}
 				result.KeepSecrets[name] = oldName
 			}
+		case "worker_loader":
+			result.Deployment.WorkerLoaders = append(result.Deployment.WorkerLoaders, nanoflare.WorkerLoaderBinding{Binding: name})
 		case "kv_namespace":
 			result.Deployment.KVNamespaces = append(result.Deployment.KVNamespaces, nanoflare.KVBinding{Binding: name, ID: binding.NamespaceID})
 		case "d1":
@@ -797,7 +799,7 @@ func (binding Binding) validate() error {
 		}
 		allowed["namespace"] = true
 		required = binding.Namespace
-	case "assets":
+	case "assets", "worker_loader":
 	default:
 		return errors.New("unsupported binding type")
 	}

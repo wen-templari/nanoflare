@@ -407,6 +407,9 @@ func (s *Service) validateManagedBindingIntent(org string, in ManagedDeployInput
 	for _, binding := range in.Deployment.DispatchNamespaces {
 		actual[binding.Binding] = "dispatch_namespace"
 	}
+	for _, binding := range in.Deployment.WorkerLoaders {
+		actual[binding.Binding] = "worker_loader"
+	}
 	if len(actual) != len(in.Metadata.Bindings) {
 		return errors.New("management metadata does not match native bindings")
 	}

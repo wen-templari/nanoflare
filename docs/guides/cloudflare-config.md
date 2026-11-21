@@ -154,3 +154,6 @@ code, secret versions and revision history. Deploy them through the compatible
 `GET /v1/workers/{workerID}/environments` endpoint lists actual environment Worker
 IDs, which remain pinned in native outbound bindings. See Cloudflare's [environment documentation](https://developers.cloudflare.com/workers/wrangler/environments/)
 and [service-environment deprecation](https://developers.cloudflare.com/workers/wrangler/deprecations/).
+
+Module Workers can declare a `worker_loaders` binding for the trusted
+[Dynamic Workers pilot](dynamic-workers.md).

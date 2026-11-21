@@ -205,9 +205,11 @@ func (m *Manager) prepare(active []nanoflare.ActiveDeployment) (string, []nanofl
 
 	stableDispatcher := false
 	for _, item := range active {
+		if len(item.Deployment.WorkerLoaders) > 0 {
+			return "", nil, errors.New("worker_loaders requires the dynamic runtime")
+		}
 		if len(item.Deployment.DispatchNamespaces) > 0 {
 			stableDispatcher = true
-			break
 		}
 	}
 	if stableDispatcher && m.active != nil && m.pending == nil && m.active.publicationInput == identity {

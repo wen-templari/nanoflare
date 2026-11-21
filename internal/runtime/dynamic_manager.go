@@ -59,14 +59,15 @@ type DynamicManager struct {
 	background                                          sync.WaitGroup
 }
 type dynamicSnapshot struct {
-	registeredSession string
-	registration      string
-	registered        bool
-	retired           bool
-	frozen            *nanoflare.ExecutionSnapshot
-	code              config.WorkerCodeSnapshot
-	validated         bool
-	validationFailed  bool
+	registeredSession     string
+	registration          string
+	registered            bool
+	retired               bool
+	frozen                *nanoflare.ExecutionSnapshot
+	code                  config.WorkerCodeSnapshot
+	validated             bool
+	validationFailed      bool
+	applicationLoaderKeys map[loaderCacheKey]struct{}
 }
 type dynamicPublication struct {
 	done   chan struct{}
@@ -75,11 +76,12 @@ type dynamicPublication struct {
 	active []nanoflare.ActiveDeployment
 }
 type dynamicInvocation struct {
-	key, token, pin string
-	root            *dynamicLifetime
-	complete        bool
-	started         bool
-	epoch           uint64
+	key, token, pin        string
+	root                   *dynamicLifetime
+	complete               bool
+	started                bool
+	epoch                  uint64
+	applicationLoaderCalls int
 }
 type dynamicLifetime struct {
 	responseDone bool
@@ -900,6 +902,10 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown execution", 404)
 		return
 	}
+	if operation == "application-loader" {
+		m.admitApplicationLoader(w, r, key, snapshot)
+		return
+	}
 	active := snapshot.frozen.ActiveDeployment()
 	switch operation {
 	case "diagnostic":
@@ -945,6 +951,9 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 		}
 		env["__NANOFLARE_DISPATCH_BINDINGS"] = mapping
 		result["env"] = env
+		if len(active.Deployment.WorkerLoaders) > 0 {
+			result["workerLoaders"] = active.Deployment.WorkerLoaders
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	case "start":

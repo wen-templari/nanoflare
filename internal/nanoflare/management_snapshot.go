@@ -37,7 +37,7 @@ func managementDeploymentInput(d Deployment) DeployInput {
 	for index := range assets {
 		assets[index].ObjectKey = ""
 	}
-	return DeployInput{Files: d.Files, Assets: assets, Entrypoint: d.Entrypoint, Format: d.Format, CompatibilityDate: d.CompatibilityDate, CompatibilityFlags: d.CompatibilityFlags, Vars: d.Vars, KVNamespaces: d.KVNamespaces, Databases: d.Databases, ObjectStorageBuckets: d.ObjectStorageBuckets, Services: d.Services, AssetConfig: d.AssetConfig, DNS: d.DNS, Triggers: d.Triggers, DispatchNamespaces: d.DispatchNamespaces}
+	return DeployInput{Files: d.Files, Assets: assets, Entrypoint: d.Entrypoint, Format: d.Format, CompatibilityDate: d.CompatibilityDate, CompatibilityFlags: d.CompatibilityFlags, Vars: d.Vars, KVNamespaces: d.KVNamespaces, Databases: d.Databases, ObjectStorageBuckets: d.ObjectStorageBuckets, Services: d.Services, AssetConfig: d.AssetConfig, DNS: d.DNS, Triggers: d.Triggers, DispatchNamespaces: d.DispatchNamespaces, WorkerLoaders: d.WorkerLoaders}
 }
 
 func (s *Service) ManagementUploadForOrg(org, worker string, includeAssetBytes bool) (ManagementUpload, bool, error) {
@@ -105,6 +105,6 @@ func (s *Service) ManagementUploadForOrg(org, worker string, includeAssetBytes b
 	for index := range assets {
 		assets[index].ObjectKey = ""
 	}
-	input := DeployInput{Files: d.Files, Assets: assets, Entrypoint: d.Entrypoint, Format: d.Format, CompatibilityDate: d.CompatibilityDate, CompatibilityFlags: d.CompatibilityFlags, Vars: d.Vars, KVNamespaces: d.KVNamespaces, Databases: d.Databases, ObjectStorageBuckets: d.ObjectStorageBuckets, Services: d.Services, AssetConfig: d.AssetConfig, DNS: d.DNS, Triggers: d.Triggers, DispatchNamespaces: d.DispatchNamespaces}
+	input := DeployInput{Files: d.Files, Assets: assets, Entrypoint: d.Entrypoint, Format: d.Format, CompatibilityDate: d.CompatibilityDate, CompatibilityFlags: d.CompatibilityFlags, Vars: d.Vars, KVNamespaces: d.KVNamespaces, Databases: d.Databases, ObjectStorageBuckets: d.ObjectStorageBuckets, Services: d.Services, AssetConfig: d.AssetConfig, DNS: d.DNS, Triggers: d.Triggers, DispatchNamespaces: d.DispatchNamespaces, WorkerLoaders: d.WorkerLoaders}
 	return ManagementUpload{State: state, Deployment: input, DeploymentID: revision, SecretRefs: artifact.Manifest().Secrets}, true, nil
 }

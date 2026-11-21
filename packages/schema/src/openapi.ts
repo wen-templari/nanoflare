@@ -2088,6 +2088,7 @@ export interface components {
       vars?: {
         [key: string]: unknown;
       };
+      worker_loaders?: components["schemas"]["WorkerLoaderBinding"][] | null;
     };
     DeploymentTraffic: {
       id: string;
@@ -2969,6 +2970,7 @@ export interface components {
       vars?: {
         [key: string]: unknown;
       };
+      worker_loaders?: components["schemas"]["WorkerLoaderBinding"][] | null;
     };
     WorkerDetail: {
       /**
@@ -2994,6 +2996,9 @@ export interface components {
       key: string;
       /** Format: int64 */
       size: number;
+    };
+    WorkerLoaderBinding: {
+      binding: string;
     };
     WorkerMetricsTimeseries: {
       /**

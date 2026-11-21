@@ -95,6 +95,7 @@ type kvOrgUsageCacheDisabler interface {
 
 type Service struct {
 	deploymentLimits     DeploymentLimits
+	workerLoadersEnabled atomic.Bool
 	executions           *ExecutionRegistry
 	dispatch             dispatchRuntime
 	telemetry            telemetryState
@@ -749,7 +750,7 @@ func (s *Service) PutSecret(appID, name, value string) error {
 		if err := validateDispatchNameCollisions(item.Deployment.DispatchNamespaces, item.Deployment.Vars, secretValues); err != nil {
 			return err
 		}
-		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.Databases, item.Deployment.ObjectStorageBuckets, item.Deployment.Services, item.Deployment.AssetConfig); err != nil {
+		if err := validateBindingCollisions(item.Deployment.Vars, secretValues, item.Deployment.KVNamespaces, item.Deployment.Databases, item.Deployment.ObjectStorageBuckets, item.Deployment.Services, item.Deployment.AssetConfig, item.Deployment.WorkerLoaders...); err != nil {
 			return err
 		}
 	}
@@ -968,6 +969,13 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 	if active == nil {
 		return detail, nil
 	}
+	// Worker Loader declarations are stored in the immutable artifact.
+	artifact, err := s.store.GetDeploymentArtifact(appID, active.Deployment.ID)
+	if err == nil {
+		active.Deployment.WorkerLoaders = artifact.Deployment.WorkerLoaders
+	} else if !errors.Is(err, ErrArtifactNotFound) {
+		return WorkerDetail{}, err
+	}
 	detail.Deployment = &WorkerDeployment{
 		ID:                   active.Deployment.ID,
 		CommitHash:           active.Deployment.CommitHash,
@@ -987,6 +995,7 @@ func (s *Service) WorkerDetail(appID string) (WorkerDetail, error) {
 		ObjectStorageBuckets: append([]ObjectStorageBucketBinding(nil), active.Deployment.ObjectStorageBuckets...),
 		AssetConfig:          active.Deployment.AssetConfig,
 		DispatchNamespaces:   CloneDispatchBindings(active.Deployment.DispatchNamespaces),
+		WorkerLoaders:        append([]WorkerLoaderBinding(nil), active.Deployment.WorkerLoaders...),
 		Bindings:             s.deploymentBindings(active.Deployment),
 		Port:                 active.Deployment.Port,
 		TrafficPercent:       active.TrafficPercent,
@@ -1294,6 +1303,9 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 	if err != nil {
 		return Deployment{}, err
 	}
+	if err := s.validateWorkerLoaders(app, format, input.WorkerLoaders); err != nil {
+		return Deployment{}, err
+	}
 	if format == "service-worker" {
 		for _, file := range files {
 			if file.Wasm != nil {
@@ -1339,6 +1351,7 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 		ObjectStorageBuckets: objectStorageBuckets,
 		Services:             services,
 		DispatchNamespaces:   CloneDispatchBindings(input.DispatchNamespaces),
+		WorkerLoaders:        append([]WorkerLoaderBinding(nil), input.WorkerLoaders...),
 		AssetConfig:          assetConfig,
 		BundleSize:           bundleSize(files),
 		CreatedAt:            time.Now().UTC(),
@@ -1403,7 +1416,7 @@ func (s *Service) buildAndPublishDeployment(appID string, input DeployInput, fin
 		secrets, err = s.resolvedSecretValues(appID)
 	}
 	if err == nil {
-		err = validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig)
+		err = validateBindingCollisions(vars, secrets, kvNamespaces, databases, objectStorageBuckets, services, input.AssetConfig, input.WorkerLoaders...)
 	}
 	if err != nil {
 		s.cleanupDeploymentObject(deployment)
@@ -1781,7 +1794,7 @@ func normalizeVars(vars map[string]json.RawMessage) (map[string]json.RawMessage,
 	return normalized, nil
 }
 
-func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, dbBindings []DatabaseBinding, objectBindings []ObjectStorageBucketBinding, serviceBindings []ServiceBinding, assetConfig AssetConfig) error {
+func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[string]string, kvBindings []KVBinding, dbBindings []DatabaseBinding, objectBindings []ObjectStorageBucketBinding, serviceBindings []ServiceBinding, assetConfig AssetConfig, loaders ...WorkerLoaderBinding) error {
 	seen := make(map[string]string)
 	add := func(name, kind string) error {
 		if strings.HasPrefix(name, "__NANOFLARE_") {
@@ -1826,11 +1839,19 @@ func validateBindingCollisions(vars map[string]json.RawMessage, secrets map[stri
 			return err
 		}
 	}
+	for _, binding := range loaders {
+		if err := add(binding.Binding, "worker_loaders"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (s *Service) deploymentBindings(deployment Deployment) []Binding {
 	bindings := make([]Binding, 0, len(deployment.KVNamespaces)+len(deployment.Databases)+len(deployment.ObjectStorageBuckets)+len(deployment.Services)+1)
+	for _, binding := range deployment.WorkerLoaders {
+		bindings = append(bindings, Binding{Kind: "worker_loader", Binding: binding.Binding})
+	}
 	for _, binding := range deployment.KVNamespaces {
 		item := Binding{Kind: "kv", Binding: binding.Binding, NamespaceID: binding.ID}
 		if namespace, err := s.store.GetKVNamespace(binding.ID); err == nil {

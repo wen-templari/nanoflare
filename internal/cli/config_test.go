@@ -112,7 +112,7 @@ func TestDeployWranglerProject(t *testing.T) {
 			t.Setenv(authTokenEnv, "test-token")
 			t.Setenv(authOrgIDEnv, "test-org")
 			withWorkingDirectory(t, t.TempDir())
-			config := `{"name":"portable","main":"worker.ts","compatibility_date":"2026-08-01","vars":{"GREETING":"hello"},"assets":{"directory":"public","binding":"ASSETS"},"dispatch_namespaces":` + test.bindings + `}`
+			config := `{"name":"portable","main":"worker.ts","compatibility_date":"2026-08-01","vars":{"GREETING":"hello"},"assets":{"directory":"public","binding":"ASSETS"},"worker_loaders":[{"binding":"LOADER"}],"dispatch_namespaces":` + test.bindings + `}`
 			for path, content := range map[string]string{"wrangler.jsonc": config, "worker.ts": `export default {fetch(): Response {return new Response("hello")}}`} {
 				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 					t.Fatal(err)
@@ -152,6 +152,9 @@ func TestDeployWranglerProject(t *testing.T) {
 			}
 			if listRequests != test.wantLists {
 				t.Fatalf("namespace list requests = %d, want %d", listRequests, test.wantLists)
+			}
+			if len(deployed.WorkerLoaders) != 1 || deployed.WorkerLoaders[0].Binding != "LOADER" {
+				t.Fatalf("worker loader payload: %#v", deployed.WorkerLoaders)
 			}
 			if len(deployed.DispatchNamespaces) != len(test.wantIDs) {
 				t.Fatalf("dispatch payload: %#v", deployed.DispatchNamespaces)

@@ -1369,6 +1369,12 @@
           "vars": {
             "additionalProperties": {},
             "type": "object"
+          },
+          "worker_loaders": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerLoaderBinding"
+            },
+            "type": ["array", "null"]
           }
         },
         "required": ["files", "compatibility_date"],
@@ -3587,6 +3593,12 @@
           "vars": {
             "additionalProperties": {},
             "type": "object"
+          },
+          "worker_loaders": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerLoaderBinding"
+            },
+            "type": ["array", "null"]
           }
         },
         "required": [
@@ -3669,6 +3681,16 @@
           }
         },
         "required": ["key", "size"],
+        "type": "object"
+      },
+      "WorkerLoaderBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "type": "string"
+          }
+        },
+        "required": ["binding"],
         "type": "object"
       },
       "WorkerMetricsTimeseries": {

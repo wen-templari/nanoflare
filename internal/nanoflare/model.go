@@ -45,6 +45,7 @@ type Deployment struct {
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	DispatchNamespaces   []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	WorkerLoaders        []WorkerLoaderBinding        `json:"worker_loaders,omitempty"`
 	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	BundleSize           int64                        `json:"-"`
@@ -195,6 +196,7 @@ type DeployInput struct {
 	Databases             []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets  []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	DispatchNamespaces    []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	WorkerLoaders         []WorkerLoaderBinding        `json:"worker_loaders,omitempty"`
 	Services              []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig           AssetConfig                  `json:"asset_config,omitempty"`
 }
@@ -217,6 +219,7 @@ type WorkerDeployment struct {
 	Databases            []DatabaseBinding            `json:"db,omitempty"`
 	ObjectStorageBuckets []ObjectStorageBucketBinding `json:"object_storage_buckets,omitempty"`
 	DispatchNamespaces   []DispatchBinding            `json:"dispatch_namespaces,omitempty"`
+	WorkerLoaders        []WorkerLoaderBinding        `json:"worker_loaders,omitempty"`
 	Services             []ServiceBinding             `json:"services,omitempty"`
 	AssetConfig          AssetConfig                  `json:"asset_config,omitempty"`
 	Bindings             []Binding                    `json:"bindings,omitempty"`

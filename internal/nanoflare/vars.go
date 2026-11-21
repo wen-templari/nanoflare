@@ -52,7 +52,7 @@ func (s *Service) UpdateVarsForOrg(orgID, appID string, input UpdateVarsInput) (
 		return VarsUpdateResult{}, err
 	}
 	return s.updateRetainedDeploymentForOrg(orgID, appID, input, fingerprint, func(current *ActiveDeployment, next *Deployment) error {
-		if err := validateBindingCollisions(input.Vars, current.App.SecretValues, current.Deployment.KVNamespaces, current.Deployment.Databases, current.Deployment.ObjectStorageBuckets, current.Deployment.Services, current.Deployment.AssetConfig); err != nil {
+		if err := validateBindingCollisions(input.Vars, current.App.SecretValues, current.Deployment.KVNamespaces, current.Deployment.Databases, current.Deployment.ObjectStorageBuckets, current.Deployment.Services, current.Deployment.AssetConfig, current.Deployment.WorkerLoaders...); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidVarsUpdate, err)
 		}
 		if err := validateDispatchNameCollisions(current.Deployment.DispatchNamespaces, input.Vars, current.App.SecretValues); err != nil {

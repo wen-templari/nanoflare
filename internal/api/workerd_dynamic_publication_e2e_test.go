@@ -158,8 +158,11 @@ const { KV, SERVICE } = importedEnv;
 let counter = 0;
 export default {async fetch(request,env,ctx) {
  if (new URL(request.url).pathname === "/origin-check") {
+  // Consume the POST body before responding so socket reuse does not depend on
+  // when workerd closes the connection for an unread upload.
+  const body = await request.text();
   if (request.method === "POST" && request.headers.get("Origin") !== new URL(request.url).origin) return new Response("Origin mismatch", {status:403});
-  return Response.json({url:request.url,host:request.headers.get("Host"),body:await request.text()});
+  return Response.json({url:request.url,host:request.headers.get("Host"),body});
  }
  if (new URL(request.url).pathname === "/ws") {
   const pair = new WebSocketPair(); pair[1].accept();

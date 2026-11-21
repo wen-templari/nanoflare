@@ -60,6 +60,10 @@ func FreezeExecution(active ActiveDeployment, compileOptions ...string) (*Execut
 }
 
 func (s *ExecutionSnapshot) ID() string { return s.id }
+func (s *ExecutionSnapshot) WorkerLoaders() []WorkerLoaderBinding {
+	return append([]WorkerLoaderBinding(nil), s.active.Deployment.WorkerLoaders...)
+}
+
 func (s *ExecutionSnapshot) ActiveDeployment() ActiveDeployment {
 	return cloneExecutionActive(s.active)
 }
@@ -82,6 +86,7 @@ func cloneExecutionActive(a ActiveDeployment) ActiveDeployment {
 	d.ObjectStorageBuckets = slices.Clone(d.ObjectStorageBuckets)
 	d.Services = slices.Clone(d.Services)
 	d.DispatchNamespaces = CloneDispatchBindings(d.DispatchNamespaces)
+	d.WorkerLoaders = append([]WorkerLoaderBinding(nil), d.WorkerLoaders...)
 	d.AssetConfig.RunWorkerFirst = slices.Clone(d.AssetConfig.RunWorkerFirst)
 	return a
 }
