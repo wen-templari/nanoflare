@@ -172,11 +172,15 @@ func main() {
 			log.Fatal(err)
 		}
 		objectStore, err = objects.Open(ctx, objects.MinIOConfig{
-			Endpoint:  endpoint,
-			AccessKey: os.Getenv("MINIO_ACCESS_KEY"),
-			SecretKey: os.Getenv("MINIO_SECRET_KEY"),
-			Bucket:    envOrDefault("MINIO_BUCKET", "nanoflare"),
-			Secure:    secure,
+			Endpoint:        endpoint,
+			PublicEndpoint:  os.Getenv("MINIO_PUBLIC_ENDPOINT"),
+			UploadAccessKey: os.Getenv("MINIO_UPLOAD_ACCESS_KEY"),
+			UploadSecretKey: os.Getenv("MINIO_UPLOAD_SECRET_KEY"),
+			Region:          os.Getenv("MINIO_REGION"),
+			AccessKey:       os.Getenv("MINIO_ACCESS_KEY"),
+			SecretKey:       os.Getenv("MINIO_SECRET_KEY"),
+			Bucket:          envOrDefault("MINIO_BUCKET", "nanoflare"),
+			Secure:          secure,
 		})
 		if err != nil {
 			log.Fatal(err)
@@ -471,6 +475,10 @@ func main() {
 	}
 	stopAssetCleanup := service.StartAssetUploadCleanup(shutdown, time.Minute, func(err error) { log.Printf("asset staging cleanup: %v", err) })
 	defer stopAssetCleanup()
+	stopObjectUsage := service.StartObjectUsageReconciliation(shutdown, func(err error) { log.Printf("object usage reconciliation: %v", err) })
+	defer stopObjectUsage()
+	stopObjectCleanup := service.StartObjectTransferCleanup(shutdown, func(err error) { log.Printf("object staging cleanup: %v", err) })
+	defer stopObjectCleanup()
 	if remoteRunner != nil {
 		stopReconciliation := remoteRunner.StartReconciliation(shutdown, 5*time.Second, service.ReconcileRuntime, func(err error) {
 			log.Printf("remote runner reconciliation: %v", err)

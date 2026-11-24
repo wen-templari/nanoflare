@@ -29,7 +29,6 @@ type ConfigWriter interface {
 }
 
 type ObjectStore interface {
-	PresignUpload(appID, path string, expiry time.Duration) (string, error)
 	PresignDownload(appID, path string, expiry time.Duration) (string, error)
 	Put(appID, path string, contentType string, data []byte) (ObjectInfo, error)
 	Get(appID, path string) (ObjectBody, error)
@@ -101,6 +100,7 @@ type Service struct {
 	runtimeAuthorization runtimeAuthorization
 	// Serialize configuration snapshots and publication, including rollbacks.
 	configMu             sync.Mutex
+	objectStorageMu      sync.Mutex
 	store                Repository
 	writer               ConfigWriter
 	objects              ObjectStore
@@ -466,23 +466,7 @@ func (s *Service) GetObjectStorageBucket(bucketID string) (ObjectStorageBucket, 
 }
 
 func (s *Service) UpdateObjectStorageBucket(bucketID string, input UpdateObjectStorageBucketInput) (ObjectStorageBucket, error) {
-	bucketID = strings.TrimSpace(bucketID)
-	if bucketID == "" {
-		return ObjectStorageBucket{}, ErrObjectStorageBucketNotFound
-	}
-	bucket, err := s.store.GetObjectStorageBucket(bucketID)
-	if err != nil {
-		return ObjectStorageBucket{}, err
-	}
-	name := strings.TrimSpace(input.Name)
-	if name == "" {
-		return ObjectStorageBucket{}, errors.New("name is required")
-	}
-	bucket.Name = name
-	if err := s.store.UpdateObjectStorageBucket(bucket); err != nil {
-		return ObjectStorageBucket{}, err
-	}
-	return bucket, nil
+	return s.UpdateObjectStorageBucketForOrg("", bucketID, input)
 }
 
 func (s *Service) GetObjectStorageBucketForOrg(orgID, bucketID string) (ObjectStorageBucket, error) {
@@ -500,6 +484,18 @@ func (s *Service) DeleteObjectStorageBucket(bucketID string) error {
 	bucketID = strings.TrimSpace(bucketID)
 	if bucketID == "" {
 		return ErrObjectStorageBucketNotFound
+	}
+	release, err := s.lockObjectStorage(context.Background(), bucketID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	transfers, err := s.objectTransfers(bucketID)
+	if err != nil {
+		return err
+	}
+	if err := checkObjectTransferConflict(transfers, bucketID, ""); err != nil {
+		return err
 	}
 	return s.store.DeleteObjectStorageBucket(bucketID)
 }
@@ -849,15 +845,27 @@ func (s *Service) DeleteAppForOrg(orgID, appID string) error {
 }
 
 func (s *Service) UpdateObjectStorageBucketForOrg(orgID, bucketID string, input UpdateObjectStorageBucketInput) (ObjectStorageBucket, error) {
+	release, err := s.lockObjectStorage(context.Background(), bucketID)
+	if err != nil {
+		return ObjectStorageBucket{}, err
+	}
+	defer release()
 	bucket, err := s.GetObjectStorageBucketForOrg(orgID, bucketID)
 	if err != nil {
 		return ObjectStorageBucket{}, err
 	}
-	name := strings.TrimSpace(input.Name)
-	if name == "" {
+	if name := strings.TrimSpace(input.Name); name != "" {
+		bucket.Name = name
+	} else if input.Name != "" || input.MaxBytes == nil {
 		return ObjectStorageBucket{}, errors.New("name is required")
 	}
-	bucket.Name = name
+	if input.MaxBytes != nil {
+		maxBytes := *input.MaxBytes
+		if maxBytes < 0 {
+			return ObjectStorageBucket{}, errors.New("max_bytes must not be negative")
+		}
+		bucket.MaxBytes = &maxBytes
+	}
 	if err := s.store.UpdateObjectStorageBucket(bucket); err != nil {
 		return ObjectStorageBucket{}, err
 	}
@@ -2333,21 +2341,6 @@ func objectStorageBucketPath(bucketID, objectPath string) string {
 	return path.Join("buckets", bucketID, key)
 }
 
-func (s *Service) PresignUpload(capability, bucketID, objectPath string) (string, error) {
-	_, err := s.objectCapabilityAppID(capability, bucketID)
-	if err != nil {
-		return "", err
-	}
-	bucket, err := s.GetObjectStorageBucket(bucketID)
-	if err != nil {
-		return "", err
-	}
-	if err := s.enforcePresignedObjectUploadAllowed(bucket.OrgID); err != nil {
-		return "", err
-	}
-	return s.objects.PresignUpload(objectStorageBucketScope, objectStorageBucketPath(bucketID, objectPath), 15*time.Minute)
-}
-
 func (s *Service) PresignDownload(capability, bucketID, objectPath string) (string, error) {
 	_, err := s.objectCapabilityAppID(capability, bucketID)
 	if err != nil {
@@ -2361,11 +2354,26 @@ func (s *Service) DeleteObject(capability, bucketID, objectPath string) error {
 }
 
 func (s *Service) DeleteObjectContext(ctx context.Context, capability, bucketID, objectPath string) error {
-	_, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID)
+	if _, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID); err != nil {
+		return err
+	}
+	if repo, ok := s.store.(objectMutationRepository); ok {
+		_, err := s.mutateStoredObject(ctx, repo, bucketID, objectPath, "", nil, true)
+		return err
+	}
+	release, err := s.lockObjectStorage(ctx, bucketID)
 	if err != nil {
 		return err
 	}
+	defer release()
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
+	transfers, err := s.objectTransfers(bucketID)
+	if err != nil {
+		return err
+	}
+	if err := checkObjectTransferConflict(transfers, bucketID, storedPath); err != nil {
+		return err
+	}
 	var oldSize int64
 	existed := false
 	if existing, err := s.objectHeadContext(ctx, objectStorageBucketScope, storedPath); err == nil {
@@ -2374,16 +2382,18 @@ func (s *Service) DeleteObjectContext(ctx context.Context, capability, bucketID,
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return err
 	}
+	finishUsage, err := s.beginObjectUsageChange(ctx, bucketID)
+	if err != nil {
+		return err
+	}
 	if err := s.objectDeleteContext(ctx, objectStorageBucketScope, storedPath); err != nil {
 		return err
 	}
-	if oldSize > 0 {
-		_ = s.store.AdjustObjectStorageBucketSize(bucketID, -oldSize)
-	}
+	var count int64
 	if existed {
-		_ = s.store.AdjustObjectStorageBucketObjectCount(bucketID, -1)
+		count = -1
 	}
-	return nil
+	return finishUsage(-oldSize, count)
 }
 
 func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
@@ -2391,11 +2401,25 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 }
 
 func (s *Service) ObjectPutContext(ctx context.Context, capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
-	_, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID)
+	if _, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID); err != nil {
+		return ObjectInfo{}, err
+	}
+	if repo, ok := s.store.(objectMutationRepository); ok {
+		return s.mutateStoredObject(ctx, repo, bucketID, objectPath, contentType, data, false)
+	}
+	release, err := s.lockObjectStorage(ctx, bucketID)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	defer release()
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
+	transfers, err := s.objectTransfers(bucketID)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := checkObjectTransferConflict(transfers, bucketID, storedPath); err != nil {
+		return ObjectInfo{}, err
+	}
 	var oldSize int64
 	existed := false
 	if existing, err := s.objectHeadContext(ctx, objectStorageBucketScope, storedPath); err == nil {
@@ -2404,16 +2428,38 @@ func (s *Service) ObjectPutContext(ctx context.Context, capability, bucketID, ob
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return ObjectInfo{}, err
 	}
-	if err := s.enforceObjectStorageBytesLimit(bucketID, int64(len(data))-oldSize); err != nil {
+	bucket, err := s.GetObjectStorageBucket(bucketID)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	delta := int64(len(data)) - oldSize
+	if err := s.checkObjectWriteLimits(ctx, bucket, delta, transfers, ""); err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
+	committed, err := s.reserveBufferedObjectWrite(bucket, storedPath, delta)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	finishUsage, err := s.beginObjectUsageChange(ctx, bucketID)
+	if err != nil {
 		return ObjectInfo{}, err
 	}
 	object, err := s.objectPutContext(ctx, objectStorageBucketScope, storedPath, contentType, data)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	_ = s.store.AdjustObjectStorageBucketSize(bucketID, object.Size-oldSize)
+	var count int64
 	if !existed {
-		_ = s.store.AdjustObjectStorageBucketObjectCount(bucketID, 1)
+		count = 1
+	}
+	if err := finishUsage(object.Size-oldSize, count); err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := committed(); err != nil {
+		return ObjectInfo{}, err
 	}
 	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, nil
@@ -3035,6 +3081,14 @@ func (s *Service) KVNamespaceMetricsForOrg(orgID, namespaceID string) (KVNamespa
 }
 
 func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
+	if _, ok := s.store.(objectUsageLedger); ok {
+		return s.store.ObjectStorageBucketMetrics(bucketID)
+	}
+	release, err := s.lockObjectStorage(context.Background(), bucketID)
+	if err != nil {
+		return ObjectStorageBucketMetrics{}, err
+	}
+	defer release()
 	metrics, err := s.store.ObjectStorageBucketMetrics(bucketID)
 	if err != nil {
 		return ObjectStorageBucketMetrics{}, err
@@ -3042,8 +3096,8 @@ func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBuck
 	if s.objects == nil {
 		return metrics, nil
 	}
-	size, objectCount, ok, err := s.reconcileObjectStorageBucketUsage(bucketID)
-	if err != nil || !ok {
+	size, objectCount, err := s.storedObjectUsage(context.Background(), bucketID)
+	if err != nil {
 		return metrics, err
 	}
 	_ = s.store.AdjustObjectStorageBucketSize(bucketID, size-metrics.Size)
@@ -3058,51 +3112,6 @@ func (s *Service) ObjectStorageBucketMetricsForOrg(orgID, bucketID string) (Obje
 		return ObjectStorageBucketMetrics{}, err
 	}
 	return s.ObjectStorageBucketMetrics(bucketID)
-}
-
-func (s *Service) enforcePresignedObjectUploadAllowed(orgID string) error {
-	orgID = strings.TrimSpace(orgID)
-	if orgID == "" {
-		return nil
-	}
-	org, err := s.store.GetOrganization(orgID)
-	if err != nil {
-		return err
-	}
-	if OrgLimitsForLevel(org.UsageLevel).ObjectStorageBytes != nil {
-		return UsageLimitError{Message: NormalizeUsageLevel(org.UsageLevel) + " orgs cannot use presigned object uploads"}
-	}
-	return nil
-}
-
-func (s *Service) enforceObjectStorageBytesLimit(bucketID string, delta int64) error {
-	if delta <= 0 {
-		return nil
-	}
-	bucket, err := s.GetObjectStorageBucket(bucketID)
-	if err != nil {
-		return err
-	}
-	orgID := strings.TrimSpace(bucket.OrgID)
-	if orgID == "" {
-		return nil
-	}
-	org, err := s.store.GetOrganization(orgID)
-	if err != nil {
-		return err
-	}
-	limit := OrgLimitsForLevel(org.UsageLevel).ObjectStorageBytes
-	if limit == nil {
-		return nil
-	}
-	current, err := s.store.ObjectStorageBytesByOrg(orgID)
-	if err != nil {
-		return err
-	}
-	if current+delta > *limit {
-		return usageByteLimitError(org.UsageLevel, "object storage", *limit)
-	}
-	return nil
 }
 
 func (s *Service) enforceKVStorageBytesLimit(namespaceID string, delta int64) (string, error) {
@@ -3224,30 +3233,6 @@ func (s *Service) RecordRuntimeObjectRead(bucketID string) error {
 
 func (s *Service) RecordRuntimeObjectWrite(bucketID string) error {
 	return s.store.IncrementObjectStorageBucketWrites(bucketID)
-}
-
-func (s *Service) reconcileObjectStorageBucketUsage(bucketID string) (int64, int64, bool, error) {
-	active, err := s.activeDeployments()
-	if err != nil {
-		return 0, 0, false, err
-	}
-	for _, item := range active {
-		for _, binding := range item.Deployment.ObjectStorageBuckets {
-			if binding.BucketID != bucketID {
-				continue
-			}
-			objects, err := s.ObjectList(item.App.RuntimeToken, bucketID)
-			if err != nil {
-				return 0, 0, false, err
-			}
-			var size int64
-			for _, object := range objects {
-				size += object.Size
-			}
-			return size, int64(len(objects)), true, nil
-		}
-	}
-	return 0, 0, false, nil
 }
 
 func (s *Service) ensureActiveDeploymentBindsNamespace(appID, namespaceID string) error {

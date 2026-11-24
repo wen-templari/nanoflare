@@ -91,6 +91,17 @@ async function toObjectRequestInit(value, options) {
 export function wrapObjectsBinding(bindingName, binding) {
   const service = serviceBinding(binding);
   if (!service) return binding;
+  const uploadRequest = async (action, payload) => {
+    const response = await service.fetch(
+      new Request("https://objects.local/internal/runtime/objects/upload-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, action }),
+      }),
+    );
+    if (!response.ok) throw await objectBindingError(bindingName, action, response);
+    return await response.json();
+  };
   return {
     async put(key, value, options) {
       const init = await toObjectRequestInit(value, options);
@@ -123,6 +134,40 @@ export function wrapObjectsBinding(bindingName, binding) {
       if (response.status === 404) return null;
       if (!response.ok) throw await objectBindingError(bindingName, "get", response);
       return buildObjectBody(response, objectMetadata(response, key));
+    },
+    async presignDownload(key) {
+      const response = await service.fetch(
+        new Request("https://objects.local/internal/runtime/objects/presign-public-download", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ key }),
+        }),
+      );
+      if (!response.ok) throw await objectBindingError(bindingName, "presignDownload", response);
+      const { url } = await response.json();
+      return url;
+    },
+    createUpload(key, size) {
+      return uploadRequest("create", { key, size });
+    },
+    createMultipartUpload(key, parts) {
+      if (parts.length === 0) throw new Error("Multipart uploads require at least one part");
+      return uploadRequest("create", {
+        key,
+        size: parts.reduce((total, size) => total + size, 0),
+        parts,
+      });
+    },
+    signUploadPart(id, part) {
+      return uploadRequest("sign-part", { id, part });
+    },
+    async completeUpload(id) {
+      const object = await uploadRequest("complete", { id });
+      object.uploaded = new Date(object.uploaded);
+      return object;
+    },
+    async abortUpload(id) {
+      await uploadRequest("abort", { id });
     },
     async head(key) {
       const response = await service.fetch(

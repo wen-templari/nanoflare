@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -15,17 +16,28 @@ import (
 // advisory lock for the same critical section as Service.configMu, including
 // runtime publication and rollback, across processes using this database.
 func (p *Postgres) LockDeploymentUpdates() (func(), error) {
+	return p.lockOperation(context.Background(), 0x4e414e4f56415253)
+}
+
+func (p *Postgres) LockObjectStorageUpdates(ctx context.Context, scope string) (func(), error) {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte("object-storage:" + scope))
+	return p.lockOperation(ctx, int64(hash.Sum64()))
+}
+
+func (p *Postgres) lockOperation(ctx context.Context, lockID int64) (func(), error) {
 	var conn *sql.Conn
-	const lockID int64 = 0x4e414e4f56415253
 	for {
-		candidate, err := p.db.Conn(context.Background())
+		candidate, err := p.db.Conn(ctx)
 		if err != nil {
 			return nil, err
 		}
 		var acquired bool
-		err = candidate.QueryRowContext(context.Background(), `SELECT pg_try_advisory_lock($1)`, lockID).Scan(&acquired)
+		err = candidate.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, lockID).Scan(&acquired)
 		if err != nil {
-			candidate.Close()
+			// Cancellation can race with lock acquisition on the server.
+			_ = candidate.Raw(func(any) error { return driver.ErrBadConn })
+			_ = candidate.Close()
 			return nil, err
 		}
 		if acquired {
@@ -35,7 +47,11 @@ func (p *Postgres) LockDeploymentUpdates() (func(), error) {
 		// A waiter must not hold a pooled connection while the publisher needs
 		// that pool to read/write deployment state.
 		_ = candidate.Close()
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 	return func() {
 		if _, err := conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, lockID); err != nil {
