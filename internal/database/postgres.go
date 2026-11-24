@@ -306,6 +306,8 @@ CREATE TABLE IF NOT EXISTS object_transfers (
 	id text PRIMARY KEY,
 	transfer jsonb NOT NULL
 );
+CREATE INDEX IF NOT EXISTS object_transfers_bucket_idx ON object_transfers ((transfer->>'BucketID'));
+CREATE INDEX IF NOT EXISTS object_transfers_org_idx ON object_transfers ((transfer->>'OrgID'));
 CREATE TABLE IF NOT EXISTS object_storage_buckets (
 	id text PRIMARY KEY,
 	org_id text NOT NULL DEFAULT '',
@@ -480,6 +482,7 @@ CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
 	size bigint NOT NULL DEFAULT 0,
 	object_count bigint NOT NULL DEFAULT 0
 );
+ALTER TABLE object_storage_bucket_metrics ADD COLUMN IF NOT EXISTS usage_reconciled boolean NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS database_metrics (
 	database_id text PRIMARY KEY REFERENCES databases(id) ON DELETE CASCADE,
 	queries bigint NOT NULL DEFAULT 0,

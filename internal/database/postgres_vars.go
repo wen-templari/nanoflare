@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
@@ -18,8 +19,10 @@ func (p *Postgres) LockDeploymentUpdates() (func(), error) {
 	return p.lockOperation(context.Background(), 0x4e414e4f56415253)
 }
 
-func (p *Postgres) LockObjectStorageUpdates(ctx context.Context) (func(), error) {
-	return p.lockOperation(ctx, 0x4e414e4f4f424a53)
+func (p *Postgres) LockObjectStorageUpdates(ctx context.Context, scope string) (func(), error) {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte("object-storage:" + scope))
+	return p.lockOperation(ctx, int64(hash.Sum64()))
 }
 
 func (p *Postgres) lockOperation(ctx context.Context, lockID int64) (func(), error) {

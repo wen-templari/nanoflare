@@ -15,25 +15,28 @@ import (
 )
 
 const objectTransferScope = "object-storage-buckets"
+const objectTransferMetadata = "X-Amz-Meta-Nanoflare-Upload"
 
 func (m *MinIO) PublicPresignedUploads() bool {
 	return m.uploadSigner != nil
 }
 
-func (m *MinIO) CreateMultipartObjectTransfer(ctx context.Context, stagingPath string) (string, error) {
+func (m *MinIO) CreateMultipartObjectTransfer(ctx context.Context, transfer nanoflare.ObjectTransfer) (string, error) {
 	ctx, cancel := m.operationContext(ctx)
 	defer cancel()
-	key, err := objectKey(objectTransferScope, stagingPath)
+	key, err := objectKey(objectTransferScope, transfer.UploadKey())
 	if err != nil {
 		return "", err
 	}
-	return (minio.Core{Client: m.client}).NewMultipartUpload(ctx, m.bucket, key, minio.PutObjectOptions{})
+	return (minio.Core{Client: m.client}).NewMultipartUpload(ctx, m.bucket, key, minio.PutObjectOptions{
+		UserMetadata: map[string]string{"Nanoflare-Upload": transfer.ID},
+	})
 }
 
 func (m *MinIO) SignObjectTransfer(ctx context.Context, transfer nanoflare.ObjectTransfer, part int) (string, error) {
 	ctx, cancel := m.operationContext(ctx)
 	defer cancel()
-	key, err := objectKey(objectTransferScope, transfer.StagingKey())
+	key, err := objectKey(objectTransferScope, transfer.UploadKey())
 	if err != nil {
 		return "", err
 	}
@@ -66,13 +69,14 @@ func (m *MinIO) SignObjectTransfer(ctx context.Context, transfer nanoflare.Objec
 func (m *MinIO) CompleteMultipartObjectTransfer(ctx context.Context, transfer nanoflare.ObjectTransfer) error {
 	ctx, cancel := m.operationContext(ctx)
 	defer cancel()
-	key, err := objectKey(objectTransferScope, transfer.StagingKey())
+	key, err := objectKey(objectTransferScope, transfer.UploadKey())
 	if err != nil {
 		return err
 	}
-	if _, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{}); err == nil {
-		// Only this server can create the staged object by completing its multipart upload.
-		return nil
+	if info, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{}); err == nil {
+		if !transfer.DirectMultipart || info.Metadata.Get(objectTransferMetadata) == transfer.ID {
+			return nil
+		}
 	} else if !errors.Is(minioNotFound(err), nanoflare.ErrObjectNotFound) {
 		return err
 	}
@@ -117,6 +121,16 @@ func (m *MinIO) PublishObjectTransfer(ctx context.Context, transfer nanoflare.Ob
 	if err != nil {
 		return nanoflare.ObjectInfo{}, err
 	}
+	current, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{})
+	if err == nil && current.Size == transfer.Size && current.Metadata.Get(objectTransferMetadata) == transfer.ID {
+		return objectInfo(destination, current), nil
+	}
+	if err != nil && !errors.Is(minioNotFound(err), nanoflare.ErrObjectNotFound) {
+		return nanoflare.ObjectInfo{}, err
+	}
+	if transfer.DirectMultipart {
+		return nanoflare.ObjectInfo{}, errors.New("completed multipart object is missing or has unexpected metadata")
+	}
 	info, err := m.client.StatObject(ctx, m.bucket, source, minio.StatObjectOptions{})
 	if errors.Is(minioNotFound(err), nanoflare.ErrObjectNotFound) {
 		return nanoflare.ObjectInfo{}, fmt.Errorf("%w: staged upload is missing", nanoflare.ErrObjectTransferInput)
@@ -124,16 +138,8 @@ func (m *MinIO) PublishObjectTransfer(ctx context.Context, transfer nanoflare.Ob
 	if err != nil {
 		return nanoflare.ObjectInfo{}, err
 	}
-	if info.Size != transfer.Size || info.ETag == "" {
+	if info.Size != transfer.Size || info.ETag == "" || info.Metadata.Get("X-Amz-Meta-Nanoflare-Discarded") != "" {
 		return nanoflare.ObjectInfo{}, fmt.Errorf("%w: staged object does not match reserved upload", nanoflare.ErrObjectTransferInput)
-	}
-	const transferMetadata = "X-Amz-Meta-Nanoflare-Upload"
-	current, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{})
-	if err == nil && current.Size == transfer.Size && current.Metadata.Get(transferMetadata) == transfer.ID {
-		return objectInfo(destination, current), nil
-	}
-	if err != nil && !errors.Is(minioNotFound(err), nanoflare.ErrObjectNotFound) {
-		return nanoflare.ObjectInfo{}, err
 	}
 	src := minio.CopySrcOptions{Bucket: m.bucket, Object: source, VersionID: info.VersionID, MatchETag: info.ETag}
 	dst := minio.CopyDestOptions{
@@ -154,9 +160,12 @@ func (m *MinIO) PublishObjectTransfer(ctx context.Context, transfer nanoflare.Ob
 func (m *MinIO) CleanupObjectTransfer(ctx context.Context, transfer nanoflare.ObjectTransfer) error {
 	ctx, cancel := m.operationContext(ctx)
 	defer cancel()
-	key, err := objectKey(objectTransferScope, transfer.StagingKey())
+	key, err := objectKey(objectTransferScope, transfer.UploadKey())
 	if err != nil {
 		return err
+	}
+	if transfer.DirectMultipart && transfer.UploadID == "" {
+		return nil
 	}
 	core := minio.Core{Client: m.client}
 	if transfer.UploadID != "" {
@@ -178,6 +187,17 @@ func (m *MinIO) CleanupObjectTransfer(ctx context.Context, transfer nanoflare.Ob
 				}
 			}
 		}
+	}
+	if transfer.DirectMultipart {
+		return nil
+	}
+	if len(transfer.Parts) == 0 && time.Now().Before(transfer.ExpiresAt.Add(time.Hour)) {
+		// Keep a zero-byte tombstone so a still-valid conditional PUT cannot
+		// recreate the staging payload after completion or abort.
+		_, err := m.client.PutObject(ctx, m.bucket, key, strings.NewReader(""), 0, minio.PutObjectOptions{
+			UserMetadata: map[string]string{"Nanoflare-Discarded": "true"},
+		})
+		return err
 	}
 	return m.client.RemoveObject(ctx, m.bucket, key, minio.RemoveObjectOptions{})
 }

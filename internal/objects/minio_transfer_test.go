@@ -65,17 +65,19 @@ func TestMinIOPresignedTransfers(t *testing.T) {
 			transfer := nanoflare.ObjectTransfer{ID: tc.name + "-" + time.Now().UTC().Format("150405.000000000"), ExpiresAt: time.Now().Add(time.Minute)}
 			destination := "buckets/transfer-test/" + transfer.ID
 			t.Cleanup(func() {
+				transfer.ExpiresAt = time.Now().Add(-2 * time.Hour)
 				_ = store.CleanupObjectTransfer(ctx, transfer)
 				_ = store.Delete(objectTransferScope, destination)
 			})
 			want := first
+			var singleURL string
 			if tc.parts == nil {
 				transfer.Size = int64(len(first))
-				url, err := store.SignObjectTransfer(ctx, transfer, 0)
+				singleURL, err = store.SignObjectTransfer(ctx, transfer, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
-				status, cors, body := request(http.MethodOptions, url, nil, map[string]string{
+				status, cors, body := request(http.MethodOptions, singleURL, nil, map[string]string{
 					"Origin":                         "https://sites.example.test",
 					"Access-Control-Request-Method":  "PUT",
 					"Access-Control-Request-Headers": "if-none-match",
@@ -84,17 +86,19 @@ func TestMinIOPresignedTransfers(t *testing.T) {
 					t.Fatalf("browser preflight = %d, %v, %s", status, cors, body)
 				}
 				headers := map[string]string{"If-None-Match": "*"}
-				if status, _, body := request(http.MethodPut, url, first[:2], headers); status < 400 {
+				if status, _, body := request(http.MethodPut, singleURL, first[:2], headers); status < 400 {
 					t.Fatalf("changed content length accepted: %d %s", status, body)
 				}
-				if status, _, body := request(http.MethodPut, url, first, headers); status != http.StatusOK {
+				if status, _, body := request(http.MethodPut, singleURL, first, headers); status != http.StatusOK {
 					t.Fatalf("upload rejected: %d %s", status, body)
 				}
-				if status, _, body := request(http.MethodPut, url, second, headers); status != http.StatusPreconditionFailed {
+				if status, _, body := request(http.MethodPut, singleURL, second, headers); status != http.StatusPreconditionFailed {
 					t.Fatalf("replayed upload = %d %s", status, body)
 				}
 			} else {
-				transfer.UploadID, err = store.CreateMultipartObjectTransfer(ctx, transfer.StagingKey())
+				transfer.Key = destination
+				transfer.DirectMultipart = true
+				transfer.UploadID, err = store.CreateMultipartObjectTransfer(ctx, transfer)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -123,6 +127,18 @@ func TestMinIOPresignedTransfers(t *testing.T) {
 				if err != nil || got.Size != int64(len(want)) {
 					t.Fatalf("publish = %#v, %v", got, err)
 				}
+			}
+			if err := store.CleanupObjectTransfer(ctx, transfer); err != nil {
+				t.Fatal(err)
+			}
+			if singleURL != "" {
+				status, _, body := request(http.MethodPut, singleURL, second, map[string]string{"If-None-Match": "*"})
+				if status != http.StatusPreconditionFailed {
+					t.Fatalf("upload replay after cleanup = %d %s", status, body)
+				}
+			}
+			if got, err := store.PublishObjectTransfer(ctx, transfer, destination); err != nil || got.Size != int64(len(want)) {
+				t.Fatalf("retry after cleanup = %#v, %v", got, err)
 			}
 			url, err := store.PresignPublicDownload(ctx, objectTransferScope, destination, time.Minute)
 			if err != nil {

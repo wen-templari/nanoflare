@@ -310,7 +310,7 @@ func (m *MinIO) operationContext(parent context.Context) (context.Context, conte
 }
 
 func (m *MinIO) UsageContext(ctx context.Context, appID, prefix string) (int64, int64, error) {
-	ctx, cancel := m.operationContext(ctx)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	key, err := objectKey(appID, prefix)
 	if err != nil {

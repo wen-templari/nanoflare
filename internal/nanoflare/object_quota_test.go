@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func TestObjectBucketQuotaUsesExistingBytesAndSerializesWrites(t *testing.T) {
@@ -77,5 +78,24 @@ func TestObjectBucketQuotaUsesExistingBytesAndSerializesWrites(t *testing.T) {
 	}
 	if err := put("replacement", "de"); err != nil {
 		t.Fatalf("write after deletion = %v", err)
+	}
+}
+
+func TestObjectUploadWindowAndCompletionGrace(t *testing.T) {
+	if got := objectUploadWindow(5 << 30); got != 5*time.Hour {
+		t.Fatalf("5 GiB upload window = %v", got)
+	}
+	expiry := time.Now()
+	transfer := ObjectTransfer{ExpiresAt: expiry}
+	if !transfer.active(expiry.Add(30*time.Minute)) || transfer.active(expiry.Add(time.Hour)) {
+		t.Fatal("completion should be allowed for one hour after URL expiry")
+	}
+	transfer.Aborted = true
+	if !transfer.holdsReservation() {
+		t.Fatal("failed abort cleanup released its staging reservation")
+	}
+	transfer.Cleaned = true
+	if transfer.holdsReservation() {
+		t.Fatal("successful abort cleanup retained its staging reservation")
 	}
 }

@@ -485,12 +485,12 @@ func (s *Service) DeleteObjectStorageBucket(bucketID string) error {
 	if bucketID == "" {
 		return ErrObjectStorageBucketNotFound
 	}
-	release, err := s.lockObjectStorage(context.Background())
+	release, err := s.lockObjectStorage(context.Background(), bucketID)
 	if err != nil {
 		return err
 	}
 	defer release()
-	transfers, err := s.objectTransfers()
+	transfers, err := s.objectTransfers(bucketID)
 	if err != nil {
 		return err
 	}
@@ -845,7 +845,7 @@ func (s *Service) DeleteAppForOrg(orgID, appID string) error {
 }
 
 func (s *Service) UpdateObjectStorageBucketForOrg(orgID, bucketID string, input UpdateObjectStorageBucketInput) (ObjectStorageBucket, error) {
-	release, err := s.lockObjectStorage(context.Background())
+	release, err := s.lockObjectStorage(context.Background(), bucketID)
 	if err != nil {
 		return ObjectStorageBucket{}, err
 	}
@@ -2357,13 +2357,13 @@ func (s *Service) DeleteObjectContext(ctx context.Context, capability, bucketID,
 	if _, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID); err != nil {
 		return err
 	}
-	release, err := s.lockObjectStorage(ctx)
+	release, err := s.lockObjectStorage(ctx, bucketID)
 	if err != nil {
 		return err
 	}
 	defer release()
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
-	transfers, err := s.objectTransfers()
+	transfers, err := s.objectTransfers(bucketID)
 	if err != nil {
 		return err
 	}
@@ -2378,16 +2378,18 @@ func (s *Service) DeleteObjectContext(ctx context.Context, capability, bucketID,
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return err
 	}
+	finishUsage, err := s.beginObjectUsageChange(ctx, bucketID)
+	if err != nil {
+		return err
+	}
 	if err := s.objectDeleteContext(ctx, objectStorageBucketScope, storedPath); err != nil {
 		return err
 	}
-	if oldSize > 0 {
-		_ = s.store.AdjustObjectStorageBucketSize(bucketID, -oldSize)
-	}
+	var count int64
 	if existed {
-		_ = s.store.AdjustObjectStorageBucketObjectCount(bucketID, -1)
+		count = -1
 	}
-	return nil
+	return finishUsage(-oldSize, count)
 }
 
 func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
@@ -2398,13 +2400,13 @@ func (s *Service) ObjectPutContext(ctx context.Context, capability, bucketID, ob
 	if _, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID); err != nil {
 		return ObjectInfo{}, err
 	}
-	release, err := s.lockObjectStorage(ctx)
+	release, err := s.lockObjectStorage(ctx, bucketID)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
 	defer release()
 	storedPath := objectStorageBucketPath(bucketID, objectPath)
-	transfers, err := s.objectTransfers()
+	transfers, err := s.objectTransfers(bucketID)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -2434,16 +2436,23 @@ func (s *Service) ObjectPutContext(ctx context.Context, capability, bucketID, ob
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	finishUsage, err := s.beginObjectUsageChange(ctx, bucketID)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
 	object, err := s.objectPutContext(ctx, objectStorageBucketScope, storedPath, contentType, data)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	if err := committed(); err != nil {
+	var count int64
+	if !existed {
+		count = 1
+	}
+	if err := finishUsage(object.Size-oldSize, count); err != nil {
 		return ObjectInfo{}, err
 	}
-	_ = s.store.AdjustObjectStorageBucketSize(bucketID, object.Size-oldSize)
-	if !existed {
-		_ = s.store.AdjustObjectStorageBucketObjectCount(bucketID, 1)
+	if err := committed(); err != nil {
+		return ObjectInfo{}, err
 	}
 	object.Key = strings.TrimPrefix(objectPath, "/")
 	return object, nil
@@ -3065,7 +3074,7 @@ func (s *Service) KVNamespaceMetricsForOrg(orgID, namespaceID string) (KVNamespa
 }
 
 func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
-	release, err := s.lockObjectStorage(context.Background())
+	release, err := s.lockObjectStorage(context.Background(), bucketID)
 	if err != nil {
 		return ObjectStorageBucketMetrics{}, err
 	}
@@ -3076,6 +3085,12 @@ func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBuck
 	}
 	if s.objects == nil {
 		return metrics, nil
+	}
+	if ledger, ok := s.store.(objectUsageLedger); ok {
+		if err := s.reconcileObjectUsage(context.Background(), ledger, bucketID, ""); err != nil {
+			return metrics, err
+		}
+		return s.store.ObjectStorageBucketMetrics(bucketID)
 	}
 	size, objectCount, err := s.storedObjectUsage(context.Background(), bucketID)
 	if err != nil {

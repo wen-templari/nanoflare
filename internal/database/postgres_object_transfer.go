@@ -2,12 +2,31 @@ package database
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 )
 
-func (p *Postgres) ListObjectTransfers() ([]nanoflare.ObjectTransfer, error) {
-	rows, err := p.db.Query(`SELECT transfer FROM object_transfers`)
+func (p *Postgres) ListObjectTransfers(bucketID, orgID, includeID string) ([]nanoflare.ObjectTransfer, error) {
+	query := `SELECT transfer FROM object_transfers`
+	var args []any
+	switch {
+	case orgID != "":
+		query += ` WHERE transfer->>'OrgID' = $1`
+		args = append(args, orgID)
+	case bucketID != "":
+		query += ` WHERE transfer->>'BucketID' = $1`
+		args = append(args, bucketID)
+	default:
+		query += ` WHERE (NOT COALESCE((transfer->>'Cleaned')::boolean, false)
+			AND (transfer->>'Result' IS NOT NULL OR (transfer->>'Aborted')::boolean)) OR (transfer->>'ExpiresAt')::timestamptz < $1`
+		args = append(args, time.Now().UTC())
+	}
+	if bucketID != "" || orgID != "" {
+		query += ` AND (id = $2 OR NOT COALESCE((transfer->>'Cleaned')::boolean, false))`
+		args = append(args, includeID)
+	}
+	rows, err := p.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

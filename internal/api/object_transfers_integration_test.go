@@ -9,12 +9,23 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/objects"
 )
+
+type countedObjectUsage struct {
+	*objects.MinIO
+	listings atomic.Int64
+}
+
+func (s *countedObjectUsage) UsageContext(ctx context.Context, scope, prefix string) (int64, int64, error) {
+	s.listings.Add(1)
+	return s.MinIO.UsageContext(ctx, scope, prefix)
+}
 
 func TestObjectTransferRuntimeAndQuota(t *testing.T) {
 	endpoint := os.Getenv("NANOFLARE_TEST_MINIO_ENDPOINT")
@@ -38,7 +49,8 @@ func TestObjectTransferRuntimeAndQuota(t *testing.T) {
 	if err := repo.CreateOrganization(nanoflare.Organization{ID: org, Name: org, UsageLevel: nanoflare.UsageLevelPaid}); err != nil {
 		t.Fatal(err)
 	}
-	service := nanoflare.NewServiceWithObjects(repo, discardWriter{}, storage)
+	provider := &countedObjectUsage{MinIO: storage}
+	service := nanoflare.NewServiceWithObjects(repo, discardWriter{}, provider)
 	service.SetPlatformDispatchEnabled(true)
 	controlAuth := nanoflare.NewControlAuthService(repo, "object-transfer-test")
 	controlAuth.SetTestHashCost(4)
@@ -145,7 +157,7 @@ func TestObjectTransferRuntimeAndQuota(t *testing.T) {
 		_ = storage.Delete("object-storage-buckets", "buckets/"+bucket.ID+"/published")
 		_ = storage.CleanupObjectTransfer(ctx, nanoflare.ObjectTransfer{ID: ticket.ID})
 	}()
-	other := nanoflare.NewServiceWithObjects(repo, discardWriter{}, storage)
+	other := nanoflare.NewServiceWithObjects(repo, discardWriter{}, provider)
 	other.SetPlatformDispatchEnabled(true)
 	otherInvocation, err := other.AcquireDispatch(ctx, hostToken, ns.ID, "site")
 	if err != nil {
@@ -205,5 +217,8 @@ func TestObjectTransferRuntimeAndQuota(t *testing.T) {
 	uploadCall(map[string]any{"action": "abort", "id": aborted.ID}, http.StatusOK, nil)
 	if _, err := service.ObjectPut(invocation.Lease, bucket.ID, "published", "text/plain", []byte("hello")); err != nil {
 		t.Fatalf("write after abort = %v", err)
+	}
+	if got := provider.listings.Load(); got != 1 {
+		t.Fatalf("provider listings = %d, want one ledger initialization", got)
 	}
 }
