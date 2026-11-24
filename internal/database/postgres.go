@@ -483,6 +483,7 @@ CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
 	object_count bigint NOT NULL DEFAULT 0
 );
 ALTER TABLE object_storage_bucket_metrics ADD COLUMN IF NOT EXISTS usage_reconciled boolean NOT NULL DEFAULT false;
+ALTER TABLE object_storage_bucket_metrics ADD COLUMN IF NOT EXISTS usage_revision bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS database_metrics (
 	database_id text PRIMARY KEY REFERENCES databases(id) ON DELETE CASCADE,
 	queries bigint NOT NULL DEFAULT 0,
@@ -1842,7 +1843,11 @@ ON CONFLICT (database_id) DO UPDATE SET storage_bytes = GREATEST($2, 0), table_c
 }
 
 func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
-	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at, max_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+	_, err := p.db.Exec(`WITH created AS (
+INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at, max_bytes)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+)
+INSERT INTO object_storage_bucket_metrics (bucket_id, usage_reconciled) SELECT id, true FROM created`,
 		bucket.ID, bucket.OrgID, bucket.Name, bucket.ExternalID, bucket.OAuthClientID, bucket.CreatedAt, bucket.MaxBytes)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrObjectStorageBucketExists

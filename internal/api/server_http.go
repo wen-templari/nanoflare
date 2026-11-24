@@ -25,7 +25,7 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, nanoflare.ErrObjectTransferInput):
 		writeError(w, http.StatusBadRequest, err)
 		return
-	case errors.Is(err, nanoflare.ErrObjectTransferUnavailable), errors.Is(err, nanoflare.ErrObjectDownloadUnavailable):
+	case errors.Is(err, nanoflare.ErrObjectUsageRebuilding), errors.Is(err, nanoflare.ErrObjectTransferUnavailable), errors.Is(err, nanoflare.ErrObjectDownloadUnavailable):
 		writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
@@ -78,6 +78,10 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 }
 
 func writeWorkerError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nanoflare.ErrObjectUsageRebuilding) {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrObjectTransferConflict) {
 		writeError(w, http.StatusConflict, err)
 		return

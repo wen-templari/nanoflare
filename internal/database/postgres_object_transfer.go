@@ -60,3 +60,8 @@ func (p *Postgres) DeleteObjectTransfer(id string) error {
 	_, err := p.db.Exec(`DELETE FROM object_transfers WHERE id = $1`, id)
 	return err
 }
+
+func (p *Postgres) MarkObjectTransferCleaned(id string) error {
+	_, err := p.db.Exec(`UPDATE object_transfers SET transfer = jsonb_set(transfer, '{Cleaned}', 'true') WHERE id = $1`, id)
+	return err
+}

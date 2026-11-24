@@ -82,8 +82,11 @@ func TestObjectBucketQuotaUsesExistingBytesAndSerializesWrites(t *testing.T) {
 }
 
 func TestObjectUploadWindowAndCompletionGrace(t *testing.T) {
-	if got := objectUploadWindow(5 << 30); got != 5*time.Hour {
-		t.Fatalf("5 GiB upload window = %v", got)
+	if err := validateObjectTransfer(ObjectTransferInput{Size: 65 << 20}); !errors.Is(err, ErrObjectTransferInput) {
+		t.Fatalf("single-part limit = %v", err)
+	}
+	if err := validateObjectTransfer(ObjectTransferInput{Size: 5 << 30, Parts: []int64{5 << 30}}); err != nil {
+		t.Fatalf("multipart part limit = %v", err)
 	}
 	expiry := time.Now()
 	transfer := ObjectTransfer{ExpiresAt: expiry}

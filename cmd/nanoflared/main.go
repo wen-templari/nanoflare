@@ -475,6 +475,8 @@ func main() {
 	}
 	stopAssetCleanup := service.StartAssetUploadCleanup(shutdown, time.Minute, func(err error) { log.Printf("asset staging cleanup: %v", err) })
 	defer stopAssetCleanup()
+	stopObjectUsage := service.StartObjectUsageReconciliation(shutdown, func(err error) { log.Printf("object usage reconciliation: %v", err) })
+	defer stopObjectUsage()
 	stopObjectCleanup := service.StartObjectTransferCleanup(shutdown, func(err error) { log.Printf("object staging cleanup: %v", err) })
 	defer stopObjectCleanup()
 	if remoteRunner != nil {

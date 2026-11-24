@@ -12,7 +12,9 @@ const (
 	objectTransferTTL        = 15 * time.Minute
 	objectPartURLTTL         = 24 * time.Hour
 	objectCompletionGrace    = time.Hour
-	maxSingleObjectUpload    = int64(5 << 30)
+	objectSingleURLTTL       = time.Hour
+	maxSingleObjectUpload    = int64(64 << 20)
+	maxObjectUploadPart      = int64(5 << 30)
 	minObjectUploadPart      = int64(5 << 20)
 	maxMultipartObjectUpload = int64(5 << 40)
 )
@@ -37,6 +39,7 @@ type ObjectTransfer struct {
 	Result          *ObjectInfo
 	Aborted         bool
 	Buffered        bool
+	ClaimOnly       bool
 }
 
 type ObjectTransferInput struct {
@@ -93,18 +96,13 @@ func (t ObjectTransfer) completionDeadline() time.Time {
 	return t.ExpiresAt.Add(objectCompletionGrace)
 }
 
-func objectUploadWindow(size int64) time.Duration {
-	// Budget one hour per GiB, with a one-hour minimum for resumable uploads.
-	return time.Duration(max(1, (size+(1<<30)-1)>>30)) * time.Hour
-}
-
 func validateObjectTransfer(input ObjectTransferInput) error {
 	if input.Size < 0 || input.Size > maxMultipartObjectUpload {
 		return fmt.Errorf("%w: invalid upload size", ErrObjectTransferInput)
 	}
 	if len(input.Parts) == 0 {
 		if input.Size > maxSingleObjectUpload {
-			return fmt.Errorf("%w: single-part uploads are limited to 5 GiB", ErrObjectTransferInput)
+			return fmt.Errorf("%w: single-part uploads are limited to 64 MiB; use multipart for larger objects", ErrObjectTransferInput)
 		}
 		return nil
 	}
@@ -113,7 +111,7 @@ func validateObjectTransfer(input ObjectTransferInput) error {
 	}
 	var size int64
 	for i, part := range input.Parts {
-		if part <= 0 || part > maxSingleObjectUpload || (i < len(input.Parts)-1 && part < minObjectUploadPart) {
+		if part <= 0 || part > maxObjectUploadPart || (i < len(input.Parts)-1 && part < minObjectUploadPart) {
 			return fmt.Errorf("%w: invalid upload size for part %d", ErrObjectTransferInput, i+1)
 		}
 		size += part
@@ -133,13 +131,42 @@ func (s *Service) CreateObjectTransfer(ctx context.Context, capability, bucketID
 	if storedPath == objectStorageBucketPath(bucketID, "") {
 		return ticket, fmt.Errorf("%w: object key is required", ErrObjectTransferInput)
 	}
-	err := s.withObjectTransfers(ctx, capability, bucketID, "", func(repo objectTransferRepository, provider objectTransferProvider, bucket ObjectStorageBucket, transfers []ObjectTransfer) error {
-		if err := checkObjectTransferConflict(transfers, bucketID, storedPath); err != nil {
-			return err
+	var claim ObjectTransfer
+	var claimedDelta int64
+	if mutationRepo, ok := s.store.(objectMutationRepository); ok {
+		if _, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID); err != nil {
+			return ticket, err
 		}
-		delta, err := s.objectTransferDelta(ctx, storedPath, input.Size)
+		backend, ok := s.objects.(objectTransferProvider)
+		if !ok || !backend.PublicPresignedUploads() {
+			return ticket, ErrObjectTransferUnavailable
+		}
+		var err error
+		claim, err = s.claimObjectMutation(ctx, mutationRepo, bucketID, input.Key)
 		if err != nil {
-			return err
+			return ticket, err
+		}
+		defer mutationRepo.DeleteObjectTransfer(claim.ID)
+		claimedDelta, err = s.objectTransferDelta(ctx, storedPath, input.Size)
+		if err != nil {
+			return ticket, err
+		}
+	}
+	var transfer ObjectTransfer
+	var provider objectTransferProvider
+	var repo objectTransferRepository
+	err := s.withObjectTransfers(ctx, capability, bucketID, "", func(repository objectTransferRepository, backend objectTransferProvider, bucket ObjectStorageBucket, transfers []ObjectTransfer) error {
+		repo, provider = repository, backend
+		delta := claimedDelta
+		if claim.ID == "" {
+			if err := checkObjectTransferConflict(transfers, bucketID, storedPath); err != nil {
+				return err
+			}
+			var err error
+			delta, err = s.objectTransferDelta(ctx, storedPath, input.Size)
+			if err != nil {
+				return err
+			}
 		}
 		if err := s.checkObjectWriteLimits(ctx, bucket, delta, transfers, ""); err != nil {
 			return err
@@ -151,44 +178,54 @@ func (s *Service) CreateObjectTransfer(ctx context.Context, capability, bucketID
 		if err != nil {
 			return err
 		}
-		transfer := ObjectTransfer{
+		transfer = ObjectTransfer{
 			ID: id, BucketID: bucketID, OrgID: bucket.OrgID, Key: storedPath,
 			Size: input.Size, Reserved: max(delta, 0), Parts: input.Parts, DirectMultipart: len(input.Parts) > 0,
-			ExpiresAt: time.Now().UTC().Add(objectUploadWindow(input.Size)),
+			ExpiresAt: time.Now().UTC().Add(objectSingleURLTTL),
 		}
 		if transfer.DirectMultipart {
 			transfer.ExpiresAt = time.Now().UTC().Add(objectPartURLTTL)
 		}
-		if err := repo.SaveObjectTransfer(transfer); err != nil {
-			return err
-		}
-		ticket = ObjectTransferTicket{ID: id, ExpiresAt: transfer.ExpiresAt}
-		if len(transfer.Parts) == 0 {
-			ticket.URL, err = provider.SignObjectTransfer(ctx, transfer, 0)
-		} else {
-			transfer.UploadID, err = provider.CreateMultipartObjectTransfer(ctx, transfer)
-			if err == nil {
-				err = repo.SaveObjectTransfer(transfer)
-			}
-		}
-		if err != nil {
-			// Keep the durable record when cleanup fails so the sweeper can retry.
-			if provider.CleanupObjectTransfer(context.WithoutCancel(ctx), transfer) == nil {
-				_ = repo.DeleteObjectTransfer(id)
-			}
-			return err
-		}
-		return nil
+		return repo.SaveObjectTransfer(transfer)
 	})
+	if err != nil {
+		return ticket, err
+	}
+	ticket = ObjectTransferTicket{ID: transfer.ID, ExpiresAt: transfer.ExpiresAt}
+	if len(transfer.Parts) == 0 {
+		ticket.URL, err = provider.SignObjectTransfer(ctx, transfer, 0)
+	} else {
+		transfer.UploadID, err = provider.CreateMultipartObjectTransfer(ctx, transfer)
+		if err == nil {
+			err = repo.SaveObjectTransfer(transfer)
+		}
+	}
+	if err != nil {
+		// Keep the durable record when cleanup fails so the sweeper can retry.
+		if provider.CleanupObjectTransfer(context.WithoutCancel(ctx), transfer) == nil {
+			_ = repo.DeleteObjectTransfer(transfer.ID)
+		}
+	}
 	return ticket, err
 }
 
 func (s *Service) ObjectTransferAction(ctx context.Context, capability, bucketID, id, action string, part int) (any, error) {
+	if repo, ok := s.store.(objectMutationRepository); ok && action == "complete" {
+		return s.completeStoredObjectTransfer(ctx, repo, capability, bucketID, id)
+	}
 	var result any
+	var afterUnlock func() error
 	err := s.withObjectTransfers(ctx, capability, bucketID, id, func(repo objectTransferRepository, provider objectTransferProvider, bucket ObjectStorageBucket, transfers []ObjectTransfer) error {
 		for _, transfer := range transfers {
 			if transfer.ID != id || transfer.BucketID != bucketID || transfer.Buffered {
 				continue
+			}
+			if transfer.Result == nil && (action == "abort" || action == "sign-part") {
+				for _, other := range transfers {
+					if other.Buffered && other.Key == transfer.Key {
+						return ErrObjectTransferConflict
+					}
+				}
 			}
 			switch action {
 			case "abort":
@@ -199,7 +236,7 @@ func (s *Service) ObjectTransferAction(ctx context.Context, capability, bucketID
 					}
 				}
 				if transfer.Result == nil {
-					return cleanObjectTransfer(ctx, repo, provider, transfer)
+					afterUnlock = func() error { return cleanObjectTransfer(ctx, repo, provider, transfer) }
 				}
 				return nil
 			case "sign-part":
@@ -217,9 +254,12 @@ func (s *Service) ObjectTransferAction(ctx context.Context, capability, bucketID
 						return err
 					}
 				}
-				url, err := provider.SignObjectTransfer(ctx, ticket, part)
-				result = ObjectTransferTicket{ID: id, ExpiresAt: ticket.ExpiresAt, URL: url}
-				return err
+				afterUnlock = func() error {
+					url, err := provider.SignObjectTransfer(ctx, ticket, part)
+					result = ObjectTransferTicket{ID: id, ExpiresAt: ticket.ExpiresAt, URL: url}
+					return err
+				}
+				return nil
 			case "complete":
 				if transfer.Result != nil {
 					result = *transfer.Result
@@ -246,6 +286,9 @@ func (s *Service) ObjectTransferAction(ctx context.Context, capability, bucketID
 		}
 		return ErrObjectTransferNotFound
 	})
+	if err == nil && afterUnlock != nil {
+		err = afterUnlock()
+	}
 	return result, err
 }
 
@@ -342,6 +385,9 @@ func cleanObjectTransfer(ctx context.Context, repo objectTransferRepository, pro
 	if err := provider.CleanupObjectTransfer(ctx, transfer); err != nil {
 		return err
 	}
+	if store, ok := repo.(interface{ MarkObjectTransferCleaned(string) error }); ok {
+		return store.MarkObjectTransferCleaned(transfer.ID)
+	}
 	transfer.Cleaned = true
 	return repo.SaveObjectTransfer(transfer)
 }
@@ -380,7 +426,7 @@ func (s *Service) cleanupObjectTransfer(ctx context.Context, repo objectTransfer
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer func() { release() }()
 	transfers, err := repo.ListObjectTransfers(candidate.BucketID, "", candidate.ID)
 	if err != nil {
 		return err
@@ -391,16 +437,27 @@ func (s *Service) cleanupObjectTransfer(ctx context.Context, repo objectTransfer
 		}
 		if time.Now().Before(transfer.completionDeadline()) {
 			if transfer.Result != nil || transfer.Aborted {
+				release()
+				release = func() {}
 				return cleanObjectTransfer(ctx, repo, provider, transfer)
 			}
 			return nil
 		}
 		if !transfer.Buffered {
+			for _, other := range transfers {
+				if other.Buffered && other.Key == transfer.Key {
+					return nil
+				}
+			}
+		}
+		if !transfer.Buffered {
+			release()
+			release = func() {}
 			if err := provider.CleanupObjectTransfer(ctx, transfer); err != nil {
 				return err
 			}
 		}
-		if transfer.Result == nil {
+		if transfer.Buffered && !transfer.ClaimOnly {
 			if ledger, ok := s.store.(objectUsageLedger); ok {
 				if _, err := ledger.BeginObjectUsageChange(ctx, transfer.BucketID); err != nil {
 					return err

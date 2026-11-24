@@ -19,12 +19,36 @@ import (
 
 type countedObjectUsage struct {
 	*objects.MinIO
-	listings atomic.Int64
+	listings       atomic.Int64
+	putStarted     chan struct{}
+	resumePut      chan struct{}
+	listingStarted chan struct{}
+	resumeListing  chan struct{}
 }
 
 func (s *countedObjectUsage) UsageContext(ctx context.Context, scope, prefix string) (int64, int64, error) {
 	s.listings.Add(1)
+	if s.listingStarted != nil {
+		close(s.listingStarted)
+		select {
+		case <-ctx.Done():
+			return 0, 0, ctx.Err()
+		case <-s.resumeListing:
+		}
+	}
 	return s.MinIO.UsageContext(ctx, scope, prefix)
+}
+
+func (s *countedObjectUsage) PutContext(ctx context.Context, scope, key, contentType string, data []byte) (nanoflare.ObjectInfo, error) {
+	if s.putStarted != nil && strings.HasSuffix(key, "/slow-put") {
+		close(s.putStarted)
+		select {
+		case <-ctx.Done():
+			return nanoflare.ObjectInfo{}, ctx.Err()
+		case <-s.resumePut:
+		}
+	}
+	return s.MinIO.PutContext(ctx, scope, key, contentType, data)
 }
 
 func TestObjectTransferRuntimeAndQuota(t *testing.T) {
@@ -218,7 +242,74 @@ func TestObjectTransferRuntimeAndQuota(t *testing.T) {
 	if _, err := service.ObjectPut(invocation.Lease, bucket.ID, "published", "text/plain", []byte("hello")); err != nil {
 		t.Fatalf("write after abort = %v", err)
 	}
-	if got := provider.listings.Load(); got != 1 {
-		t.Fatalf("provider listings = %d, want one ledger initialization", got)
+	if got := provider.listings.Load(); got != 0 {
+		t.Fatalf("provider listings = %d, want none for a newly provisioned bucket", got)
 	}
+	if _, err := repo.(interface {
+		BeginObjectUsageChange(context.Context, string) (bool, error)
+	}).BeginObjectUsageChange(ctx, bucket.ID); err != nil {
+		t.Fatal(err)
+	}
+	provider.listingStarted, provider.resumeListing = make(chan struct{}), make(chan struct{})
+	stopReconcile := service.StartObjectUsageReconciliation(ctx, func(err error) {
+		t.Errorf("background reconciliation: %v", err)
+	})
+	defer stopReconcile()
+	select {
+	case <-provider.listingStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("background reconciliation did not begin")
+	}
+	retryCtx, cancelRetry := context.WithTimeout(ctx, time.Second)
+	_, err = other.ObjectPutContext(retryCtx, otherInvocation.Lease, bucket.ID, "during-rebuild", "text/plain", []byte("x"))
+	cancelRetry()
+	close(provider.resumeListing)
+	if !errors.Is(err, nanoflare.ErrObjectUsageRebuilding) {
+		t.Fatalf("growth during reconciliation = %v, want retryable error", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := other.ObjectPut(otherInvocation.Lease, bucket.ID, "during-rebuild", "text/plain", []byte("x"))
+		if errors.Is(err, nanoflare.ErrUsageLimitExceeded) {
+			break
+		}
+		if !errors.Is(err, nanoflare.ErrObjectUsageRebuilding) || time.Now().After(deadline) {
+			t.Fatalf("growth after reconciliation = %v, want quota limit", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stopReconcile()
+
+	slow := make(chan error, 1)
+	provider.putStarted, provider.resumePut = make(chan struct{}), make(chan struct{})
+	limit := int64(20)
+	if _, err := service.UpdateObjectStorageBucketForOrg(org, bucket.ID, nanoflare.UpdateObjectStorageBucketInput{MaxBytes: &limit}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_, err := service.ObjectPut(invocation.Lease, bucket.ID, "slow-put", "text/plain", []byte("one"))
+		slow <- err
+	}()
+	defer func() {
+		close(provider.resumePut)
+		if err := <-slow; err != nil {
+			t.Errorf("slow PUT: %v", err)
+		}
+		_ = storage.Delete("object-storage-buckets", "buckets/"+bucket.ID+"/slow-put")
+	}()
+	select {
+	case <-provider.putStarted:
+	case err := <-slow:
+		slow <- err
+		t.Fatalf("PUT exited before reaching provider: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("PUT did not reach provider")
+	}
+	defer storage.Delete("object-storage-buckets", "buckets/"+bucket.ID+"/fast-put")
+	quick, stopQuick := context.WithTimeout(ctx, 3*time.Second)
+	defer stopQuick()
+	if _, err := other.ObjectPutContext(quick, otherInvocation.Lease, bucket.ID, "fast-put", "text/plain", []byte("two")); err != nil {
+		t.Fatalf("same-org PUT blocked behind a slow provider call: %v", err)
+	}
+
 }

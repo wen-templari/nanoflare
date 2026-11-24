@@ -72,27 +72,120 @@ type objectUsageReader interface {
 }
 
 type objectUsageLedger interface {
+	ObjectUsageRevision(context.Context, string, bool) (int64, error)
 	UnreconciledObjectBuckets(context.Context, string, string) ([]string, error)
 	ReconcileObjectUsage(context.Context, string, int64, int64) error
 	BeginObjectUsageChange(context.Context, string) (bool, error)
 	FinishObjectUsageChange(context.Context, string, int64, int64) error
 }
 
-func (s *Service) reconcileObjectUsage(ctx context.Context, ledger objectUsageLedger, bucketID, orgID string) error {
+var ErrObjectUsageRebuilding = errors.New("object storage usage is being rebuilt; retry shortly")
+
+func requireObjectUsage(ctx context.Context, ledger objectUsageLedger, bucketID, orgID string) error {
 	buckets, err := ledger.UnreconciledObjectBuckets(ctx, bucketID, orgID)
 	if err != nil {
 		return err
 	}
-	for _, bucket := range buckets {
-		size, count, err := s.storedObjectUsage(ctx, bucket)
-		if err != nil {
-			return err
-		}
-		if err := ledger.ReconcileObjectUsage(ctx, bucket, size, count); err != nil {
-			return err
-		}
+	if len(buckets) != 0 {
+		return ErrObjectUsageRebuilding
 	}
 	return nil
+}
+
+func (s *Service) StartObjectUsageReconciliation(parent context.Context, onError func(error)) func() {
+	ledger, ok := s.store.(objectUsageLedger)
+	if !ok || s.objects == nil {
+		return func() {}
+	}
+	ctx, stop := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			if err := s.rebuildObjectUsage(ctx, ledger); err != nil && ctx.Err() == nil && onError != nil {
+				onError(err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() { stop(); <-done }
+}
+
+func (s *Service) rebuildObjectUsage(ctx context.Context, ledger objectUsageLedger) error {
+	buckets, err := ledger.UnreconciledObjectBuckets(ctx, "", "")
+	if err != nil {
+		return err
+	}
+	var failures error
+	for _, bucket := range buckets {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(failures, err)
+		}
+		attempt, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		err := s.rebuildObjectBucketUsage(attempt, ledger, bucket)
+		cancel()
+		failures = errors.Join(failures, err)
+	}
+	return failures
+}
+
+func (s *Service) rebuildObjectBucketUsage(ctx context.Context, ledger objectUsageLedger, bucketID string) error {
+	release, err := s.lockObjectStorage(ctx, bucketID)
+	if errors.Is(err, ErrObjectStorageBucketNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	revision, dirty, err := s.objectUsageSnapshot(ctx, ledger, bucketID)
+	release()
+	if err != nil || !dirty {
+		return err
+	}
+
+	size, count, err := s.storedObjectUsage(ctx, bucketID)
+	if err != nil {
+		return err
+	}
+	release, err = s.lockObjectStorage(ctx, bucketID)
+	if errors.Is(err, ErrObjectStorageBucketNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer release()
+	current, dirty, err := s.objectUsageSnapshot(ctx, ledger, bucketID)
+	if err != nil || !dirty || current != revision {
+		return err
+	}
+	return ledger.ReconcileObjectUsage(ctx, bucketID, size, count)
+}
+
+func (s *Service) objectUsageSnapshot(ctx context.Context, ledger objectUsageLedger, bucketID string) (int64, bool, error) {
+	buckets, err := ledger.UnreconciledObjectBuckets(ctx, bucketID, "")
+	if err != nil || len(buckets) == 0 {
+		return 0, false, err
+	}
+	if repo, ok := s.store.(objectTransferRepository); ok {
+		transfers, err := repo.ListObjectTransfers(bucketID, "", "")
+		if err != nil {
+			return 0, false, err
+		}
+		for _, transfer := range transfers {
+			if transfer.Buffered && !transfer.ClaimOnly {
+				return 0, false, nil
+			}
+		}
+	}
+	revision, err := ledger.ObjectUsageRevision(ctx, bucketID, false)
+	return revision, true, err
 }
 
 func (s *Service) beginObjectUsageChange(ctx context.Context, bucketID string) (func(int64, int64) error, error) {
@@ -119,7 +212,7 @@ func (s *Service) beginObjectUsageChange(ctx context.Context, bucketID string) (
 
 func (s *Service) objectBucketCommittedBytes(ctx context.Context, bucketID string) (int64, error) {
 	if ledger, ok := s.store.(objectUsageLedger); ok {
-		if err := s.reconcileObjectUsage(ctx, ledger, bucketID, ""); err != nil {
+		if err := requireObjectUsage(ctx, ledger, bucketID, ""); err != nil {
 			return 0, err
 		}
 		metrics, err := s.store.ObjectStorageBucketMetrics(bucketID)
@@ -209,7 +302,7 @@ func (s *Service) checkObjectStagingLimit(bucket ObjectStorageBucket, size int64
 
 func (s *Service) organizationObjectUsage(ctx context.Context, orgID string) (int64, error) {
 	if ledger, ok := s.store.(objectUsageLedger); ok {
-		if err := s.reconcileObjectUsage(ctx, ledger, "", orgID); err != nil {
+		if err := requireObjectUsage(ctx, ledger, "", orgID); err != nil {
 			return 0, err
 		}
 		return s.store.ObjectStorageBytesByOrg(orgID)

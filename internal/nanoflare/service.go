@@ -2357,6 +2357,10 @@ func (s *Service) DeleteObjectContext(ctx context.Context, capability, bucketID,
 	if _, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID); err != nil {
 		return err
 	}
+	if repo, ok := s.store.(objectMutationRepository); ok {
+		_, err := s.mutateStoredObject(ctx, repo, bucketID, objectPath, "", nil, true)
+		return err
+	}
 	release, err := s.lockObjectStorage(ctx, bucketID)
 	if err != nil {
 		return err
@@ -2399,6 +2403,9 @@ func (s *Service) ObjectPut(capability, bucketID, objectPath, contentType string
 func (s *Service) ObjectPutContext(ctx context.Context, capability, bucketID, objectPath, contentType string, data []byte) (ObjectInfo, error) {
 	if _, err := s.objectCapabilityAppIDContext(ctx, capability, bucketID); err != nil {
 		return ObjectInfo{}, err
+	}
+	if repo, ok := s.store.(objectMutationRepository); ok {
+		return s.mutateStoredObject(ctx, repo, bucketID, objectPath, contentType, data, false)
 	}
 	release, err := s.lockObjectStorage(ctx, bucketID)
 	if err != nil {
@@ -3074,6 +3081,9 @@ func (s *Service) KVNamespaceMetricsForOrg(orgID, namespaceID string) (KVNamespa
 }
 
 func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBucketMetrics, error) {
+	if _, ok := s.store.(objectUsageLedger); ok {
+		return s.store.ObjectStorageBucketMetrics(bucketID)
+	}
 	release, err := s.lockObjectStorage(context.Background(), bucketID)
 	if err != nil {
 		return ObjectStorageBucketMetrics{}, err
@@ -3085,12 +3095,6 @@ func (s *Service) ObjectStorageBucketMetrics(bucketID string) (ObjectStorageBuck
 	}
 	if s.objects == nil {
 		return metrics, nil
-	}
-	if ledger, ok := s.store.(objectUsageLedger); ok {
-		if err := s.reconcileObjectUsage(context.Background(), ledger, bucketID, ""); err != nil {
-			return metrics, err
-		}
-		return s.store.ObjectStorageBucketMetrics(bucketID)
 	}
 	size, objectCount, err := s.storedObjectUsage(context.Background(), bucketID)
 	if err != nil {
