@@ -302,6 +302,10 @@ CREATE TABLE IF NOT EXISTS databases (
 	name text NOT NULL,
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS object_transfers (
+	id text PRIMARY KEY,
+	transfer jsonb NOT NULL
+);
 CREATE TABLE IF NOT EXISTS object_storage_buckets (
 	id text PRIMARY KEY,
 	org_id text NOT NULL DEFAULT '',
@@ -442,6 +446,7 @@ UPDATE deployments SET traffic_percent = 100 WHERE active AND traffic_percent = 
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
+ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS max_bytes bigint CHECK (max_bytes >= 0);
 ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
@@ -1834,8 +1839,8 @@ ON CONFLICT (database_id) DO UPDATE SET storage_bytes = GREATEST($2, 0), table_c
 }
 
 func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
-	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-		bucket.ID, bucket.OrgID, bucket.Name, bucket.ExternalID, bucket.OAuthClientID, bucket.CreatedAt)
+	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at, max_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		bucket.ID, bucket.OrgID, bucket.Name, bucket.ExternalID, bucket.OAuthClientID, bucket.CreatedAt, bucket.MaxBytes)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrObjectStorageBucketExists
 	}
@@ -1853,7 +1858,7 @@ func (p *Postgres) ListObjectStorageBuckets() ([]nanoflare.ObjectStorageBucket, 
 }
 
 func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.ObjectStorageBucket, error) {
-	query := `SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM object_storage_buckets`
+	query := `SELECT id, org_id, name, external_id, oauth_client_id, created_at, max_bytes FROM object_storage_buckets`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -1868,7 +1873,7 @@ func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.Obje
 	buckets := make([]nanoflare.ObjectStorageBucket, 0)
 	for rows.Next() {
 		var bucket nanoflare.ObjectStorageBucket
-		if err := rows.Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt); err != nil {
+		if err := rows.Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt, &bucket.MaxBytes); err != nil {
 			return nil, err
 		}
 		buckets = append(buckets, bucket)
@@ -1878,8 +1883,8 @@ func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.Obje
 
 func (p *Postgres) GetObjectStorageBucket(bucketID string) (nanoflare.ObjectStorageBucket, error) {
 	var bucket nanoflare.ObjectStorageBucket
-	err := p.db.QueryRow(`SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM object_storage_buckets WHERE id = $1`, bucketID).
-		Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, external_id, oauth_client_id, created_at, max_bytes FROM object_storage_buckets WHERE id = $1`, bucketID).
+		Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt, &bucket.MaxBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.ObjectStorageBucket{}, nanoflare.ErrObjectStorageBucketNotFound
 	}
@@ -1887,7 +1892,7 @@ func (p *Postgres) GetObjectStorageBucket(bucketID string) (nanoflare.ObjectStor
 }
 
 func (p *Postgres) UpdateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
-	result, err := p.db.Exec(`UPDATE object_storage_buckets SET name = $2 WHERE id = $1`, bucket.ID, bucket.Name)
+	result, err := p.db.Exec(`UPDATE object_storage_buckets SET name = $2, max_bytes = $3 WHERE id = $1`, bucket.ID, bucket.Name, bucket.MaxBytes)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrObjectStorageBucketExists
 	}

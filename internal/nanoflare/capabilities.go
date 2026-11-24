@@ -55,7 +55,14 @@ func (s *Service) RuntimeCapabilitiesForOrg(org, worker string) (RuntimeCapabili
 		result.Outbound = "invocation_http_policy"
 		result.DurationMeasurement = "elapsed_dispatch"
 		result.Experimental = []string{"worker_loader", "native_props", "nodejs_als"}
-		result.Unavailable = append(result.Unavailable, "cache_api", "raw_tcp", "websockets", "classic_scripts", "custom_dispatch_limits", "arbitrary_service_rpc", "customer_namespace_dispatch", "schedules", "custom_dns_profiles", "presigned_object_urls")
+		result.Unavailable = append(result.Unavailable, "cache_api", "raw_tcp", "websockets", "classic_scripts", "custom_dispatch_limits", "arbitrary_service_rpc", "customer_namespace_dispatch", "schedules", "custom_dns_profiles")
+		if signer, ok := s.objects.(publicObjectDownloadSigner); !ok || !signer.PublicPresignedDownloads() {
+			result.Unavailable = append(result.Unavailable, "presigned_object_downloads")
+		}
+		_, repoOK := s.store.(objectTransferRepository)
+		if provider, ok := s.objects.(objectTransferProvider); !repoOK || !ok || !provider.PublicPresignedUploads() {
+			result.Unavailable = append(result.Unavailable, "presigned_object_uploads")
+		}
 		result.Limits = RuntimeLimits{WallMS: 30000, BackgroundMS: 2000, Subrequests: defaultInvocationSubrequestBudget, Depth: 8, GlobalInvocations: 1024, NamespaceInvocations: 128, CustomerInvocations: 32, CodeDescriptors: 64, CodeDescriptorBytes: 32 << 20}
 	}
 	return result, nil

@@ -36,8 +36,10 @@ func (s *Server) registerObjectRoutes() {
 	s.mux.HandleFunc("HEAD /internal/runtime/objects/{key...}", s.runtimeObjectHead)
 	s.mux.HandleFunc("PUT /internal/runtime/objects/{key...}", s.runtimeObjectPut)
 	s.mux.HandleFunc("DELETE /internal/runtime/objects/{key...}", s.runtimeObjectDelete)
-	s.mux.HandleFunc("POST /internal/runtime/objects/presign-upload", s.presignUpload)
+	s.mux.HandleFunc("POST /internal/runtime/objects/presign-upload", s.retiredPresignUpload)
 	s.mux.HandleFunc("POST /internal/runtime/objects/presign-download", s.presignDownload)
+	s.mux.HandleFunc("POST /internal/runtime/objects/presign-public-download", s.presignPublicDownload)
+	s.mux.HandleFunc("POST /internal/runtime/objects/upload-session", s.objectUploadSession)
 	s.mux.HandleFunc("POST /internal/runtime/objects/delete", s.deleteObject)
 }
 
@@ -74,18 +76,16 @@ func (s *Server) workerObjectGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.WorkerObjectGetForOrg(controlOrgID(r), r.PathValue("workerID"), r.PathValue("bucketID"), key)
+	object, body, err := s.service.OpenWorkerObjectForOrg(r.Context(), controlOrgID(r), r.PathValue("workerID"), r.PathValue("bucketID"), key)
+	if errors.Is(err, nanoflare.ErrObjectNotFound) {
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		writeWorkerError(w, err)
 		return
 	}
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	writeRuntimeObjectHeaders(w.Header(), object.ObjectInfo)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(object.Body)
+	writeObjectStream(w, object, body)
 }
 
 func (s *Server) workerObjectPut(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +217,7 @@ func (s *Server) deleteObjectStorageBucket(w http.ResponseWriter, r *http.Reques
 		if errors.Is(err, nanoflare.ErrObjectStorageBucketNotFound) {
 			status = http.StatusNotFound
 		}
-		if errors.Is(err, nanoflare.ErrObjectStorageBucketInUse) {
+		if errors.Is(err, nanoflare.ErrObjectStorageBucketInUse) || errors.Is(err, nanoflare.ErrObjectTransferConflict) {
 			status = http.StatusConflict
 		}
 		writeError(w, status, err)
@@ -305,19 +305,26 @@ func (s *Server) runtimeObjectGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	object, ok, err := s.service.ObjectGetContext(r.Context(), bearerToken(r), bucketID, key)
+	object, body, err := s.service.OpenObjectContext(r.Context(), bearerToken(r), bucketID, key)
+	if errors.Is(err, nanoflare.ErrObjectNotFound) {
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		writeRuntimeError(w, err)
 		return
 	}
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
 	_ = s.service.RecordRuntimeObjectRead(bucketID)
-	writeRuntimeObjectHeaders(w.Header(), object.ObjectInfo)
+	writeObjectStream(w, object, body)
+}
+
+func writeObjectStream(w http.ResponseWriter, object nanoflare.ObjectInfo, body io.ReadCloser) {
+	defer body.Close()
+	writeRuntimeObjectHeaders(w.Header(), object)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(object.Body)
+	if _, err := io.Copy(w, body); err != nil {
+		panic(http.ErrAbortHandler)
+	}
 }
 
 func (s *Server) runtimeObjectHead(w http.ResponseWriter, r *http.Request) {
@@ -423,12 +430,95 @@ func (s *Server) runtimeObjectDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) presignUpload(w http.ResponseWriter, r *http.Request) {
-	s.presignObject(w, r, s.service.PresignUpload)
+func (s *Server) retiredPresignUpload(w http.ResponseWriter, r *http.Request) {
+	if authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, r.Header.Get("X-Nanoflare-Object-Bucket-ID")) == nil {
+		return
+	}
+	writeError(w, http.StatusGone, errors.New("use an object upload session with a declared size"))
 }
 
 func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 	s.presignObject(w, r, s.service.PresignDownload)
+}
+
+func (s *Server) presignPublicDownload(w http.ResponseWriter, r *http.Request) {
+	bucketID, err := runtimeObjectBucketID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionObject, bucketID)
+	if !ok {
+		return
+	}
+	defer release()
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, bucketID)
+	if r == nil {
+		return
+	}
+	var input struct {
+		Key string `json:"key"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	url, err := s.service.PresignPublicObjectDownload(r.Context(), bearerToken(r), bucketID, input.Key)
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"url": url})
+}
+
+func (s *Server) objectUploadSession(w http.ResponseWriter, r *http.Request) {
+	bucketID, err := runtimeObjectBucketID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	r, release, ok := beginResourceGrant(w, r, s.service, nanoflare.ExecutionObject, bucketID)
+	if !ok {
+		return
+	}
+	defer release()
+	r = authorizeRuntime(w, r, s.service, nanoflare.RuntimeObjects, bucketID)
+	if r == nil {
+		return
+	}
+	var input struct {
+		nanoflare.ObjectTransferInput
+		Action string `json:"action"`
+		ID     string `json:"id"`
+		Part   int    `json:"part"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var result any
+	switch input.Action {
+	case "create":
+		result, err = s.service.CreateObjectTransfer(r.Context(), bearerToken(r), bucketID, input.ObjectTransferInput)
+	case "sign-part", "complete", "abort":
+		if input.ID == "" {
+			writeError(w, http.StatusBadRequest, errors.New("upload session id is required"))
+			return
+		}
+		result, err = s.service.ObjectTransferAction(r.Context(), bearerToken(r), bucketID, input.ID, input.Action, input.Part)
+	default:
+		writeError(w, http.StatusBadRequest, errors.New("invalid upload session action"))
+		return
+	}
+	if err != nil {
+		writeRuntimeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) presignObject(w http.ResponseWriter, r *http.Request, presign func(string, string, string) (string, error)) {

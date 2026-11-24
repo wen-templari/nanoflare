@@ -46,7 +46,7 @@ Dispatch acquisitions consume one shared root unit each. Resource effects share 
 
 ## Rejected, deferred and independent work
 
-Untrusted execution profiles, custom WFP CPU/limit options, classic scripts, WebSockets, arbitrary cross-Worker service RPC, dynamic namespace-wide nested dispatch, schedules, custom DNS profiles, Cache API and presigned object URL effects are unavailable. Unsupported dispatch options are rejected explicitly. Native control JSON rejects unknown fields; it does not accept a limit and silently substitute a weaker one.
+Untrusted execution profiles, custom WFP CPU/limit options, classic scripts, WebSockets, arbitrary cross-Worker service RPC, dynamic namespace-wide nested dispatch, schedules, custom DNS profiles and Cache API are unavailable. Binding-scoped signed object transfers require a configured public storage endpoint. See [Object storage quotas and direct transfers](object-storage-transfers.md). Unsupported dispatch options are rejected explicitly. Native control JSON rejects unknown fields; it does not accept a limit and silently substitute a weaker one.
 
 Real CPU accounting/interruption is the user's [separate workstream](../plans/workers-for-platforms-cpu-enforcement.md). The wall/effect deadline cannot stop a JavaScript infinite loop. Customer cells, hardened OS/VM containment and independent security qualification remain gates before an untrusted release.
 

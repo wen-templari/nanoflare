@@ -199,6 +199,7 @@ type Repository interface {
 }
 
 type Store struct {
+	objectStorageMu     sync.Mutex
 	assetUploads        map[string]AssetUploadSession
 	artifacts           map[string]DeploymentArtifact
 	publications        map[string]Publication

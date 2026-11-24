@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -15,17 +16,23 @@ import (
 )
 
 type MinIO struct {
-	client  *minio.Client
-	bucket  string
-	timeout time.Duration
+	client         *minio.Client
+	downloadSigner *minio.Client
+	uploadSigner   *minio.Client
+	bucket         string
+	timeout        time.Duration
 }
 
 type MinIOConfig struct {
-	Endpoint  string
-	AccessKey string
-	SecretKey string
-	Bucket    string
-	Secure    bool
+	Endpoint        string
+	AccessKey       string
+	SecretKey       string
+	Bucket          string
+	Secure          bool
+	PublicEndpoint  string
+	UploadAccessKey string
+	UploadSecretKey string
+	Region          string
 	// OperationTimeout bounds retries and body reads. Zero selects 30 seconds.
 	// Caller cancellation or an earlier deadline wins.
 	OperationTimeout time.Duration
@@ -44,6 +51,11 @@ func Open(ctx context.Context, config MinIOConfig) (*MinIO, error) {
 	if config.Endpoint == "" || config.AccessKey == "" || config.SecretKey == "" || config.Bucket == "" {
 		return nil, errors.New("MinIO endpoint, credentials, and bucket are required")
 	}
+	if config.UploadAccessKey != "" || config.UploadSecretKey != "" {
+		if config.PublicEndpoint == "" || config.UploadAccessKey == "" || config.UploadSecretKey == "" || config.UploadAccessKey == config.AccessKey {
+			return nil, errors.New("signed uploads require a public endpoint and separate staging credentials")
+		}
+	}
 	client, err := minio.New(config.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
 		Secure: config.Secure,
@@ -52,6 +64,38 @@ func Open(ctx context.Context, config MinIOConfig) (*MinIO, error) {
 		return nil, err
 	}
 	store := &MinIO{client: client, bucket: config.Bucket, timeout: timeout}
+	if config.PublicEndpoint != "" {
+		endpoint, err := url.Parse(config.PublicEndpoint)
+		if err != nil || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+			endpoint.User != nil || (endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return nil, errors.New("public MinIO endpoint must be an HTTP(S) origin")
+		}
+		region := config.Region
+		if region == "" {
+			region = "us-east-1"
+		}
+		store.downloadSigner, err = minio.New(endpoint.Host, &minio.Options{
+			Creds:        credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
+			Secure:       endpoint.Scheme == "https",
+			Region:       region,
+			BucketLookup: minio.BucketLookupPath,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if config.UploadAccessKey != "" {
+			store.uploadSigner, err = minio.New(endpoint.Host, &minio.Options{
+				Creds:        credentials.NewStaticV4(config.UploadAccessKey, config.UploadSecretKey, ""),
+				Secure:       endpoint.Scheme == "https",
+				Region:       region,
+				BucketLookup: minio.BucketLookupPath,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	exists, err := client.BucketExists(ctx, config.Bucket)
 	if err != nil {
 		return nil, err
@@ -64,20 +108,6 @@ func Open(ctx context.Context, config MinIOConfig) (*MinIO, error) {
 	return store, nil
 }
 
-func (m *MinIO) PresignUpload(appID, objectPath string, expiry time.Duration) (string, error) {
-	ctx, cancel := m.operationContext(context.Background())
-	defer cancel()
-	key, err := objectKey(appID, objectPath)
-	if err != nil {
-		return "", err
-	}
-	signed, err := m.client.PresignedPutObject(ctx, m.bucket, key, expiry)
-	if err != nil {
-		return "", err
-	}
-	return signed.String(), nil
-}
-
 func (m *MinIO) PresignDownload(appID, objectPath string, expiry time.Duration) (string, error) {
 	ctx, cancel := m.operationContext(context.Background())
 	defer cancel()
@@ -86,6 +116,27 @@ func (m *MinIO) PresignDownload(appID, objectPath string, expiry time.Duration) 
 		return "", err
 	}
 	signed, err := m.client.PresignedGetObject(ctx, m.bucket, key, expiry, nil)
+	if err != nil {
+		return "", err
+	}
+	return signed.String(), nil
+}
+
+func (m *MinIO) PublicPresignedDownloads() bool {
+	return m.downloadSigner != nil
+}
+
+func (m *MinIO) PresignPublicDownload(ctx context.Context, appID, objectPath string, expiry time.Duration) (string, error) {
+	if m.downloadSigner == nil {
+		return "", errors.New("public object downloads are unavailable")
+	}
+	ctx, cancel := m.operationContext(ctx)
+	defer cancel()
+	key, err := objectKey(appID, objectPath)
+	if err != nil {
+		return "", err
+	}
+	signed, err := m.downloadSigner.PresignedGetObject(ctx, m.bucket, key, expiry, nil)
 	if err != nil {
 		return "", err
 	}
@@ -117,29 +168,42 @@ func (m *MinIO) Get(appID, objectPath string) (nanoflare.ObjectBody, error) {
 }
 
 func (m *MinIO) GetContext(ctx context.Context, appID, objectPath string) (nanoflare.ObjectBody, error) {
+	info, reader, err := m.OpenObjectContext(ctx, appID, objectPath)
+	if err != nil {
+		return nanoflare.ObjectBody{}, err
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return nanoflare.ObjectBody{}, minioNotFound(err)
+	}
+	return nanoflare.ObjectBody{ObjectInfo: info, Body: body}, nil
+}
+
+type objectReader struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r objectReader) Close() error {
+	defer r.cancel()
+	return r.ReadCloser.Close()
+}
+
+func (m *MinIO) OpenObjectContext(ctx context.Context, appID, objectPath string) (nanoflare.ObjectInfo, io.ReadCloser, error) {
 	ctx, cancel := m.operationContext(ctx)
-	defer cancel()
 	key, err := objectKey(appID, objectPath)
 	if err != nil {
-		return nanoflare.ObjectBody{}, err
+		cancel()
+		return nanoflare.ObjectInfo{}, nil, err
 	}
-	object, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
+	// Read metadata from the same response as the body, including during a replacement.
+	object, info, _, err := (minio.Core{Client: m.client}).GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nanoflare.ObjectBody{}, err
+		cancel()
+		return nanoflare.ObjectInfo{}, nil, minioNotFound(err)
 	}
-	defer object.Close()
-	info, err := object.Stat()
-	if err != nil {
-		return nanoflare.ObjectBody{}, minioNotFound(err)
-	}
-	body, err := io.ReadAll(object)
-	if err != nil {
-		return nanoflare.ObjectBody{}, minioNotFound(err)
-	}
-	return nanoflare.ObjectBody{
-		ObjectInfo: objectInfo(objectPath, info),
-		Body:       body,
-	}, nil
+	return objectInfo(objectPath, info), objectReader{object, cancel}, nil
 }
 
 func (m *MinIO) Head(appID, objectPath string) (nanoflare.ObjectInfo, error) {
@@ -243,4 +307,30 @@ func (m *MinIO) operationContext(parent context.Context) (context.Context, conte
 		timeout = 30 * time.Second
 	}
 	return context.WithTimeout(parent, timeout)
+}
+
+func (m *MinIO) UsageContext(ctx context.Context, appID, prefix string) (int64, int64, error) {
+	ctx, cancel := m.operationContext(ctx)
+	defer cancel()
+	key, err := objectKey(appID, prefix)
+	if err != nil {
+		return 0, 0, err
+	}
+	var size, count int64
+	for object := range m.client.ListObjects(ctx, m.bucket, minio.ListObjectsOptions{Prefix: key + "/", Recursive: true}) {
+		if object.Err != nil {
+			return 0, 0, object.Err
+		}
+		size += object.Size
+		count++
+	}
+	// Older callers could write the normalized bucket-root key.
+	info, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{})
+	if err == nil {
+		size += info.Size
+		count++
+	} else if !errors.Is(minioNotFound(err), nanoflare.ErrObjectNotFound) {
+		return 0, 0, err
+	}
+	return size, count, ctx.Err()
 }
