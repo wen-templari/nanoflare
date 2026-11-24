@@ -12,6 +12,18 @@ type objectMutationRepository interface {
 	FinishObjectMutation(context.Context, string, string, int64, int64, *ObjectTransfer) error
 }
 
+// ErrObjectPutRejected indicates the provider definitively rejected a PUT.
+var ErrObjectPutRejected = errors.New("object PUT was rejected before commit")
+
+type objectMutationContextKey struct{}
+
+// ObjectMutationID identifies an admitted PUT so provider metadata can confirm
+// its outcome even when the response was lost.
+func ObjectMutationID(ctx context.Context) string {
+	id, _ := ctx.Value(objectMutationContextKey{}).(string)
+	return id
+}
+
 // A durable key claim protects the HEAD and ensuing mutation even while the
 // organization lock is released. Positive growth is reserved before the PUT.
 func (s *Service) mutateStoredObject(ctx context.Context, repo objectMutationRepository, bucketID, key, contentType string, data []byte, deleting bool) (ObjectInfo, error) {
@@ -38,6 +50,9 @@ func (s *Service) mutateStoredObject(ctx context.Context, repo objectMutationRep
 		return ObjectInfo{}, err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
 	mutating = true
 	var object ObjectInfo
 	var count int64
@@ -45,12 +60,17 @@ func (s *Service) mutateStoredObject(ctx context.Context, repo objectMutationRep
 		err = s.objectDeleteContext(ctx, objectStorageBucketScope, transfer.Key)
 		count = -oldCount
 	} else {
-		object, err = s.objectPutContext(ctx, objectStorageBucketScope, transfer.Key, contentType, data)
+		// Let an admitted PUT reach a definitive outcome after a disconnect.
+		put, stopPut := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		put = context.WithValue(put, objectMutationContextKey{}, transfer.ID)
+		object, err = s.objectPutContext(put, objectStorageBucketScope, transfer.Key, contentType, data)
+		stopPut()
 		count = 1 - oldCount
 	}
 	if err != nil {
-		// The provider may have committed. Keep the claim until cleanup can
-		// invalidate the ledger and reconciliation can observe the outcome.
+		if !deleting {
+			s.settleFailedObjectPut(ctx, repo, transfer, oldSize, oldCount, err)
+		}
 		return ObjectInfo{}, err
 	}
 	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -60,6 +80,20 @@ func (s *Service) mutateStoredObject(ctx context.Context, repo objectMutationRep
 	}
 	object.Key = strings.TrimPrefix(key, "/")
 	return object, nil
+}
+
+func (s *Service) settleFailedObjectPut(ctx context.Context, repo objectMutationRepository, claim ObjectTransfer, oldSize, oldCount int64, putErr error) {
+	recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	object, err := s.objectHeadContext(recovery, objectStorageBucketScope, claim.Key)
+	switch {
+	case err == nil && (object.MutationID == claim.ID || errors.Is(putErr, ErrObjectPutRejected)):
+		_ = s.finishStoredObjectMutation(recovery, repo, claim, object.Size-oldSize, 1-oldCount, nil)
+	case errors.Is(putErr, ErrObjectPutRejected) && errors.Is(err, ErrObjectNotFound):
+		_ = s.finishStoredObjectMutation(recovery, repo, claim, -oldSize, -oldCount, nil)
+	}
+	// An unchanged HEAD after an ambiguous timeout cannot rule out a late
+	// commit. Retain the claim if the provider outcome is still unknown.
 }
 
 func (s *Service) claimObjectMutation(ctx context.Context, repo objectMutationRepository, bucketID, key string) (ObjectTransfer, error) {

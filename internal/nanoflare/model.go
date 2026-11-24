@@ -762,6 +762,7 @@ type ObjectHTTPMetadata struct {
 }
 
 type ObjectInfo struct {
+	MutationID   string             `json:"-"`
 	Key          string             `json:"key"`
 	Size         int64              `json:"size"`
 	ETag         string             `json:"etag,omitempty"`

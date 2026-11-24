@@ -154,10 +154,16 @@ func (m *MinIO) PutContext(ctx context.Context, appID, objectPath string, conten
 	if err != nil {
 		return nanoflare.ObjectInfo{}, err
 	}
-	_, err = m.client.PutObject(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
-		ContentType: contentType,
-	})
+	options := minio.PutObjectOptions{ContentType: contentType}
+	if id := nanoflare.ObjectMutationID(ctx); id != "" {
+		options.UserMetadata = map[string]string{"Nanoflare-Mutation": id}
+	}
+	_, err = m.client.PutObject(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), options)
 	if err != nil {
+		switch minio.ToErrorResponse(err).Code {
+		case "InvalidObjectName", "EntityTooLarge", "InvalidDigest", "BadDigest":
+			return nanoflare.ObjectInfo{}, errors.Join(nanoflare.ErrObjectPutRejected, err)
+		}
 		return nanoflare.ObjectInfo{}, err
 	}
 	return m.HeadContext(ctx, appID, objectPath)
@@ -271,11 +277,12 @@ func (m *MinIO) DeleteContext(ctx context.Context, appID, objectPath string) err
 
 func objectInfo(objectPath string, info minio.ObjectInfo) nanoflare.ObjectInfo {
 	return nanoflare.ObjectInfo{
-		Key:      objectPath,
-		Size:     info.Size,
-		ETag:     strings.Trim(info.ETag, `"`),
-		HTTPETag: info.ETag,
-		Uploaded: info.LastModified.UTC(),
+		MutationID: info.Metadata.Get("X-Amz-Meta-Nanoflare-Mutation"),
+		Key:        objectPath,
+		Size:       info.Size,
+		ETag:       strings.Trim(info.ETag, `"`),
+		HTTPETag:   info.ETag,
+		Uploaded:   info.LastModified.UTC(),
 		HTTPMetadata: nanoflare.ObjectHTTPMetadata{
 			ContentType: info.ContentType,
 		},

@@ -20,6 +20,9 @@ import (
 type countedObjectUsage struct {
 	*objects.MinIO
 	listings       atomic.Int64
+	lostResponse   atomic.Bool
+	rejectPut      atomic.Bool
+	cancelPut      context.CancelFunc
 	putStarted     chan struct{}
 	resumePut      chan struct{}
 	listingStarted chan struct{}
@@ -47,6 +50,16 @@ func (s *countedObjectUsage) PutContext(ctx context.Context, scope, key, content
 			return nanoflare.ObjectInfo{}, ctx.Err()
 		case <-s.resumePut:
 		}
+	}
+	if strings.HasSuffix(key, "/lost-put") && s.lostResponse.CompareAndSwap(true, false) {
+		s.cancelPut()
+		if _, err := s.MinIO.PutContext(ctx, scope, key, contentType, data); err != nil {
+			return nanoflare.ObjectInfo{}, err
+		}
+		return nanoflare.ObjectInfo{}, context.Canceled
+	}
+	if strings.HasSuffix(key, "/rejected-put") && s.rejectPut.CompareAndSwap(true, false) {
+		return nanoflare.ObjectInfo{}, nanoflare.ErrObjectPutRejected
 	}
 	return s.MinIO.PutContext(ctx, scope, key, contentType, data)
 }
@@ -286,6 +299,30 @@ func TestObjectTransferRuntimeAndQuota(t *testing.T) {
 	if _, err := service.UpdateObjectStorageBucketForOrg(org, bucket.ID, nanoflare.UpdateObjectStorageBucketInput{MaxBytes: &limit}); err != nil {
 		t.Fatal(err)
 	}
+	putCtx, cancelPut := context.WithCancel(ctx)
+	defer cancelPut()
+	provider.cancelPut = cancelPut
+	provider.lostResponse.Store(true)
+	defer storage.Delete("object-storage-buckets", "buckets/"+bucket.ID+"/lost-put")
+	if _, err := service.ObjectPutContext(putCtx, invocation.Lease, bucket.ID, "lost-put", "text/plain", []byte("lost")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("lost PUT response = %v", err)
+	}
+	metrics, err := service.ObjectStorageBucketMetrics(bucket.ID)
+	if err != nil || metrics.Size != 9 || metrics.ObjectCount != 2 {
+		t.Fatalf("usage after committed PUT with lost response = %#v, %v", metrics, err)
+	}
+	if _, err := service.ObjectPut(invocation.Lease, bucket.ID, "lost-put", "text/plain", []byte("ok")); err != nil {
+		t.Fatalf("retry after lost response = %v", err)
+	}
+	provider.rejectPut.Store(true)
+	defer storage.Delete("object-storage-buckets", "buckets/"+bucket.ID+"/rejected-put")
+	if _, err := service.ObjectPut(invocation.Lease, bucket.ID, "rejected-put", "text/plain", []byte("no")); !errors.Is(err, nanoflare.ErrObjectPutRejected) {
+		t.Fatalf("rejected PUT = %v", err)
+	}
+	if _, err := service.ObjectPut(invocation.Lease, bucket.ID, "rejected-put", "text/plain", []byte("ok")); err != nil {
+		t.Fatalf("retry after definitive rejection = %v", err)
+	}
+
 	go func() {
 		_, err := service.ObjectPut(invocation.Lease, bucket.ID, "slow-put", "text/plain", []byte("one"))
 		slow <- err
