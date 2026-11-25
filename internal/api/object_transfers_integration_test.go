@@ -64,6 +64,81 @@ func (s *countedObjectUsage) PutContext(ctx context.Context, scope, key, content
 	return s.MinIO.PutContext(ctx, scope, key, contentType, data)
 }
 
+func TestBucketDeletionAbortsUnfinishedDirectUploads(t *testing.T) {
+	repo := runtimePostgres(t)
+	transfers := repo.(interface {
+		SaveObjectTransfer(nanoflare.ObjectTransfer) error
+		ListObjectTransfers(bucketID, orgID, includeID string) ([]nanoflare.ObjectTransfer, error)
+		DeleteObjectTransfer(string) error
+	})
+	service := nanoflare.NewService(repo, discardWriter{})
+	server := newTestServer(service)
+	const org = "test-org"
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(repo.CreateOrganization(nanoflare.Organization{ID: org, Name: org, UsageLevel: nanoflare.UsageLevelPaid}))
+
+	const bucketsURL = "/v1/organizations/" + org + "/object-storage-buckets"
+	var bucket, other nanoflare.ObjectStorageBucket
+	requestJSONBytes(t, server, http.MethodPost, bucketsURL, []byte(`{"name":"abandoned"}`), http.StatusCreated, &bucket)
+	requestJSONBytes(t, server, http.MethodPost, bucketsURL, []byte(`{"name":"other"}`), http.StatusCreated, &other)
+	bucketURL := bucketsURL + "/" + bucket.ID
+	worker, err := service.CreateApp(nanoflare.CreateAppInput{OrgID: org, Name: "uploader", Hostname: "uploader.example.test"})
+	must(err)
+	_, err = service.Deploy(worker.ID, nanoflare.DeployInput{
+		Files:                []nanoflare.WorkerFile{{Path: "worker.js", Content: "export default {}"}},
+		CompatibilityDate:    "2025-12-10",
+		ObjectStorageBuckets: []nanoflare.ObjectStorageBucketBinding{{Binding: "OBJECTS", BucketID: bucket.ID}},
+	})
+	must(err)
+
+	now := time.Now().UTC()
+	for _, transfer := range []nanoflare.ObjectTransfer{
+		{ID: "single", BucketID: bucket.ID, ExpiresAt: now.Add(-30 * time.Minute)},
+		{ID: "multipart", BucketID: bucket.ID, ExpiresAt: now.Add(24 * time.Hour), DirectMultipart: true, UploadID: "provider-id"},
+		{ID: "completed", BucketID: bucket.ID, ExpiresAt: now.Add(time.Hour), Result: &nanoflare.ObjectInfo{Size: 1}},
+		{ID: "other", BucketID: other.ID, ExpiresAt: now.Add(time.Hour)},
+	} {
+		transfer.OrgID = org
+		transfer.Key = "buckets/" + transfer.BucketID + "/" + transfer.ID
+		must(transfers.SaveObjectTransfer(transfer))
+	}
+	checkAborted := func(deleted bool) {
+		t.Helper()
+		rows, err := transfers.ListObjectTransfers(bucket.ID, org, "")
+		must(err)
+		if len(rows) != 4 {
+			t.Fatalf("transfer count = %d, want 4", len(rows))
+		}
+		for _, transfer := range rows {
+			want := deleted && (transfer.ID == "single" || transfer.ID == "multipart")
+			if transfer.Aborted != want || transfer.Cleaned {
+				t.Errorf("transfer %s: aborted = %t, cleaned = %t, want aborted = %t and pending cleanup", transfer.ID, transfer.Aborted, transfer.Cleaned, want)
+			}
+		}
+	}
+	requestJSON(t, server, http.MethodDelete, bucketURL, http.StatusConflict, nil)
+	checkAborted(false)
+	must(service.DeleteApp(worker.ID))
+
+	// A claim can outlive its expiry while an ambiguous provider write is being recovered.
+	must(transfers.SaveObjectTransfer(nanoflare.ObjectTransfer{
+		ID: "claim", BucketID: bucket.ID, OrgID: org, Key: "buckets/" + bucket.ID + "/claim",
+		Buffered: true, ExpiresAt: now.Add(-time.Minute),
+	}))
+	requestJSON(t, server, http.MethodDelete, bucketURL, http.StatusConflict, nil)
+	must(transfers.DeleteObjectTransfer("claim"))
+	checkAborted(false)
+
+	requestJSON(t, server, http.MethodDelete, bucketURL, http.StatusNoContent, nil)
+	requestJSON(t, server, http.MethodDelete, bucketURL, http.StatusNotFound, nil)
+	checkAborted(true)
+}
+
 func TestObjectTransferRuntimeAndQuota(t *testing.T) {
 	endpoint := os.Getenv("NANOFLARE_TEST_MINIO_ENDPOINT")
 	if endpoint == "" {

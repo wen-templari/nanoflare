@@ -490,13 +490,6 @@ func (s *Service) DeleteObjectStorageBucket(bucketID string) error {
 		return err
 	}
 	defer release()
-	transfers, err := s.objectTransfers(bucketID)
-	if err != nil {
-		return err
-	}
-	if err := checkObjectTransferConflict(transfers, bucketID, ""); err != nil {
-		return err
-	}
 	return s.store.DeleteObjectStorageBucket(bucketID)
 }
 

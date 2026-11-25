@@ -371,7 +371,7 @@ func (s *Service) objectTransfers(bucketID string) ([]ObjectTransfer, error) {
 func checkObjectTransferConflict(transfers []ObjectTransfer, bucketID, storedPath string) error {
 	now := time.Now()
 	for _, t := range transfers {
-		if t.BucketID == bucketID && (storedPath == "" || t.Key == storedPath) && (t.active(now) || (t.Buffered && t.holdsReservation())) {
+		if t.BucketID == bucketID && t.Key == storedPath && (t.active(now) || (t.Buffered && t.holdsReservation())) {
 			return ErrObjectTransferConflict
 		}
 	}
