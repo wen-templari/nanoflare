@@ -2126,8 +2126,14 @@ SELECT EXISTS (
 }
 
 func (p *Postgres) DeleteObjectStorageBucket(bucketID string) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	var inUse bool
-	err := p.db.QueryRow(`
+	err = tx.QueryRow(`
 SELECT EXISTS (
 	SELECT 1
 	FROM deployments d, jsonb_array_elements(
@@ -2141,7 +2147,24 @@ SELECT EXISTS (
 	if inUse {
 		return nanoflare.ErrObjectStorageBucketInUse
 	}
-	result, err := p.db.Exec(`DELETE FROM object_storage_buckets WHERE id = $1`, bucketID)
+
+	// Buffered claims protect provider mutations, including direct upload
+	// completion, even after the claim's expiry and until recovery.
+	err = tx.QueryRow(`
+SELECT EXISTS (
+	SELECT 1 FROM object_transfers
+	WHERE transfer->>'BucketID' = $1
+		AND transfer @> '{"Buffered":true}'
+		AND NOT transfer @> '{"Cleaned":true}'
+)`, bucketID).Scan(&inUse)
+	if err != nil {
+		return err
+	}
+	if inUse {
+		return nanoflare.ErrObjectTransferConflict
+	}
+
+	result, err := tx.Exec(`DELETE FROM object_storage_buckets WHERE id = $1`, bucketID)
 	if err != nil {
 		return err
 	}
@@ -2152,7 +2175,17 @@ SELECT EXISTS (
 	if deleted == 0 {
 		return nanoflare.ErrObjectStorageBucketNotFound
 	}
-	return nil
+	// Retain the aborted rows for asynchronous provider cleanup.
+	if _, err := tx.Exec(`
+UPDATE object_transfers SET transfer = jsonb_set(transfer, '{Aborted}', 'true')
+WHERE transfer->>'BucketID' = $1
+	AND transfer->>'Result' IS NULL
+	AND NOT transfer @> '{"Buffered":true}'
+	AND NOT transfer @> '{"Aborted":true}'
+	AND NOT transfer @> '{"Cleaned":true}'`, bucketID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (p *Postgres) Activate(deployment nanoflare.Deployment) error {

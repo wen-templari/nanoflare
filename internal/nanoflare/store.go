@@ -160,6 +160,8 @@ type Repository interface {
 	ListObjectStorageBucketsByOrg(string) ([]ObjectStorageBucket, error)
 	GetObjectStorageBucket(string) (ObjectStorageBucket, error)
 	UpdateObjectStorageBucket(ObjectStorageBucket) error
+	// Repositories with transfers must reject outstanding mutation claims and
+	// abort unfinished direct transfers atomically with bucket deletion.
 	DeleteObjectStorageBucket(string) error
 	ListSecrets(string) ([]SecretRecord, error)
 	PutSecret(string, SecretRecord) error
