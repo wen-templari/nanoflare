@@ -127,10 +127,17 @@ func TestWorkerdUsesConfiguredEgress(t *testing.T) {
 		`(name = "nanoflare-egress", external = (address = "127.0.0.1:8082", http = (style = proxy)))`,
 		`globalOutbound = "internet"`,
 		`(name = "__NANOFLARE_HTTP_OUTBOUND", wrapped = (moduleName = "nanoflare-internal:egress"`,
+		`(name = "nanoflare-internal:egress", internal = true, esModule = `,
+		`function installEgressFetch(outbound)`,
+		`installEgressFetch(() => env.OUTBOUND);`,
+		`return env.OUTBOUND;`,
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("config does not contain %q:\n%s", expected, generated)
 		}
+	}
+	if generated := WorkerdWithOptions(active, WorkerdOptions{}); strings.Contains(generated, "nanoflare-internal:egress") {
+		t.Fatal("generated egress extension without a configured egress address")
 	}
 }
 

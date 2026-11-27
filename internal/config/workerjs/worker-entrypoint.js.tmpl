@@ -1,0 +1,67 @@
+import userWorker from {{.Entrypoint}};
+export * from {{.Entrypoint}};
+import { wrapEnv } from "nanoflare-internal:runtime-bindings";
+const assetBindingName = {{.AssetBinding}};
+const dbBindingNames = {{.DatabaseBindings}};
+const objectBindingNames = {{.ObjectBindings}};
+
+function withOutputIdentity(_env, callback) { return callback(); }
+
+function recordRuntimeDuration(env, ctx, startedAt, outcome) {
+  const durationMs = Math.max(1, Date.now() - startedAt);
+  ctx?.waitUntil?.(env.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([{
+      scriptName: env.__NANOFLARE_APP_ID,
+      eventTimestamp: Date.now(),
+      durationMs,
+      outcome,
+    }]),
+  }));
+}
+
+for (const name of Object.getOwnPropertyNames(userWorker.prototype)) {
+  if (name === "constructor") continue;
+  const original = Object.getOwnPropertyDescriptor(userWorker.prototype, name).value;
+  if (typeof original !== "function") continue;
+  Object.defineProperty(userWorker.prototype, name, {
+    configurable: true,
+    writable: true,
+    value: function (...args) {
+      const env = this.env;
+      const ctx = this.ctx;
+      return withOutputIdentity(env, () => {
+        const startedAt = Date.now();
+        try {
+          const result = original.apply(this, args);
+          if (result && typeof result.then === "function") {
+            return result.then(
+              (value) => {
+                recordRuntimeDuration(env, ctx, startedAt, "ok");
+                return value;
+              },
+              (error) => {
+                recordRuntimeDuration(env, ctx, startedAt, "exception");
+                throw error;
+              },
+            );
+          }
+          recordRuntimeDuration(env, ctx, startedAt, "ok");
+          return result;
+        } catch (error) {
+          recordRuntimeDuration(env, ctx, startedAt, "exception");
+          throw error;
+        }
+      });
+    },
+  });
+}
+
+// Pass adapters through the constructor too; replacing this.env after super()
+// would be too late for statements captured in user instance fields/constructors.
+export default class extends userWorker {
+  constructor(ctx, env) {
+    super(ctx, wrapEnv(env, assetBindingName, dbBindingNames, objectBindingNames));
+  }
+}

@@ -48,3 +48,30 @@ func TestInstrumentLoaderInvocationRejectsReservedModuleCollision(t *testing.T) 
 		})
 	}
 }
+
+func TestInstallOutboundParametersAppendsToImportedEnvironment(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		names []string
+		json  string
+	}{
+		{name: "empty", json: `[]`},
+		{name: "escaped names", names: []string{`proxy"name`, "line\nbreak", "{{literal}}"}, json: `["proxy\"name","line\nbreak","{{literal}}"]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{
+				Format:     "modules",
+				Entrypoint: "worker.js",
+				Files:      []nanoflare.WorkerFile{{Path: "worker.js", Content: "export default {};"}},
+			}}
+			code := InstrumentLoaderInvocation(SnapshotWorkerCodeForLoader(active, WorkerdOptions{}), active)
+			before := code.Modules[importedEnvModule].JS
+			InstallOutboundParameters(&code, test.names)
+			want := before + "\n" + `import { installOutboundParameters } from "nanoflare-internal:invocation-context";` +
+				"\ninstallOutboundParameters(" + test.json + ");\n"
+			if got := code.Modules[importedEnvModule].JS; got != want {
+				t.Fatalf("imported environment source = %q, want %q", got, want)
+			}
+		})
+	}
+}

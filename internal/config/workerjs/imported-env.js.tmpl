@@ -1,0 +1,7 @@
+import { installImportedBindings } from {{.ContextModule}};
+import { wrapEnv } from "nanoflare-internal:runtime-bindings";
+installImportedBindings({{.Declarations}}, env => wrapEnv(env, {{.AssetBinding}}, {{.DatabaseBindings}}, {{.ObjectBindings}}));
+{{if .WasmImports}}import { registerPublishedApplicationWasm } from {{.ContextModule}};
+{{range .WasmImports}}import {{.Identifier}} from {{.Path}};
+registerPublishedApplicationWasm({{.Identifier}}, {{.Name}});
+{{end}}{{end}}

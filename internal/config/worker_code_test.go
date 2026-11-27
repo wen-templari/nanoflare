@@ -114,3 +114,24 @@ func TestWasmCodeSnapshotStaticAndWireTypes(t *testing.T) {
 		t.Fatal("mixed module union accepted")
 	}
 }
+
+func TestWorkerCodeSnapshotTemplatesPreserveSourceAndQuoteEntrypoint(t *testing.T) {
+	const script = "addEventListener('fetch', event => event.respondWith(new Response(String.raw\x60{{.Entrypoint}}\x60)));"
+	const entrypoint = "nested/quoted\"\a漢.js"
+	active := nanoflare.ActiveDeployment{Deployment: nanoflare.Deployment{
+		Format:     "modules",
+		Entrypoint: entrypoint,
+		Files:      []nanoflare.WorkerFile{{Path: entrypoint, Content: "export default {};"}},
+	}}
+	code := SnapshotWorkerCode(active, WorkerdOptions{})
+	if source := code.Modules[code.MainModule].JS; !strings.Contains(source, `import userWorker from "./nested/quoted\"\u0007漢.js";`) {
+		t.Fatalf("entrypoint was not encoded as a JavaScript string literal:\n%s", source)
+	}
+
+	active.Deployment.Format = "service-worker"
+	active.Deployment.Files[0].Content = script
+	code = SnapshotWorkerCode(active, WorkerdOptions{})
+	if !strings.Contains(code.Modules[code.MainModule].JS, script) {
+		t.Fatal("service worker template altered the user script")
+	}
+}

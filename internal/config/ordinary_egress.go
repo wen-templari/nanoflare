@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 )
@@ -37,29 +38,23 @@ func writeOrdinaryEgressExtension(out *strings.Builder, options WorkerdOptions) 
 	if strings.TrimSpace(options.EgressAddr) == "" {
 		return
 	}
-	source := egressFetchInstaller + `
-export default function(env) {
- installEgressFetch(() => env.OUTBOUND);
- return env.OUTBOUND;
-}
-`
+	source := egressFetchInstaller + egressBindingModule
 	fmt.Fprintf(out, "extensions = [(modules = [(name = \"nanoflare-internal:egress\", internal = true, esModule = %s)])],\n", capnpQuote(source))
 }
 
 // WorkerLoader receives its bindings as env values rather than wrapped-binding
 // config. Resolve the binding from the admitted invocation, including when
 // importable env is disabled, and install before user imports can capture fetch.
-const egressFetchSource = `import { currentInvocationEnv } from "` + loaderInvocationContextModule + `";
-` + egressFetchInstaller + `
-installEgressFetch(() => currentInvocationEnv().__NANOFLARE_HTTP_OUTBOUND);
-`
+var egressFetchSource = renderWorkerJavaScript("egress-loader", struct {
+	ContextModule string
+	Installer     string
+}{
+	ContextModule: jsStringLiteral(loaderInvocationContextModule),
+	Installer:     egressFetchInstaller,
+})
 
-const egressFetchInstaller = `function installEgressFetch(outbound) {
- globalThis.fetch = async function fetch(input, init) {
-  return outbound().fetch(input, {
-   redirect: input instanceof Request ? input.redirect : "follow",
-   ...init,
-  });
- };
-}
-`
+//go:embed workerjs/egress-fetch-installer.js
+var egressFetchInstaller string
+
+//go:embed workerjs/egress-binding.js
+var egressBindingModule string

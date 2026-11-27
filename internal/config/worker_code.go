@@ -86,12 +86,7 @@ func SnapshotWorkerCode(item nanoflare.ActiveDeployment, options WorkerdOptions)
 		return true
 	}
 	if len(deployment.DispatchNamespaces) > 0 {
-		source := entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets)
-		source = `import { wrapDispatchEnv, DispatchBroker } from "nanoflare-internal:dispatch";
-export { DispatchBroker };
-` + source
-		source = strings.ReplaceAll(source, "wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames)", `wrapDispatchEnv(wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames),ctx,request.headers.get("X-Nanoflare-Dispatch-Root"))`)
-		add(mainModule, source)
+		add(mainModule, entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets, true))
 		add("nanoflare-internal:dispatch", runtimeassets.DispatchModule)
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 		for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {
@@ -108,7 +103,7 @@ export { DispatchBroker };
 		if workerEntrypointModule(deployment) {
 			add(mainModule, workerEntrypointInstrumentationWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets))
 		} else {
-			add(mainModule, entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets))
+			add(mainModule, entrypointWrapper(deployment.Entrypoint, assetBindingName(deployment.AssetConfig), deployment.Databases, deployment.ObjectStorageBuckets, false))
 		}
 		add("nanoflare-internal:runtime-bindings", runtimeassets.BindingsModule)
 		for _, file := range entrypointFirst(deployment.Files, deployment.Entrypoint) {

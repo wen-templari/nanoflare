@@ -32,7 +32,7 @@ func TestWorkerdPreservesNonBreakingSpaceValues(t *testing.T) {
 			config := fmt.Sprintf(`using Workerd = import "/workerd/workerd.capnp";
 const config :Workerd.Config = (
  services=[(name="test",worker=(compatibilityDate=%s,modules=[(name="worker.js",esModule=%s)]))],
- sockets=[(name="http",address=%s,http=(),service="test")]);`, quote(date), capnpQuote(source), quote("unix:"+socket))
+ sockets=[(name="http",address=%s,http=(),service="test")]);`, capnpQuote(date), capnpQuote(source), capnpQuote("unix:"+socket))
 			file := filepath.Join(dir, "workerd.capnp")
 			if err := os.WriteFile(file, []byte(config), 0600); err != nil {
 				t.Fatal(err)

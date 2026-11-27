@@ -1,0 +1,108 @@
+import { installGlobalBindings } from "nanoflare-internal:runtime-bindings";
+
+function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
+  const durationMs = Math.max(1, Date.now() - startedAt);
+  const payload = [{
+    scriptName: globalThis.__NANOFLARE_APP_ID,
+    eventTimestamp: Date.now(),
+    durationMs,
+    outcome,
+  }];
+  globalThis.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+const __nanoflareAddEventListener = globalThis.addEventListener.bind(globalThis);
+const __nanoflareScheduledListeners = [];
+let __nanoflareFetchListenerCount = 0;
+
+function __nanoflareWithOutputIdentity(callback) { return callback(); }
+
+function __nanoflareScheduledEvent(request) {
+  const url = new URL(request.url);
+  const cron = url.searchParams.get("cron") || "* * * * *";
+  const rawTime = Number(url.searchParams.get("time") || "");
+  const scheduledTime = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1000000000000 ? rawTime * 1000 : rawTime) : Date.now();
+  const pending = [];
+  return {
+    scheduledTime,
+    cron,
+    noRetry() {},
+    waitUntil(promise) {
+      pending.push(Promise.resolve(promise));
+    },
+    async __nanoflareRunWaitUntil() {
+      await Promise.all(pending);
+    },
+  };
+}
+
+async function __nanoflareRunScheduledListeners(request) {
+  return __nanoflareWithOutputIdentity(async () => {
+    const event = __nanoflareScheduledEvent(request);
+    for (const listener of __nanoflareScheduledListeners) {
+      const result = listener(event);
+      if (result && typeof result.then === "function") {
+        event.waitUntil(result);
+      }
+    }
+    await event.__nanoflareRunWaitUntil();
+  });
+}
+
+globalThis.addEventListener = function(type, listener, options) {
+  if (type === "scheduled" && typeof listener === "function") {
+    __nanoflareScheduledListeners.push(listener);
+    return;
+  }
+  if (type !== "fetch" || typeof listener !== "function") {
+    return __nanoflareAddEventListener(type, listener, options);
+  }
+  __nanoflareFetchListenerCount++;
+  return __nanoflareAddEventListener(type, (event) => {
+    if (new URL(event.request.url).pathname === "/cdn-cgi/handler/scheduled") {
+      event.respondWith(__nanoflareRunScheduledListeners(event.request).then(
+        () => new Response(null, { status: 204 }),
+        (error) => new Response(error && error.message ? error.message : "scheduled handler failed", { status: 500 }),
+      ));
+      return;
+    }
+    const startedAt = Date.now();
+    const originalRespondWith = event.respondWith.bind(event);
+    event.respondWith = (response) => originalRespondWith(Promise.resolve(response).then(
+      (value) => {
+        __nanoflareRecordRuntimeDuration(startedAt, "ok");
+        return value;
+      },
+      (error) => {
+        __nanoflareRecordRuntimeDuration(startedAt, "exception");
+        throw error;
+      },
+    ));
+    const result = __nanoflareWithOutputIdentity(() => listener(event));
+    if (result && typeof result.then === "function") {
+      event.waitUntil(result.catch(() => {}));
+    }
+    return result;
+  }, options);
+};
+
+const __nanoflareObjectBindingNames = {{.ObjectBindings}};
+const __nanoflareDBBindingNames = {{.DatabaseBindings}};
+
+installGlobalBindings(globalThis, __nanoflareDBBindingNames, __nanoflareObjectBindingNames);
+
+{{.Script}}
+
+__nanoflareAddEventListener("fetch", (event) => {
+  if (__nanoflareFetchListenerCount > 0 || new URL(event.request.url).pathname !== "/cdn-cgi/handler/scheduled") {
+    return;
+  }
+  event.respondWith(__nanoflareRunScheduledListeners(event.request).then(
+    () => new Response(null, { status: 204 }),
+    (error) => new Response(error && error.message ? error.message : "scheduled handler failed", { status: 500 }),
+  ));
+});

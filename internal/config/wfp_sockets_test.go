@@ -188,7 +188,7 @@ func TestWFPSocketDefaultLinkLocalDeny(t *testing.T) {
 			var generated strings.Builder
 			writeWFPSocketService(&generated, o)
 			for _, prefix := range []string{"169.254.0.0/16", "fe80::/10"} {
-				if strings.Contains(generated.String(), quote(prefix)) == unsafe {
+				if strings.Contains(generated.String(), capnpQuote(prefix)) == unsafe {
 					t.Fatalf("unsafe=%t allow=%q: incorrect default deny %s", unsafe, allow, prefix)
 				}
 			}

@@ -1,0 +1,43 @@
+import { currentInvocationEnv as __nanoflareCurrentEnv } from {{.ContextModule}};
+import { wrapEnv as __nanoflareWrapLegacyEnv } from "nanoflare-internal:runtime-bindings";
+function __nanoflareLegacyEnv() {
+  return __nanoflareWrapLegacyEnv(__nanoflareCurrentEnv(), {{.AssetBinding}}, {{.DatabaseBindings}}, {{.ObjectBindings}});
+}
+const __nanoflareLegacyResourceRefs = new Map({{.ResourceNames}}.map(name => [name, new Proxy({}, {
+  get(_, method) {
+    const resource = __nanoflareLegacyEnv()[name];
+    const value = resource?.[method];
+    return typeof value === "function" ? (...args) => Reflect.apply(value, resource, args) : value;
+  },
+})]));
+for (const name of new Set([...Object.keys(__nanoflareCurrentEnv()), ...{{.BindingNames}}])) {
+  if (["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_SERVICE_BROKER", "__NANOFLARE_LIFECYCLE"].includes(name)) continue;
+  Object.defineProperty(globalThis, name, { configurable: true, get() { return __nanoflareLegacyResourceRefs.get(name) ?? __nanoflareLegacyEnv()[name]; } });
+}
+const __nanoflareLegacyListeners = [];
+globalThis.addEventListener = (type, listener) => {
+  if (type === "fetch") __nanoflareLegacyListeners.push(listener);
+};
+{{.Script}}
+export default {
+  async fetch(request, env, ctx) {
+    let response;
+    let responded = false;
+    const event = {
+      request,
+      respondWith(value) {
+        if (responded) throw new TypeError("respondWith() was already called");
+        responded = true;
+        response = Promise.resolve(value);
+      },
+      waitUntil(value) { ctx.waitUntil(value); },
+      passThroughOnException() { ctx.passThroughOnException(); },
+    };
+    for (const listener of __nanoflareLegacyListeners) {
+      listener(event);
+      if (responded) break;
+    }
+    if (!responded) throw new TypeError("Legacy fetch listener did not call respondWith()");
+    return response;
+  },
+};

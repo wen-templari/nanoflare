@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -322,18 +323,16 @@ func telemetryServiceName(item nanoflare.ActiveDeployment, kind string) string {
 	return "nanoflare-" + kind + "-" + deploymentServiceName(item)
 }
 
+//go:embed workerjs/duration-telemetry.js
+var durationTelemetryModule string
+
 func durationTelemetryServices(runtimeAddr string, active []nanoflare.ActiveDeployment) string {
 	var out strings.Builder
 	for _, item := range active {
 		for _, kind := range []string{nanoflare.RuntimeDurations, nanoflare.RuntimeLogs, nanoflare.RuntimeAccess} {
 			fmt.Fprintf(&out, "    (name = %s, external = (address = %s, http = (injectRequestHeaders = [(name = \"Authorization\", value = %s)]))),\n", capnpQuote(telemetryServiceName(item, kind)), capnpQuote(runtimeAddr), capnpQuote("Bearer "+nanoflare.RuntimeCapability(item, kind, "")))
 		}
-		source := `export default { async tail(events, env) {
-  await env.COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/logs", {
-    method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(events)
-  });
-}};`
-		fmt.Fprintf(&out, "    (name = %s, worker = (compatibilityDate = \"2025-01-01\", modules = [(name = \"tail.js\", esModule = %s)], bindings = [(name = \"COLLECTOR\", service = %s)])),\n", capnpQuote(telemetryServiceName(item, "tail")), capnpQuote(source), capnpQuote(telemetryServiceName(item, nanoflare.RuntimeLogs)))
+		fmt.Fprintf(&out, "    (name = %s, worker = (compatibilityDate = \"2025-01-01\", modules = [(name = \"tail.js\", esModule = %s)], bindings = [(name = \"COLLECTOR\", service = %s)])),\n", capnpQuote(telemetryServiceName(item, "tail")), capnpQuote(durationTelemetryModule), capnpQuote(telemetryServiceName(item, nanoflare.RuntimeLogs)))
 	}
 	return out.String()
 }
@@ -479,274 +478,43 @@ func workerEntrypointModule(deployment nanoflare.Deployment) bool {
 	return false
 }
 
+type moduleEntrypointData struct {
+	Entrypoint       string
+	AssetBinding     string
+	DatabaseBindings string
+	ObjectBindings   string
+	Dispatch         bool
+}
+
 func workerEntrypointInstrumentationWrapper(entrypoint, assetBinding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return fmt.Sprintf(`import userWorker from %s;
-export * from %s;
-import { wrapEnv } from "nanoflare-internal:runtime-bindings";
-const assetBindingName = %s;
-const dbBindingNames = %s;
-const objectBindingNames = %s;
-
-function withOutputIdentity(_env, callback) { return callback(); }
-
-function recordRuntimeDuration(env, ctx, startedAt, outcome) {
-  const durationMs = Math.max(1, Date.now() - startedAt);
-  ctx?.waitUntil?.(env.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify([{
-      scriptName: env.__NANOFLARE_APP_ID,
-      eventTimestamp: Date.now(),
-      durationMs,
-      outcome,
-    }]),
-  }));
+	return renderWorkerJavaScript("worker-entrypoint", moduleEntrypointData{
+		Entrypoint:       jsStringLiteral("./" + strings.TrimPrefix(entrypoint, "./")),
+		AssetBinding:     jsStringLiteral(assetBinding),
+		DatabaseBindings: dbBindingNamesJSON(dbBindings),
+		ObjectBindings:   objectBindingNamesJSON(objectBindings),
+	})
 }
 
-for (const name of Object.getOwnPropertyNames(userWorker.prototype)) {
-  if (name === "constructor") continue;
-  const original = Object.getOwnPropertyDescriptor(userWorker.prototype, name).value;
-  if (typeof original !== "function") continue;
-  Object.defineProperty(userWorker.prototype, name, {
-    configurable: true,
-    writable: true,
-    value: function (...args) {
-      const env = this.env;
-      const ctx = this.ctx;
-      return withOutputIdentity(env, () => {
-        const startedAt = Date.now();
-        try {
-          const result = original.apply(this, args);
-          if (result && typeof result.then === "function") {
-            return result.then(
-              (value) => {
-                recordRuntimeDuration(env, ctx, startedAt, "ok");
-                return value;
-              },
-              (error) => {
-                recordRuntimeDuration(env, ctx, startedAt, "exception");
-                throw error;
-              },
-            );
-          }
-          recordRuntimeDuration(env, ctx, startedAt, "ok");
-          return result;
-        } catch (error) {
-          recordRuntimeDuration(env, ctx, startedAt, "exception");
-          throw error;
-        }
-      });
-    },
-  });
-}
-
-// Pass adapters through the constructor too; replacing this.env after super()
-// would be too late for statements captured in user instance fields/constructors.
-export default class extends userWorker {
-  constructor(ctx, env) {
-    super(ctx, wrapEnv(env, assetBindingName, dbBindingNames, objectBindingNames));
-  }
-}`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(assetBinding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
-}
-
-func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return fmt.Sprintf(`import { wrapEnv as wrapRuntimeEnv } from "nanoflare-internal:runtime-bindings";
-import userWorker from %s;
-export * from %s;
-
-const assetBindingName = %s;
-const dbBindingNames = %s;
-const objectBindingNames = %s;
-
-function withOutputIdentity(_env, callback) { return callback(); }
-
-function recordRuntimeDuration(env, ctx, startedAt, outcome) {
-  const durationMs = Math.max(1, Date.now() - startedAt);
-  const payload = [{
-    scriptName: env.__NANOFLARE_APP_ID,
-    eventTimestamp: Date.now(),
-    durationMs,
-    outcome,
-  }];
-  ctx?.waitUntil?.(env.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  }));
-}
-
-function scheduledController(request) {
-  const url = new URL(request.url);
-  const cron = url.searchParams.get("cron") || "* * * * *";
-  const rawTime = Number(url.searchParams.get("time") || "");
-  const scheduledTime = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1000000000000 ? rawTime * 1000 : rawTime) : Date.now();
-  return { scheduledTime, cron, noRetry() {} };
-}
-
-async function runScheduled(request, env, ctx) {
-  if (typeof userWorker.scheduled !== "function") {
-    return new Response("scheduled handler not found", { status: 404 });
-  }
-  return withOutputIdentity(env, async () => {
-    const startedAt = Date.now();
-    try {
-      await userWorker.scheduled(scheduledController(request), wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames), ctx);
-      recordRuntimeDuration(env, ctx, startedAt, "ok");
-      return new Response(null, { status: 204 });
-    } catch (error) {
-      recordRuntimeDuration(env, ctx, startedAt, "exception");
-      throw error;
-    }
-  });
-}
-
-export default {
-  ...userWorker,
-  async fetch(request, env, ctx) {
-    if (new URL(request.url).pathname === "/cdn-cgi/handler/scheduled") {
-      return runScheduled(request, env, ctx);
-    }
-    const assertion = request.headers.get("X-Nanoflare-User-JWT");
-    if (assertion && env.__NANOFLARE_ACCESS) {
-      let identity;
-      Object.defineProperty(ctx, "access", { value: Object.freeze({
-        getIdentity() {
-          return identity ??= env.__NANOFLARE_ACCESS.fetch("https://nanoflare.internal/internal/runtime/access", {
-            headers: {"X-Nanoflare-User-JWT": assertion}
-          }).then(async response => {
-            if (!response.ok) throw new Error("Access identity is unavailable");
-            return response.json();
-          });
-        }
-      }) });
-    }
-    return withOutputIdentity(env, async () => {
-      const startedAt = Date.now();
-      try {
-        if (typeof userWorker.fetch !== "function") {
-          return new Response("fetch handler not found", { status: 404 });
-        }
-        const response = await userWorker.fetch(request, wrapRuntimeEnv(env, assetBindingName, dbBindingNames, objectBindingNames), ctx);
-        recordRuntimeDuration(env, ctx, startedAt, "ok");
-        return response;
-      } catch (error) {
-        recordRuntimeDuration(env, ctx, startedAt, "exception");
-        throw error;
-      }
-    });
-  },
-};`, quote("./"+strings.TrimPrefix(entrypoint, "./")), quote("./"+strings.TrimPrefix(entrypoint, "./")), quote(binding), dbBindingNamesJSON(dbBindings), objectBindingNamesJSON(objectBindings))
+func entrypointWrapper(entrypoint, binding string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding, dispatch bool) string {
+	return renderWorkerJavaScript("module-entrypoint", moduleEntrypointData{
+		Entrypoint:       jsStringLiteral("./" + strings.TrimPrefix(entrypoint, "./")),
+		AssetBinding:     jsStringLiteral(binding),
+		DatabaseBindings: dbBindingNamesJSON(dbBindings),
+		ObjectBindings:   objectBindingNamesJSON(objectBindings),
+		Dispatch:         dispatch,
+	})
 }
 
 func serviceWorkerWrapper(script string, dbBindings []nanoflare.DatabaseBinding, objectBindings []nanoflare.ObjectStorageBucketBinding) string {
-	return `import { installGlobalBindings } from "nanoflare-internal:runtime-bindings";
-
-function __nanoflareRecordRuntimeDuration(startedAt, outcome) {
-  const durationMs = Math.max(1, Date.now() - startedAt);
-  const payload = [{
-    scriptName: globalThis.__NANOFLARE_APP_ID,
-    eventTimestamp: Date.now(),
-    durationMs,
-    outcome,
-  }];
-  globalThis.__NANOFLARE_DURATION_COLLECTOR.fetch("http://nanoflare.internal/internal/runtime/durations", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
-
-const __nanoflareAddEventListener = globalThis.addEventListener.bind(globalThis);
-const __nanoflareScheduledListeners = [];
-let __nanoflareFetchListenerCount = 0;
-
-function __nanoflareWithOutputIdentity(callback) { return callback(); }
-
-function __nanoflareScheduledEvent(request) {
-  const url = new URL(request.url);
-  const cron = url.searchParams.get("cron") || "* * * * *";
-  const rawTime = Number(url.searchParams.get("time") || "");
-  const scheduledTime = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1000000000000 ? rawTime * 1000 : rawTime) : Date.now();
-  const pending = [];
-  return {
-    scheduledTime,
-    cron,
-    noRetry() {},
-    waitUntil(promise) {
-      pending.push(Promise.resolve(promise));
-    },
-    async __nanoflareRunWaitUntil() {
-      await Promise.all(pending);
-    },
-  };
-}
-
-async function __nanoflareRunScheduledListeners(request) {
-  return __nanoflareWithOutputIdentity(async () => {
-    const event = __nanoflareScheduledEvent(request);
-    for (const listener of __nanoflareScheduledListeners) {
-      const result = listener(event);
-      if (result && typeof result.then === "function") {
-        event.waitUntil(result);
-      }
-    }
-    await event.__nanoflareRunWaitUntil();
-  });
-}
-
-globalThis.addEventListener = function(type, listener, options) {
-  if (type === "scheduled" && typeof listener === "function") {
-    __nanoflareScheduledListeners.push(listener);
-    return;
-  }
-  if (type !== "fetch" || typeof listener !== "function") {
-    return __nanoflareAddEventListener(type, listener, options);
-  }
-  __nanoflareFetchListenerCount++;
-  return __nanoflareAddEventListener(type, (event) => {
-    if (new URL(event.request.url).pathname === "/cdn-cgi/handler/scheduled") {
-      event.respondWith(__nanoflareRunScheduledListeners(event.request).then(
-        () => new Response(null, { status: 204 }),
-        (error) => new Response(error && error.message ? error.message : "scheduled handler failed", { status: 500 }),
-      ));
-      return;
-    }
-    const startedAt = Date.now();
-    const originalRespondWith = event.respondWith.bind(event);
-    event.respondWith = (response) => originalRespondWith(Promise.resolve(response).then(
-      (value) => {
-        __nanoflareRecordRuntimeDuration(startedAt, "ok");
-        return value;
-      },
-      (error) => {
-        __nanoflareRecordRuntimeDuration(startedAt, "exception");
-        throw error;
-      },
-    ));
-    const result = __nanoflareWithOutputIdentity(() => listener(event));
-    if (result && typeof result.then === "function") {
-      event.waitUntil(result.catch(() => {}));
-    }
-    return result;
-  }, options);
-};
-
-const __nanoflareObjectBindingNames = ` + objectBindingNamesJSON(objectBindings) + `;
-const __nanoflareDBBindingNames = ` + dbBindingNamesJSON(dbBindings) + `;
-
-installGlobalBindings(globalThis, __nanoflareDBBindingNames, __nanoflareObjectBindingNames);
-` + "\n" + script + `
-
-__nanoflareAddEventListener("fetch", (event) => {
-  if (__nanoflareFetchListenerCount > 0 || new URL(event.request.url).pathname !== "/cdn-cgi/handler/scheduled") {
-    return;
-  }
-  event.respondWith(__nanoflareRunScheduledListeners(event.request).then(
-    () => new Response(null, { status: 204 }),
-    (error) => new Response(error && error.message ? error.message : "scheduled handler failed", { status: 500 }),
-  ));
-});
-`
+	return renderWorkerJavaScript("service-worker", struct {
+		Script           string
+		DatabaseBindings string
+		ObjectBindings   string
+	}{
+		Script:           script,
+		DatabaseBindings: dbBindingNamesJSON(dbBindings),
+		ObjectBindings:   objectBindingNamesJSON(objectBindings),
+	})
 }
 
 func deploymentFormat(deployment nanoflare.Deployment) string {
@@ -789,7 +557,7 @@ func objectServiceName(item nanoflare.ActiveDeployment, index int) string {
 func dbBindingNamesJSON(bindings []nanoflare.DatabaseBinding) string {
 	names := make([]string, 0, len(bindings))
 	for _, binding := range bindings {
-		names = append(names, quote(binding.Binding))
+		names = append(names, jsStringLiteral(binding.Binding))
 	}
 	return "[" + strings.Join(names, ", ") + "]"
 }
@@ -797,7 +565,7 @@ func dbBindingNamesJSON(bindings []nanoflare.DatabaseBinding) string {
 func objectBindingNamesJSON(bindings []nanoflare.ObjectStorageBucketBinding) string {
 	names := make([]string, 0, len(bindings))
 	for _, binding := range bindings {
-		names = append(names, quote(binding.Binding))
+		names = append(names, jsStringLiteral(binding.Binding))
 	}
 	return "[" + strings.Join(names, ", ") + "]"
 }
@@ -962,10 +730,6 @@ func capnpQuote(source string) string {
 	out.WriteString(quoted[1 : len(quoted)-1])
 	out.WriteByte('"')
 	return out.String()
-}
-
-func quote(value string) string {
-	return strconv.Quote(value)
 }
 
 func yamlQuote(value string) string {

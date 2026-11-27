@@ -1,0 +1,3 @@
+import { currentInvocationEnv } from {{.ContextModule}};
+{{.Installer}}
+installEgressFetch(() => currentInvocationEnv().__NANOFLARE_HTTP_OUTBOUND);

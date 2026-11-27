@@ -1,0 +1,73 @@
+import {{.ImportedEnv}};
+import UserWorker, * as UserModule from {{.Entrypoint}};
+export * from {{.Entrypoint}};
+export class NanoflareInvocationCompletion extends WorkerEntrypoint {
+ wait() { return waitInvocation(this.ctx.props.__nanoflare_invocation?.token); }
+}
+export class NanoflareExportDispatcher extends WorkerEntrypoint {
+ invoke(name,props,method,args,read=false,requireEntrypoint=false) {
+  const state=this._state??=invocationState(this.env,this.ctx);
+  const Type=UserModule[name];
+  if(requireEntrypoint && (typeof Type!=="function" || !(Type.prototype instanceof WorkerEntrypoint) || typeof Type.prototype[method]!=="function"))throw new TypeError("Invalid Worker entrypoint: "+name);
+  if(typeof Type!=="function" || typeof method!=="string" || method.startsWith("_") || ["constructor","ctx","env","prototype","__proto__"].includes(method)) throw new Error("Invalid named export call");
+  return runInvocation(state,()=>{const instance=this._instance??=new Type({...state.ctx,props:restoreRpcProps(props)},state.env);return read?instance[method]:instance[method](...args);});
+ }
+}
+import { WorkerEntrypoint } from "cloudflare:workers";
+import { makeInvocation, runInvocation, wrapInvocationExports, restoreRpcProps, waitInvocation } from {{.ContextModule}};
+const declarations = {{.Declarations}};
+function invocationState(env, ctx) {
+  const state = makeInvocation(env, ctx, declarations);
+  state.ctx.exports = wrapInvocationExports(state,UserModule,ctx.exports);
+  return state;
+}
+const states = new WeakMap();
+const workers = new WeakMap();
+let WrappedWorker;
+if (typeof UserWorker === "function") {
+  WrappedWorker = class extends WorkerEntrypoint {
+    constructor(ctx, env) {
+      super(ctx, env);
+      const state = invocationState(env, ctx);
+      states.set(this, state);
+    }
+  };
+  const seen = new Set(["constructor", "env", "ctx"]);
+  for (let prototype = UserWorker.prototype; prototype && prototype !== Object.prototype; prototype = Object.getPrototypeOf(prototype)) {
+    for (const name of Object.getOwnPropertyNames(prototype)) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+      if(typeof descriptor.get==="function"){
+       Object.defineProperty(WrappedWorker.prototype,name,{configurable:true,get(){const state=states.get(this);return runInvocation(state,()=>{let worker=workers.get(this);if(!worker){worker=new UserWorker(state.ctx,state.env);workers.set(this,worker);}return Reflect.apply(descriptor.get,worker,[]);});}});continue;
+      }
+      if (typeof descriptor.value !== "function") continue;
+      Object.defineProperty(WrappedWorker.prototype, name, {
+        configurable: true,
+        value: function(...args) {
+          const state = states.get(this);
+          return runInvocation(state, () => {
+            // Construct user code after admission and inside the same context
+            // as its methods, including synchronous constructor binding calls.
+            let worker = workers.get(this);
+            if (!worker) {
+              worker = new UserWorker(state.ctx, state.env);
+              workers.set(this, worker);
+            }
+            return descriptor.value.apply(worker, args);
+          });
+        },
+      });
+    }
+  }
+} else {
+  WrappedWorker = {};
+  for (const [name, method] of Object.entries(UserWorker)) {
+    if (typeof method !== "function") { WrappedWorker[name] = method; continue; }
+    WrappedWorker[name] = function(first, env, ctx, ...rest) {
+      const state = invocationState(env, ctx);
+      return runInvocation(state, () => method.call(UserWorker, first, state.env, state.ctx, ...rest));
+    };
+  }
+}
+export default WrappedWorker;

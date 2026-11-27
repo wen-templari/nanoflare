@@ -58,50 +58,23 @@ func SnapshotWorkerCodeForLoader(item nanoflare.ActiveDeployment, options Worker
 	// Global resource values must be resolved inside the invocation rather than
 	// capturing the native broker environment during module evaluation.
 	main.JS = strings.Replace(main.JS, "installGlobalBindings(globalThis, __nanoflareDBBindingNames, __nanoflareObjectBindingNames);", "", 1)
-	main.JS = `import { currentInvocationEnv as __nanoflareCurrentEnv } from "` + loaderInvocationContextModule + `";
-import { wrapEnv as __nanoflareWrapLegacyEnv } from "nanoflare-internal:runtime-bindings";
-function __nanoflareLegacyEnv() {
-  return __nanoflareWrapLegacyEnv(__nanoflareCurrentEnv(), ` + quote(assetBindingName(item.Deployment.AssetConfig)) + `, ` + dbBindingNamesJSON(item.Deployment.Databases) + `, ` + objectBindingNamesJSON(item.Deployment.ObjectStorageBuckets) + `);
-}
-const __nanoflareLegacyResourceRefs = new Map(` + string(resourceNamesJSON) + `.map(name => [name, new Proxy({}, {
-  get(_, method) {
-    const resource = __nanoflareLegacyEnv()[name];
-    const value = resource?.[method];
-    return typeof value === "function" ? (...args) => Reflect.apply(value, resource, args) : value;
-  },
-})]));
-for (const name of new Set([...Object.keys(__nanoflareCurrentEnv()), ...` + string(namesJSON) + `])) {
-  if (["__NANOFLARE_RESOURCE_BROKER", "__NANOFLARE_SERVICE_BROKER", "__NANOFLARE_LIFECYCLE"].includes(name)) continue;
-  Object.defineProperty(globalThis, name, { configurable: true, get() { return __nanoflareLegacyResourceRefs.get(name) ?? __nanoflareLegacyEnv()[name]; } });
-}
-const __nanoflareLegacyListeners = [];
-globalThis.addEventListener = (type, listener) => {
-  if (type === "fetch") __nanoflareLegacyListeners.push(listener);
-};
-` + main.JS + `
-export default {
-  async fetch(request, env, ctx) {
-    let response;
-    let responded = false;
-    const event = {
-      request,
-      respondWith(value) {
-        if (responded) throw new TypeError("respondWith() was already called");
-        responded = true;
-        response = Promise.resolve(value);
-      },
-      waitUntil(value) { ctx.waitUntil(value); },
-      passThroughOnException() { ctx.passThroughOnException(); },
-    };
-    for (const listener of __nanoflareLegacyListeners) {
-      listener(event);
-      if (responded) break;
-    }
-    if (!responded) throw new TypeError("Legacy fetch listener did not call respondWith()");
-    return response;
-  },
-};
-`
+	main.JS = renderWorkerJavaScript("legacy-loader", struct {
+		ContextModule    string
+		AssetBinding     string
+		DatabaseBindings string
+		ObjectBindings   string
+		ResourceNames    string
+		BindingNames     string
+		Script           string
+	}{
+		ContextModule:    jsStringLiteral(loaderInvocationContextModule),
+		AssetBinding:     jsStringLiteral(assetBindingName(item.Deployment.AssetConfig)),
+		DatabaseBindings: dbBindingNamesJSON(item.Deployment.Databases),
+		ObjectBindings:   objectBindingNamesJSON(item.Deployment.ObjectStorageBuckets),
+		ResourceNames:    string(resourceNamesJSON),
+		BindingNames:     string(namesJSON),
+		Script:           main.JS,
+	})
 	code.Modules[code.MainModule] = main
 	code.Modules[loaderInvocationContextModule] = WorkerCodeModule{JS: loaderInvocationContextSource}
 	if !slices.Contains(code.moduleOrder, loaderInvocationContextModule) {
