@@ -34,58 +34,50 @@ exit. It verified these behaviors on macOS ARM64 with workerd `2026-09-11`.
 - A simulated change to Alpha's active revision started a fresh Alpha child
   while Beta kept its existing child and counter in the same process.
 
-The probe embeds its own dispatcher and publication pointer. Its JavaScript
-stub defers loading until default-entrypoint fetch and forces child outbound
-off. Production request admission, resource bindings, publication storage,
-runtime limits, and broader Worker Loader API compatibility remain to be tested.
+The probe embeds its own dispatcher and publication pointer. The Nanoflare
+integration tests also exercise the gateway, execution broker, and runner.
 
-## Implementation status
+## Stage 1 — Trusted Kitesurf pilot
 
-The trusted pilot now has config parsing, native and Cloudflare-compatible upload
-metadata, immutable binding declarations, a scoped dispatcher bridge, and fetch
-entrypoints. The [operator and developer guide](../guides/dynamic-workers.md)
-lists the supported syntax, defaults and limits. Native tests run embedded and
-remote runners. Full Cloudflare API and public tenant qualification remain
-follow-up work.
+The opt-in pilot supports Wrangler declarations, native and Cloudflare-compatible
+upload metadata, and revision-scoped admission. It supports fresh and cached
+children, named entrypoint fetch and RPC, disposable RPC sessions, inline WASM,
+and WASM imported from the parent deployment. Fresh children can use scoped
+outbound and tail entrypoints. Nanoflare enforces the child's outbound subrequest
+budget for the life of that child. The
+[Dynamic Workers guide](../guides/dynamic-workers.md) documents the API and
+limits.
 
-## Implementation and qualification
+On macOS ARM64 with workerd `1.20260911.1`, the
+[loader integration test](../../internal/api/workerd_application_loader_e2e_test.go)
+passed in embedded and remote mode. The
+[Kitesurf smoke test](../../internal/api/workerd_kitesurf_e2e_test.go) deployed the
+upstream Docker bundle with an entrypoint adapter to an embedded Nanoflare
+runner. CDP navigated to controlled HTML and read back the expected page title.
+The smoke test used image digest
+`sha256:076e1614b048b00620a3bf1eadc5515de2e49dc9a92b0a6c52fe53fdaf706a8a`.
 
-1. **Persist the binding declaration.** Add an optional binding list to deployment
-   input and immutable artifacts. Parse the Wrangler field in the CLI. Validate
-   duplicate and reserved names across all binding types. Preserve declarations
-   through vars and secret edits, rollback, and weighted deployments. Read old
-   artifacts as having an empty list. Reject declarations explicitly where the
-   selected runtime or deployment path cannot serve them. Keep the feature off by
-   default.
-2. **Scope the bridge to declared bindings.** Configure a dedicated native
-   loader next to the publication loader in the dispatcher. Attach a bridge
-   with a server-assigned execution identity when building the parent's
-   environment. Verify the binding declaration at admission. Key cached children
-   by the tuple of parent execution identity, binding name, and caller ID. Use the same scope for all invocations
-   of that snapshot. Verify that the bridge belongs to the admitted parent and
-   avoid using caller-supplied routing or identity headers as authority.
-3. **Implement the fetch API and qualify its semantics.** Start with JavaScript
-   modules and fetch on default and named entrypoints for both `get()` and
-   `load()`. The native test covers concurrent cache misses and repeated fetches
-   against a fresh stub within one invocation. Qualify callback timing and
-   errors, streaming, cancellation, and client disconnects on the pinned engine.
-   Defer RPC on child entrypoints and arbitrary capability values until
-   independently qualified.
-4. **Tie execution to admission and bound usage.** Associate child dispatch with
-   a live parent invocation and its deadlines. Keep child code and data separate
-   from the parent's platform bindings and credentials. Start with outbound off.
-   Cap descriptor bytes, concurrent child calls, and admitted cache-key
-   cardinality. Require callers to avoid request-specific secrets or authority in
-   cached code descriptors. Test revision retirement and resource retention with
-   active children. Measure workerd memory across child-cache churn and verify
-   what can be reclaimed without recycling the whole process.
-5. **Wire up end-to-end coverage.** Run the standalone probe and native
-   integration tests with the pinned workerd in Linux CI. Exercise Wrangler
-   config through the normal deployment path, both embedded and remote runners,
-   binding opt-in and rejection, old artifacts, weighted revisions, peer
-   continuity, and old admitted requests completing after an update. Inject
-   publication failure, session loss, and runner crash. Document the exact
-   supported API and operational limits for a trusted pilot.
+## Stage 2 — Runtime and deployment qualification
+
+- **CPU enforcement.** The pinned standalone workerd accepts `cpuMs`. The
+  opt-in CPU qualification showed that JavaScript and WASM exceeded the requested
+  budget and completed with outcome `ok`. An experimental watchdog interrupted
+  both workloads in a standalone V8 test and allowed a subsequent call. The
+  experimental workerd build and Nanoflare qualification are pending. Qualify
+  measured CPU interruption and `exceededCpu` reporting in both runner modes,
+  including I/O waits, background work, nested RPC, concurrent invocations, and
+  recovery. Follow the [CPU enforcement plan](workers-for-platforms-cpu-enforcement.md).
+- **Deployment compatibility.** Qualify the upstream bundle on Linux and through
+  a remote runner. Exercise the Wrangler deployment path and its upload limits
+  with the full bundle. The current smoke test uses the native deployment service,
+  higher test-specific upload limits, and an adapter for the bundle's aliased
+  class entrypoint and text modules. Document a repeatable deployment workflow.
+- **Loader compatibility and recovery.** Qualify streaming, cancellation, client
+  disconnects, child retirement, runner restart and session loss, and memory
+  reclamation during cache churn. Extend coverage for weighted deployments,
+  rollback, and older artifacts. Review API gaps such as Durable Object
+  entrypoints and capability bindings in child `env` against workloads that
+  need them.
 
 ## Public hosting gate
 

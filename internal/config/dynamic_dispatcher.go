@@ -100,18 +100,19 @@ async function reportInitialization(env, key, error) {
   try {await env.BROKER.fetch(brokerURL("/diagnostic/"+encodeURIComponent(key)),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:new TextEncoder().encode(message).byteLength<=4096?message:"initialization ["+reference+"]: [exception exceeds collection limit]"})});} catch {}
 }
 
+async function loadWorkerSource(env, key) {
+  const response = await env.BROKER.fetch(brokerURL("/source/" + encodeURIComponent(key)));
+  if (!response.ok) throw new Error("Worker source unavailable: " + response.status);
+  return await response.json();
+}
+
 async function load(env, ctx, key, validation = false, state = {}) {
-  const source = async () => {
-    const response = await env.BROKER.fetch(brokerURL("/source/" + encodeURIComponent(key)));
-    if (!response.ok) throw new Error("Worker source unavailable: " + response.status);
-    return await response.json();
-  };
   // Fetch before entering the loader so even a cached initialization exception
   // can be distinguished from an unavailable source broker.
-  const validationCode = validation ? await source() : null;
+  const validationCode = validation ? await loadWorkerSource(env, key) : null;
   state.sourceReady = validation;
   return env.LOADER.get((validation ? "validation:" : "execution:") + key, async () => {
-    const code = validationCode || await source();
+    const code = validationCode || await loadWorkerSource(env, key);
     const childEnv = {
       ...code.env,
       __NANOFLARE_HTTP_OUTBOUND: env.HTTP_OUTBOUND,
@@ -129,7 +130,7 @@ async function load(env, ctx, key, validation = false, state = {}) {
     }
     let mainModule = code.mainModule;
     let modules = Object.fromEntries(Object.entries(code.modules).map(([name, module]) => [name,
-      Object.hasOwn(module, "wasm") ? {wasm: Uint8Array.from(atob(module.wasm), byte => byte.charCodeAt(0)).buffer} : module
+      Object.hasOwn(module, "wasm") ? {wasm: Uint8Array.fromBase64(module.wasm).buffer} : module
     ]));
     if (validation) {
       const name = "__nanoflare_validation__.js";

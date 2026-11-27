@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/clas/nanoflare/internal/nanoflare"
 	"github.com/clas/nanoflare/internal/runtimeassets"
@@ -53,10 +55,26 @@ func InstrumentLoaderInvocation(code WorkerCodeSnapshot, active nanoflare.Active
 	}
 	declarationJSON, _ := json.Marshal(declarations)
 	const importedEnvModule = "__nanoflare_imported_env__.js"
+	var loaderWasmImports strings.Builder
+	if len(declarations.Loaders) > 0 {
+		for index, name := range slices.Sorted(maps.Keys(code.Modules)) {
+			if code.Modules[name].Wasm == nil {
+				continue
+			}
+			identifier := "loaderWasm" + strconv.Itoa(index)
+			loaderWasmImports.WriteString("import " + identifier + " from " + quote("./"+name) + ";\n")
+			loaderWasmImports.WriteString("registerPublishedApplicationWasm(" + identifier + ", " + quote(name) + ");\n")
+		}
+	}
 	code.Modules[importedEnvModule] = WorkerCodeModule{JS: `import { installImportedBindings } from "` + loaderInvocationContextModule + `";
 import { wrapEnv } from "nanoflare-internal:runtime-bindings";
 installImportedBindings(` + string(declarationJSON) + `, env => wrapEnv(env, ` + quote(assetBindingName(active.Deployment.AssetConfig)) + `, ` + dbBindingNamesJSON(active.Deployment.Databases) + `, ` + objectBindingNamesJSON(active.Deployment.ObjectStorageBuckets) + `));
 `}
+	if loaderWasmImports.Len() > 0 {
+		module := code.Modules[importedEnvModule]
+		module.JS += `import { registerPublishedApplicationWasm } from "` + loaderInvocationContextModule + `";` + "\n" + loaderWasmImports.String()
+		code.Modules[importedEnvModule] = module
+	}
 	code.moduleOrder = append(code.moduleOrder, importedEnvModule)
 	const main = "__nanoflare_invocation_entrypoint__.js"
 	if existing, exists := code.Modules[loaderInvocationContextModule]; !exists || existing.JS != loaderInvocationContextSource {
@@ -70,10 +88,10 @@ export class NanoflareInvocationCompletion extends WorkerEntrypoint {
  wait() { return waitInvocation(this.ctx.props.__nanoflare_invocation?.token); }
 }
 export class NanoflareExportDispatcher extends WorkerEntrypoint {
- invoke(name,props,method,args,read=false,fetchEntrypoint=false) {
+ invoke(name,props,method,args,read=false,requireEntrypoint=false) {
   const state=this._state??=invocationState(this.env,this.ctx);
   const Type=UserModule[name];
-  if(fetchEntrypoint && (typeof Type!=="function" || !(Type.prototype instanceof WorkerEntrypoint) || typeof Type.prototype.fetch!=="function"))throw new TypeError("Invalid outbound fetch entrypoint: "+name);
+  if(requireEntrypoint && (typeof Type!=="function" || !(Type.prototype instanceof WorkerEntrypoint) || typeof Type.prototype[method]!=="function"))throw new TypeError("Invalid Worker entrypoint: "+name);
   if(typeof Type!=="function" || typeof method!=="string" || method.startsWith("_") || ["constructor","ctx","env","prototype","__proto__"].includes(method)) throw new Error("Invalid named export call");
   return runInvocation(state,()=>{const instance=this._instance??=new Type({...state.ctx,props:restoreRpcProps(props)},state.env);return read?instance[method]:instance[method](...args);});
  }
@@ -299,7 +317,7 @@ const exportReferences=new WeakMap();
 function exportProps(value,seen=new WeakSet()) {
  if(!value||typeof value!=="object") return value;
  const reference=exportReferences.get(value);
- if(reference)return {__nanoflare_export:{...reference,props:exportProps(reference.props,seen)}};
+ if(reference){const {name,props,methods,properties}=reference;return {__nanoflare_export:{name,props:exportProps(props,seen),methods,properties}};}
  if(Array.isArray(value))return value.map(item=>exportProps(item,seen));
  if(Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)return value;
  if(seen.has(value))throw new TypeError("Cyclic native props");seen.add(value);
@@ -318,7 +336,7 @@ export function wrapInvocationExports(state,module,nativeExports) {
    const facade=returnedValue(state,new (class extends RpcTarget {})(),new WeakMap(),resolveInstance);
    const methods=[],properties=[],seen=new Set(["constructor","ctx","env","then"]);
    for(let proto=Type.prototype;proto&&proto!==Object.prototype;proto=Object.getPrototypeOf(proto)){for(const name of Object.getOwnPropertyNames(proto)){if(seen.has(name)||name.startsWith("_"))continue;seen.add(name);const descriptor=Object.getOwnPropertyDescriptor(proto,name);if(typeof descriptor.value==="function")methods.push(name);else if(typeof descriptor.get==="function")properties.push(name);}}
-   exportReferences.set(facade,{name,props:options.props??{},methods,properties});return facade;
+   exportReferences.set(facade,{owner:state,name,props:options.props??{},methods,properties});return facade;
   };
  }});
 }

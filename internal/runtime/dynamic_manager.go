@@ -82,6 +82,7 @@ type dynamicInvocation struct {
 	started                bool
 	epoch                  uint64
 	applicationLoaderCalls int
+	loaderSubrequests      map[string]uint32
 }
 type dynamicLifetime struct {
 	responseDone bool
@@ -1107,10 +1108,21 @@ func (m *DynamicManager) serveBroker(w http.ResponseWriter, r *http.Request) {
 	case "export":
 		m.mu.Lock()
 		caller := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
-		if caller == nil || caller.key != key || !caller.started {
+		loaderExport := r.Header.Get("X-Nanoflare-Application-Loader") == "true"
+		if caller == nil || caller.key != key || !caller.started || (loaderExport && caller.complete) {
 			m.mu.Unlock()
 			http.Error(w, "invalid export caller", 403)
 			return
+		}
+		child := r.Header.Get("X-Nanoflare-Application-Child")
+		if loaderExport && child != "" {
+			remaining, exists := caller.loaderSubrequests[child]
+			if !exists || remaining == 0 {
+				m.mu.Unlock()
+				http.Error(w, "loader child subrequest limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+			caller.loaderSubrequests[child] = remaining - 1
 		}
 		invocation, err := m.admitLocked(r.Context(), key, caller.root)
 		m.mu.Unlock()

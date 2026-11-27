@@ -14,8 +14,10 @@ const (
 )
 
 type applicationLoaderKey struct {
-	Binding string  `json:"binding"`
-	ID      *string `json:"id"`
+	Binding     string  `json:"binding"`
+	ID          *string `json:"id"`
+	Child       string  `json:"child"`
+	Subrequests *uint32 `json:"subrequests"`
 }
 
 func (m *DynamicManager) admitApplicationLoader(w http.ResponseWriter, r *http.Request, key string, snapshot *dynamicSnapshot) {
@@ -25,7 +27,9 @@ func (m *DynamicManager) admitApplicationLoader(w http.ResponseWriter, r *http.R
 	}
 	var input applicationLoaderKey
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input)
-	if err != nil || (input.ID != nil && len(*input.ID) > 256) {
+	if err != nil || (input.ID != nil && len(*input.ID) > 256) ||
+		(input.Child != "" && (len(input.Child) != 36 || input.ID != nil || input.Subrequests == nil)) ||
+		(input.Child == "" && input.Subrequests != nil) {
 		http.Error(w, "invalid loader key", http.StatusBadRequest)
 		return
 	}
@@ -39,6 +43,22 @@ func (m *DynamicManager) admitApplicationLoader(w http.ResponseWriter, r *http.R
 	invocation := m.invocations[r.Header.Get("X-Nanoflare-Invocation")]
 	if invocation == nil || invocation.key != key || !invocation.started || invocation.complete {
 		http.Error(w, "invalid invocation", http.StatusForbidden)
+		return
+	}
+	if input.Child != "" {
+		if len(invocation.loaderSubrequests) >= applicationLoaderCallLimit {
+			http.Error(w, "loader invocation limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if invocation.loaderSubrequests == nil {
+			invocation.loaderSubrequests = make(map[string]uint32)
+		}
+		if _, exists := invocation.loaderSubrequests[input.Child]; exists {
+			http.Error(w, "loader child already registered", http.StatusConflict)
+			return
+		}
+		invocation.loaderSubrequests[input.Child] = *input.Subrequests
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if invocation.applicationLoaderCalls >= applicationLoaderCallLimit {
