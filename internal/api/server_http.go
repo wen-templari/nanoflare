@@ -15,6 +15,20 @@ import (
 const maxJSONBodySize = 10 << 20
 
 func writeRuntimeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, nanoflare.ErrObjectTransferNotFound):
+		writeError(w, http.StatusNotFound, err)
+		return
+	case errors.Is(err, nanoflare.ErrObjectTransferConflict):
+		writeError(w, http.StatusConflict, err)
+		return
+	case errors.Is(err, nanoflare.ErrObjectTransferInput):
+		writeError(w, http.StatusBadRequest, err)
+		return
+	case errors.Is(err, nanoflare.ErrObjectUsageRebuilding), errors.Is(err, nanoflare.ErrObjectTransferUnavailable), errors.Is(err, nanoflare.ErrObjectDownloadUnavailable):
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrSQLPolicy) || errors.Is(err, nanoflare.ErrInvalidDispatchOptions) {
 		writeError(w, 422, err)
 		return
@@ -64,6 +78,14 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 }
 
 func writeWorkerError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nanoflare.ErrObjectUsageRebuilding) {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if errors.Is(err, nanoflare.ErrObjectTransferConflict) {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	if errors.Is(err, nanoflare.ErrTelemetryQuery) {
 		writeError(w, 400, err)
 		return

@@ -302,6 +302,12 @@ CREATE TABLE IF NOT EXISTS databases (
 	name text NOT NULL,
 	created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS object_transfers (
+	id text PRIMARY KEY,
+	transfer jsonb NOT NULL
+);
+CREATE INDEX IF NOT EXISTS object_transfers_bucket_idx ON object_transfers ((transfer->>'BucketID'));
+CREATE INDEX IF NOT EXISTS object_transfers_org_idx ON object_transfers ((transfer->>'OrgID'));
 CREATE TABLE IF NOT EXISTS object_storage_buckets (
 	id text PRIMARY KEY,
 	org_id text NOT NULL DEFAULT '',
@@ -442,6 +448,7 @@ UPDATE deployments SET traffic_percent = 100 WHERE active AND traffic_percent = 
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE kv_namespaces ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
+ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS max_bytes bigint CHECK (max_bytes >= 0);
 ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS org_id text NOT NULL DEFAULT '';
 ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS external_id text NOT NULL DEFAULT '';
 ALTER TABLE object_storage_buckets ADD COLUMN IF NOT EXISTS oauth_client_id text NOT NULL DEFAULT '';
@@ -475,6 +482,8 @@ CREATE TABLE IF NOT EXISTS object_storage_bucket_metrics (
 	size bigint NOT NULL DEFAULT 0,
 	object_count bigint NOT NULL DEFAULT 0
 );
+ALTER TABLE object_storage_bucket_metrics ADD COLUMN IF NOT EXISTS usage_reconciled boolean NOT NULL DEFAULT false;
+ALTER TABLE object_storage_bucket_metrics ADD COLUMN IF NOT EXISTS usage_revision bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS database_metrics (
 	database_id text PRIMARY KEY REFERENCES databases(id) ON DELETE CASCADE,
 	queries bigint NOT NULL DEFAULT 0,
@@ -1834,8 +1843,12 @@ ON CONFLICT (database_id) DO UPDATE SET storage_bytes = GREATEST($2, 0), table_c
 }
 
 func (p *Postgres) CreateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
-	_, err := p.db.Exec(`INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-		bucket.ID, bucket.OrgID, bucket.Name, bucket.ExternalID, bucket.OAuthClientID, bucket.CreatedAt)
+	_, err := p.db.Exec(`WITH created AS (
+INSERT INTO object_storage_buckets (id, org_id, name, external_id, oauth_client_id, created_at, max_bytes)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+)
+INSERT INTO object_storage_bucket_metrics (bucket_id, usage_reconciled) SELECT id, true FROM created`,
+		bucket.ID, bucket.OrgID, bucket.Name, bucket.ExternalID, bucket.OAuthClientID, bucket.CreatedAt, bucket.MaxBytes)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrObjectStorageBucketExists
 	}
@@ -1853,7 +1866,7 @@ func (p *Postgres) ListObjectStorageBuckets() ([]nanoflare.ObjectStorageBucket, 
 }
 
 func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.ObjectStorageBucket, error) {
-	query := `SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM object_storage_buckets`
+	query := `SELECT id, org_id, name, external_id, oauth_client_id, created_at, max_bytes FROM object_storage_buckets`
 	var rows *sql.Rows
 	var err error
 	if orgID == "" {
@@ -1868,7 +1881,7 @@ func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.Obje
 	buckets := make([]nanoflare.ObjectStorageBucket, 0)
 	for rows.Next() {
 		var bucket nanoflare.ObjectStorageBucket
-		if err := rows.Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt); err != nil {
+		if err := rows.Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt, &bucket.MaxBytes); err != nil {
 			return nil, err
 		}
 		buckets = append(buckets, bucket)
@@ -1878,8 +1891,8 @@ func (p *Postgres) ListObjectStorageBucketsByOrg(orgID string) ([]nanoflare.Obje
 
 func (p *Postgres) GetObjectStorageBucket(bucketID string) (nanoflare.ObjectStorageBucket, error) {
 	var bucket nanoflare.ObjectStorageBucket
-	err := p.db.QueryRow(`SELECT id, org_id, name, external_id, oauth_client_id, created_at FROM object_storage_buckets WHERE id = $1`, bucketID).
-		Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt)
+	err := p.db.QueryRow(`SELECT id, org_id, name, external_id, oauth_client_id, created_at, max_bytes FROM object_storage_buckets WHERE id = $1`, bucketID).
+		Scan(&bucket.ID, &bucket.OrgID, &bucket.Name, &bucket.ExternalID, &bucket.OAuthClientID, &bucket.CreatedAt, &bucket.MaxBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nanoflare.ObjectStorageBucket{}, nanoflare.ErrObjectStorageBucketNotFound
 	}
@@ -1887,7 +1900,7 @@ func (p *Postgres) GetObjectStorageBucket(bucketID string) (nanoflare.ObjectStor
 }
 
 func (p *Postgres) UpdateObjectStorageBucket(bucket nanoflare.ObjectStorageBucket) error {
-	result, err := p.db.Exec(`UPDATE object_storage_buckets SET name = $2 WHERE id = $1`, bucket.ID, bucket.Name)
+	result, err := p.db.Exec(`UPDATE object_storage_buckets SET name = $2, max_bytes = $3 WHERE id = $1`, bucket.ID, bucket.Name, bucket.MaxBytes)
 	if isUniqueViolation(err) {
 		return nanoflare.ErrObjectStorageBucketExists
 	}
@@ -2113,8 +2126,14 @@ SELECT EXISTS (
 }
 
 func (p *Postgres) DeleteObjectStorageBucket(bucketID string) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	var inUse bool
-	err := p.db.QueryRow(`
+	err = tx.QueryRow(`
 SELECT EXISTS (
 	SELECT 1
 	FROM deployments d, jsonb_array_elements(
@@ -2128,7 +2147,24 @@ SELECT EXISTS (
 	if inUse {
 		return nanoflare.ErrObjectStorageBucketInUse
 	}
-	result, err := p.db.Exec(`DELETE FROM object_storage_buckets WHERE id = $1`, bucketID)
+
+	// Buffered claims protect provider mutations, including direct upload
+	// completion, even after the claim's expiry and until recovery.
+	err = tx.QueryRow(`
+SELECT EXISTS (
+	SELECT 1 FROM object_transfers
+	WHERE transfer->>'BucketID' = $1
+		AND transfer @> '{"Buffered":true}'
+		AND NOT transfer @> '{"Cleaned":true}'
+)`, bucketID).Scan(&inUse)
+	if err != nil {
+		return err
+	}
+	if inUse {
+		return nanoflare.ErrObjectTransferConflict
+	}
+
+	result, err := tx.Exec(`DELETE FROM object_storage_buckets WHERE id = $1`, bucketID)
 	if err != nil {
 		return err
 	}
@@ -2139,7 +2175,17 @@ SELECT EXISTS (
 	if deleted == 0 {
 		return nanoflare.ErrObjectStorageBucketNotFound
 	}
-	return nil
+	// Retain the aborted rows for asynchronous provider cleanup.
+	if _, err := tx.Exec(`
+UPDATE object_transfers SET transfer = jsonb_set(transfer, '{Aborted}', 'true')
+WHERE transfer->>'BucketID' = $1
+	AND transfer->>'Result' IS NULL
+	AND NOT transfer @> '{"Buffered":true}'
+	AND NOT transfer @> '{"Aborted":true}'
+	AND NOT transfer @> '{"Cleaned":true}'`, bucketID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (p *Postgres) Activate(deployment nanoflare.Deployment) error {
