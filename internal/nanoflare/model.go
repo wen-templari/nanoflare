@@ -108,7 +108,8 @@ type CreateObjectStorageBucketInput struct {
 }
 
 type UpdateObjectStorageBucketInput struct {
-	Name string `json:"name"`
+	Name     string `json:"name,omitempty"`
+	MaxBytes *int64 `json:"max_bytes,omitempty" minimum:"0"`
 }
 
 type UpdateAppInput struct {
@@ -456,6 +457,7 @@ type RestoreDatabaseResult struct {
 }
 
 type ObjectStorageBucket struct {
+	MaxBytes      *int64    `json:"max_bytes,omitempty"`
 	ID            string    `json:"id"`
 	OrgID         string    `json:"org_id,omitempty"`
 	Name          string    `json:"name"`
@@ -763,6 +765,7 @@ type ObjectHTTPMetadata struct {
 }
 
 type ObjectInfo struct {
+	MutationID   string             `json:"-"`
 	Key          string             `json:"key"`
 	Size         int64              `json:"size"`
 	ETag         string             `json:"etag,omitempty"`

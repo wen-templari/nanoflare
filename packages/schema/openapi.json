@@ -2217,6 +2217,10 @@
           "id": {
             "type": "string"
           },
+          "max_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
           "name": {
             "type": "string"
           },
@@ -3354,11 +3358,15 @@
             "readOnly": true,
             "type": "string"
           },
+          "max_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "name": {
             "type": "string"
           }
         },
-        "required": ["name"],
         "type": "object"
       },
       "UpdateVarsInput": {

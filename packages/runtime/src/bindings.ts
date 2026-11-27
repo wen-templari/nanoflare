@@ -149,6 +149,18 @@ async function toObjectRequestInit(
 export function wrapObjectsBinding(bindingName: string, binding: unknown): unknown {
   const service = serviceBinding(binding);
   if (!service) return binding;
+  const uploadRequest = async <T>(action: string, payload: Record<string, unknown>): Promise<T> => {
+    const response = await service.fetch(
+      new Request("https://objects.local/internal/runtime/objects/upload-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, action }),
+      }),
+    );
+    if (!response.ok) throw await objectBindingError(bindingName, action, response);
+    return (await response.json()) as T;
+  };
+  type UploadTicket = { id: string; expires_at: string; url?: string };
   return {
     async put(key: string, value: unknown, options?: { httpMetadata?: { contentType?: string } }) {
       const init = await toObjectRequestInit(value, options);
@@ -181,6 +193,40 @@ export function wrapObjectsBinding(bindingName: string, binding: unknown): unkno
       if (response.status === 404) return null;
       if (!response.ok) throw await objectBindingError(bindingName, "get", response);
       return buildObjectBody(response, objectMetadata(response, key));
+    },
+    async presignDownload(key: string): Promise<string> {
+      const response = await service.fetch(
+        new Request("https://objects.local/internal/runtime/objects/presign-public-download", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ key }),
+        }),
+      );
+      if (!response.ok) throw await objectBindingError(bindingName, "presignDownload", response);
+      const { url } = (await response.json()) as { url: string };
+      return url;
+    },
+    createUpload(key: string, size: number) {
+      return uploadRequest<UploadTicket & { url: string }>("create", { key, size });
+    },
+    createMultipartUpload(key: string, parts: number[]) {
+      if (parts.length === 0) throw new Error("Multipart uploads require at least one part");
+      return uploadRequest<UploadTicket>("create", {
+        key,
+        size: parts.reduce((total, size) => total + size, 0),
+        parts,
+      });
+    },
+    signUploadPart(id: string, part: number) {
+      return uploadRequest<UploadTicket & { url: string }>("sign-part", { id, part });
+    },
+    async completeUpload(id: string) {
+      const object = await uploadRequest<ObjectMetadata>("complete", { id });
+      object.uploaded = new Date(object.uploaded);
+      return object;
+    },
+    async abortUpload(id: string) {
+      await uploadRequest<null>("abort", { id });
     },
     async head(key: string) {
       const response = await service.fetch(

@@ -2413,6 +2413,8 @@ export interface components {
       created_at: string;
       external_id?: string;
       id: string;
+      /** Format: int64 */
+      max_bytes?: number;
       name: string;
       oauth_client_id?: string;
       org_id?: string;
@@ -2871,7 +2873,9 @@ export interface components {
        * @example https://example.com/schemas/UpdateObjectStorageBucketInput.json
        */
       readonly $schema?: string;
-      name: string;
+      /** Format: int64 */
+      max_bytes?: number;
+      name?: string;
     };
     UpdateVarsInput: {
       /**

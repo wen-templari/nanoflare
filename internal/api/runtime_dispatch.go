@@ -151,7 +151,9 @@ func (s *RuntimeDispatchServer) effect(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set("X-Nanoflare-Deployment-ID", resource)
 		NewRuntimeAssetServer(s.service).ServeHTTP(w, r)
 	case nanoflare.RuntimeObjects:
-		if r.Method != "GET" && r.Method != "HEAD" && r.Method != "PUT" && r.Method != "DELETE" {
+		effectPath := r.PathValue("path")
+		transfer := r.Method == "POST" && (effectPath == "internal/runtime/objects/presign-public-download" || effectPath == "internal/runtime/objects/upload-session")
+		if !transfer && r.Method != "GET" && r.Method != "HEAD" && r.Method != "PUT" && r.Method != "DELETE" {
 			http.Error(w, "unsupported object effect", 405)
 			return
 		}
